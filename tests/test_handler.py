@@ -75,6 +75,11 @@ class TestCCProxyRouting:
         ccproxy_data = {
             "ccproxy": {
                 "debug": False,
+                "hooks": [
+                    "ccproxy.hooks.rule_evaluator",
+                    "ccproxy.hooks.model_router",
+                    "ccproxy.hooks.forward_oauth_hook",
+                ],
                 "rules": [
                     {
                         "name": "token_count",
@@ -250,6 +255,11 @@ class TestHandlerHookMethods:
         ccproxy_data = {
             "ccproxy": {
                 "debug": False,
+                "hooks": [
+                    "ccproxy.hooks.rule_evaluator",
+                    "ccproxy.hooks.model_router",
+                    "ccproxy.hooks.forward_oauth_hook",
+                ],
                 "rules": [
                     {
                         "name": "background",
@@ -277,6 +287,17 @@ class TestHandlerHookMethods:
     @pytest.fixture
     def handler(self) -> CCProxyHandler:
         """Create a ccproxy handler instance with mocked router."""
+        # Create a minimal config with hooks
+        config = CCProxyConfig(
+            debug=False,
+            hooks=[
+                "ccproxy.hooks.rule_evaluator",
+                "ccproxy.hooks.model_router",
+            ],
+            rules=[]
+        )
+        set_config_instance(config)
+        
         # Mock proxy server with default model
         mock_proxy_server = MagicMock()
         mock_proxy_server.llm_router = MagicMock()
@@ -467,6 +488,11 @@ class TestCCProxyHandler:
         ccproxy_data = {
             "ccproxy": {
                 "debug": False,
+                "hooks": [
+                    "ccproxy.hooks.rule_evaluator",
+                    "ccproxy.hooks.model_router",
+                    "ccproxy.hooks.forward_oauth_hook",
+                ],
                 "rules": [
                     {
                         "name": "background",
@@ -543,6 +569,10 @@ class TestCCProxyHandler:
         ccproxy_data = {
             "ccproxy": {
                 "debug": False,
+                "hooks": [
+                    "ccproxy.hooks.rule_evaluator",
+                    "ccproxy.hooks.model_router",
+                ],
                 "rules": [
                     {
                         "name": "token_count",
@@ -613,6 +643,58 @@ class TestCCProxyHandler:
                 assert modified_data["model"] == "gemini-2.5-pro"
                 assert modified_data["metadata"]["ccproxy_model_name"] == "token_count"
 
+        finally:
+            ccproxy_path.unlink()
+            litellm_path.unlink()
+            clear_config_instance()
+            clear_router()
+
+    @pytest.mark.asyncio
+    async def test_hooks_loaded_from_config(self) -> None:
+        """Test that hooks are loaded from configuration file."""
+        # Create config with hooks
+        ccproxy_data = {
+            "ccproxy": {
+                "debug": False,
+                "hooks": [
+                    "ccproxy.hooks.rule_evaluator",
+                    "ccproxy.hooks.model_router",
+                ],
+                "rules": [],
+            }
+        }
+        
+        # Create a dummy litellm config file
+        litellm_data = {"model_list": []}
+        
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as litellm_file:
+            yaml.dump(litellm_data, litellm_file)
+            litellm_path = Path(litellm_file.name)
+        
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as ccproxy_file:
+            yaml.dump(ccproxy_data, ccproxy_file)
+            ccproxy_path = Path(ccproxy_file.name)
+        
+        try:
+            config = CCProxyConfig.from_yaml(ccproxy_path, litellm_config_path=litellm_path)
+            set_config_instance(config)
+            
+            # Mock proxy server
+            mock_proxy_server = MagicMock()
+            mock_proxy_server.llm_router = MagicMock()
+            mock_proxy_server.llm_router.model_list = []
+            
+            mock_module = MagicMock()
+            mock_module.proxy_server = mock_proxy_server
+            
+            with patch.dict("sys.modules", {"litellm.proxy": mock_module}):
+                handler = CCProxyHandler()
+                
+                # Verify hooks were loaded
+                assert len(handler.hooks) == 2
+                assert any("rule_evaluator" in str(h) for h in handler.hooks)
+                assert any("model_router" in str(h) for h in handler.hooks)
+                
         finally:
             ccproxy_path.unlink()
             litellm_path.unlink()

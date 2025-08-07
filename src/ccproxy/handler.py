@@ -5,7 +5,6 @@ from typing import Any, TypedDict
 
 from litellm.integrations.custom_logger import CustomLogger
 
-import ccproxy.hooks as hooks
 from ccproxy.classifier import RequestClassifier
 from ccproxy.config import get_config
 from ccproxy.router import get_router
@@ -36,7 +35,15 @@ class CCProxyHandler(CustomLogger):
         super().__init__()
         self.classifier = RequestClassifier()
         self.router = get_router()
-        self.hooks = [hooks.rule_evaluator, hooks.model_router, hooks.forward_oauth_hook]
+
+        # Load hooks from configuration
+        config = get_config()
+        self.hooks = config.load_hooks()
+
+        # Log loaded hooks for debugging
+        if config.debug and self.hooks:
+            hook_names = [f"{h.__module__}.{h.__name__}" for h in self.hooks]
+            logger.debug(f"Loaded {len(self.hooks)} hooks: {', '.join(hook_names)}")
 
     async def async_pre_call_hook(
         self,

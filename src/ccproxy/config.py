@@ -119,6 +119,9 @@ class CCProxyConfig(BaseSettings):
     debug: bool = False
     metrics_enabled: bool = True
 
+    # Hook configurations (function import paths)
+    hooks: list[str] = Field(default_factory=list)
+
     # Rule configurations
     rules: list[RuleConfig] = Field(default_factory=list)
 
@@ -127,6 +130,29 @@ class CCProxyConfig(BaseSettings):
 
     # Path to LiteLLM config (for model lookups)
     litellm_config_path: Path = Field(default_factory=lambda: Path("./config.yaml"))
+
+    def load_hooks(self) -> list[Any]:
+        """Load hook functions from their import paths.
+
+        Returns:
+            List of callable hook functions
+
+        Raises:
+            ImportError: If a hook cannot be imported
+        """
+        loaded_hooks = []
+        for hook_path in self.hooks:
+            try:
+                # Import the hook function
+                module_path, func_name = hook_path.rsplit(".", 1)
+                module = importlib.import_module(module_path)
+                hook_func = getattr(module, func_name)
+                loaded_hooks.append(hook_func)
+                logger.debug(f"Loaded hook: {hook_path}")
+            except (ImportError, AttributeError) as e:
+                logger.error(f"Failed to load hook {hook_path}: {e}")
+                # Continue loading other hooks even if one fails
+        return loaded_hooks
 
     @classmethod
     def from_proxy_runtime(cls, **kwargs: Any) -> "CCProxyConfig":
@@ -172,6 +198,11 @@ class CCProxyConfig(BaseSettings):
                     instance.debug = ccproxy_data["debug"]
                 if "metrics_enabled" in ccproxy_data:
                     instance.metrics_enabled = ccproxy_data["metrics_enabled"]
+
+                # Load hooks
+                hooks_data = ccproxy_data.get("hooks", [])
+                if hooks_data:
+                    instance.hooks = hooks_data
 
                 # Load rules
                 rules_data = ccproxy_data.get("rules", [])
