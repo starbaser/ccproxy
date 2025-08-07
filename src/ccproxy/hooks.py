@@ -9,10 +9,10 @@ from ccproxy.router import ModelRouter
 logger = logging.getLogger(__name__)
 
 
-def classify_hook(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+def rule_evaluator(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
     classifier = kwargs.get("classifier")
     if not isinstance(classifier, RequestClassifier):
-        logger.warning("Classifier not found or invalid type in classify_hook")
+        logger.warning("Classifier not found or invalid type in rule_evaluator")
         return data
 
     if "metadata" not in data:
@@ -26,10 +26,10 @@ def classify_hook(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwa
     return data
 
 
-def rewrite_model_hook(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+def model_router(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
     router = kwargs.get("router")
     if not isinstance(router, ModelRouter):
-        logger.warning("Router not found or invalid type in rewrite_model_hook")
+        logger.warning("Router not found or invalid type in model_router")
         return data
 
     # Get model_name with safe default

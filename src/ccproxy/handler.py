@@ -36,7 +36,7 @@ class CCProxyHandler(CustomLogger):
         super().__init__()
         self.classifier = RequestClassifier()
         self.router = get_router()
-        self.hooks = [hooks.classify_hook, hooks.rewrite_model_hook, hooks.forward_oauth_hook]
+        self.hooks = [hooks.rule_evaluator, hooks.model_router, hooks.forward_oauth_hook]
 
     async def async_pre_call_hook(
         self,

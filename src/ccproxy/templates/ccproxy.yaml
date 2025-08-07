@@ -7,6 +7,9 @@ litellm:
 
 ccproxy:
   debug: true
+  hooks:
+    - rule_evaluator # evaluates rules against request
+    - model_router # routes to appropriate model
   rules:
     - name: token_count
       rule: ccproxy.rules.TokenCountRule

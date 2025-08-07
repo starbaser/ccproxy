@@ -35,6 +35,7 @@
 
 ```
 src/ccproxy/
+├── templates        # config template source files (copied to examples/ on commit)
 ├── __main__.py      # Entry point
 ├── cli.py           # Tyro CLI commands
 ├── handler.py       # CCProxyHandler (CustomLogger)
@@ -273,4 +274,3 @@ uv run pytest --cov=ccproxy --cov-report=html
 ---
 
 _This CLAUDE.md optimizes for ccproxy development with Tyro CLI patterns, LiteLLM integration, and Python async best practices while maintaining token efficiency._
-
