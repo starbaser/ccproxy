@@ -8,8 +8,9 @@ litellm:
 ccproxy:
   debug: true
   hooks:
-    - rule_evaluator # evaluates rules against request
-    - model_router # routes to appropriate model
+    - ccproxy.hooks.rule_evaluator # evaluates rules against request
+    - ccproxy.hooks.model_router # routes to appropriate model (coupled with rule_evaluator)
+    - ccproxy.hooks.forward_oauth_hook
   rules:
     - name: token_count
       rule: ccproxy.rules.TokenCountRule
