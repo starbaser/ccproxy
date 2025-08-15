@@ -19,7 +19,7 @@
 - **Cross-Provider Context Preservation** _(coming soon)_: Maintain conversation history and context when routing between different models and providers.
 
 > ⚠️ **Note**: This is a newly released project ready for public use and feedback. While core functionality is complete, real-world testing and community input are welcomed. Please [open an issue](https://github.com/starbased-co/ccproxy/issues) to share your experience, report bugs, or suggest improvements.
->
+
 > **Known Issue**: Context preservation between providers is not yet implemented. Due to the way how cache breakpoints work, routing requests in-between different models/providers will result in lowered cache efficiency. Improving this is the next major feature being worked on.
 
 ## Installation
@@ -239,21 +239,22 @@ litellm:
 ccproxy:
   debug: true
   rules:
-    - name: token_count                          # ┌─ 1st priority
-      rule: ccproxy.rules.TokenCountRule         # │
-      params:                                    # │
+    - name: token_count # ┌─ 1st priority
+      rule: ccproxy.rules.TokenCountRule # │
+      params: # │
         - threshold: 60000 # tokens              # ▼
-    - name: background                           # ┌─ 2nd priority
-      rule: ccproxy.rules.MatchModelRule         # │
-      params:                                    # │
-        - model_name: claude-3-5-haiku-20241022  # ▼
-    - name: think                                # ┌─ 3rd priority
-      rule: ccproxy.rules.ThinkingRule           # │
-                                                 # ▼
-    - name: web_search                           # ┌─ 4th priority
-      rule: ccproxy.rules.MatchToolRule          # │
-      params:                                    # │
-        - tool_name: WebSearch                   # ▼
+    - name: background # ┌─ 2nd priority
+      rule: ccproxy.rules.MatchModelRule # │
+      params: # │
+        - model_name: claude-3-5-haiku-20241022 # ▼
+    - name: think # ┌─ 3rd priority
+      rule:
+        ccproxy.rules.ThinkingRule # │
+        # ▼
+    - name: web_search # ┌─ 4th priority
+      rule: ccproxy.rules.MatchToolRule # │
+      params: # │
+        - tool_name: WebSearch # ▼
 ```
 
 **Note**: For Claude Code to function as normal, only the `default`, `background`, and `think` rules need to be present. All other rules are optional.

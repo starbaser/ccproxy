@@ -55,7 +55,11 @@ model_list:
       api_key: os.environ/GOOGLE_API_KEY
 
 litellm_settings:
-  callbacks: ccproxy.handler
+  callbacks: 
+    - ccproxy.handler
+    - langfuse
+  success_callback:
+    - langfuse
 
 general_settings:
   forward_client_headers_to_llm_api: true
