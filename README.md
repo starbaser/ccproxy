@@ -20,7 +20,7 @@
 
 > ⚠️ **Note**: This is a newly released project ready for public use and feedback. While core functionality is complete, real-world testing and community input are welcomed. Please [open an issue](https://github.com/starbased-co/ccproxy/issues) to share your experience, report bugs, or suggest improvements.
 
-> **Known Issue**: Context preservation between providers is not yet implemented. Due to the way how cache breakpoints work, routing requests in-between different models/providers will result in lowered cache efficiency. Improving this is the next major feature being worked on.
+> **Known Issue**: Context preservation between providers has not yet been fully implemented. Due to the way how cache breakpoints work, routing requests in-between different models/providers will result in lowered cache efficiency. Improving this is the next major feature being worked on.
 
 ## Installation
 
@@ -52,53 +52,45 @@ To overwrite existing files without prompting:
 ccproxy install --force
 ```
 
-## Manual Setup
+See [docs/configuration.md](docs/configuration.md).
 
-If you prefer to set up manually, download the template files:
+### Routing Rules
 
-```bash
-# Create the ccproxy configuration directory
-mkdir -p ~/.ccproxy
+`ccproxy` includes built-in rules for intelligent request routing:
 
-# Download the callback file
-curl -o ~/.ccproxy/ccproxy.py \
-  https://raw.githubusercontent.com/starbased-co/ccproxy/main/src/ccproxy/templates/ccproxy.py
+- **TokenCountRule**: Routes requests with large token counts to high-capacity models
+- **MatchModelRule**: Routes based on the requested model name
+- **ThinkingRule**: Routes requests containing a "thinking" field
+- **MatchToolRule**: Routes based on tool usage (e.g., WebSearch)
 
-# Download the LiteLLM config
-curl -o ~/.ccproxy/config.yaml \
-  https://raw.githubusercontent.com/starbased-co/ccproxy/main/src/ccproxy/templates/config.yaml
+You can also create custom rules - see the examples directory for details. Custom rules (and hooks) are loaded with the same mechanism that LiteLLM uses to import the custom callbacks, that is, they are imported as by the LiteLLM python process as named module from within it's virtual environment (e.g. `import custom_rule_file.custom_rule_function`), or as a python script adjacent to `config.yaml`.
 
-# Download the ccproxy routing rules config
-curl -o ~/.ccproxy/ccproxy.yaml \
-  https://raw.githubusercontent.com/starbased-co/ccproxy/main/src/ccproxy/templates/ccproxy.yaml
-```
-
-The downloaded `config.yaml` contains:
+#### Example Configuration
 
 ```yaml
-# See https://docs.litellm.ai/docs/proxy/configs
+# LiteLLM model configuration
 model_list:
   # Default model for regular use
   - model_name: default
     litellm_params:
       model: claude-sonnet-4-20250514
 
-  # Background model
+  # Background model for low-cost operations
   - model_name: background
     litellm_params:
       model: claude-3-5-haiku-20241022
 
-  # Thinking model for complex reasoning (request.body.think = true)
+  # Thinking model for complex reasoning
   - model_name: think
     litellm_params:
       model: claude-opus-4-20250514
 
-  # Large context model for >60k tokens (threshold configurable in ccproxy.yaml)
+  # Large context model for >60k tokens
   - model_name: token_count
     litellm_params:
       model: gemini-2.5-pro
 
-  # Web search model for execution when the WebSearch tool is present
+  # Web search model for tool usage
   - model_name: web_search
     litellm_params:
       model: gemini-2.5-flash
@@ -120,56 +112,13 @@ model_list:
       api_base: https://api.anthropic.com
 
   # Add any other provider/model supported by LiteLLM
+
   - model_name: gemini-2.5-pro
     litellm_params:
       model: gemini/gemini-2.5-pro
       api_base: https://generativelanguage.googleapis.com
       api_key: os.environ/GOOGLE_API_KEY
-
-  - model_name: gemini-2.5-flash
-    litellm_params:
-      model: gemini/gemini-2.5-flash
-      api_base: https://generativelanguage.googleapis.com
-      api_key: os.environ/GOOGLE_API_KEY
-
-litellm_settings:
-  callbacks: ccproxy.handler
-
-general_settings:
-  forward_client_headers_to_llm_api: true
 ```
-
-See the examples directory for complete configuration examples.
-
-**Start the LiteLLM proxy**:
-
-```bash
-cd ~/.ccproxy
-litellm --config config.yaml
-```
-
-The proxy will start on `http://localhost:4000` by default.
-
-## Configuration
-
-- **model_name entries**: In your `config.yaml`, each `model_name` can be either:
-  - A configured LiteLLM model (e.g., `claude-sonnet-4-20250514`)
-  - The name of a rule configured in `ccproxy.yaml` (e.g., `default`, `background`, `think`)
-
-- **Minimum requirements for Claude Code**: For Claude Code to function properly, your `config.yaml` must include at minimum:
-  - **Rule-based models**: `default`, `background`, and `think`
-  - **Claude models**: `claude-sonnet-4-20250514`, `claude-3-5-haiku-20241022`, and `claude-opus-4-20250514` (all with `api_base: https://api.anthropic.com`)
-
-### Routing Rules
-
-`ccproxy` includes built-in rules for intelligent request routing:
-
-- **TokenCountRule**: Routes requests with large token counts to high-capacity models
-- **MatchModelRule**: Routes based on the requested model name
-- **ThinkingRule**: Routes requests containing a "thinking" field
-- **MatchToolRule**: Routes based on tool usage (e.g., WebSearch)
-
-You can also create custom rules - see the examples directory for details. Custom rules (and hooks) are loaded with the same mechanism that LiteLLM uses to import the custom callbacks, that is, they are imported as by the LiteLLM python process as named module from within it's virtual environment (e.g. `import custom_rule_file.custom_rule_function`), or as a python script adjacent to `config.yaml`.
 
 ## CLI Commands
 
@@ -222,46 +171,7 @@ export ANTHROPIC_BASE_URL=http://localhost:4000 # Add to your .zshrc/.bashrc
 claude -p "Explain quantum computing"
 ```
 
-## Configuration
-
-For the LiteLLM `config.yaml`, [see the LiteLLM documentation](https://docs.litellm.ai/docs/proxy/configs). To configure the starting options of the LiteLLM process, or to configure routing rules and hooks, a `ccproxy.yaml` file is expected in the same directory as `config.yaml`:
-
-```yaml
-# ~/.ccproxy/ccproxy.yaml
-litellm:
-  # See `litellm --help`
-  host: 127.0.0.1
-  port: 4000
-  num_workers: 4
-  debug: true
-  detailed_debug: true
-
-ccproxy:
-  debug: true
-  rules:
-    - name: token_count # ┌─ 1st priority
-      rule: ccproxy.rules.TokenCountRule # │
-      params: # │
-        - threshold: 60000 # tokens              # ▼
-    - name: background # ┌─ 2nd priority
-      rule: ccproxy.rules.MatchModelRule # │
-      params: # │
-        - model_name: claude-3-5-haiku-20241022 # ▼
-    - name: think # ┌─ 3rd priority
-      rule:
-        ccproxy.rules.ThinkingRule # │
-        # ▼
-    - name: web_search # ┌─ 4th priority
-      rule: ccproxy.rules.MatchToolRule # │
-      params: # │
-        - tool_name: WebSearch # ▼
-```
-
-**Note**: For Claude Code to function as normal, only the `default`, `background`, and `think` rules need to be present. All other rules are optional.
-
-### Custom Rules
-
-Custom rules are dynamically imported using Python's module import system. When you specify a rule like `ccproxy.rules.TokenCountRule`, ccproxy imports it as if you had written `from ccproxy.rules import TokenCountRule`. You can create your own rules by implementing the `ClassificationRule` interface - your rule class must have an `evaluate` method that takes the request dictionary and returns a boolean. If `evaluate` returns `True`, the request will be routed to the model specified by that rule's `label`. Rules are evaluated in order from top to bottom, with the first matching rule determining the routing destination.
+For detailed configuration documentation including custom rules and advanced usage, see [docs/configuration.md](docs/configuration.md).
 
 ## Contributing
 
@@ -278,6 +188,7 @@ Since this is a new project, I especially appreciate:
 - Documentation improvements
 - Test coverage additions
 - Feature suggestions
+- Any of your implementations using `ccproxy`
 
 ## Acknowledgments
 

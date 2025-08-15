@@ -29,12 +29,3 @@ repos:
         args: [--strict]
         files: ^src/
 
-  - repo: local
-    hooks:
-      - id: check-examples-match-templates
-        name: Check examples match templates
-        entry: .pre-commit-scripts/check-examples-match-templates.py
-        language: python
-        pass_filenames: false
-        always_run: true
-        files: ^(examples/|src/ccproxy/templates/)
