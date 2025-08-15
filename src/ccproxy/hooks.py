@@ -1,6 +1,7 @@
 import logging
 import uuid
 from typing import Any
+from urllib.parse import urlparse
 
 from ccproxy.classifier import RequestClassifier
 from ccproxy.router import ModelRouter
@@ -51,10 +52,27 @@ def model_router(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwar
         data["metadata"]["ccproxy_model_config"] = model_config
     else:
         # No model config found (not even default)
-        # This should only happen if no 'default' model is configured
-        raise ValueError(
+        # This can happen during startup when LiteLLM proxy is still initializing
+        logger.warning(
             f"No model configured for model_name '{model_name}' and no 'default' model available as fallback"
         )
+
+        # Try to reload models in case they weren't loaded properly
+        router.reload_models()
+        model_config = router.get_model_for_label(model_name)
+
+        if model_config is not None:
+            routed_model = model_config.get("litellm_params", {}).get("model")
+            if routed_model:
+                data["model"] = routed_model
+            data["metadata"]["ccproxy_litellm_model"] = routed_model
+            data["metadata"]["ccproxy_model_config"] = model_config
+            logger.info(f"Successfully routed after model reload: {model_name} -> {routed_model}")
+        else:
+            # Final fallback - still no models available, raise error
+            raise ValueError(
+                f"No model configured for model_name '{model_name}' and no 'default' model available as fallback"
+            )
 
     # Generate request ID if not present
     if "request_id" not in data["metadata"]:
@@ -62,7 +80,7 @@ def model_router(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwar
     return data
 
 
-def forward_oauth_hook(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+def forward_oauth(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
     request = data.get("proxy_server_request")
     if request is None:
         # No proxy server request, skip OAuth forwarding
@@ -84,7 +102,6 @@ def forward_oauth_hook(data: dict[str, Any], user_api_key_dict: dict[str, Any], 
     custom_provider = litellm_params.get("custom_llm_provider", "")
 
     # Check if this is going to Anthropic's API directly
-    from urllib.parse import urlparse
 
     # Parse hostname properly to prevent subdomain attacks
     if api_base:

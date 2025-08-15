@@ -1,7 +1,10 @@
 """Model routing component for mapping classification labels to models."""
 
+import logging
 import threading
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class ModelRouter:
@@ -41,9 +44,30 @@ class ModelRouter:
         self._model_list: list[dict[str, Any]] = []
         self._model_group_alias: dict[str, list[str]] = {}
         self._available_models: set[str] = set()
+        self._models_loaded = False
 
-        # Load initial configuration
-        self._load_model_mapping()
+        # Models will be loaded on first actual request when proxy is guaranteed to be ready
+
+    def _ensure_models_loaded(self) -> None:
+        """Ensure models are loaded on first request when proxy is ready."""
+        if self._models_loaded:
+            return
+
+        with self._lock:
+            # Double-check pattern
+            if self._models_loaded:
+                return
+
+            self._load_model_mapping()
+
+            # Mark as loaded regardless of success - models should be available by now
+            # If no models are found, it's likely a configuration issue
+            self._models_loaded = True
+            
+            if self._available_models:
+                logger.info(f"Successfully loaded {len(self._available_models)} models: {sorted(self._available_models)}")
+            else:
+                logger.error("No models were loaded from LiteLLM proxy - check configuration")
 
     def _load_model_mapping(self) -> None:
         """Load and parse model mapping from configuration.
@@ -63,8 +87,10 @@ class ModelRouter:
 
             if proxy_server and hasattr(proxy_server, "llm_router") and proxy_server.llm_router:
                 model_list = proxy_server.llm_router.model_list or []
+                logger.debug(f"Loaded {len(model_list)} models from LiteLLM proxy server")
             else:
                 model_list = []
+                logger.warning("LiteLLM proxy server or llm_router not available - no models loaded")
 
             # Build model mapping and list
             for model_entry in model_list:
@@ -110,6 +136,9 @@ class ModelRouter:
             >>> print(model["model_name"])  # "background"
             >>> print(model["litellm_params"]["model"])  # "claude-3-5-haiku-20241022"
         """
+        # Ensure models are loaded before accessing
+        self._ensure_models_loaded()
+
         model_name_str = model_name
 
         with self._lock:
@@ -133,6 +162,9 @@ class ModelRouter:
         This method is designed for use by LiteLLM hooks to access
         the full model configuration.
         """
+        # Ensure models are loaded before accessing
+        self._ensure_models_loaded()
+
         with self._lock:
             return self._model_list.copy()
 
@@ -157,6 +189,9 @@ class ModelRouter:
                 "claude-3-5-haiku-20241022": ["background"]
             }
         """
+        # Ensure models are loaded before accessing
+        self._ensure_models_loaded()
+
         with self._lock:
             return self._model_group_alias.copy()
 
@@ -166,6 +201,9 @@ class ModelRouter:
         Returns:
             List of model alias names (e.g., ["default", "background", "think"])
         """
+        # Ensure models are loaded before accessing
+        self._ensure_models_loaded()
+
         with self._lock:
             return sorted(self._available_models)
 
@@ -178,8 +216,21 @@ class ModelRouter:
         Returns:
             True if the model is available, False otherwise
         """
+        # Ensure models are loaded before accessing
+        self._ensure_models_loaded()
+
         with self._lock:
             return model_name in self._available_models
+
+    def reload_models(self) -> None:
+        """Force reload model configuration from LiteLLM proxy.
+
+        This can be used to refresh model configuration if it changes
+        during runtime.
+        """
+        with self._lock:
+            self._models_loaded = False
+            self._ensure_models_loaded()
 
 
 # Global router instance

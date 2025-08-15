@@ -10,7 +10,7 @@ ccproxy:
   hooks:
     - ccproxy.hooks.rule_evaluator # evaluates rules against request
     - ccproxy.hooks.model_router # routes to appropriate model (coupled with rule_evaluator)
-    - ccproxy.hooks.forward_oauth_hook #
+    - ccproxy.hooks.forward_oauth # forwards oauth token for claude-cli requests to anthropic
   rules:
     - name: token_count
       rule: ccproxy.rules.TokenCountRule

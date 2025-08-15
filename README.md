@@ -163,7 +163,7 @@ The `ccproxy run` command sets up the following environment variables:
 - `OPENAI_API_BASE` - For OpenAI SDK compatibility
 - `OPENAI_BASE_URL` - For OpenAI SDK compatibility
 
-**Note**: Using `ccproxy run` is not required. You can also simply export `ANTHROPIC_BASE_URL` to point to your LiteLLM server:
+**Note**: Using `ccproxy run` is not strictly required for Claude Code. You can also simply export `ANTHROPIC_BASE_URL` to point to your LiteLLM server:
 
 ```bash
 ccproxy start
