@@ -60,19 +60,19 @@ class Logs:
     """Number of lines to show (default: 100)."""
 
 
-@dataclass
-class ShellIntegration:
-    """Generate shell integration for automatic claude aliasing."""
+# @dataclass
+# class ShellIntegration:
+#     """Generate shell integration for automatic claude aliasing."""
+#
+#     shell: Annotated[str, tyro.conf.arg(help="Shell type (bash, zsh, or auto)")] = "auto"
+#     """Target shell for integration script."""
+#
+#     install: bool = False
+#     """Install the integration to shell config file."""
 
-    shell: Annotated[str, tyro.conf.arg(help="Shell type (bash, zsh, or auto)")] = "auto"
-    """Target shell for integration script."""
 
-    install: bool = False
-    """Install the integration to shell config file."""
-
-
-# Type alias for all subcommands
-Command = Start | Install | Run | Stop | Logs | ShellIntegration
+# Type alias for all subcommands  
+Command = Start | Install | Run | Stop | Logs
 
 
 def install_config(config_dir: Path, force: bool = False) -> None:
@@ -311,124 +311,124 @@ def stop_litellm(config_dir: Path) -> None:
         sys.exit(1)
 
 
-def generate_shell_integration(config_dir: Path, shell: str = "auto", install: bool = False) -> None:
-    """Generate shell integration for automatic claude aliasing.
-
-    Args:
-        config_dir: Configuration directory
-        shell: Target shell (bash, zsh, or auto)
-        install: Whether to install the integration
-    """
-    # Auto-detect shell if needed
-    if shell == "auto":
-        shell_path = os.environ.get("SHELL", "")
-        if "zsh" in shell_path:
-            shell = "zsh"
-        elif "bash" in shell_path:
-            shell = "bash"
-        else:
-            print("Error: Could not auto-detect shell. Please specify --shell=bash or --shell=zsh", file=sys.stderr)
-            sys.exit(1)
-
-    # Validate shell type
-    if shell not in ["bash", "zsh"]:
-        print(f"Error: Unsupported shell '{shell}'. Use 'bash' or 'zsh'.", file=sys.stderr)
-        sys.exit(1)
-
-    # Generate the integration script
-    integration_script = f"""# ccproxy shell integration
-# This enables the 'claude' alias when LiteLLM proxy is running
-
-# Function to check if LiteLLM proxy is running
-ccproxy_check_running() {{
-    local pid_file="{config_dir}/litellm.lock"
-    if [ -f "$pid_file" ]; then
-        local pid=$(cat "$pid_file" 2>/dev/null)
-        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-            return 0  # Running
-        fi
-    fi
-    return 1  # Not running
-}}
-
-# Function to set up claude alias
-ccproxy_setup_alias() {{
-    if ccproxy_check_running; then
-        alias claude='ccproxy run claude'
-    else
-        unalias claude 2>/dev/null || true
-    fi
-}}
-
-# Set up the alias on shell startup
-ccproxy_setup_alias
-
-# For zsh: also check on each prompt
-"""
-
-    if shell == "zsh":
-        integration_script += """if [[ -n "$ZSH_VERSION" ]]; then
-    # Add to precmd hooks to check before each prompt
-    if ! (( $precmd_functions[(I)ccproxy_setup_alias] )); then
-        precmd_functions+=(ccproxy_setup_alias)
-    fi
-fi
-"""
-    elif shell == "bash":
-        integration_script += """if [[ -n "$BASH_VERSION" ]]; then
-    # For bash, check on PROMPT_COMMAND
-    if [[ ! "$PROMPT_COMMAND" =~ ccproxy_setup_alias ]]; then
-        PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND$'\\n'}ccproxy_setup_alias"
-    fi
-fi
-"""
-
-    if install:
-        # Determine shell config file
-        home = Path.home()
-        if shell == "zsh":
-            config_files = [home / ".zshrc", home / ".config/zsh/.zshrc"]
-        else:  # bash
-            config_files = [home / ".bashrc", home / ".bash_profile", home / ".profile"]
-
-        # Find the first existing config file
-        shell_config = None
-        for cf in config_files:
-            if cf.exists():
-                shell_config = cf
-                break
-
-        if not shell_config:
-            # Create .zshrc or .bashrc if none exist
-            shell_config = home / f".{shell}rc"
-            shell_config.touch()
-
-        # Check if already installed
-        marker = "# ccproxy shell integration"
-        existing_content = shell_config.read_text()
-
-        if marker in existing_content:
-            print(f"ccproxy integration already installed in {shell_config}")
-            print("To update, remove the existing integration first.")
-            sys.exit(0)
-
-        # Append the integration
-        with shell_config.open("a") as f:
-            f.write("\n")
-            f.write(integration_script)
-            f.write("\n")
-
-        print(f"✓ ccproxy shell integration installed to {shell_config}")
-        print("\nTo activate now, run:")
-        print(f"  source {shell_config}")
-        print(f"\nOr start a new {shell} session.")
-        print("\nThe 'claude' alias will be available when LiteLLM proxy is running.")
-    else:
-        # Just print the script
-        print(f"# Add this to your {shell} configuration file:")
-        print(integration_script)
-        print("\n# To install automatically, run:")
-        print(f"  ccproxy shell-integration --shell={shell} --install")
+# def generate_shell_integration(config_dir: Path, shell: str = "auto", install: bool = False) -> None:
+#     """Generate shell integration for automatic claude aliasing.
+#
+#     Args:
+#         config_dir: Configuration directory
+#         shell: Target shell (bash, zsh, or auto)
+#         install: Whether to install the integration
+#     """
+#     # Auto-detect shell if needed
+#     if shell == "auto":
+#         shell_path = os.environ.get("SHELL", "")
+#         if "zsh" in shell_path:
+#             shell = "zsh"
+#         elif "bash" in shell_path:
+#             shell = "bash"
+#         else:
+#             print("Error: Could not auto-detect shell. Please specify --shell=bash or --shell=zsh", file=sys.stderr)
+#             sys.exit(1)
+#
+#     # Validate shell type
+#     if shell not in ["bash", "zsh"]:
+#         print(f"Error: Unsupported shell '{shell}'. Use 'bash' or 'zsh'.", file=sys.stderr)
+#         sys.exit(1)
+#
+#     # Generate the integration script
+#     integration_script = f"""# ccproxy shell integration
+# # This enables the 'claude' alias when LiteLLM proxy is running
+#
+# # Function to check if LiteLLM proxy is running
+# ccproxy_check_running() {{
+#     local pid_file="{config_dir}/litellm.lock"
+#     if [ -f "$pid_file" ]; then
+#         local pid=$(cat "$pid_file" 2>/dev/null)
+#         if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+#             return 0  # Running
+#         fi
+#     fi
+#     return 1  # Not running
+# }}
+#
+# # Function to set up claude alias
+# ccproxy_setup_alias() {{
+#     if ccproxy_check_running; then
+#         alias claude='ccproxy run claude'
+#     else
+#         unalias claude 2>/dev/null || true
+#     fi
+# }}
+#
+# # Set up the alias on shell startup
+# ccproxy_setup_alias
+#
+# # For zsh: also check on each prompt
+# """
+#
+#     if shell == "zsh":
+#         integration_script += """if [[ -n "$ZSH_VERSION" ]]; then
+#     # Add to precmd hooks to check before each prompt
+#     if ! (( $precmd_functions[(I)ccproxy_setup_alias] )); then
+#         precmd_functions+=(ccproxy_setup_alias)
+#     fi
+# fi
+# """
+#     elif shell == "bash":
+#         integration_script += """if [[ -n "$BASH_VERSION" ]]; then
+#     # For bash, check on PROMPT_COMMAND
+#     if [[ ! "$PROMPT_COMMAND" =~ ccproxy_setup_alias ]]; then
+#         PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND$'\\n'}ccproxy_setup_alias"
+#     fi
+# fi
+# """
+#
+#     if install:
+#         # Determine shell config file
+#         home = Path.home()
+#         if shell == "zsh":
+#             config_files = [home / ".zshrc", home / ".config/zsh/.zshrc"]
+#         else:  # bash
+#             config_files = [home / ".bashrc", home / ".bash_profile", home / ".profile"]
+#
+#         # Find the first existing config file
+#         shell_config = None
+#         for cf in config_files:
+#             if cf.exists():
+#                 shell_config = cf
+#                 break
+#
+#         if not shell_config:
+#             # Create .zshrc or .bashrc if none exist
+#             shell_config = home / f".{shell}rc"
+#             shell_config.touch()
+#
+#         # Check if already installed
+#         marker = "# ccproxy shell integration"
+#         existing_content = shell_config.read_text()
+#
+#         if marker in existing_content:
+#             print(f"ccproxy integration already installed in {shell_config}")
+#             print("To update, remove the existing integration first.")
+#             sys.exit(0)
+#
+#         # Append the integration
+#         with shell_config.open("a") as f:
+#             f.write("\n")
+#             f.write(integration_script)
+#             f.write("\n")
+#
+#         print(f"✓ ccproxy shell integration installed to {shell_config}")
+#         print("\nTo activate now, run:")
+#         print(f"  source {shell_config}")
+#         print(f"\nOr start a new {shell} session.")
+#         print("\nThe 'claude' alias will be available when LiteLLM proxy is running.")
+#     else:
+#         # Just print the script
+#         print(f"# Add this to your {shell} configuration file:")
+#         print(integration_script)
+#         print("\n# To install automatically, run:")
+#         print(f"  ccproxy shell-integration --shell={shell} --install")
 
 
 def view_logs(config_dir: Path, follow: bool = False, lines: int = 100) -> None:
@@ -524,8 +524,6 @@ def main(
     elif isinstance(cmd, Logs):
         view_logs(config_dir, follow=cmd.follow, lines=cmd.lines)
 
-    elif isinstance(cmd, ShellIntegration):
-        generate_shell_integration(config_dir, shell=cmd.shell, install=cmd.install)
 
 
 def entry_point() -> None:
