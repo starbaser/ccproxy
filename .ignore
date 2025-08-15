@@ -4,3 +4,4 @@
 .stubs
 uv.lock
 tests
+scripts

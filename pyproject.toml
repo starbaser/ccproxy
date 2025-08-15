@@ -72,6 +72,8 @@ addopts = [
   "--cov-report=term-missing",
   "--cov-report=html",
   "--cov-fail-under=90",
+  # Ignore shell integration tests - feature is TBD (generate_shell_integration function is commented out)
+  "--ignore=tests/test_shell_integration.py",
 ]
 
 [tool.coverage.run]

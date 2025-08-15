@@ -5,19 +5,22 @@ import shutil
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
 
+import attrs
 import tyro
 import yaml
 from rich import print
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
 
 from ccproxy.utils import get_templates_dir
 
 
-# Subcommand definitions using dataclasses
-@dataclass
+# Subcommand definitions using attrs
+@attrs.define
 class Start:
     """Start the LiteLLM proxy server with ccproxy configuration."""
 
@@ -28,7 +31,7 @@ class Start:
     """Run in background and save PID to litellm.lock."""
 
 
-@dataclass
+@attrs.define
 class Install:
     """Install ccproxy configuration files."""
 
@@ -36,7 +39,7 @@ class Install:
     """Overwrite existing configuration."""
 
 
-@dataclass
+@attrs.define
 class Run:
     """Run a command with ccproxy environment."""
 
@@ -44,12 +47,12 @@ class Run:
     """Command and arguments to execute with proxy settings."""
 
 
-@dataclass
+@attrs.define
 class Stop:
     """Stop the background LiteLLM proxy server."""
 
 
-@dataclass
+@attrs.define
 class Logs:
     """View the LiteLLM log file."""
 
@@ -60,7 +63,12 @@ class Logs:
     """Number of lines to show (default: 100)."""
 
 
-# @dataclass
+@attrs.define
+class Status:
+    """Show the status of LiteLLM proxy and ccproxy configuration."""
+
+
+# @attrs.define
 # class ShellIntegration:
 #     """Generate shell integration for automatic claude aliasing."""
 #
@@ -71,8 +79,8 @@ class Logs:
 #     """Install the integration to shell config file."""
 
 
-# Type alias for all subcommands  
-Command = Start | Install | Run | Stop | Logs
+# Type alias for all subcommands
+Command = Start | Install | Run | Stop | Logs | Status
 
 
 def install_config(config_dir: Path, force: bool = False) -> None:
@@ -491,6 +499,109 @@ def view_logs(config_dir: Path, follow: bool = False, lines: int = 100) -> None:
             sys.exit(1)
 
 
+def show_status(config_dir: Path) -> None:
+    """Show the status of LiteLLM proxy and ccproxy configuration.
+
+    Args:
+        config_dir: Configuration directory to check
+    """
+    console = Console()
+
+    # Check LiteLLM proxy status
+    pid_file = config_dir / "litellm.lock"
+    log_file = config_dir / "litellm.log"
+
+    proxy_running = False
+    proxy_pid = None
+
+    if pid_file.exists():
+        try:
+            pid = int(pid_file.read_text().strip())
+            # Check if process is still running
+            try:
+                os.kill(pid, 0)  # This doesn't kill, just checks if process exists
+                proxy_running = True
+                proxy_pid = pid
+            except ProcessLookupError:
+                # Process is not running, stale PID file
+                pass
+        except (ValueError, OSError):
+            # Invalid PID file
+            pass
+
+    # Check configuration files
+    ccproxy_config = config_dir / "ccproxy.yaml"
+    litellm_config = config_dir / "config.yaml"
+    user_hooks = config_dir / "ccproxy.py"
+
+    # Load proxy configuration for host/port info
+    proxy_host = "127.0.0.1"
+    proxy_port = 4000
+
+    if ccproxy_config.exists():
+        try:
+            with ccproxy_config.open() as f:
+                config = yaml.safe_load(f)
+            litellm_settings = config.get("litellm", {}) if config else {}
+            proxy_host = litellm_settings.get("host", "127.0.0.1")
+            proxy_port = litellm_settings.get("port", 4000)
+        except (yaml.YAMLError, OSError):
+            pass
+
+    # Create status table
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("Component", style="white", width=20)
+    table.add_column("Status", width=15)
+    table.add_column("Details", style="dim")
+
+    # LiteLLM Proxy status
+    if proxy_running:
+        table.add_row(
+            "LiteLLM Proxy", "[green]Running[/green]", f"PID: {proxy_pid}, URL: http://{proxy_host}:{proxy_port}"
+        )
+    else:
+        table.add_row("LiteLLM Proxy", "[red]Stopped[/red]", "Use 'ccproxy start' to start")
+
+    # Configuration files
+    if ccproxy_config.exists():
+        table.add_row("ccproxy.yaml", "[green]Found[/green]", str(ccproxy_config))
+    else:
+        table.add_row("ccproxy.yaml", "[red]Missing[/red]", "Use 'ccproxy install' to create")
+
+    if litellm_config.exists():
+        table.add_row("config.yaml", "[green]Found[/green]", str(litellm_config))
+    else:
+        table.add_row("config.yaml", "[red]Missing[/red]", "Use 'ccproxy install' to create")
+
+    if user_hooks.exists():
+        table.add_row("ccproxy.py", "[green]Found[/green]", str(user_hooks))
+    else:
+        table.add_row("ccproxy.py", "[yellow]Optional[/yellow]", "User hooks file")
+
+    # Log file
+    if log_file.exists():
+        try:
+            log_size = log_file.stat().st_size
+            if log_size > 0:
+                table.add_row("Log File", "[green]Active[/green]", f"{log_file} ({log_size} bytes)")
+            else:
+                table.add_row("Log File", "[yellow]Empty[/yellow]", str(log_file))
+        except OSError:
+            table.add_row("Log File", "[red]Error[/red]", "Cannot read log file")
+    else:
+        table.add_row("Log File", "[yellow]None[/yellow]", "No log file found")
+
+    # Display the status
+    console.print(Panel(table, title="[bold]ccproxy Status[/bold]", border_style="blue"))
+
+    # Add helpful hints
+    if not proxy_running:
+        console.print("\n[yellow]💡 Tip:[/yellow] Start the proxy with [cyan]ccproxy start[/cyan]")
+
+    if not (ccproxy_config.exists() and litellm_config.exists()):
+        console.print("\n[yellow]💡 Tip:[/yellow] Install configuration with [cyan]ccproxy install[/cyan]")
+
+
 def main(
     cmd: Annotated[Command, tyro.conf.arg(name="")],
     *,
@@ -524,6 +635,8 @@ def main(
     elif isinstance(cmd, Logs):
         view_logs(config_dir, follow=cmd.follow, lines=cmd.lines)
 
+    elif isinstance(cmd, Status):
+        show_status(config_dir)
 
 
 def entry_point() -> None:
