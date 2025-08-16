@@ -3,5 +3,4 @@
 .ruff_cache
 .stubs
 uv.lock
-tests
 scripts

@@ -65,6 +65,11 @@ class CCProxyHandler(CustomLogger):
         Returns:
             Modified request data
         """
+        
+        # Debug: Print thinking parameters if present
+        thinking_params = data.get("thinking", None)
+        if thinking_params is not None:
+            print(f"🧠 Thinking parameters: {thinking_params}")
 
         # Run all processors in sequence with error handling
         for hook in self.hooks:

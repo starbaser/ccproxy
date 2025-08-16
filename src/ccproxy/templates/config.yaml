@@ -13,7 +13,7 @@ model_list:
   # Thinking model for complex reasoning (request.body.think = true)
   - model_name: think
     litellm_params:
-      model: claude-opus-4-20250514
+      model: claude-opus-4-1-20250805
 
   # Large context model for >60k tokens (threshold configurable in ccproxy.yaml)
   - model_name: token_count
@@ -31,9 +31,9 @@ model_list:
       model: claude-sonnet-4-20250514
       api_base: https://api.anthropic.com
 
-  - model_name: claude-opus-4-20250514
+  - model_name: claude-opus-4-1-20250805
     litellm_params:
-      model: anthropic/claude-opus-4-20250514
+      model: claude-opus-4-1-20250805
       api_base: https://api.anthropic.com
 
   - model_name: claude-3-5-haiku-20241022

@@ -1,5 +1,7 @@
 """ccproxy CLI for managing the LiteLLM proxy server - Tyro implementation."""
 
+import logging
+import logging.config
 import os
 import shutil
 import subprocess
@@ -53,6 +55,17 @@ class Stop:
 
 
 @attrs.define
+class Restart:
+    """Restart the LiteLLM proxy server (stop then start)."""
+
+    args: Annotated[list[str] | None, tyro.conf.Positional] = None
+    """Additional arguments to pass to litellm command."""
+
+    detach: Annotated[bool, tyro.conf.arg(aliases=["-d"])] = False
+    """Run in background and save PID to litellm.lock."""
+
+
+@attrs.define
 class Logs:
     """View the LiteLLM log file."""
 
@@ -80,7 +93,16 @@ class Status:
 
 
 # Type alias for all subcommands
-Command = Start | Install | Run | Stop | Logs | Status
+Command = Start | Install | Run | Stop | Restart | Logs | Status
+
+
+def setup_logging() -> None:
+    """Configure logging with 100-character text width."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)-20s - %(levelname)-8s - %(message).100s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
 
 
 def install_config(config_dir: Path, force: bool = False) -> None:
@@ -183,7 +205,7 @@ def run_with_proxy(config_dir: Path, command: list[str]) -> None:
         sys.exit(130)  # Standard exit code for Ctrl+C
 
 
-def start_proxy(config_dir: Path, args: list[str] | None = None, detach: bool = False) -> None:
+def start_litellm(config_dir: Path, args: list[str] | None = None, detach: bool = False) -> None:
     """Start the LiteLLM proxy server with ccproxy configuration.
 
     Args:
@@ -267,18 +289,21 @@ def start_proxy(config_dir: Path, args: list[str] | None = None, detach: bool = 
             sys.exit(130)
 
 
-def stop_litellm(config_dir: Path) -> None:
+def stop_litellm(config_dir: Path) -> bool:
     """Stop the background LiteLLM proxy server.
 
     Args:
         config_dir: Configuration directory containing the PID file
+
+    Returns:
+        True if server was stopped successfully, False otherwise
     """
     pid_file = config_dir / "litellm.lock"
 
     # Check if PID file exists
     if not pid_file.exists():
         print("No LiteLLM server is running (PID file not found)", file=sys.stderr)
-        sys.exit(1)
+        return False
 
     try:
         pid = int(pid_file.read_text().strip())
@@ -305,18 +330,17 @@ def stop_litellm(config_dir: Path) -> None:
 
             # Remove PID file
             pid_file.unlink()
-
-            sys.exit(0)
+            return True
 
         except ProcessLookupError:
             # Process is not running, clean up stale PID file
             print(f"LiteLLM server was not running (stale PID: {pid})")
             pid_file.unlink()
-            sys.exit(1)
+            return False
 
     except (ValueError, OSError) as e:
         print(f"Error reading PID file: {e}", file=sys.stderr)
-        sys.exit(1)
+        return False
 
 
 # def generate_shell_integration(config_dir: Path, shell: str = "auto", install: bool = False) -> None:
@@ -615,9 +639,12 @@ def main(
     if config_dir is None:
         config_dir = Path.home() / ".ccproxy"
 
+    # Setup logging with 100-character text width
+    setup_logging()
+
     # Handle each command type
     if isinstance(cmd, Start):
-        start_proxy(config_dir, args=cmd.args, detach=cmd.detach)
+        start_litellm(config_dir, args=cmd.args, detach=cmd.detach)
 
     elif isinstance(cmd, Install):
         install_config(config_dir, force=cmd.force)
@@ -630,7 +657,24 @@ def main(
         run_with_proxy(config_dir, cmd.command)
 
     elif isinstance(cmd, Stop):
-        stop_litellm(config_dir)
+        success = stop_litellm(config_dir)
+        sys.exit(0 if success else 1)
+
+    elif isinstance(cmd, Restart):
+        # Stop the server first
+        pid_file = config_dir / "litellm.lock"
+        if pid_file.exists():
+            print("Stopping LiteLLM server...")
+            stop_litellm(config_dir)
+        else:
+            print("No server running, starting fresh...")
+
+        # Wait for clean shutdown
+        time.sleep(1)
+
+        # Start the server
+        print("Starting LiteLLM server...")
+        start_litellm(config_dir, args=cmd.args, detach=cmd.detach)
 
     elif isinstance(cmd, Logs):
         view_logs(config_dir, follow=cmd.follow, lines=cmd.lines)

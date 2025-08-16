@@ -16,7 +16,7 @@ from ccproxy.cli import (
     install_config,
     main,
     run_with_proxy,
-    start_proxy,
+    start_litellm,
     stop_litellm,
     view_logs,
 )
@@ -28,7 +28,7 @@ class TestStartProxy:
     def test_litellm_no_config(self, tmp_path: Path, capsys) -> None:
         """Test litellm when config doesn't exist."""
         with pytest.raises(SystemExit) as exc_info:
-            start_proxy(tmp_path)
+            start_litellm(tmp_path)
 
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
@@ -44,7 +44,7 @@ class TestStartProxy:
         mock_run.return_value = Mock(returncode=0)
 
         with pytest.raises(SystemExit) as exc_info:
-            start_proxy(tmp_path)
+            start_litellm(tmp_path)
 
         assert exc_info.value.code == 0
         mock_run.assert_called_once_with(["litellm", "--config", str(config_file)], env=ANY)
@@ -58,7 +58,7 @@ class TestStartProxy:
         mock_run.return_value = Mock(returncode=0)
 
         with pytest.raises(SystemExit) as exc_info:
-            start_proxy(tmp_path, args=["--debug", "--port", "8080"])
+            start_litellm(tmp_path, args=["--debug", "--port", "8080"])
 
         assert exc_info.value.code == 0
         mock_run.assert_called_once_with(
@@ -74,7 +74,7 @@ class TestStartProxy:
         mock_run.side_effect = FileNotFoundError()
 
         with pytest.raises(SystemExit) as exc_info:
-            start_proxy(tmp_path)
+            start_litellm(tmp_path)
 
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
@@ -90,7 +90,7 @@ class TestStartProxy:
         mock_run.side_effect = KeyboardInterrupt()
 
         with pytest.raises(SystemExit) as exc_info:
-            start_proxy(tmp_path)
+            start_litellm(tmp_path)
 
         assert exc_info.value.code == 130
 
@@ -105,7 +105,7 @@ class TestStartProxy:
         mock_popen.return_value = mock_process
 
         with pytest.raises(SystemExit) as exc_info:
-            start_proxy(tmp_path, detach=True)
+            start_litellm(tmp_path, detach=True)
 
         assert exc_info.value.code == 0
 
@@ -134,7 +134,7 @@ class TestStartProxy:
         mock_kill.return_value = None
 
         with pytest.raises(SystemExit) as exc_info:
-            start_proxy(tmp_path, detach=True)
+            start_litellm(tmp_path, detach=True)
 
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
@@ -159,7 +159,7 @@ class TestStartProxy:
         mock_popen.return_value = mock_process
 
         with pytest.raises(SystemExit) as exc_info:
-            start_proxy(tmp_path, detach=True)
+            start_litellm(tmp_path, detach=True)
 
         assert exc_info.value.code == 0
 
