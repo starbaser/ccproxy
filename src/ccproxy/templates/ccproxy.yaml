@@ -12,17 +12,17 @@ ccproxy:
     - ccproxy.hooks.model_router # routes to appropriate model (coupled with rule_evaluator)
     - ccproxy.hooks.forward_oauth # forwards oauth token for claude-cli requests to anthropic
   rules:
-    - name: token_count
-      rule: ccproxy.rules.TokenCountRule
-      params:
-        - threshold: 60000
+    # - name: token_count
+    #   rule: ccproxy.rules.TokenCountRule
+    #   params:
+    #     - threshold: 60000
     - name: background
       rule: ccproxy.rules.MatchModelRule
       params:
         - model_name: claude-3-5-haiku-20241022
     - name: think
       rule: ccproxy.rules.ThinkingRule
-    - name: web_search
-      rule: ccproxy.rules.MatchToolRule
-      params:
-        - tool_name: WebSearch
+    # - name: web_search
+    #   rule: ccproxy.rules.MatchToolRule
+    #   params:
+    #     - tool_name: WebSearch

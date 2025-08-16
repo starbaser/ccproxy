@@ -4,6 +4,7 @@ import logging
 from typing import Any, TypedDict
 
 from litellm.integrations.custom_logger import CustomLogger
+from rich import print
 
 from ccproxy.classifier import RequestClassifier
 from ccproxy.config import get_config

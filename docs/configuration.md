@@ -78,7 +78,7 @@ model_list:
   # Anthropic provided claude models, no `api_key` needed
   - model_name: claude-sonnet-4-20250514
     litellm_params:
-      model: anthropic/claude-3-5-sonnet-20241022
+      model: claude-sonnet-4-20250514
       api_base: https://api.anthropic.com
 
   - model_name: claude-opus-4-20250514
