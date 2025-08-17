@@ -61,6 +61,16 @@ ccproxy:
     - ccproxy.hooks.model_router # routes to appropriate model       󰁎─┘  rules & routing)
     - ccproxy.hooks.forward_oauth # required for claude code's oauth token
   rules:
+    # example rules
+    - name: token_count
+      rule: ccproxy.rules.TokenCountRule
+      params:
+        - threshold: 60000
+    - name: web_search
+      rule: ccproxy.rules.MatchToolRule
+      params:
+        - tool_name: WebSearch
+    # basic rules
     - name: background
       rule: ccproxy.rules.MatchModelRule
       params:
@@ -85,9 +95,9 @@ If a request doesn't match any rule, it receives the `default` label.
 
 #### `config.yaml`
 
-[LiteLLM's proxy configuration file](https://docs.litellm.ai/docs/proxy/config_settings) is where the actual model endpoints are defined. The `model_router` hook takes advantage of [LiteLLM's model alias feature](https://docs.litellm.ai/docs/completion/model_alias) to dynamically rewrite the model field in requests based on rule criteria. When a request is labeled (e.g., think), the hook changes the model from whatever Claude Code requested to the corresponding alias, allowing seamless redirection to different models without Claude Code knowing the request was rerouted.
+[LiteLLM's proxy configuration file](https://docs.litellm.ai/docs/proxy/config_settings) is where your model deployments are defined. The `model_router` hook takes advantage of [LiteLLM's model alias feature](https://docs.litellm.ai/docs/completion/model_alias) to dynamically rewrite the model field in requests based on rule criteria before LiteLLM selects a deployment. When a request is labeled (e.g., think), the hook changes the model from whatever Claude Code requested to the corresponding alias, allowing seamless redirection to different models.
 
-The diagram shows how routing labels (⚡ default, 🧠 think, 🍃 background) map to their corresponding model configurations:
+The diagram shows how routing labels (⚡ default, 🧠 think, 🍃 background) map to their corresponding model deployments:
 
 ```mermaid
 graph LR
@@ -138,7 +148,7 @@ And the corresponding `config.yaml`:
 ```yaml
 # config.yaml
 model_list:
-  # Model aliases (for routing)
+  # aliases here are used to select a deployment below
   - model_name: default
     litellm_params:
       model: claude-sonnet-4-20250514
@@ -151,7 +161,7 @@ model_list:
     litellm_params:
       model: claude-3-5-haiku-20241022
 
-  # Actual model configurations
+  # deployments
   - model_name: claude-sonnet-4-20250514
     litellm_params:
       model: anthropic/claude-sonnet-4-20250514
