@@ -185,7 +185,7 @@ class ModelRouter:
             Dict mapping underlying model names to lists of aliases.
             For example:
             {
-                "claude-3-5-sonnet-20241022": ["default", "think", "token_count"],
+                "claude-sonnet-4-20250514": ["default", "think", "token_count"],
                 "claude-3-5-haiku-20241022": ["background"]
             }
         """

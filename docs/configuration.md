@@ -63,7 +63,7 @@ model_list:
   # Thinking model for complex reasoning
   - model_name: think
     litellm_params:
-      model: claude-opus-4-20250514
+      model: claude-opus-4-1-20250805
 
   # Large context model for >60k tokens
   - model_name: token_count
@@ -78,12 +78,12 @@ model_list:
   # Anthropic provided claude models, no `api_key` needed
   - model_name: claude-sonnet-4-20250514
     litellm_params:
-      model: claude-sonnet-4-20250514
+      model: anthropic/claude-sonnet-4-20250514
       api_base: https://api.anthropic.com
 
-  - model_name: claude-opus-4-20250514
+  - model_name: claude-opus-4-1-20250805
     litellm_params:
-      model: anthropic/claude-opus-4-20250514
+      model: anthropic/claude-opus-4-1-20250805
       api_base: https://api.anthropic.com
 
   - model_name: claude-3-5-haiku-20241022
@@ -117,7 +117,7 @@ Model names in `config.yaml` must correspond to rule names in `ccproxy.yaml`. Wh
 
 - **Minimum requirements for Claude Code**: For Claude Code to function properly, your `config.yaml` must include at minimum:
   - **Rule-based models**: `default`, `background`, and `think`
-  - **Claude models**: `claude-sonnet-4-20250514`, `claude-3-5-haiku-20241022`, and `claude-opus-4-20250514` (all with `api_base: https://api.anthropic.com`)
+  - **Claude models**: `claude-sonnet-4-20250514`, `claude-3-5-haiku-20241022`, and `claude-opus-4-1-20250805` (all with `api_base: https://api.anthropic.com`)
 
 See the [LiteLLM documentation](https://docs.litellm.ai/docs/proxy/configs) for more information.
 
@@ -346,5 +346,5 @@ rules:
   - name: reasoning
     rule: ccproxy.rules.MatchModelRule
     params:
-      - model_name: claude-opus-4-20250514
+      - model_name: claude-opus-4-1-20250805
 ```

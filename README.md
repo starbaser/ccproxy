@@ -57,9 +57,9 @@ This file controls how ccproxy hooks into your Claude Code requests and how to r
 ccproxy:
   debug: true
   hooks:
-    - ccproxy.hooks.rule_evaluator  # evaluates rules against request 󰁎─┬─ (required for rules &
-    - ccproxy.hooks.model_router    # routes to appropriate model     󰁎─┘  routing)
-    - ccproxy.hooks.forward_oauth   # forwards oauth token for requests to anthropic (required)
+    - ccproxy.hooks.rule_evaluator # evaluates rules against request 󰁎─┬─ (optional, needed for
+    - ccproxy.hooks.model_router # routes to appropriate model     󰁎─┘  rules & routing)
+    - ccproxy.hooks.forward_oauth # required for claude code's oauth token
   rules:
     - name: background
       rule: ccproxy.rules.MatchModelRule
@@ -74,7 +74,6 @@ litellm:
   num_workers: 4
   debug: true
   detailed_debug: true
-
 ```
 
 When `ccproxy` receives a request from Claude Code, the `rule_evaluator` hook labels the request with the first matching rule:
@@ -88,37 +87,85 @@ If a request doesn't match any rule, it receives the `default` label.
 
 [LiteLLM's proxy configuration file](https://docs.litellm.ai/docs/proxy/config_settings) is where the actual model endpoints are defined. The `model_router` hook takes advantage of [LiteLLM's model alias feature](https://docs.litellm.ai/docs/completion/model_alias) to dynamically rewrite the model field in requests based on rule criteria. When a request is labeled (e.g., think), the hook changes the model from whatever Claude Code requested to the corresponding alias, allowing seamless redirection to different models without Claude Code knowing the request was rerouted.
 
-The diagram shows how routing labels (⚡ default, 🧠 think, 🍃 background) map to their corresponding model configurations
+The diagram shows how routing labels (⚡ default, 🧠 think, 🍃 background) map to their corresponding model configurations:
+
+```mermaid
+graph TB
+    subgraph ccproxy_yaml["ccproxy.yaml"]
+        R1["rules:<br/>- name: <b>default</b><br/>- name: <b>think</b><br/>- name: <b>background</b>"]
+    end
+
+    subgraph config_yaml["config.yaml"]
+        subgraph aliases["Model Aliases (Rule Names)"]
+            A1["<b>model_name: default</b><br/>litellm_params:<br/>  model: claude-sonnet-4-20250514"]
+            A2["<b>model_name: think</b><br/>litellm_params:<br/>  model: claude-opus-4-1-20250805"]
+            A3["<b>model_name: background</b><br/>litellm_params:<br/>  model: claude-3-5-haiku-20241022"]
+        end
+
+        subgraph models["Configured Models & Providers"]
+            M1["<b>model_name: claude-sonnet-4-20250514</b><br/>litellm_params:<br/>  model: anthropic/claude-sonnet-4-20250514<br/>  api_base: https://api.anthropic.com"]
+            M2["<b>model_name: claude-opus-4-1-20250805</b><br/>litellm_params:<br/>  model: anthropic/claude-opus-4-1-20250805<br/>  api_base: https://api.anthropic.com"]
+            M3["<b>model_name: claude-3-5-haiku-20241022</b><br/>litellm_params:<br/>  model: anthropic/claude-3-5-haiku-20241022<br/>  api_base: https://api.anthropic.com"]
+        end
+    end
+
+    R1 ==>|"⚡ default"| A1
+    R1 ==>|"🧠 think"| A2
+    R1 ==>|"🍃 background"| A3
+
+    A1 -->|references| M1
+    A2 -->|references| M2
+    A3 -->|references| M3
+
+    style R1 fill:#e6f3ff,stroke:#4a90e2,stroke-width:2px,color:#000
+
+    style A1 fill:#fffbf0,stroke:#ffa500,stroke-width:2px,color:#000
+    style A2 fill:#fff0f5,stroke:#ff1493,stroke-width:2px,color:#000
+    style A3 fill:#f0fff0,stroke:#32cd32,stroke-width:2px,color:#000
+
+    style M1 fill:#f8f9fa,stroke:#6c757d,stroke-width:1px,color:#000
+    style M2 fill:#f8f9fa,stroke:#6c757d,stroke-width:1px,color:#000
+    style M3 fill:#f8f9fa,stroke:#6c757d,stroke-width:1px,color:#000
+
+    style aliases fill:#f0f8ff,stroke:#333,stroke-width:1px
+    style models fill:#f5f5f5,stroke:#333,stroke-width:1px
+    style ccproxy_yaml fill:#e8f4fd,stroke:#2196F3,stroke-width:2px
+    style config_yaml fill:#ffffff,stroke:#333,stroke-width:2px
+```
+
+And the corresponding `config.yaml`:
 
 ```yaml
 # config.yaml
 model_list:
+  # Model aliases (for routing)
   - model_name: default
     litellm_params:
-      model: claude-sonnet-4-20250514      # 󰁎─[⚡]─┐
-                                           #        │
-  - model_name: think                      #        │
-    litellm_params:                        #        │
-      model: claude-opus-4-1-20250805      # 󰁎─[🧠]─┼─┐
-                                           #        │ │
-  - model_name: background                 #        │ │
-    litellm_params:                        #        │ │
-    model: claude-3-5-haiku-20241022       # 󰁎─[🍃]─┼─┼─┐
-                                           #        │ │ │
-  - model_name: claude-sonnet-4-20250514   # 󰁎─[⚡]─┘ │ │
-    litellm_params:                        #          │ │
-      model: claude-sonnet-4-20250514      #          │ │
-      api_base: https://api.anthropic.com  #          │ │
-                                           #          │ │
-  - model_name: claude-opus-4-1-20250805   # 󰁎─[🧠]───┘ │
-    litellm_params:                        #            │
-      model: claude-opus-4-1-20250805      #            │
-      api_base: https://api.anthropic.com  #            │
-                                           #            │
-  - model_name: claude-3-5-haiku-20241022  # 󰁎─[🍃]─────┘
-    litellm_params:                        #
-      model: claude-3-5-haiku-20241022     #
-      api_base: https://api.anthropic.com  #
+      model: claude-sonnet-4-20250514
+
+  - model_name: think
+    litellm_params:
+      model: claude-opus-4-1-20250805
+
+  - model_name: background
+    litellm_params:
+      model: claude-3-5-haiku-20241022
+
+  # Actual model configurations
+  - model_name: claude-sonnet-4-20250514
+    litellm_params:
+      model: anthropic/claude-sonnet-4-20250514
+      api_base: https://api.anthropic.com
+
+  - model_name: claude-opus-4-1-20250805
+    litellm_params:
+      model: anthropic/claude-opus-4-1-20250805
+      api_base: https://api.anthropic.com
+
+  - model_name: claude-3-5-haiku-20241022
+    litellm_params:
+      model: anthropic/claude-3-5-haiku-20241022
+      api_base: https://api.anthropic.com
 
 litellm_settings:
   callbacks:

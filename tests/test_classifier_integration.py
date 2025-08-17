@@ -92,7 +92,7 @@ class TestRequestClassifierIntegration:
     def test_realistic_claude_code_request(self, classifier: RequestClassifier) -> None:
         """Test with a realistic Claude Code API request."""
         request = {
-            "model": "claude-3-5-sonnet-20241022",
+            "model": "claude-sonnet-4-20250514",
             "messages": [
                 {"role": "user", "content": "Write a Python function to calculate fibonacci"},
             ],
@@ -110,7 +110,7 @@ class TestRequestClassifierIntegration:
         # This will be ~5001 tokens, need to double for >10000
         long_content = varied_text * 3  # ~15,003 tokens
         request = {
-            "model": "claude-3-5-sonnet-20241022",
+            "model": "claude-sonnet-4-20250514",
             "messages": [
                 {"role": "user", "content": long_content},
             ],
@@ -121,7 +121,7 @@ class TestRequestClassifierIntegration:
     def test_realistic_thinking_request(self, classifier: RequestClassifier) -> None:
         """Test with a realistic thinking request."""
         request = {
-            "model": "claude-3-5-sonnet-20241022",
+            "model": "claude-sonnet-4-20250514",
             "messages": [
                 {"role": "user", "content": "Solve this complex problem..."},
             ],
@@ -145,7 +145,7 @@ class TestRequestClassifierIntegration:
     def test_realistic_web_search_request(self, classifier: RequestClassifier) -> None:
         """Test with a realistic web search request."""
         request = {
-            "model": "claude-3-5-sonnet-20241022",
+            "model": "claude-sonnet-4-20250514",
             "messages": [
                 {"role": "user", "content": "Search for the latest news about AI"},
             ],

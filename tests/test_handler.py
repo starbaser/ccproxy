@@ -41,7 +41,7 @@ class TestCCProxyRouting:
                 {
                     "model_name": "default",
                     "litellm_params": {
-                        "model": "claude-3-5-sonnet-20241022",
+                        "model": "claude-sonnet-4-20250514",
                     },
                 },
                 {
@@ -131,7 +131,7 @@ class TestCCProxyRouting:
         test_model_list = [
             {
                 "model_name": "default",
-                "litellm_params": {"model": "claude-3-5-sonnet-20241022"},
+                "litellm_params": {"model": "claude-sonnet-4-20250514"},
             },
             {
                 "model_name": "background",
@@ -162,13 +162,13 @@ class TestCCProxyRouting:
             with patch.dict("sys.modules", {"litellm.proxy": mock_module}):
                 handler = CCProxyHandler()
                 request_data = {
-                    "model": "claude-3-5-sonnet-20241022",
+                    "model": "claude-sonnet-4-20250514",
                     "messages": [{"role": "user", "content": "Hello"}],
                 }
                 user_api_key_dict = {}
 
                 result = await handler.async_pre_call_hook(request_data, user_api_key_dict)
-                assert result["model"] == "claude-3-5-sonnet-20241022"
+                assert result["model"] == "claude-sonnet-4-20250514"
         finally:
             clear_config_instance()
             clear_router()
@@ -184,7 +184,7 @@ class TestCCProxyRouting:
         test_model_list = [
             {
                 "model_name": "default",
-                "litellm_params": {"model": "claude-3-5-sonnet-20241022"},
+                "litellm_params": {"model": "claude-sonnet-4-20250514"},
             },
             {
                 "model_name": "background",
@@ -239,7 +239,7 @@ class TestHandlerHookMethods:
                 {
                     "model_name": "default",
                     "litellm_params": {
-                        "model": "claude-3-5-sonnet-20241022",
+                        "model": "claude-sonnet-4-20250514",
                     },
                 },
                 {
@@ -304,7 +304,7 @@ class TestHandlerHookMethods:
         mock_proxy_server.llm_router.model_list = [
             {
                 "model_name": "default",
-                "litellm_params": {"model": "claude-3-5-sonnet-20241022"},
+                "litellm_params": {"model": "claude-sonnet-4-20250514"},
             },
         ]
 
@@ -352,7 +352,7 @@ class TestHandlerHookMethods:
         """Test async_pre_call_hook with completion call type."""
         # Create mock data
         data = {
-            "model": "claude-3-5-sonnet-20241022",
+            "model": "claude-sonnet-4-20250514",
             "messages": [{"role": "user", "content": "Hello"}],
         }
         user_api_key_dict = {}
@@ -431,7 +431,7 @@ class TestCCProxyHandler:
         test_model_list = [
             {
                 "model_name": "default",
-                "litellm_params": {"model": "claude-3-5-sonnet-20241022"},
+                "litellm_params": {"model": "claude-sonnet-4-20250514"},
             },
             {
                 "model_name": "background",
@@ -473,7 +473,7 @@ class TestCCProxyHandler:
                 {
                     "model_name": "default",
                     "litellm_params": {
-                        "model": "claude-3-5-sonnet-20241022",
+                        "model": "claude-sonnet-4-20250514",
                     },
                 },
                 {
@@ -543,7 +543,7 @@ class TestCCProxyHandler:
     async def test_async_pre_call_hook_preserves_existing_metadata(self, handler):
         """Test that existing metadata is preserved."""
         request_data = {
-            "model": "claude-3-5-sonnet-20241022",
+            "model": "claude-sonnet-4-20250514",
             "messages": [{"role": "user", "content": "Hello"}],
             "metadata": {
                 "existing_key": "existing_value",
@@ -562,7 +562,7 @@ class TestCCProxyHandler:
 
         # Check new metadata added
         assert modified_data["metadata"]["ccproxy_model_name"] == "default"
-        assert modified_data["metadata"]["ccproxy_alias_model"] == "claude-3-5-sonnet-20241022"
+        assert modified_data["metadata"]["ccproxy_alias_model"] == "claude-sonnet-4-20250514"
 
     async def test_handler_uses_config_threshold(self):
         """Test that handler uses context threshold from config."""
@@ -604,7 +604,7 @@ class TestCCProxyHandler:
                 {
                     "model_name": "default",
                     "litellm_params": {
-                        "model": "claude-3-5-sonnet-20241022",
+                        "model": "claude-sonnet-4-20250514",
                     },
                 },
                 {
@@ -629,7 +629,7 @@ class TestCCProxyHandler:
                 base_text = "The quick brown fox jumps over the lazy dog. " * 50  # ~501 tokens
                 large_message = base_text * 21  # ~10521 tokens (above 10000 threshold)
                 request_data = {
-                    "model": "claude-3-5-sonnet-20241022",
+                    "model": "claude-sonnet-4-20250514",
                     "messages": [{"role": "user", "content": large_message}],
                 }
                 user_api_key_dict = {}
@@ -738,7 +738,7 @@ class TestCCProxyHandler:
 
                 # Test with request that doesn't match any rule
                 request_data = {
-                    "model": "claude-3-opus-20240229",
+                    "model": "claude-opus-4-1-20250805",
                     "messages": [{"role": "user", "content": "Hello"}],
                     "token_count": 100,  # Below threshold
                 }
@@ -748,7 +748,7 @@ class TestCCProxyHandler:
                 result = await handler.async_pre_call_hook(request_data, user_api_key_dict)
 
                 # Verify request continues with original model
-                assert result["model"] == "claude-3-opus-20240229"
+                assert result["model"] == "claude-opus-4-1-20250805"
 
                 # Test with missing model field
                 request_data_no_model = {

@@ -19,7 +19,7 @@ def mock_handler():
         {
             "model_name": "default",
             "litellm_params": {
-                "model": "claude-3-5-sonnet-20241022",
+                "model": "claude-sonnet-4-20250514",
                 "api_base": "https://api.anthropic.com",
             },
         },
@@ -40,6 +40,7 @@ def mock_handler():
 
     config = CCProxyConfig(
         debug=False,
+        default_model_passthrough=False,  # Disable passthrough to test actual routing
         hooks=[
             "ccproxy.hooks.rule_evaluator",
             "ccproxy.hooks.model_router",
@@ -121,7 +122,7 @@ async def test_no_oauth_forwarding_for_non_anthropic_models(mock_handler):
     mock_proxy_server.llm_router.model_list = [
         {
             "model_name": "default",
-            "litellm_params": {"model": "claude-3-5-sonnet-20241022"},
+            "litellm_params": {"model": "claude-sonnet-4-20250514"},
         },
         {
             "model_name": "token_count",
@@ -161,7 +162,7 @@ async def test_no_oauth_forwarding_for_non_anthropic_models(mock_handler):
         base_text = "The quick brown fox jumps over the lazy dog. " * 5  # ~51 tokens
         long_message = base_text * 3  # ~153 tokens (above 100 threshold)
         data = {
-            "model": "claude-3-5-sonnet-20241022",
+            "model": "claude-sonnet-4-20250514",
             "messages": [{"role": "user", "content": long_message}],  # >100 tokens
             "metadata": {},
             "provider_specific_header": {"extra_headers": {}},
@@ -243,7 +244,7 @@ async def test_oauth_forwarding_with_claude_prefix_model(mock_handler):
 
     # Test data for model starting with 'claude'
     data = {
-        "model": "claude-3-5-sonnet-20241022",
+        "model": "claude-sonnet-4-20250514",
         "messages": [{"role": "user", "content": "test"}],
         "metadata": {},
         "provider_specific_header": {"extra_headers": {}},
@@ -288,7 +289,7 @@ async def test_oauth_forwarding_with_routed_model(mock_handler):
     assert result["provider_specific_header"]["extra_headers"]["authorization"] == "Bearer sk-ant-oat01-test-token-123"
 
     # Verify the model was routed correctly
-    assert result["model"] == "claude-3-5-sonnet-20241022"
+    assert result["model"] == "claude-sonnet-4-20250514"
 
 
 @pytest.mark.asyncio
@@ -315,6 +316,7 @@ async def test_no_oauth_forwarding_when_routed_to_non_anthropic(mock_handler):
 
     config = CCProxyConfig(
         debug=False,
+        default_model_passthrough=False,  # Disable passthrough to test actual routing
         hooks=[
             "ccproxy.hooks.rule_evaluator",
             "ccproxy.hooks.model_router",
@@ -376,6 +378,7 @@ async def test_no_oauth_forwarding_for_anthropic_model_on_vertex():
 
     config = CCProxyConfig(
         debug=False,
+        default_model_passthrough=False,  # Disable passthrough to test actual routing
         hooks=[
             "ccproxy.hooks.rule_evaluator",
             "ccproxy.hooks.model_router",
@@ -425,7 +428,7 @@ async def test_oauth_forwarding_for_anthropic_direct_api():
         {
             "model_name": "default",
             "litellm_params": {
-                "model": "anthropic/claude-3-5-sonnet-20241022",
+                "model": "anthropic/claude-sonnet-4-20250514",
                 "api_base": "https://api.anthropic.com",
             },
         },
@@ -439,6 +442,7 @@ async def test_oauth_forwarding_for_anthropic_direct_api():
 
     config = CCProxyConfig(
         debug=False,
+        default_model_passthrough=False,  # Disable passthrough to test actual routing
         hooks=[
             "ccproxy.hooks.rule_evaluator",
             "ccproxy.hooks.model_router",
@@ -474,7 +478,7 @@ async def test_oauth_forwarding_for_anthropic_direct_api():
         )
 
         # Verify the model was routed correctly
-        assert result["model"] == "anthropic/claude-3-5-sonnet-20241022"
+        assert result["model"] == "anthropic/claude-sonnet-4-20250514"
 
     clear_config_instance()
     clear_router()

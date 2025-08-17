@@ -66,13 +66,13 @@ ccproxy:
 model_list:
   - model_name: default
     litellm_params:
-      model: claude-3-5-sonnet-20241022
+      model: claude-sonnet-4-20250514
   - model_name: background
     litellm_params:
       model: claude-3-5-haiku-20241022
   - model_name: think
     litellm_params:
-      model: claude-3-5-sonnet-20241022
+      model: claude-opus-4-1-20250805
   - model_name: token_count
     litellm_params:
       model: gemini-2.5-pro
@@ -301,14 +301,14 @@ ccproxy:
             {
                 "model_name": "default",
                 "litellm_params": {
-                    "model": "claude-3-5-sonnet-20241022",
+                    "model": "anthropic/claude-sonnet-4-20250514",
                     "api_base": "https://api.anthropic.com",
                 },
             },
             {
                 "model_name": "background",
                 "litellm_params": {
-                    "model": "claude-3-5-haiku-20241022",
+                    "model": "anthropic/claude-3-5-haiku-20241022",
                     "api_base": "https://api.anthropic.com",
                 },
             },
