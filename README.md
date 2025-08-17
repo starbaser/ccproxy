@@ -90,32 +90,32 @@ If a request doesn't match any rule, it receives the `default` label.
 The diagram shows how routing labels (⚡ default, 🧠 think, 🍃 background) map to their corresponding model configurations:
 
 ```mermaid
-graph TB
-    subgraph ccproxy_yaml["ccproxy.yaml"]
-        R1["rules:<br/>- name: <b>default</b><br/>- name: <b>think</b><br/>- name: <b>background</b>"]
+graph LR
+    subgraph ccproxy_yaml["<code>ccproxy.yaml</code>"]
+        R1["<div style='text-align:left'><code>rules:</code><br/><code>- name: default</code><br/><code>- name: think</code><br/><code>- name: background</code></div>"]
     end
 
-    subgraph config_yaml["config.yaml"]
-        subgraph aliases["Model Aliases (Rule Names)"]
-            A1["<b>model_name: default</b><br/>litellm_params:<br/>  model: claude-sonnet-4-20250514"]
-            A2["<b>model_name: think</b><br/>litellm_params:<br/>  model: claude-opus-4-1-20250805"]
-            A3["<b>model_name: background</b><br/>litellm_params:<br/>  model: claude-3-5-haiku-20241022"]
+    subgraph config_yaml["<code>config.yaml</code>"]
+        subgraph aliases[" "]
+            A1["<div style='text-align:left'><code>model_name: default</code><br/><code>litellm_params:</code><br/><code>&nbsp;&nbsp;model: claude-sonnet-4-20250514</code></div>"]
+            A2["<div style='text-align:left'><code>model_name: think</code><br/><code>litellm_params:</code><br/><code>&nbsp;&nbsp;model: claude-opus-4-1-20250805</code></div>"]
+            A3["<div style='text-align:left'><code>model_name: background</code><br/><code>litellm_params:</code><br/><code>&nbsp;&nbsp;model: claude-3-5-haiku-20241022</code></div>"]
         end
 
-        subgraph models["Configured Models & Providers"]
-            M1["<b>model_name: claude-sonnet-4-20250514</b><br/>litellm_params:<br/>  model: anthropic/claude-sonnet-4-20250514<br/>  api_base: https://api.anthropic.com"]
-            M2["<b>model_name: claude-opus-4-1-20250805</b><br/>litellm_params:<br/>  model: anthropic/claude-opus-4-1-20250805<br/>  api_base: https://api.anthropic.com"]
-            M3["<b>model_name: claude-3-5-haiku-20241022</b><br/>litellm_params:<br/>  model: anthropic/claude-3-5-haiku-20241022<br/>  api_base: https://api.anthropic.com"]
+        subgraph models[" "]
+            M1["<div style='text-align:left'><code>model_name: claude-sonnet-4-20250514</code><br/><code>litellm_params:</code><br/><code>&nbsp;&nbsp;model: anthropic/claude-sonnet-4-20250514</code></div>"]
+            M2["<div style='text-align:left'><code>model_name: claude-opus-4-1-20250805</code><br/><code>litellm_params:</code><br/><code>&nbsp;&nbsp;model: anthropic/claude-opus-4-1-20250805</code></div>"]
+            M3["<div style='text-align:left'><code>model_name: claude-3-5-haiku-20241022</code><br/><code>litellm_params:</code><br/><code>&nbsp;&nbsp;model: anthropic/claude-3-5-haiku-20241022</code></div>"]
         end
     end
 
-    R1 ==>|"⚡ default"| A1
-    R1 ==>|"🧠 think"| A2
-    R1 ==>|"🍃 background"| A3
+    R1 ==>|"⚡ <code>default</code>"| A1
+    R1 ==>|"🧠 <code>think</code>"| A2
+    R1 ==>|"🍃 <code>background</code>"| A3
 
-    A1 -->|references| M1
-    A2 -->|references| M2
-    A3 -->|references| M3
+    A1 -->|"<code>alias</code>"| M1
+    A2 -->|"<code>alias</code>"| M2
+    A3 -->|"<code>alias</code>"| M3
 
     style R1 fill:#e6f3ff,stroke:#4a90e2,stroke-width:2px,color:#000
 
