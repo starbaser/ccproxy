@@ -126,7 +126,8 @@ class CCProxyHandler(CustomLogger):
             from rich.panel import Panel
             from rich.text import Text
 
-            console = Console()
+            # Create console with 80 char width limit
+            console = Console(width=80)
 
             # Color scheme based on routing
             if is_passthrough:
@@ -142,20 +143,28 @@ class CCProxyHandler(CustomLogger):
                 color = "green"
                 routing_type = "ROUTED"
 
+            # Helper function to truncate and wrap long model names
+            def format_model_name(name: str, max_width: int = 60) -> str:
+                """Format model name to fit within max width."""
+                if len(name) <= max_width:
+                    return name
+                # Truncate with ellipsis
+                return name[: max_width - 3] + "..."
+
             # Create the routing message
             routing_text = Text()
             routing_text.append("[ccproxy] Request Routed\n", style="bold cyan")
             routing_text.append("├─ Type: ", style="dim")
             routing_text.append(f"{routing_type}\n", style=f"bold {color}")
             routing_text.append("├─ Model Name: ", style="dim")
-            routing_text.append(f"{model_name}\n", style="magenta")
+            routing_text.append(f"{format_model_name(model_name)}\n", style="magenta")
             routing_text.append("├─ Original: ", style="dim")
-            routing_text.append(f"{original_model}\n", style="blue")
+            routing_text.append(f"{format_model_name(original_model)}\n", style="blue")
             routing_text.append("└─ Routed to: ", style="dim")
-            routing_text.append(f"{routed_model}", style=f"bold {color}")
+            routing_text.append(f"{format_model_name(routed_model)}", style=f"bold {color}")
 
-            # Print the panel
-            console.print(Panel(routing_text, border_style=color, padding=(0, 1)))
+            # Print the panel with width constraint
+            console.print(Panel(routing_text, border_style=color, padding=(0, 1), width=78))
 
         log_data = {
             "event": "ccproxy_routing",
