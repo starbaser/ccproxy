@@ -78,7 +78,7 @@ class TestCCProxyRouting:
                 "hooks": [
                     "ccproxy.hooks.rule_evaluator",
                     "ccproxy.hooks.model_router",
-                    "ccproxy.hooks.forward_oauth_hook",
+                    "ccproxy.hooks.forward_oauth",
                 ],
                 "rules": [
                     {
@@ -258,7 +258,7 @@ class TestHandlerHookMethods:
                 "hooks": [
                     "ccproxy.hooks.rule_evaluator",
                     "ccproxy.hooks.model_router",
-                    "ccproxy.hooks.forward_oauth_hook",
+                    "ccproxy.hooks.forward_oauth",
                 ],
                 "rules": [
                     {
@@ -294,10 +294,10 @@ class TestHandlerHookMethods:
                 "ccproxy.hooks.rule_evaluator",
                 "ccproxy.hooks.model_router",
             ],
-            rules=[]
+            rules=[],
         )
         set_config_instance(config)
-        
+
         # Mock proxy server with default model
         mock_proxy_server = MagicMock()
         mock_proxy_server.llm_router = MagicMock()
@@ -491,7 +491,7 @@ class TestCCProxyHandler:
                 "hooks": [
                     "ccproxy.hooks.rule_evaluator",
                     "ccproxy.hooks.model_router",
-                    "ccproxy.hooks.forward_oauth_hook",
+                    "ccproxy.hooks.forward_oauth",
                 ],
                 "rules": [
                     {
@@ -663,38 +663,38 @@ class TestCCProxyHandler:
                 "rules": [],
             }
         }
-        
+
         # Create a dummy litellm config file
         litellm_data = {"model_list": []}
-        
+
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as litellm_file:
             yaml.dump(litellm_data, litellm_file)
             litellm_path = Path(litellm_file.name)
-        
+
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as ccproxy_file:
             yaml.dump(ccproxy_data, ccproxy_file)
             ccproxy_path = Path(ccproxy_file.name)
-        
+
         try:
             config = CCProxyConfig.from_yaml(ccproxy_path, litellm_config_path=litellm_path)
             set_config_instance(config)
-            
+
             # Mock proxy server
             mock_proxy_server = MagicMock()
             mock_proxy_server.llm_router = MagicMock()
             mock_proxy_server.llm_router.model_list = []
-            
+
             mock_module = MagicMock()
             mock_module.proxy_server = mock_proxy_server
-            
+
             with patch.dict("sys.modules", {"litellm.proxy": mock_module}):
                 handler = CCProxyHandler()
-                
+
                 # Verify hooks were loaded
                 assert len(handler.hooks) == 2
                 assert any("rule_evaluator" in str(h) for h in handler.hooks)
                 assert any("model_router" in str(h) for h in handler.hooks)
-                
+
         finally:
             ccproxy_path.unlink()
             litellm_path.unlink()
@@ -757,6 +757,57 @@ class TestCCProxyHandler:
 
                 # Should log error but continue processing
                 await handler.async_pre_call_hook(request_data_no_model, user_api_key_dict)
+
+        finally:
+            clear_config_instance()
+            clear_router()
+
+    @pytest.mark.asyncio
+    async def test_log_routing_decision_fallback_scenario(self) -> None:
+        """Test _log_routing_decision with fallback scenario (lines 135-136)."""
+        # Set up handler with debug mode
+        config = CCProxyConfig(debug=True)
+        clear_config_instance()
+        set_config_instance(config)
+
+        try:
+            handler = CCProxyHandler()
+
+            # Test fallback scenario where model_config is None
+            # This tests lines 135-136: color = "yellow", routing_type = "FALLBACK"
+            handler._log_routing_decision(
+                model_name="default",
+                original_model="gpt-4",
+                routed_model="claude-3-5-sonnet",
+                request_id="test-123",
+                model_config=None,  # This triggers the fallback path
+            )
+
+        finally:
+            clear_config_instance()
+            clear_router()
+
+    @pytest.mark.asyncio
+    async def test_log_routing_decision_passthrough_scenario(self) -> None:
+        """Test _log_routing_decision with passthrough scenario (lines 139-140)."""
+        # Set up handler with debug mode
+        config = CCProxyConfig(debug=True)
+        clear_config_instance()
+        set_config_instance(config)
+
+        try:
+            handler = CCProxyHandler()
+
+            # Test passthrough scenario where original_model == routed_model
+            # This tests lines 139-140: color = "dim", routing_type = "PASSTHROUGH"
+            model_config = {"model_info": {"some": "config"}}
+            handler._log_routing_decision(
+                model_name="default",
+                original_model="claude-3-5-sonnet",
+                routed_model="claude-3-5-sonnet",  # Same as original = passthrough
+                request_id="test-456",
+                model_config=model_config,
+            )
 
         finally:
             clear_config_instance()

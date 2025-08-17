@@ -15,16 +15,6 @@ model_list:
     litellm_params:
       model: claude-opus-4-1-20250805
 
-  # Large context model for >60k tokens (threshold configurable in ccproxy.yaml)
-  - model_name: token_count
-    litellm_params:
-      model: gemini-2.5-pro
-
-  # Web search model for execution when the WebSearch tool is present
-  - model_name: web_search
-    litellm_params:
-      model: gemini-2.5-flash
-
   # Anthropic provided claude models, no `api_key` needed
   - model_name: claude-sonnet-4-20250514
     litellm_params:
@@ -41,25 +31,12 @@ model_list:
       model: anthropic/claude-3-5-haiku-20241022
       api_base: https://api.anthropic.com
 
-  # Add any other provider/model supported by LiteLLM
-  - model_name: gemini-2.5-pro
-    litellm_params:
-      model: gemini/gemini-2.5-pro
-      api_base: https://generativelanguage.googleapis.com
-      api_key: os.environ/GOOGLE_API_KEY
-
-  - model_name: gemini-2.5-flash
-    litellm_params:
-      model: gemini/gemini-2.5-flash
-      api_base: https://generativelanguage.googleapis.com
-      api_key: os.environ/GOOGLE_API_KEY
-
 litellm_settings:
   callbacks:
     - ccproxy.handler
-    - langfuse
-  success_callback:
-    - langfuse
+  #   - langfuse
+  # success_callback:
+  #   - langfuse
 
 general_settings:
   forward_client_headers_to_llm_api: true

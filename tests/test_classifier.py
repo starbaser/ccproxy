@@ -147,6 +147,55 @@ class TestRequestClassifier:
         # Should have cleared custom rules and set up defaults
         assert len(classifier._rules) == 4  # Back to 4 default rules
 
+    def test_rule_loading_exception_handling(self) -> None:
+        """Test exception handling when rule loading fails (lines 62-65)."""
+        from ccproxy.config import RuleConfig
+        
+        # Create config with a bad rule that will fail to load
+        config = CCProxyConfig(debug=True)
+        config.rules = [
+            RuleConfig("broken_rule", "nonexistent.module.NonExistentRule", []),
+        ]
+        
+        clear_config_instance()
+        set_config_instance(config)
+        
+        try:
+            # This should handle the ImportError gracefully
+            classifier = RequestClassifier()
+            # Should have 0 rules since the rule failed to load
+            assert len(classifier._rules) == 0
+        finally:
+            clear_config_instance()
+
+    def test_pydantic_conversion_exception_handling(self, classifier: RequestClassifier) -> None:
+        """Test exception handling for pydantic model conversion failure (lines 85-86)."""
+        # Create a mock object that has model_dump but raises an exception
+        mock_model = mock.Mock()
+        mock_model.model_dump.side_effect = Exception("Conversion failed")
+        
+        # This should handle the exception and use the object as-is
+        result = classifier.classify(mock_model)
+        # Since the mock object isn't a dict, it should return "default"
+        assert result == "default"
+
+    def test_non_dict_request_handling(self, classifier: RequestClassifier) -> None:
+        """Test handling of non-dict requests that can't be converted (lines 90-91)."""
+        # Test with a simple string that can't be converted to dict
+        result = classifier.classify("invalid request")
+        assert result == "default"
+        
+        # Test with an int
+        result = classifier.classify(42)
+        assert result == "default"
+        
+        # Test with an object without model_dump
+        class PlainObject:
+            pass
+        
+        result = classifier.classify(PlainObject())
+        assert result == "default"
+
 
 class TestClassificationRuleProtocol:
     """Tests for ClassificationRule abstract base class."""

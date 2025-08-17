@@ -166,6 +166,42 @@ class TestStartProxy:
         # Check PID file was updated
         assert pid_file.read_text() == "12345"
 
+    @patch("subprocess.Popen")
+    @patch("os.kill")
+    def test_litellm_detach_invalid_pid_file(self, mock_kill: Mock, mock_popen: Mock, tmp_path: Path) -> None:
+        """Test litellm detach with invalid PID file content."""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("litellm: config")
+
+        # Create PID file with invalid content
+        pid_file = tmp_path / "litellm.lock"
+        pid_file.write_text("not-a-number")
+
+        mock_process = Mock()
+        mock_process.pid = 12345
+        mock_popen.return_value = mock_process
+
+        with pytest.raises(SystemExit) as exc_info:
+            start_litellm(tmp_path, detach=True)
+
+        assert exc_info.value.code == 0
+        # Check PID file was updated with new PID
+        assert pid_file.read_text() == "12345"
+
+    @patch("subprocess.Popen")
+    def test_litellm_detach_file_not_found(self, mock_popen: Mock, tmp_path: Path) -> None:
+        """Test litellm detach when command is not found."""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("litellm: config")
+
+        # Mock FileNotFoundError (command not found)
+        mock_popen.side_effect = FileNotFoundError("Command not found")
+
+        with pytest.raises(SystemExit) as exc_info:
+            start_litellm(tmp_path, detach=True)
+
+        assert exc_info.value.code == 1
+
 
 class TestInstallConfig:
     """Test suite for install_config function."""
@@ -244,6 +280,33 @@ class TestInstallConfig:
         captured = capsys.readouterr()
         assert "Warning: Template config.yaml not found" in captured.err
         assert "Warning: Template ccproxy.py not found" in captured.err
+
+    def test_install_template_dir_error(self, tmp_path: Path) -> None:
+        """Test install when get_templates_dir raises RuntimeError."""
+        config_dir = tmp_path / "config"
+        
+        with patch("ccproxy.cli.get_templates_dir", side_effect=RuntimeError("Templates not found")):
+            with pytest.raises(SystemExit) as exc_info:
+                install_config(config_dir)
+            assert exc_info.value.code == 1
+
+    def test_install_skip_existing_file(self, tmp_path: Path, capsys) -> None:
+        """Test install skips existing files without force flag."""
+        templates_dir = tmp_path / "templates"
+        templates_dir.mkdir()
+        (templates_dir / "ccproxy.yaml").write_text("template content")
+        
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        (config_dir / "ccproxy.yaml").write_text("existing content")
+        
+        with patch("ccproxy.cli.get_templates_dir", return_value=templates_dir):
+            with pytest.raises(SystemExit) as exc_info:
+                install_config(config_dir)
+            assert exc_info.value.code == 1
+        
+        # Verify file wasn't overwritten
+        assert (config_dir / "ccproxy.yaml").read_text() == "existing content"
 
 
 class TestRunWithProxy:
@@ -343,10 +406,9 @@ class TestStopLiteLLM:
 
     def test_stop_no_pid_file(self, tmp_path: Path, capsys) -> None:
         """Test stop when PID file doesn't exist."""
-        with pytest.raises(SystemExit) as exc_info:
-            stop_litellm(tmp_path)
-
-        assert exc_info.value.code == 1
+        result = stop_litellm(tmp_path)
+        
+        assert result is False
         captured = capsys.readouterr()
         assert "No LiteLLM server is running (PID file not found)" in captured.err
 
@@ -362,10 +424,9 @@ class TestStopLiteLLM:
         # Third call: check if still running (raises ProcessLookupError - stopped)
         mock_kill.side_effect = [None, None, ProcessLookupError()]
 
-        with pytest.raises(SystemExit) as exc_info:
-            stop_litellm(tmp_path)
+        result = stop_litellm(tmp_path)
 
-        assert exc_info.value.code == 0
+        assert result is True
         assert not pid_file.exists()  # PID file should be removed
 
         captured = capsys.readouterr()
@@ -387,10 +448,9 @@ class TestStopLiteLLM:
         # Process keeps running after SIGTERM
         mock_kill.side_effect = [None, None, None, None]
 
-        with pytest.raises(SystemExit) as exc_info:
-            stop_litellm(tmp_path)
+        result = stop_litellm(tmp_path)
 
-        assert exc_info.value.code == 0
+        assert result is True
         assert not pid_file.exists()
 
         captured = capsys.readouterr()
@@ -409,10 +469,9 @@ class TestStopLiteLLM:
         # Process not running
         mock_kill.side_effect = ProcessLookupError()
 
-        with pytest.raises(SystemExit) as exc_info:
-            stop_litellm(tmp_path)
+        result = stop_litellm(tmp_path)
 
-        assert exc_info.value.code == 1
+        assert result is False
         assert not pid_file.exists()  # Stale PID file should be removed
 
         captured = capsys.readouterr()
@@ -423,10 +482,9 @@ class TestStopLiteLLM:
         pid_file = tmp_path / "litellm.lock"
         pid_file.write_text("invalid-pid")
 
-        with pytest.raises(SystemExit) as exc_info:
-            stop_litellm(tmp_path)
+        result = stop_litellm(tmp_path)
 
-        assert exc_info.value.code == 1
+        assert result is False
         captured = capsys.readouterr()
         assert "Error reading PID file" in captured.err
 
@@ -544,7 +602,7 @@ class TestViewLogs:
 class TestMainFunction:
     """Test suite for main CLI function using Tyro."""
 
-    @patch("ccproxy.cli.start_proxy")
+    @patch("ccproxy.cli.start_litellm")
     def test_main_litellm_command(self, mock_litellm: Mock, tmp_path: Path) -> None:
         """Test main with litellm command."""
         cmd = Start(args=["--debug", "--port", "8080"])
@@ -552,7 +610,7 @@ class TestMainFunction:
 
         mock_litellm.assert_called_once_with(tmp_path, args=["--debug", "--port", "8080"], detach=False)
 
-    @patch("ccproxy.cli.start_proxy")
+    @patch("ccproxy.cli.start_litellm")
     def test_main_litellm_no_args(self, mock_litellm: Mock, tmp_path: Path) -> None:
         """Test main with litellm command without args."""
         cmd = Start()
@@ -560,7 +618,7 @@ class TestMainFunction:
 
         mock_litellm.assert_called_once_with(tmp_path, args=None, detach=False)
 
-    @patch("ccproxy.cli.start_proxy")
+    @patch("ccproxy.cli.start_litellm")
     def test_main_litellm_detach(self, mock_litellm: Mock, tmp_path: Path) -> None:
         """Test main with litellm command in detach mode."""
         cmd = Start(detach=True)
@@ -600,7 +658,7 @@ class TestMainFunction:
         """Test main uses default config directory when not specified."""
         with (
             patch.object(Path, "home", return_value=tmp_path),
-            patch("ccproxy.cli.start_proxy") as mock_litellm,
+            patch("ccproxy.cli.start_litellm") as mock_litellm,
         ):
             cmd = Start()
             main(cmd)
@@ -612,8 +670,12 @@ class TestMainFunction:
     def test_main_stop_command(self, mock_stop: Mock, tmp_path: Path) -> None:
         """Test main with stop command."""
         cmd = Stop()
-        main(cmd, config_dir=tmp_path)
+        mock_stop.return_value = True  # Simulate successful stop
+        
+        with pytest.raises(SystemExit) as exc_info:
+            main(cmd, config_dir=tmp_path)
 
+        assert exc_info.value.code == 0
         mock_stop.assert_called_once_with(tmp_path)
 
     @patch("ccproxy.cli.view_logs")

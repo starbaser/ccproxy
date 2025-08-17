@@ -35,6 +35,20 @@ def mock_handler():
     mock_module = MagicMock()
     mock_module.proxy_server = mock_proxy_server
 
+    # Set up config with hooks
+    from ccproxy.config import CCProxyConfig, set_config_instance
+    
+    config = CCProxyConfig(
+        debug=False,
+        hooks=[
+            "ccproxy.hooks.rule_evaluator",
+            "ccproxy.hooks.model_router", 
+            "ccproxy.hooks.forward_oauth"
+        ],
+        rules=[]
+    )
+    set_config_instance(config)
+
     # Patch the proxy server import
     with patch.dict("sys.modules", {"litellm.proxy": mock_module}):
         clear_router()  # Clear any existing router
@@ -123,6 +137,11 @@ async def test_no_oauth_forwarding_for_non_anthropic_models(mock_handler):
 
     config = CCProxyConfig(
         debug=False,
+        hooks=[
+            "ccproxy.hooks.rule_evaluator",
+            "ccproxy.hooks.model_router", 
+            "ccproxy.hooks.forward_oauth"
+        ],
         rules=[
             RuleConfig(
                 name="token_count",
@@ -291,6 +310,20 @@ async def test_no_oauth_forwarding_when_routed_to_non_anthropic(mock_handler):
     mock_module = MagicMock()
     mock_module.proxy_server = mock_proxy_server
 
+    # Set up config with hooks
+    from ccproxy.config import CCProxyConfig, set_config_instance
+    
+    config = CCProxyConfig(
+        debug=False,
+        hooks=[
+            "ccproxy.hooks.rule_evaluator",
+            "ccproxy.hooks.model_router", 
+            "ccproxy.hooks.forward_oauth"
+        ],
+        rules=[]
+    )
+    set_config_instance(config)
+
     with patch.dict("sys.modules", {"litellm.proxy": mock_module}):
         clear_router()
         handler = CCProxyHandler()
@@ -337,6 +370,20 @@ async def test_no_oauth_forwarding_for_anthropic_model_on_vertex():
 
     mock_module = MagicMock()
     mock_module.proxy_server = mock_proxy_server
+
+    # Set up config with hooks
+    from ccproxy.config import CCProxyConfig, set_config_instance
+    
+    config = CCProxyConfig(
+        debug=False,
+        hooks=[
+            "ccproxy.hooks.rule_evaluator",
+            "ccproxy.hooks.model_router", 
+            "ccproxy.hooks.forward_oauth"
+        ],
+        rules=[]
+    )
+    set_config_instance(config)
 
     with patch.dict("sys.modules", {"litellm.proxy": mock_module}):
         clear_router()
@@ -386,6 +433,20 @@ async def test_oauth_forwarding_for_anthropic_direct_api():
 
     mock_module = MagicMock()
     mock_module.proxy_server = mock_proxy_server
+
+    # Set up config with hooks
+    from ccproxy.config import CCProxyConfig, set_config_instance
+    
+    config = CCProxyConfig(
+        debug=False,
+        hooks=[
+            "ccproxy.hooks.rule_evaluator",
+            "ccproxy.hooks.model_router", 
+            "ccproxy.hooks.forward_oauth"
+        ],
+        rules=[]
+    )
+    set_config_instance(config)
 
     with patch.dict("sys.modules", {"litellm.proxy": mock_module}):
         clear_router()

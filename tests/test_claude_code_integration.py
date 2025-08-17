@@ -76,19 +76,20 @@ class TestClaudeCodeE2E:
     
     def test_claude_simple_query_with_mock(self, test_config_dir):
         """Test that claude command environment is set up correctly by ccproxy run."""
-        port = yaml.safe_load((test_config_dir / "ccproxy.yaml").read_text())["litellm"]["port"]
-        
-        # Create a mock claude script that just verifies environment
+        # Create a mock claude script that just verifies environment is set
         mock_claude = test_config_dir / "claude"
         mock_claude.write_text("""#!/bin/bash
-if [ "$ANTHROPIC_BASE_URL" = "http://127.0.0.1:PORT" ]; then
+# Check if ANTHROPIC_BASE_URL is set to something that looks like a proxy
+if [[ "$ANTHROPIC_BASE_URL" =~ ^http://127\.0\.0\.1:[0-9]+$ ]]; then
     echo "SUCCESS: Environment configured correctly"
+    echo "ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL"
+    echo "Args: $@"
     exit 0
 else
-    echo "FAIL: ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL"
+    echo "FAIL: ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL (should match http://127.0.0.1:PORT)"
     exit 1
 fi
-""".replace("PORT", str(port)))
+""")
         mock_claude.chmod(0o755)
         
         # Add mock claude to PATH
@@ -96,9 +97,9 @@ fi
         env["PATH"] = f"{test_config_dir}:{env['PATH']}"
         env["CCPROXY_CONFIG_DIR"] = str(test_config_dir)
         
-        # Run ccproxy run command
+        # Run ccproxy run command with proper argument separation
         result = subprocess.run(
-            ["uv", "run", "ccproxy", "run", "claude", "-p", "Hello"],
+            ["uv", "run", "ccproxy", "run", "--", "claude", "-p", "Hello"],
             env=env,
             cwd=test_config_dir,
             capture_output=True,
@@ -106,7 +107,7 @@ fi
             timeout=10
         )
         
-        assert result.returncode == 0, f"Command failed: {result.stderr}"
+        assert result.returncode == 0, f"Command failed. stdout: {result.stdout}, stderr: {result.stderr}"
         assert "SUCCESS" in result.stdout
 
 

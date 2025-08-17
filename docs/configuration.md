@@ -28,15 +28,15 @@ mkdir -p ~/.ccproxy
 
 # Download the callback file
 curl -o ~/.ccproxy/ccproxy.py \
-  https://raw.githubusercontent.com/starbased-co/ccproxy/main/src/ccproxy/templates/ccproxy.py
+  https://raw.githubusercontent.com/starbased-co/claude-code-proxy/main/src/ccproxy/templates/ccproxy.py
 
 # Download the LiteLLM config
 curl -o ~/.ccproxy/config.yaml \
-  https://raw.githubusercontent.com/starbased-co/ccproxy/main/src/ccproxy/templates/config.yaml
+  https://raw.githubusercontent.com/starbased-co/claude-code-proxy/main/src/ccproxy/templates/config.yaml
 
 # Download the ccproxy routing rules config
 curl -o ~/.ccproxy/ccproxy.yaml \
-  https://raw.githubusercontent.com/starbased-co/ccproxy/main/src/ccproxy/templates/ccproxy.yaml
+  https://raw.githubusercontent.com/starbased-co/claude-code-proxy/main/src/ccproxy/templates/ccproxy.yaml
 ```
 
 This creates the configuration files from the built-in templates.
@@ -142,7 +142,7 @@ ccproxy:
   hooks:
     - ccproxy.hooks.rule_evaluator # Evaluates rules
     - ccproxy.hooks.model_router # Routes to models
-    - ccproxy.hooks.forward_oauth_hook # Forwards OAuth tokens
+    - ccproxy.hooks.forward_oauth # Forwards OAuth tokens
 
   # Routing rules (evaluated in order)
   rules:
@@ -219,7 +219,7 @@ This file is referenced in `config.yaml` under `litellm_settings.callbacks`.
 2. **Hook Processing**: ccproxy hooks process the request in order:
    - `rule_evaluator`: Evaluates rules to determine routing
    - `model_router`: Maps rule name to model configuration
-   - `forward_oauth_hook`: Handles OAuth token forwarding
+   - `forward_oauth`: Handles OAuth token forwarding
 3. **Model Selection**: Request routed to appropriate model
 4. **Response**: Response returned through LiteLLM proxy
 
@@ -256,7 +256,7 @@ ccproxy:
 
 ccproxy provides a hook system that allows you to extend and customize its behavior beyond the built-in rule routing system. Hooks are Python functions that can intercept and modify requests, implement custom logging, filtering, or integrate with external systems. The rule routing system is just itself a custom hook.
 
-Only the `forward_oauth_hook` is required for Claude Code to function properly.
+Only the `forward_oauth` is required for Claude Code to function properly.
 
 ### Example: Request Logging Hook
 
@@ -280,7 +280,7 @@ Add to `ccproxy.yaml`:
 ccproxy:
   hooks:
     - my_hooks.request_logger # Your custom hook
-    - ccproxy.hooks.forward_oauth_hook # Required for Claude Code
+    - ccproxy.hooks.forward_oauth # Required for Claude Code
 ```
 
 ## Debugging

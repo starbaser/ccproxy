@@ -2,123 +2,150 @@
 
 [![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/starbased-co/ccproxy)
 
-`ccproxy` is a command-line tool designed for Claude Code that intercepts, inspects, modifies, and redirects Claude Code's requests made to Anthropic's Messages API to any LLM provider. To accomplish this, `ccproxy` starts a [LiteLLM Proxy Server](https://docs.litellm.ai/docs/simple_proxy) as a background process, configures the needed environment for `claude` to run as a transient child process (`ccproxy run claude`), and enables you to intelligently decide how and where each and every model request is made using either our pre-configured routing rules, your own rules using the custom plugin's framework, or whatever code you want through configurable user-hooks.
+`ccproxy` unlocks the full potential of your Claude MAX subscription by enabling Claude Code to seamlessly use unlimited Claude models alongside other LLM providers like OpenAI, Gemini, and Perplexity.
 
-## Key Features
+It works by intercepting Claude Code's requests through a [LiteLLM Proxy Server](https://docs.litellm.ai/docs/simple_proxy), allowing you to route different types of requests to the most suitable model - keep your unlimited Claude for standard coding, send large contexts to Gemini's 2M token window, route web searches to Perplexity, all while Claude Code thinks it's talking to the standard API.
 
-- **Claude MAX Plan Integration**: Seamlessly use your unlimited Claude MAX (and Pro) subscription.
+- **Cross-Provider Prompt Caching Support** _is coming soon_.
 
-- **Intelligent Request Routing**: Automatically route requests based on token count, model type, tool usage, or custom rules - send large contexts to Gemini, web searches to Perplexity, and keep standard requests on Claude
-
-- **Custom Rule Framework**: Create your own Python-based routing rules with full access to request properties, conversation context, and dynamic parameters
-
-- **User Hooks**: Intercept and modify requests/responses at any stage with configurable pre/post-call hooks for complete control over the API flow
-
-- **Full LiteLLM Proxy Features**: Built on LiteLLM, includes load balancing, automatic fallbacks, spend tracking, rate limiting, caching, and 100+ provider support out of the box
-
-- **Cross-Provider Context Preservation** _(coming soon)_: Maintain conversation history and context when routing between different models and providers.
-
-> ⚠️ **Note**: This is a newly released project ready for public use and feedback. While core functionality is complete, real-world testing and community input are welcomed. Please [open an issue](https://github.com/starbased-co/ccproxy/issues) to share your experience, report bugs, or suggest improvements.
-
-> **Known Issue**: Context preservation between providers has not yet been fully implemented. Due to the way how cache breakpoints work, routing requests in-between different models/providers will result in lowered cache efficiency. Improving this is the next major feature being worked on.
+> ⚠️ **Note**: This is a newly released project ready for public use and feedback. While core functionality is complete, real-world testing and community input are welcomed. Please [open an issue](https://github.com/starbased-co/claude-code-proxy/issues) to share your experience, report bugs, or suggest improvements.
 
 ## Installation
 
 ```bash
 # Recommended: install as a uv tool
-uv tool install git+https://github.com/starbased-co/ccproxy.git
-# or
-pipx install git+https://github.com/starbased-co/ccproxy.git
+uv tool install git+https://github.com/starbased-co/claude-code-proxy.git
 
 # Alternative: Install with pip
-pip install git+https://github.com/starbased-co/ccproxy.git
+pip install git+https://github.com/starbased-co/claude-code-proxy.git
 ```
 
-## Quick Setup
+## Usage
 
 Run the automated setup:
 
 ```bash
+# This will create all necessary configuration files in ~/.ccproxy
 ccproxy install
-# or with Python module:
-python -m ccproxy install
+
+tree ~/.ccproxy
+# ~/.ccproxy
+# ├── ccproxy.py
+# ├── ccproxy.yaml
+# └── config.yaml
+
+# Start the proxy server
+ccproxy start --detach
+
+# Start Claude Code
+ccproxy run claude
+# Or add to your .zshrc/.bashrc
+export ANTHROPIC_BASE_URL="http://localhost:4000"
+# Or use an alias
+alias claude-proxy='ANTHROPIC_BASE_URL="http://localhost:4000" claude'
 ```
 
-This will create all necessary configuration files in `~/.ccproxy/`.
+Congrats, you have installed `ccproxy`! The installed configuration files are intended to be a simple demonstration, thus continuing on to the next section to configure `ccproxy` is **recommended**.
 
-To overwrite existing files without prompting:
+### Configuration
 
-```bash
-ccproxy install --force
-```
+#### `ccproxy.yaml`
 
-See [docs/configuration.md](docs/configuration.md).
-
-### Routing Rules
-
-`ccproxy` includes built-in rules for intelligent request routing:
-
-- **TokenCountRule**: Routes requests with large token counts to high-capacity models
-- **MatchModelRule**: Routes based on the requested model name
-- **ThinkingRule**: Routes requests containing a "thinking" field
-- **MatchToolRule**: Routes based on tool usage (e.g., WebSearch)
-
-You can also create custom rules - see the examples directory for details. Custom rules (and hooks) are loaded with the same mechanism that LiteLLM uses to import the custom callbacks, that is, they are imported as by the LiteLLM python process as named module from within it's virtual environment (e.g. `import custom_rule_file.custom_rule_function`), or as a python script adjacent to `config.yaml`.
-
-#### Example Configuration
+This file controls how ccproxy hooks into your Claude Code requests and how to route them to different LLM models based on rules. Here you specify rules, their evaluation order, and criteria like token count, model type, or tool usage.
 
 ```yaml
-# LiteLLM model configuration
+ccproxy:
+
+  debug: true
+  hooks:
+    - ccproxy.hooks.rule_evaluator  # evaluates rules against request 󰁎─┬─ (required for rules &
+    - ccproxy.hooks.model_router    # routes to appropriate model     󰁎─┘  routing)
+    - ccproxy.hooks.forward_oauth   # forwards oauth token for requests to anthropic (required)
+  rules:
+    - name: background
+      rule: ccproxy.rules.MatchModelRule
+      params:
+        - model_name: claude-3-5-haiku-20241022
+    - name: think
+      rule: ccproxy.rules.ThinkingRule
+
+litellm:
+  host: 127.0.0.1
+  port: 4000
+  num_workers: 4
+  debug: true
+  detailed_debug: true
+
+```
+
+When `ccproxy` receives a request from Claude Code, the `rule_evaluator` hook labels the request with the first matching rule:
+
+1. `MatchModelRule`: A request with `model: claude-3-5-haiku-20241022` is labeled: `background`
+2. `ThinkingRule`: A request with `thinking: {enabled: true}` is labeled: `think`
+
+If a request doesn't match any rule, it receives the default label.
+
+#### `config.yaml`
+
+[LiteLLM's proxy configuration file](https://docs.litellm.ai/docs/proxy/config_settings) is where the actual model endpoints are defined. The `model_router` hook takes advantage of [LiteLLM's model alias feature](https://docs.litellm.ai/docs/completion/model_alias) to dynamically rewrite the model field in requests based on rule criteria. When a request is labeled (e.g., think), the hook changes the model from whatever Claude Code requested to the corresponding alias, allowing seamless redirection to different models without Claude Code knowing the request was rerouted.
+
+The diagram shows how routing labels (⚡ default, 🧠 think, 🍃 background) map to their corresponding model configurations
+
+```yaml
+# config.yaml
 model_list:
-  # Default model for regular use
   - model_name: default
     litellm_params:
-      model: claude-sonnet-4-20250514
+      model: claude-sonnet-4-20250514      # 󰁎─[⚡]─┐
+                                           #        │
+  - model_name: think                      #        │
+    litellm_params:                        #        │
+      model: claude-opus-4-1-20250805      # 󰁎─[🧠]─┼─┐
+                                           #        │ │
+  - model_name: background                 #        │ │
+    litellm_params:                        #        │ │
+    model: claude-3-5-haiku-20241022       # 󰁎─[🍃]─┼─┼─┐
+                                           #        │ │ │
+  - model_name: claude-sonnet-4-20250514   # 󰁎─[⚡]─┘ │ │
+    litellm_params:                        #          │ │
+      model: claude-sonnet-4-20250514      #          │ │
+      api_base: https://api.anthropic.com  #          │ │
+                                           #          │ │
+  - model_name: claude-opus-4-1-20250805   # 󰁎─[🧠]───┘ │
+    litellm_params:                        #            │
+      model: claude-opus-4-1-20250805      #            │
+      api_base: https://api.anthropic.com  #            │
+                                           #            │
+  - model_name: claude-3-5-haiku-20241022  # 󰁎─[🍃]─────┘
+    litellm_params:                        #
+      model: claude-3-5-haiku-20241022     #
+      api_base: https://api.anthropic.com  #
 
-  # Background model for low-cost operations
-  - model_name: background
-    litellm_params:
-      model: claude-3-5-haiku-20241022
-
-  # Thinking model for complex reasoning
-  - model_name: think
-    litellm_params:
-      model: claude-opus-4-20250514
-
-  # Large context model for >60k tokens
-  - model_name: token_count
-    litellm_params:
-      model: gemini-2.5-pro
-
-  # Web search model for tool usage
-  - model_name: web_search
-    litellm_params:
-      model: gemini-2.5-flash
-
-  # Anthropic provided claude models, no `api_key` needed
-  - model_name: claude-sonnet-4-20250514
-    litellm_params:
-      model: anthropic/claude-3-5-sonnet-20241022
-      api_base: https://api.anthropic.com
-
-  - model_name: claude-opus-4-20250514
-    litellm_params:
-      model: anthropic/claude-opus-4-20250514
-      api_base: https://api.anthropic.com
-
-  - model_name: claude-3-5-haiku-20241022
-    litellm_params:
-      model: anthropic/claude-3-5-haiku-20241022
-      api_base: https://api.anthropic.com
-
-  # Add any other provider/model supported by LiteLLM
-
-  - model_name: gemini-2.5-pro
-    litellm_params:
-      model: gemini/gemini-2.5-pro
-      api_base: https://generativelanguage.googleapis.com
-      api_key: os.environ/GOOGLE_API_KEY
+litellm_settings:
+  callbacks:
+    - ccproxy.handler
+general_settings:
+  forward_client_headers_to_llm_api: true
 ```
+
+See [docs/configuration.md](docs/configuration.md) for more information on how to customize your Claude Code experience using `ccproxy`.
+
+<!-- ## Extended Thinking -->
+
+<!-- Normally, when you send a message, Claude Code does a simple keyword scan for words/phrases like "think deeply" to determine whether or not to enable thinking, as well the size of the thinking token budget. [Simply including the word "ultrathink](https://claudelog.com/mechanics/ultrathink-plus-plus/) sets the thinking token budget to the maximum of `31999`. -->
+
+## Routing Rules
+
+`ccproxy` provides several built-in rules as an homage to [claude-code-router](https://github.com/musistudio/claude-code-router):
+
+- **MatchModelRule**: Routes based on the requested model name
+- **ThinkingRule**: Routes requests containing a "thinking" field
+- **TokenCountRule**: Routes requests with large token counts to high-capacity models
+- **MatchToolRule**: Routes based on tool usage (e.g., WebSearch)
+
+See [`rules.py`](src/ccproxy/rules.py) for implementing your own rules.
+
+Custom rules (and hooks) are loaded with the same mechanism that LiteLLM uses to import the custom callbacks, that is, they are imported as by the LiteLLM python process as named module from within it's virtual environment (e.g. `import custom_rule_file.custom_rule_function`), or as a python script adjacent to `config.yaml`.
 
 ## CLI Commands
 
@@ -134,6 +161,9 @@ ccproxy start [--detach]
 # Stop LiteLLM
 ccproxy stop
 
+# Check that the proxy server is working
+ccproxy status
+
 # View proxy server logs
 ccproxy logs [-f] [-n LINES]
 
@@ -141,8 +171,6 @@ ccproxy logs [-f] [-n LINES]
 ccproxy run <command> [args...]
 
 ```
-
-## Usage
 
 After installation and setup, you can run any command through the ccproxy:
 
@@ -163,16 +191,6 @@ The `ccproxy run` command sets up the following environment variables:
 - `OPENAI_API_BASE` - For OpenAI SDK compatibility
 - `OPENAI_BASE_URL` - For OpenAI SDK compatibility
 
-**Note**: Using `ccproxy run` is not strictly required for Claude Code. You can also simply export `ANTHROPIC_BASE_URL` to point to your LiteLLM server:
-
-```bash
-ccproxy start
-export ANTHROPIC_BASE_URL=http://localhost:4000 # Add to your .zshrc/.bashrc
-claude -p "Explain quantum computing"
-```
-
-For detailed configuration documentation including custom rules and advanced usage, see [docs/configuration.md](docs/configuration.md).
-
 ## Contributing
 
 I welcome contributions! Please see the [Contributing Guide](CONTRIBUTING.md) for details on:
@@ -189,7 +207,3 @@ Since this is a new project, I especially appreciate:
 - Test coverage additions
 - Feature suggestions
 - Any of your implementations using `ccproxy`
-
-## Acknowledgments
-
-Inspired in part by [claude-code-router](https://github.com/musistudio/claude-code-router).

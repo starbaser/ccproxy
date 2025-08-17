@@ -88,7 +88,7 @@ The codebase follows a modular architecture with clear separation of concerns:
 - **rules.py**: Defines `ClassificationRule` abstract base class and built-in rules (TokenCountRule, MatchModelRule, ThinkingRule, MatchToolRule).
 - **router.py**: Manages model configurations from LiteLLM proxy server and provides fallback logic.
 - **config.py**: Configuration management using Pydantic, loads from `ccproxy.yaml`.
-- **hooks.py**: Built-in hooks (rule_evaluator, model_router, forward_oauth_hook) that process requests.
+- **hooks.py**: Built-in hooks (rule_evaluator, model_router, forward_oauth) that process requests.
 - **cli.py**: Tyro-based CLI interface for managing the proxy server.
 
 ### Rule System

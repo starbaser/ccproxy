@@ -47,7 +47,10 @@ class TestHandlerLoggingHookMethods:
     async def test_async_pre_call_hook_with_invalid_request(self) -> None:
         """Test async_pre_call_hook with invalid request format."""
         # Mock the router to provide a default model
-        with patch("ccproxy.handler.get_router") as mock_get_router:
+        with (
+            patch("ccproxy.handler.get_router") as mock_get_router,
+            patch("ccproxy.handler.get_config") as mock_get_config,
+        ):
             from ccproxy.router import ModelRouter
 
             mock_router = Mock(spec=ModelRouter)
@@ -56,6 +59,24 @@ class TestHandlerLoggingHookMethods:
                 "litellm_params": {"model": "claude-3-5-sonnet-20241022"},
             }
             mock_get_router.return_value = mock_router
+
+            # Mock config to include hooks
+            mock_config = Mock()
+            mock_config.debug = False
+            
+            # Create a mock hook that adds metadata and model
+            def mock_rule_evaluator(data, user_api_key_dict, **kwargs):
+                if "metadata" not in data:
+                    data["metadata"] = {}
+                data["metadata"]["ccproxy_model_name"] = "default"
+                data["metadata"]["ccproxy_alias_model"] = None
+                # Add model field if missing (simulating model_router hook)
+                if "model" not in data:
+                    data["model"] = "claude-3-5-sonnet-20241022"
+                return data
+            
+            mock_config.load_hooks.return_value = [mock_rule_evaluator]
+            mock_get_config.return_value = mock_config
 
             handler = CCProxyHandler()
 
@@ -68,6 +89,140 @@ class TestHandlerLoggingHookMethods:
             assert result["metadata"]["ccproxy_model_name"] == "default"
             assert result["metadata"]["ccproxy_alias_model"] is None
             assert result["model"] == "claude-3-5-sonnet-20241022"
+
+    @pytest.mark.asyncio  
+    async def test_handler_with_debug_hook_logging(self) -> None:
+        """Test handler debug logging of hooks during initialization."""
+        with (
+            patch("ccproxy.handler.get_router") as mock_get_router,
+            patch("ccproxy.handler.get_config") as mock_get_config,
+            patch("ccproxy.handler.logger") as mock_logger,
+        ):
+            # Mock config with debug=True and hooks
+            mock_config = Mock()
+            mock_config.debug = True
+            
+            def mock_hook(data, user_api_key_dict, **kwargs):
+                return data
+            mock_hook.__module__ = "test_module"
+            mock_hook.__name__ = "test_hook"
+            
+            mock_config.load_hooks.return_value = [mock_hook]
+            mock_get_config.return_value = mock_config
+            
+            mock_router = Mock()
+            mock_get_router.return_value = mock_router
+
+            # Create handler - should log hooks
+            handler = CCProxyHandler()
+            
+            # Verify debug logging occurred
+            mock_logger.debug.assert_called_once_with("Loaded 1 hooks: test_module.test_hook")
+
+    @pytest.mark.asyncio
+    async def test_hook_error_handling(self) -> None:
+        """Test handler error handling when hooks fail."""
+        with (
+            patch("ccproxy.handler.get_router") as mock_get_router,
+            patch("ccproxy.handler.get_config") as mock_get_config,
+            patch("ccproxy.handler.logger") as mock_logger,
+        ):
+            # Mock router
+            mock_router = Mock()
+            mock_get_router.return_value = mock_router
+
+            # Mock config with a failing hook
+            mock_config = Mock()
+            mock_config.debug = False
+            
+            def failing_hook(data, user_api_key_dict, **kwargs):
+                raise ValueError("Hook failed!")
+            failing_hook.__name__ = "failing_hook"
+            
+            mock_config.load_hooks.return_value = [failing_hook]
+            mock_get_config.return_value = mock_config
+
+            handler = CCProxyHandler()
+            data = {"messages": [{"role": "user", "content": "test"}]}
+
+            # Should not raise but should log error
+            result = await handler.async_pre_call_hook(data, {})
+            
+            # Verify error was logged
+            mock_logger.error.assert_called_once()
+            args = mock_logger.error.call_args[0]
+            assert "Hook failing_hook failed with error" in args[0]
+            assert "Hook failed!" in args[0]
+
+    @pytest.mark.asyncio
+    async def test_thinking_parameters_debug_output(self, capsys) -> None:
+        """Test debug output for thinking parameters."""
+        with (
+            patch("ccproxy.handler.get_router") as mock_get_router,
+            patch("ccproxy.handler.get_config") as mock_get_config,
+        ):
+            # Mock router
+            mock_router = Mock()
+            mock_get_router.return_value = mock_router
+
+            # Mock config with no hooks
+            mock_config = Mock()
+            mock_config.debug = False
+            mock_config.load_hooks.return_value = []
+            mock_get_config.return_value = mock_config
+
+            handler = CCProxyHandler()
+            
+            # Request with thinking parameters
+            data = {
+                "messages": [{"role": "user", "content": "test"}],
+                "thinking": {"mode": "deep", "level": 5}
+            }
+
+            await handler.async_pre_call_hook(data, {})
+            
+            # Check that thinking parameters were printed
+            captured = capsys.readouterr()
+            assert "🧠 Thinking parameters: {'mode': 'deep', 'level': 5}" in captured.out
+
+    @patch("ccproxy.handler.get_router")
+    @patch("ccproxy.handler.get_config")
+    def test_debug_routing_output(self, mock_get_config, mock_get_router, capsys) -> None:
+        """Test debug routing output with Rich formatting."""
+        from ccproxy.router import ModelRouter
+        
+        # Mock router
+        mock_router = Mock(spec=ModelRouter)
+        mock_router.get_model_for_label.return_value = {
+            "model_name": "gpt-4",
+            "litellm_params": {"model": "gpt-4-turbo"}
+        }
+        mock_get_router.return_value = mock_router
+
+        # Mock config with debug=True
+        mock_config = Mock()
+        mock_config.debug = True
+        mock_config.load_hooks.return_value = []
+        mock_get_config.return_value = mock_config
+
+        handler = CCProxyHandler()
+        
+        # Call _log_routing_decision method directly
+        metadata = {"ccproxy_model_name": "gpt-4", "ccproxy_alias_model": "claude-3-5-sonnet-20241022"}
+        
+        handler._log_routing_decision(
+            model_config={"model_name": "gpt-4"}, 
+            model_name="gpt-4",
+            original_model="claude-3-5-sonnet-20241022",
+            routed_model="gpt-4-turbo",
+            request_id="test-123"
+        )
+        
+        # Check that rich panel was printed (will contain routing info)
+        captured = capsys.readouterr()
+        assert "🚀 ccproxy Routing Decision" in captured.out
+        assert "ROUTED" in captured.out
+        assert "gpt-4" in captured.out
 
     @patch("ccproxy.handler.logger")
     def test_log_routing_decision(self, mock_logger: Mock) -> None:

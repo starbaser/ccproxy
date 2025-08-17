@@ -33,6 +33,10 @@ def model_router(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwar
         logger.warning("Router not found or invalid type in model_router")
         return data
 
+    # Ensure metadata exists
+    if "metadata" not in data:
+        data["metadata"] = {}
+
     # Get model_name with safe default
     model_name = data.get("metadata", {}).get("ccproxy_model_name", "default")
     if not model_name:

@@ -1,6 +1,5 @@
 .github
 .mypy_cache
 .ruff_cache
-.stubs
+stubs
 uv.lock
-scripts

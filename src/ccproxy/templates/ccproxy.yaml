@@ -1,28 +1,20 @@
-litellm:
-  host: 127.0.0.1
-  port: 4000
-  num_workers: 4
-  debug: true
-  detailed_debug: true
-
 ccproxy:
   debug: true
   hooks:
-    - ccproxy.hooks.rule_evaluator # evaluates rules against request
-    - ccproxy.hooks.model_router # routes to appropriate model (coupled with rule_evaluator)
-    - ccproxy.hooks.forward_oauth # forwards oauth token for claude-cli requests to anthropic
+    - ccproxy.hooks.rule_evaluator  # evaluates rules against request
+    - ccproxy.hooks.model_router    # routes to appropriate model (coupled with rule_evaluator)
+    - ccproxy.hooks.forward_oauth   # forwards oauth token for requests to anthropic (place after any routing logic)
   rules:
-    # - name: token_count
-    #   rule: ccproxy.rules.TokenCountRule
-    #   params:
-    #     - threshold: 60000
     - name: background
       rule: ccproxy.rules.MatchModelRule
       params:
         - model_name: claude-3-5-haiku-20241022
     - name: think
       rule: ccproxy.rules.ThinkingRule
-    # - name: web_search
-    #   rule: ccproxy.rules.MatchToolRule
-    #   params:
-    #     - tool_name: WebSearch
+
+litellm:
+  host: 127.0.0.1
+  port: 4000
+  num_workers: 4
+  debug: true
+  detailed_debug: true
