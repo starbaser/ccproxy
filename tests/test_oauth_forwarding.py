@@ -37,12 +37,12 @@ def mock_handler():
 
     # Set up config with hooks
     from ccproxy.config import CCProxyConfig, set_config_instance
-    
+
     config = CCProxyConfig(
         debug=False,
         hooks=[
             "ccproxy.hooks.rule_evaluator",
-            "ccproxy.hooks.model_router", 
+            "ccproxy.hooks.model_router",
             "ccproxy.hooks.forward_oauth"
         ],
         rules=[]
@@ -139,7 +139,7 @@ async def test_no_oauth_forwarding_for_non_anthropic_models(mock_handler):
         debug=False,
         hooks=[
             "ccproxy.hooks.rule_evaluator",
-            "ccproxy.hooks.model_router", 
+            "ccproxy.hooks.model_router",
             "ccproxy.hooks.forward_oauth"
         ],
         rules=[
@@ -312,12 +312,12 @@ async def test_no_oauth_forwarding_when_routed_to_non_anthropic(mock_handler):
 
     # Set up config with hooks
     from ccproxy.config import CCProxyConfig, set_config_instance
-    
+
     config = CCProxyConfig(
         debug=False,
         hooks=[
             "ccproxy.hooks.rule_evaluator",
-            "ccproxy.hooks.model_router", 
+            "ccproxy.hooks.model_router",
             "ccproxy.hooks.forward_oauth"
         ],
         rules=[]
@@ -373,12 +373,12 @@ async def test_no_oauth_forwarding_for_anthropic_model_on_vertex():
 
     # Set up config with hooks
     from ccproxy.config import CCProxyConfig, set_config_instance
-    
+
     config = CCProxyConfig(
         debug=False,
         hooks=[
             "ccproxy.hooks.rule_evaluator",
-            "ccproxy.hooks.model_router", 
+            "ccproxy.hooks.model_router",
             "ccproxy.hooks.forward_oauth"
         ],
         rules=[]
@@ -436,12 +436,12 @@ async def test_oauth_forwarding_for_anthropic_direct_api():
 
     # Set up config with hooks
     from ccproxy.config import CCProxyConfig, set_config_instance
-    
+
     config = CCProxyConfig(
         debug=False,
         hooks=[
             "ccproxy.hooks.rule_evaluator",
-            "ccproxy.hooks.model_router", 
+            "ccproxy.hooks.model_router",
             "ccproxy.hooks.forward_oauth"
         ],
         rules=[]

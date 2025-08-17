@@ -150,16 +150,16 @@ class TestRequestClassifier:
     def test_rule_loading_exception_handling(self) -> None:
         """Test exception handling when rule loading fails (lines 62-65)."""
         from ccproxy.config import RuleConfig
-        
+
         # Create config with a bad rule that will fail to load
         config = CCProxyConfig(debug=True)
         config.rules = [
             RuleConfig("broken_rule", "nonexistent.module.NonExistentRule", []),
         ]
-        
+
         clear_config_instance()
         set_config_instance(config)
-        
+
         try:
             # This should handle the ImportError gracefully
             classifier = RequestClassifier()
@@ -173,7 +173,7 @@ class TestRequestClassifier:
         # Create a mock object that has model_dump but raises an exception
         mock_model = mock.Mock()
         mock_model.model_dump.side_effect = Exception("Conversion failed")
-        
+
         # This should handle the exception and use the object as-is
         result = classifier.classify(mock_model)
         # Since the mock object isn't a dict, it should return "default"
@@ -184,15 +184,15 @@ class TestRequestClassifier:
         # Test with a simple string that can't be converted to dict
         result = classifier.classify("invalid request")
         assert result == "default"
-        
+
         # Test with an int
         result = classifier.classify(42)
         assert result == "default"
-        
+
         # Test with an object without model_dump
         class PlainObject:
             pass
-        
+
         result = classifier.classify(PlainObject())
         assert result == "default"
 

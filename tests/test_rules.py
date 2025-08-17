@@ -87,7 +87,7 @@ class TestTokenCountRule:
     def test_gpt_model_tokenizer(self, config: CCProxyConfig) -> None:
         """Test GPT model tokenizer path (line 68)."""
         rule = TokenCountRule(threshold=10)
-        
+
         # Test with GPT-4 model to trigger line 68
         request = {
             "model": "gpt-4",
@@ -100,7 +100,7 @@ class TestTokenCountRule:
     def test_gemini_model_tokenizer(self, config: CCProxyConfig) -> None:
         """Test Gemini model tokenizer path (line 74)."""
         rule = TokenCountRule(threshold=10)
-        
+
         # Test with Gemini model to trigger line 74
         request = {
             "model": "gemini-pro",
@@ -113,18 +113,18 @@ class TestTokenCountRule:
     def test_tokenizer_exception_handling(self, config: CCProxyConfig) -> None:
         """Test tokenizer exception handling (lines 81-83)."""
         from unittest.mock import patch
-        
+
         rule = TokenCountRule(threshold=10)
-        
+
         # Mock tiktoken import to fail, triggering the except block on lines 81-83
         with patch('builtins.__import__') as mock_import:
             def import_side_effect(name, *args, **kwargs):
                 if name == 'tiktoken':
                     raise ImportError("Mock tiktoken import error")
                 return __import__(name, *args, **kwargs)
-            
+
             mock_import.side_effect = import_side_effect
-            
+
             request = {
                 "model": "gpt-4",
                 "messages": [{"content": "Test message"}]
@@ -135,14 +135,14 @@ class TestTokenCountRule:
 
     def test_token_encoding_exception_handling(self, config: CCProxyConfig) -> None:
         """Test token encoding exception handling (lines 99-105)."""
-        from unittest.mock import patch, MagicMock
-        
+        from unittest.mock import MagicMock, patch
+
         rule = TokenCountRule(threshold=10)
-        
+
         # Create a mock tokenizer that raises exception on encode
         mock_tokenizer = MagicMock()
         mock_tokenizer.encode.side_effect = Exception("Encoding error")
-        
+
         with patch.object(rule, '_get_tokenizer', return_value=mock_tokenizer):
             request = {
                 "model": "gpt-4",
@@ -155,7 +155,7 @@ class TestTokenCountRule:
     def test_multimodal_content_handling(self, config: CCProxyConfig) -> None:
         """Test multi-modal content handling (lines 135-137)."""
         rule = TokenCountRule(threshold=10)
-        
+
         # Test with multi-modal content structure
         request = {
             "model": "gpt-4",

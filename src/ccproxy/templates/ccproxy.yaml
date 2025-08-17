@@ -1,9 +1,11 @@
 ccproxy:
   debug: true
   hooks:
-    - ccproxy.hooks.rule_evaluator  # evaluates rules against request
-    - ccproxy.hooks.model_router    # routes to appropriate model (coupled with rule_evaluator)
-    - ccproxy.hooks.forward_oauth   # forwards oauth token for requests to anthropic (place after any routing logic)
+    - ccproxy.hooks.rule_evaluator # evaluates rules against request
+    - ccproxy.hooks.model_router # routes to appropriate model (coupled with rule_evaluator)
+    - ccproxy.hooks.forward_oauth # forwards oauth token for requests to anthropic (place after any routing logic)
+
+  default_model_passthrough: true # use the original model that Claude Code requested when no routing rule matches
   rules:
     - name: background
       rule: ccproxy.rules.MatchModelRule

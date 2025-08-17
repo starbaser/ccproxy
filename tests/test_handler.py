@@ -384,9 +384,10 @@ class TestHandlerHookMethods:
             user_api_key_dict,
         )
 
-        # Should return the modified data - gpt-4 is not in our config so it routes to default
+        # Should return the modified data - gpt-4 is not in our config so it gets classified as default
+        # With passthrough enabled, default requests keep the original model instead of routing
         assert isinstance(result, dict)
-        assert result["model"] == "claude-3-5-sonnet-20241022"  # Should route to default
+        assert result["model"] == "gpt-4"  # Should keep original model due to passthrough
         # Metadata should be added
         assert "metadata" in result
         assert result["metadata"]["ccproxy_model_name"] == "default"
@@ -779,7 +780,6 @@ class TestCCProxyHandler:
                 model_name="default",
                 original_model="gpt-4",
                 routed_model="claude-3-5-sonnet",
-                request_id="test-123",
                 model_config=None,  # This triggers the fallback path
             )
 
@@ -805,7 +805,6 @@ class TestCCProxyHandler:
                 model_name="default",
                 original_model="claude-3-5-sonnet",
                 routed_model="claude-3-5-sonnet",  # Same as original = passthrough
-                request_id="test-456",
                 model_config=model_config,
             )
 

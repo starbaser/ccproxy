@@ -118,6 +118,7 @@ class CCProxyConfig(BaseSettings):
     # Core settings
     debug: bool = False
     metrics_enabled: bool = True
+    default_model_passthrough: bool = True
 
     # Hook configurations (function import paths)
     hooks: list[str] = Field(default_factory=list)
@@ -198,6 +199,8 @@ class CCProxyConfig(BaseSettings):
                     instance.debug = ccproxy_data["debug"]
                 if "metrics_enabled" in ccproxy_data:
                     instance.metrics_enabled = ccproxy_data["metrics_enabled"]
+                if "default_model_passthrough" in ccproxy_data:
+                    instance.default_model_passthrough = ccproxy_data["default_model_passthrough"]
 
                 # Load hooks
                 hooks_data = ccproxy_data.get("hooks", [])

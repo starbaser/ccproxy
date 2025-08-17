@@ -3,17 +3,16 @@
 This test suite validates that the `claude` command works correctly when routed through ccproxy.
 """
 
-import tempfile
-from pathlib import Path
-import subprocess
 import os
+import socket
+import subprocess
+import tempfile
+from collections.abc import Generator
+from contextlib import closing
+from pathlib import Path
+
 import pytest
 import yaml
-import time
-from typing import Generator
-import socket
-from contextlib import closing
-from unittest.mock import patch, MagicMock
 
 
 def find_free_port() -> int:
@@ -30,13 +29,13 @@ def find_free_port() -> int:
 )
 class TestClaudeCodeE2E:
     """End-to-end test that validates claude command works through ccproxy."""
-    
+
     @pytest.fixture
     def test_config_dir(self) -> Generator[Path, None, None]:
         """Create a test configuration directory with minimal ccproxy config."""
         with tempfile.TemporaryDirectory() as temp_dir:
             config_dir = Path(temp_dir)
-            
+
             # Create minimal litellm proxy config with Anthropic models
             litellm_config = {
                 "model_list": [
@@ -49,7 +48,7 @@ class TestClaudeCodeE2E:
                     }
                 ]
             }
-            
+
             # Create minimal ccproxy config
             ccproxy_config = {
                 "litellm": {
@@ -67,18 +66,18 @@ class TestClaudeCodeE2E:
                     "rules": []
                 }
             }
-            
+
             # Write config files
             (config_dir / "config.yaml").write_text(yaml.dump(litellm_config))
             (config_dir / "ccproxy.yaml").write_text(yaml.dump(ccproxy_config))
-            
+
             yield config_dir
-    
+
     def test_claude_simple_query_with_mock(self, test_config_dir):
         """Test that claude command environment is set up correctly by ccproxy run."""
         # Create a mock claude script that just verifies environment is set
         mock_claude = test_config_dir / "claude"
-        mock_claude.write_text("""#!/bin/bash
+        mock_claude.write_text(r"""#!/bin/bash
 # Check if ANTHROPIC_BASE_URL is set to something that looks like a proxy
 if [[ "$ANTHROPIC_BASE_URL" =~ ^http://127\.0\.0\.1:[0-9]+$ ]]; then
     echo "SUCCESS: Environment configured correctly"
@@ -91,12 +90,12 @@ else
 fi
 """)
         mock_claude.chmod(0o755)
-        
+
         # Add mock claude to PATH
         env = os.environ.copy()
         env["PATH"] = f"{test_config_dir}:{env['PATH']}"
         env["CCPROXY_CONFIG_DIR"] = str(test_config_dir)
-        
+
         # Run ccproxy run command with proper argument separation
         result = subprocess.run(
             ["uv", "run", "ccproxy", "run", "--", "claude", "-p", "Hello"],
@@ -106,7 +105,7 @@ fi
             text=True,
             timeout=10
         )
-        
+
         assert result.returncode == 0, f"Command failed. stdout: {result.stdout}, stderr: {result.stderr}"
         assert "SUCCESS" in result.stdout
 

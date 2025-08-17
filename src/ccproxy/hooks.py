@@ -1,9 +1,9 @@
 import logging
-import uuid
 from typing import Any
 from urllib.parse import urlparse
 
 from ccproxy.classifier import RequestClassifier
+from ccproxy.config import get_config
 from ccproxy.router import ModelRouter
 
 # Set up structured logging
@@ -43,44 +43,65 @@ def model_router(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwar
         logger.warning("No ccproxy_model_name found, using default")
         model_name = "default"
 
-    # Get model for model_name from router (includes fallback to 'default' model_name)
-    model_config = router.get_model_for_label(model_name)
-
-    if model_config is not None:
-        routed_model = model_config.get("litellm_params", {}).get("model")
-        if routed_model:
-            data["model"] = routed_model
+    # Check if we should pass through the original model for "default" routing
+    config = get_config()
+    if model_name == "default" and config.default_model_passthrough:
+        # Use the original model that Claude Code requested
+        original_model = data["metadata"].get("ccproxy_alias_model")
+        if original_model:
+            # Keep the original model - no routing needed
+            data["metadata"]["ccproxy_litellm_model"] = original_model
+            data["metadata"]["ccproxy_model_config"] = None  # No specific config since we're not routing
+            data["metadata"]["ccproxy_is_passthrough"] = True  # Mark as passthrough decision
+            logger.debug(f"Using passthrough mode for default routing: keeping original model {original_model}")
+            # Skip the routing logic and go directly to request ID generation
         else:
-            logger.warning(f"No model found in config for model_name: {model_name}")
-        data["metadata"]["ccproxy_litellm_model"] = routed_model
-        data["metadata"]["ccproxy_model_config"] = model_config
+            logger.warning("No original model found for passthrough mode, falling back to routing")
+            # Continue with routing logic below
+            model_config = router.get_model_for_label(model_name)
     else:
-        # No model config found (not even default)
-        # This can happen during startup when LiteLLM proxy is still initializing
-        logger.warning(
-            f"No model configured for model_name '{model_name}' and no 'default' model available as fallback"
-        )
-
-        # Try to reload models in case they weren't loaded properly
-        router.reload_models()
+        # Standard routing logic - get model for model_name from router
         model_config = router.get_model_for_label(model_name)
 
+    # Only process model_config if we didn't already handle passthrough above
+    passthrough_handled = (
+        model_name == "default" and config.default_model_passthrough and data["metadata"].get("ccproxy_litellm_model")
+    )
+    if not passthrough_handled:
         if model_config is not None:
             routed_model = model_config.get("litellm_params", {}).get("model")
             if routed_model:
                 data["model"] = routed_model
+            else:
+                logger.warning(f"No model found in config for model_name: {model_name}")
             data["metadata"]["ccproxy_litellm_model"] = routed_model
             data["metadata"]["ccproxy_model_config"] = model_config
-            logger.info(f"Successfully routed after model reload: {model_name} -> {routed_model}")
+            data["metadata"]["ccproxy_is_passthrough"] = False  # Mark as routed decision
         else:
-            # Final fallback - still no models available, raise error
-            raise ValueError(
+            # No model config found (not even default)
+            # This can happen during startup when LiteLLM proxy is still initializing
+            logger.warning(
                 f"No model configured for model_name '{model_name}' and no 'default' model available as fallback"
             )
 
-    # Generate request ID if not present
-    if "request_id" not in data["metadata"]:
-        data["metadata"]["request_id"] = str(uuid.uuid4())
+            # Try to reload models in case they weren't loaded properly
+            router.reload_models()
+            model_config = router.get_model_for_label(model_name)
+
+            if model_config is not None:
+                routed_model = model_config.get("litellm_params", {}).get("model")
+                if routed_model:
+                    data["model"] = routed_model
+                data["metadata"]["ccproxy_litellm_model"] = routed_model
+                data["metadata"]["ccproxy_model_config"] = model_config
+                data["metadata"]["ccproxy_is_passthrough"] = False  # Mark as routed decision
+                logger.info(f"Successfully routed after model reload: {model_name} -> {routed_model}")
+            else:
+                # Final fallback - still no models available, raise error
+                raise ValueError(
+                    f"No model configured for model_name '{model_name}' and no 'default' model available as fallback"
+                )
+
     return data
 
 
@@ -98,21 +119,22 @@ def forward_oauth(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwa
     # (not Vertex, Bedrock, or other providers hosting Anthropic models)
     metadata = data.get("metadata", {})
     is_anthropic_provider = False
-    routed_model = metadata.get("ccproxy_litellm_model", "")
+    # Need to determine the final end destination of the request to
     model_config = metadata.get("ccproxy_model_config", {})
+    routed_model = metadata.get("ccproxy_litellm_model", "")
+    # Handle case where model_config is None (passthrough mode)
+    if model_config is None:
+        model_config = {}
     litellm_params = model_config.get("litellm_params", {})
 
     api_base = litellm_params.get("api_base", "")
     custom_provider = litellm_params.get("custom_llm_provider", "")
 
     # Check if this is going to Anthropic's API directly
-
-    # Parse hostname properly to prevent subdomain attacks
     if api_base:
         try:
             parsed_url = urlparse(api_base)
             hostname = parsed_url.hostname or ""
-            # Check for exact domain match
             is_anthropic_provider = hostname in {"api.anthropic.com", "anthropic.com"}
         except Exception:
             is_anthropic_provider = False
@@ -123,11 +145,12 @@ def forward_oauth(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwa
         and not custom_provider
         and (routed_model.startswith("anthropic/") or routed_model.startswith("claude"))
     ):
-        # Default provider for anthropic/ prefix or claude models is Anthropic
+        # provider for anthropic/ prefix or claude- prefix is always Anthropic
         is_anthropic_provider = True
     else:
         is_anthropic_provider = False
 
+    # Forward the header iff claude code is the UA, the oauth token is present and the request is going to Anthropic
     if user_agent and "claude-cli" in user_agent and is_anthropic_provider:
         # Get the raw headers containing the OAuth token
         secret_fields = data.get("secret_fields") or {}
@@ -152,7 +175,6 @@ def forward_oauth(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwa
                     "event": "oauth_forwarding",
                     "user_agent": user_agent,
                     "model": routed_model,
-                    "request_id": data["metadata"].get("request_id", None),
                     "auth_present": bool(auth_header),  # Just indicate if auth is present
                 },
             )

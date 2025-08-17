@@ -63,7 +63,7 @@ class ModelRouter:
             # Mark as loaded regardless of success - models should be available by now
             # If no models are found, it's likely a configuration issue
             self._models_loaded = True
-            
+
             if self._available_models:
                 logger.info(f"Successfully loaded {len(self._available_models)} models: {sorted(self._available_models)}")
             else:

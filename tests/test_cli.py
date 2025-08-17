@@ -284,7 +284,7 @@ class TestInstallConfig:
     def test_install_template_dir_error(self, tmp_path: Path) -> None:
         """Test install when get_templates_dir raises RuntimeError."""
         config_dir = tmp_path / "config"
-        
+
         with patch("ccproxy.cli.get_templates_dir", side_effect=RuntimeError("Templates not found")):
             with pytest.raises(SystemExit) as exc_info:
                 install_config(config_dir)
@@ -295,16 +295,16 @@ class TestInstallConfig:
         templates_dir = tmp_path / "templates"
         templates_dir.mkdir()
         (templates_dir / "ccproxy.yaml").write_text("template content")
-        
+
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         (config_dir / "ccproxy.yaml").write_text("existing content")
-        
+
         with patch("ccproxy.cli.get_templates_dir", return_value=templates_dir):
             with pytest.raises(SystemExit) as exc_info:
                 install_config(config_dir)
             assert exc_info.value.code == 1
-        
+
         # Verify file wasn't overwritten
         assert (config_dir / "ccproxy.yaml").read_text() == "existing content"
 
@@ -407,7 +407,7 @@ class TestStopLiteLLM:
     def test_stop_no_pid_file(self, tmp_path: Path, capsys) -> None:
         """Test stop when PID file doesn't exist."""
         result = stop_litellm(tmp_path)
-        
+
         assert result is False
         captured = capsys.readouterr()
         assert "No LiteLLM server is running (PID file not found)" in captured.err
@@ -671,7 +671,7 @@ class TestMainFunction:
         """Test main with stop command."""
         cmd = Stop()
         mock_stop.return_value = True  # Simulate successful stop
-        
+
         with pytest.raises(SystemExit) as exc_info:
             main(cmd, config_dir=tmp_path)
 
