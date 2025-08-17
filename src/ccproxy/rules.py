@@ -35,6 +35,53 @@ class ClassificationRule(ABC):
         """
 
 
+class DefaultRule(ClassificationRule):
+    def __init__(self, passthrough: bool):
+        self.passthrough = passthrough
+
+
+class ThinkingRule(ClassificationRule):
+    """Rule for classifying requests with thinking field."""
+
+    def evaluate(self, request: dict[str, Any], config: "CCProxyConfig") -> bool:
+        """Evaluate if request has thinking field.
+
+        Args:
+            request: The request to evaluate
+            config: The current configuration
+
+        Returns:
+            True if request has thinking field, False otherwise
+        """
+        # Check top-level thinking field
+        return "thinking" in request
+
+
+class MatchModelRule(ClassificationRule):
+    """Rule for classifying requests based on model name."""
+
+    def __init__(self, model_name: str) -> None:
+        """Initialize the rule with a model name to match.
+
+        Args:
+            model_name: The model name substring to match
+        """
+        self.model_name = model_name
+
+    def evaluate(self, request: dict[str, Any], config: "CCProxyConfig") -> bool:
+        """Evaluate if request matches the configured model name.
+
+        Args:
+            request: The request to evaluate
+            config: The current configuration
+
+        Returns:
+            True if model matches, False otherwise
+        """
+        model = request.get("model", "")
+        return isinstance(model, str) and self.model_name in model
+
+
 class TokenCountRule(ClassificationRule):
     """Rule for classifying requests based on token count."""
 
@@ -152,48 +199,6 @@ class TokenCountRule(ClassificationRule):
 
         # Check against threshold
         return token_count > self.threshold
-
-
-class MatchModelRule(ClassificationRule):
-    """Rule for classifying requests based on model name."""
-
-    def __init__(self, model_name: str) -> None:
-        """Initialize the rule with a model name to match.
-
-        Args:
-            model_name: The model name substring to match
-        """
-        self.model_name = model_name
-
-    def evaluate(self, request: dict[str, Any], config: "CCProxyConfig") -> bool:
-        """Evaluate if request matches the configured model name.
-
-        Args:
-            request: The request to evaluate
-            config: The current configuration
-
-        Returns:
-            True if model matches, False otherwise
-        """
-        model = request.get("model", "")
-        return isinstance(model, str) and self.model_name in model
-
-
-class ThinkingRule(ClassificationRule):
-    """Rule for classifying requests with thinking field."""
-
-    def evaluate(self, request: dict[str, Any], config: "CCProxyConfig") -> bool:
-        """Evaluate if request has thinking field.
-
-        Args:
-            request: The request to evaluate
-            config: The current configuration
-
-        Returns:
-            True if request has thinking field, False otherwise
-        """
-        # Check top-level thinking field
-        return "thinking" in request
 
 
 class MatchToolRule(ClassificationRule):

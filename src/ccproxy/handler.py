@@ -4,7 +4,7 @@ import logging
 from typing import Any, TypedDict
 
 from litellm.integrations.custom_logger import CustomLogger
-from rich import print
+from rich import print, inspect
 
 from ccproxy.classifier import RequestClassifier
 from ccproxy.config import get_config
@@ -25,23 +25,19 @@ class RequestData(TypedDict, total=False):
 
 
 class CCProxyHandler(CustomLogger):
-    """LiteLLM CustomLogger for context-aware request routing.
-
-    This handler integrates with LiteLLM's callback system to provide
-    context-aware routing for Claude Code requests.
-    """
+    """Main module of ccproxy, an instance of CCProxyHandler is instantiated in the LiteLLM callback python script"""
 
     def __init__(self) -> None:
-        """Initialize CCProxyHandler."""
         super().__init__()
         self.classifier = RequestClassifier()
         self.router = get_router()
 
-        # Load hooks from configuration
         config = get_config()
-        self.hooks = config.load_hooks()
+        if config.debug:
+            logger.setLevel(logging.DEBUG)
 
-        # Log loaded hooks for debugging
+        # Load hooks from configuration
+        self.hooks = config.load_hooks()
         if config.debug and self.hooks:
             hook_names = [f"{h.__module__}.{h.__name__}" for h in self.hooks]
             logger.debug(f"Loaded {len(self.hooks)} hooks: {', '.join(hook_names)}")
@@ -52,20 +48,6 @@ class CCProxyHandler(CustomLogger):
         user_api_key_dict: dict[str, Any],
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Pre-call hook for request routing.
-
-        This hook is called before the LLM request is made, allowing us to
-        modify the request data including the target model.
-
-        Args:
-            data: Request data dictionary
-            user_api_key_dict: User API key information
-            **kwargs: Additional arguments from LiteLLM
-
-        Returns:
-            Modified request data
-        """
-
         # Debug: Print thinking parameters if present
         thinking_params = data.get("thinking")
         if thinking_params is not None:
