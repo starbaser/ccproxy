@@ -51,7 +51,7 @@ Congrats, you have installed `ccproxy`! The installed configuration files are in
 
 #### `ccproxy.yaml`
 
-This file controls how ccproxy hooks into your Claude Code requests and how to route them to different LLM models based on rules. Here you specify rules, their evaluation order, and criteria like token count, model type, or tool usage.
+This file controls how `ccproxy` hooks into your Claude Code requests and how to route them to different LLM models based on rules. Here you specify rules, their evaluation order, and criteria like token count, model type, or tool usage.
 
 ```yaml
 ccproxy:
@@ -218,7 +218,7 @@ ccproxy run <command> [args...]
 
 ```
 
-After installation and setup, you can run any command through the ccproxy:
+After installation and setup, you can run any command through the `ccproxy`:
 
 ```bash
 # Run Claude Code through the proxy

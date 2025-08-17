@@ -1,10 +1,10 @@
 # Configuration Guide
 
-This guide covers ccproxy's configuration system, including all configuration files and their purposes.
+This guide covers `ccproxy`'s configuration system, including all configuration files and their purposes.
 
 ## Overview
 
-ccproxy uses three main configuration files:
+`ccproxy` uses three main configuration files:
 
 1. **`config.yaml`** - LiteLLM proxy configuration (models, API keys, etc.)
 2. **`ccproxy.yaml`** - ccproxy-specific settings (rules, hooks, debug options)
@@ -113,7 +113,7 @@ Each `model_name` can be either:
 - A configured LiteLLM model (e.g., `claude-sonnet-4-20250514`)
 - The name of a rule configured in `ccproxy.yaml` (e.g., `default`, `background`, `think`)
 
-Model names in `config.yaml` must correspond to rule names in `ccproxy.yaml`. When a rule matches, ccproxy routes to the model with the same `model_name`.
+Model names in `config.yaml` must correspond to rule names in `ccproxy.yaml`. When a rule matches, `ccproxy` routes to the model with the same `model_name`.
 
 - **Minimum requirements for Claude Code**: For Claude Code to function properly, your `config.yaml` must include at minimum:
   - **Rule-based models**: `default`, `background`, and `think`
@@ -123,7 +123,7 @@ See the [LiteLLM documentation](https://docs.litellm.ai/docs/proxy/configs) for 
 
 ### `ccproxy.yaml` (ccproxy Configuration)
 
-This file configures ccproxy-specific behavior including routing rules and hooks.
+This file configures `ccproxy`-specific behavior including routing rules and hooks.
 
 ```yaml
 # LiteLLM proxy settings
@@ -202,7 +202,7 @@ params:
 
 ### ccproxy.py (Handler Integration)
 
-This file instantiates the ccproxy handler for LiteLLM integration.
+This file instantiates the `ccproxy` handler for LiteLLM integration.
 
 ```python
 from ccproxy.handler import CCProxyHandler
@@ -216,7 +216,7 @@ This file is referenced in `config.yaml` under `litellm_settings.callbacks`.
 ## Request Routing Flow
 
 1. **Request Received**: LiteLLM proxy receives request
-2. **Hook Processing**: ccproxy hooks process the request in order:
+2. **Hook Processing**: `ccproxy` hooks process the request in order:
    - `rule_evaluator`: Evaluates rules to determine routing
    - `model_router`: Maps rule name to model configuration
    - `forward_oauth`: Handles OAuth token forwarding
@@ -254,7 +254,7 @@ ccproxy:
 
 ## Custom Hooks
 
-ccproxy provides a hook system that allows you to extend and customize its behavior beyond the built-in rule routing system. Hooks are Python functions that can intercept and modify requests, implement custom logging, filtering, or integrate with external systems. The rule routing system is just itself a custom hook.
+`ccproxy` provides a hook system that allows you to extend and customize its behavior beyond the built-in rule routing system. Hooks are Python functions that can intercept and modify requests, implement custom logging, filtering, or integrate with external systems. The rule routing system is just itself a custom hook.
 
 Only the `forward_oauth` is required for Claude Code to function properly.
 
