@@ -28,15 +28,15 @@ mkdir -p ~/.ccproxy
 
 # Download the callback file
 curl -o ~/.ccproxy/ccproxy.py \
-  https://raw.githubusercontent.com/starbased-co/claude-code-proxy/main/src/ccproxy/templates/ccproxy.py
+  https://raw.githubusercontent.com/starbased-co/ccproxy/main/src/ccproxy/templates/ccproxy.py
 
 # Download the LiteLLM config
 curl -o ~/.ccproxy/config.yaml \
-  https://raw.githubusercontent.com/starbased-co/claude-code-proxy/main/src/ccproxy/templates/config.yaml
+  https://raw.githubusercontent.com/starbased-co/ccproxy/main/src/ccproxy/templates/config.yaml
 
-# Download the ccproxy routing rules config
+# Download ccproxy's config
 curl -o ~/.ccproxy/ccproxy.yaml \
-  https://raw.githubusercontent.com/starbased-co/claude-code-proxy/main/src/ccproxy/templates/ccproxy.yaml
+  https://raw.githubusercontent.com/starbased-co/ccproxy/main/src/ccproxy/templates/ccproxy.yaml
 ```
 
 This creates the configuration files from the built-in templates.

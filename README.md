@@ -8,16 +8,16 @@ It works by intercepting Claude Code's requests through a [LiteLLM Proxy Server]
 
 - **Cross-Provider Prompt Caching Support** _is coming soon_.
 
-> ⚠️ **Note**: This is a newly released project ready for public use and feedback. While core functionality is complete, real-world testing and community input are welcomed. Please [open an issue](https://github.com/starbased-co/claude-code-proxy/issues) to share your experience, report bugs, or suggest improvements.
+> ⚠️ **Note**: This is a newly released project ready for public use and feedback. While core functionality is complete, real-world testing and community input are welcomed. Please [open an issue](https://github.com/starbased-co/ccproxy/issues) to share your experience, report bugs, or suggest improvements.
 
 ## Installation
 
 ```bash
 # Recommended: install as a uv tool
-uv tool install git+https://github.com/starbased-co/claude-code-proxy.git
+uv tool install git+https://github.com/starbased-co/ccproxy.git
 
 # Alternative: Install with pip
-pip install git+https://github.com/starbased-co/claude-code-proxy.git
+pip install git+https://github.com/starbased-co/ccproxy.git
 ```
 
 ## Usage
@@ -55,7 +55,6 @@ This file controls how ccproxy hooks into your Claude Code requests and how to r
 
 ```yaml
 ccproxy:
-
   debug: true
   hooks:
     - ccproxy.hooks.rule_evaluator  # evaluates rules against request 󰁎─┬─ (required for rules &
@@ -83,7 +82,7 @@ When `ccproxy` receives a request from Claude Code, the `rule_evaluator` hook la
 1. `MatchModelRule`: A request with `model: claude-3-5-haiku-20241022` is labeled: `background`
 2. `ThinkingRule`: A request with `thinking: {enabled: true}` is labeled: `think`
 
-If a request doesn't match any rule, it receives the default label.
+If a request doesn't match any rule, it receives the `default` label.
 
 #### `config.yaml`
 
