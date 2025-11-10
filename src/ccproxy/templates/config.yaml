@@ -3,12 +3,12 @@ model_list:
   # Default model for regular use
   - model_name: default
     litellm_params:
-      model: claude-sonnet-4-20250514
+      model: claude-sonnet-4-5-20250929
 
   # Background model, see: https://docs.anthropic.com/en/docs/claude-code/costs#background-token-usage
   - model_name: background
     litellm_params:
-      model: claude-3-5-haiku-20241022
+      model: claude-haiku-4-5-20251001
 
   # Thinking model for complex reasoning (request.body.think = true)
   - model_name: think
@@ -16,9 +16,9 @@ model_list:
       model: claude-opus-4-1-20250805
 
   # Anthropic provided claude models, no `api_key` needed
-  - model_name: claude-sonnet-4-20250514
+  - model_name: claude-sonnet-4-5-20250929
     litellm_params:
-      model: anthropic/claude-sonnet-4-20250514
+      model: anthropic/claude-sonnet-4-5-20250929
       api_base: https://api.anthropic.com
 
   - model_name: claude-opus-4-1-20250805
@@ -26,9 +26,9 @@ model_list:
       model: anthropic/claude-opus-4-1-20250805
       api_base: https://api.anthropic.com
 
-  - model_name: claude-3-5-haiku-20241022
+  - model_name: claude-haiku-4-5-20251001
     litellm_params:
-      model: anthropic/claude-3-5-haiku-20241022
+      model: anthropic/claude-haiku-4-5-20251001
       api_base: https://api.anthropic.com
 
 litellm_settings:
