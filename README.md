@@ -6,9 +6,7 @@
 
 It works by intercepting Claude Code's requests through a [LiteLLM Proxy Server](https://docs.litellm.ai/docs/simple_proxy), allowing you to route different types of requests to the most suitable model - keep your unlimited Claude for standard coding, send large contexts to Gemini's 2M token window, route web searches to Perplexity, all while Claude Code thinks it's talking to the standard API.
 
-- **Complete Cross-Provider Caching Support** is coming soon. **Note**: Claude Code doesn't explicitly cache tool definitions; Anthropic's backend automatically handles this when Claude Code-specific headers are detected in requests. Based on my research, all proxy/router projects on GitHub suffer the same inefficiency. Carefully monitor tool definition token usage while using non-Anthropic providers.
-
-> ⚠️ **Note**: This is a newly released project ready for public use and feedback. While core functionality is complete, real-world testing and community input are welcomed. Please [open an issue](https://github.com/starbased-co/ccproxy/issues) to share your experience, report bugs, or suggest improvements.
+> ⚠️ **Note**: While core functionality is complete, real-world testing and community input are welcomed. Please [open an issue](https://github.com/starbased-co/ccproxy/issues) to share your experience, report bugs, or suggest improvements, or even better, submit a PR!
 
 ## Installation
 
