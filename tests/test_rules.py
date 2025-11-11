@@ -177,8 +177,8 @@ class TestModelMatchRule:
 
     @pytest.fixture
     def rule(self) -> MatchModelRule:
-        """Create a model name rule for claude-3-5-haiku."""
-        return MatchModelRule(model_name="claude-3-5-haiku")
+        """Create a model name rule for claude-haiku-4-5-20251001."""
+        return MatchModelRule(model_name="claude-haiku-4-5-20251001")
 
     @pytest.fixture
     def config(self) -> CCProxyConfig:
@@ -186,18 +186,18 @@ class TestModelMatchRule:
         return CCProxyConfig()
 
     def test_claude_haiku_model(self, rule: MatchModelRule, config: CCProxyConfig) -> None:
-        """Test request with claude-3-5-haiku model."""
-        request = {"model": "claude-3-5-haiku"}
+        """Test request with claude-haiku-4-5-20251001 model."""
+        request = {"model": "claude-haiku-4-5-20251001"}
         assert rule.evaluate(request, config) is True
 
     def test_claude_haiku_with_suffix(self, rule: MatchModelRule, config: CCProxyConfig) -> None:
-        """Test request with claude-3-5-haiku variant."""
-        request = {"model": "claude-3-5-haiku-20241022"}
+        """Test request with claude-haiku-4-5-20251001 variant."""
+        request = {"model": "claude-haiku-4-5-20251001-20241022"}
         assert rule.evaluate(request, config) is True
 
     def test_other_models(self, rule: MatchModelRule, config: CCProxyConfig) -> None:
         """Test request with other models."""
-        models = ["gpt-4", "claude-3-opus", "claude-3-sonnet", "gpt-3.5-turbo"]
+        models = ["gpt-4", "claude-opus-4-1-20250805", "claude-sonnet-4-5-20250929", "gpt-3.5-turbo"]
         for model in models:
             request = {"model": model}
             assert rule.evaluate(request, config) is False

@@ -43,11 +43,11 @@ class TestModelRouter:
         test_model_list = [
             {
                 "model_name": "default",
-                "litellm_params": {"model": "anthropic/claude-sonnet-4-20250514", "api_base": "https://api.anthropic.com"},
+                "litellm_params": {"model": "anthropic/claude-sonnet-4-5-20250929", "api_base": "https://api.anthropic.com"},
             },
             {
                 "model_name": "background",
-                "litellm_params": {"model": "anthropic/claude-3-5-haiku-20241022", "api_base": "https://api.anthropic.com"},
+                "litellm_params": {"model": "anthropic/claude-haiku-4-5-20251001-20241022", "api_base": "https://api.anthropic.com"},
                 "model_info": {"priority": "low"},
             },
         ]
@@ -58,7 +58,7 @@ class TestModelRouter:
         model = router.get_model_for_label("default")
         assert model is not None
         assert model["model_name"] == "default"
-        assert model["litellm_params"]["model"] == "anthropic/claude-sonnet-4-20250514"
+        assert model["litellm_params"]["model"] == "anthropic/claude-sonnet-4-5-20250929"
 
         # Check model with metadata
         model = router.get_model_for_label("background")
@@ -79,7 +79,7 @@ class TestModelRouter:
     def test_get_model_for_unknown_label(self) -> None:
         """Test get_model_for_label returns default fallback for unknown labels."""
         test_model_list = [
-            {"model_name": "default", "litellm_params": {"model": "claude-sonnet-4-20250514"}},
+            {"model_name": "default", "litellm_params": {"model": "claude-sonnet-4-5-20250929"}},
         ]
 
         router = self._create_router_with_models(test_model_list)
@@ -115,17 +115,17 @@ class TestModelRouter:
     def test_model_group_alias(self) -> None:
         """Test model_group_alias groups models by underlying model."""
         test_model_list = [
-            {"model_name": "default", "litellm_params": {"model": "anthropic/claude-sonnet-4-20250514"}},
-            {"model_name": "think", "litellm_params": {"model": "anthropic/claude-sonnet-4-20250514"}},
-            {"model_name": "background", "litellm_params": {"model": "anthropic/claude-3-5-haiku-20241022"}},
+            {"model_name": "default", "litellm_params": {"model": "anthropic/claude-sonnet-4-5-20250929"}},
+            {"model_name": "think", "litellm_params": {"model": "anthropic/claude-sonnet-4-5-20250929"}},
+            {"model_name": "background", "litellm_params": {"model": "anthropic/claude-haiku-4-5-20251001-20241022"}},
         ]
 
         router = self._create_router_with_models(test_model_list)
 
         aliases = router.model_group_alias
-        assert "anthropic/claude-sonnet-4-20250514" in aliases
-        assert set(aliases["anthropic/claude-sonnet-4-20250514"]) == {"default", "think"}
-        assert aliases["anthropic/claude-3-5-haiku-20241022"] == ["background"]
+        assert "anthropic/claude-sonnet-4-5-20250929" in aliases
+        assert set(aliases["anthropic/claude-sonnet-4-5-20250929"]) == {"default", "think"}
+        assert aliases["anthropic/claude-haiku-4-5-20251001-20241022"] == ["background"]
 
     def test_get_available_models(self) -> None:
         """Test get_available_models returns sorted model names."""
@@ -296,7 +296,7 @@ class TestModelRouter:
     def test_fallback_to_default_model(self) -> None:
         """Test fallback to 'default' model when label not found."""
         test_model_list = [
-            {"model_name": "default", "litellm_params": {"model": "anthropic/claude-sonnet-4-20250514"}},
+            {"model_name": "default", "litellm_params": {"model": "anthropic/claude-sonnet-4-5-20250929"}},
             {"model_name": "other", "litellm_params": {"model": "other-model"}},
         ]
 

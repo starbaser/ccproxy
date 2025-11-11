@@ -59,7 +59,7 @@ class TestEdgeCases:
 
     def test_empty_model_string(self) -> None:
         """Test MatchModelRule with empty string model."""
-        rule = MatchModelRule(model_name="claude-3-5-haiku")
+        rule = MatchModelRule(model_name="claude-haiku-4-5-20251001")
         config = CCProxyConfig()
 
         request = {"model": ""}
@@ -214,14 +214,14 @@ class TestEdgeCases:
 
     def test_model_name_partial_matches(self) -> None:
         """Test MatchModelRule substring matching behavior."""
-        rule = MatchModelRule(model_name="claude-3-5-haiku")
+        rule = MatchModelRule(model_name="claude-haiku-4-5-20251001")
         config = CCProxyConfig()
 
-        # These should match (contain "claude-3-5-haiku")
+        # These should match (contain "claude-haiku-4-5-20251001")
         matches = [
-            "claude-3-5-haiku",  # Exact substring
-            "claude-3-5-haiku-20241022",  # With version
-            "claude-3-5-haiku-vision",  # With suffix
+            "claude-haiku-4-5-20251001",  # Exact substring
+            "claude-haiku-4-5-20251001-20241022",  # With version
+            "claude-haiku-4-5-20251001-vision",  # With suffix
         ]
 
         for model in matches:
@@ -231,10 +231,10 @@ class TestEdgeCases:
 
         # These should NOT match
         non_matches = [
-            "claude-3-5-sonnet",  # Different model
+            "claude-sonnet-4-5-20250929",  # Different model
             "claude-3-5",  # Incomplete
             "haiku",  # Just the suffix
-            "claude-3-haiku",  # Missing "-5"
+            "claude-haiku-3-20241022",  # Different version
             "claude-35-haiku",  # Missing hyphens
         ]
 

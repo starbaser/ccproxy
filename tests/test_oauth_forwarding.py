@@ -19,14 +19,14 @@ def mock_handler():
         {
             "model_name": "default",
             "litellm_params": {
-                "model": "claude-sonnet-4-20250514",
+                "model": "claude-sonnet-4-5-20250929",
                 "api_base": "https://api.anthropic.com",
             },
         },
         {
             "model_name": "background",
             "litellm_params": {
-                "model": "claude-3-5-haiku-20241022",
+                "model": "claude-haiku-4-5-20251001-20241022",
                 "api_base": "https://api.anthropic.com",
             },
         },
@@ -68,7 +68,7 @@ async def test_oauth_forwarding_for_claude_cli(mock_handler):
 
     # Test data for Anthropic model with required structure
     data = {
-        "model": "anthropic/claude-3-5-haiku-20241022",
+        "model": "anthropic/claude-haiku-4-5-20251001-20241022",
         "messages": [{"role": "user", "content": "test"}],
         "metadata": {},
         "provider_specific_header": {"extra_headers": {}},
@@ -95,7 +95,7 @@ async def test_no_oauth_forwarding_for_non_claude_cli(mock_handler):
 
     # Test data with different user agent
     data = {
-        "model": "anthropic/claude-3-5-haiku-20241022",
+        "model": "anthropic/claude-haiku-4-5-20251001-20241022",
         "messages": [{"role": "user", "content": "test"}],
         "metadata": {},
         "provider_specific_header": {"extra_headers": {}},
@@ -122,7 +122,7 @@ async def test_no_oauth_forwarding_for_non_anthropic_models(mock_handler):
     mock_proxy_server.llm_router.model_list = [
         {
             "model_name": "default",
-            "litellm_params": {"model": "claude-sonnet-4-20250514"},
+            "litellm_params": {"model": "claude-sonnet-4-5-20250929"},
         },
         {
             "model_name": "token_count",
@@ -162,7 +162,7 @@ async def test_no_oauth_forwarding_for_non_anthropic_models(mock_handler):
         base_text = "The quick brown fox jumps over the lazy dog. " * 5  # ~51 tokens
         long_message = base_text * 3  # ~153 tokens (above 100 threshold)
         data = {
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-5-20250929",
             "messages": [{"role": "user", "content": long_message}],  # >100 tokens
             "metadata": {},
             "provider_specific_header": {"extra_headers": {}},
@@ -191,7 +191,7 @@ async def test_oauth_forwarding_handles_missing_headers(mock_handler):
 
     # Test data with missing secret_fields
     data = {
-        "model": "anthropic/claude-3-5-haiku-20241022",
+        "model": "anthropic/claude-haiku-4-5-20251001-20241022",
         "messages": [{"role": "user", "content": "test"}],
         "metadata": {},
         "provider_specific_header": {"extra_headers": {}},
@@ -216,7 +216,7 @@ async def test_oauth_forwarding_preserves_existing_extra_headers(mock_handler):
 
     # Test data with existing extra_headers
     data = {
-        "model": "anthropic/claude-3-5-haiku-20241022",
+        "model": "anthropic/claude-haiku-4-5-20251001-20241022",
         "messages": [{"role": "user", "content": "test"}],
         "metadata": {},
         "provider_specific_header": {"extra_headers": {"existing-header": "existing-value"}},
@@ -244,7 +244,7 @@ async def test_oauth_forwarding_with_claude_prefix_model(mock_handler):
 
     # Test data for model starting with 'claude'
     data = {
-        "model": "claude-sonnet-4-20250514",
+        "model": "claude-sonnet-4-5-20250929",
         "messages": [{"role": "user", "content": "test"}],
         "metadata": {},
         "provider_specific_header": {"extra_headers": {}},
@@ -289,7 +289,7 @@ async def test_oauth_forwarding_with_routed_model(mock_handler):
     assert result["provider_specific_header"]["extra_headers"]["authorization"] == "Bearer sk-ant-oat01-test-token-123"
 
     # Verify the model was routed correctly
-    assert result["model"] == "claude-sonnet-4-20250514"
+    assert result["model"] == "claude-sonnet-4-5-20250929"
 
 
 @pytest.mark.asyncio
@@ -363,7 +363,7 @@ async def test_no_oauth_forwarding_for_anthropic_model_on_vertex():
         {
             "model_name": "default",
             "litellm_params": {
-                "model": "vertex/claude-3-5-sonnet",
+                "model": "vertex/claude-sonnet-4-5-20250929",
                 "api_base": "https://us-central1-aiplatform.googleapis.com",
                 "custom_llm_provider": "vertex",
             },
@@ -412,7 +412,7 @@ async def test_no_oauth_forwarding_for_anthropic_model_on_vertex():
         assert "authorization" not in result["provider_specific_header"]["extra_headers"]
 
         # Verify the model was routed correctly
-        assert result["model"] == "vertex/claude-3-5-sonnet"
+        assert result["model"] == "vertex/claude-sonnet-4-5-20250929"
 
     clear_config_instance()
     clear_router()
@@ -428,7 +428,7 @@ async def test_oauth_forwarding_for_anthropic_direct_api():
         {
             "model_name": "default",
             "litellm_params": {
-                "model": "anthropic/claude-sonnet-4-20250514",
+                "model": "anthropic/claude-sonnet-4-5-20250929",
                 "api_base": "https://api.anthropic.com",
             },
         },
@@ -478,7 +478,7 @@ async def test_oauth_forwarding_for_anthropic_direct_api():
         )
 
         # Verify the model was routed correctly
-        assert result["model"] == "anthropic/claude-sonnet-4-20250514"
+        assert result["model"] == "anthropic/claude-sonnet-4-5-20250929"
 
     clear_config_instance()
     clear_router()
