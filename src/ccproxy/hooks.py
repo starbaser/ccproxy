@@ -157,6 +157,19 @@ def forward_oauth(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwa
         raw_headers = secret_fields.get("raw_headers") or {}
         auth_header = raw_headers.get("authorization", "")
 
+        # If no auth header found, try credentials fallback
+        if not auth_header:
+            config = get_config()
+            credentials_value = config.credentials_value
+            if credentials_value:
+                logger.debug("No authorization header found, using cached credentials")
+                # Format as Bearer token if not already formatted
+                if not credentials_value.startswith("Bearer "):
+                    auth_header = f"Bearer {credentials_value}"
+                else:
+                    auth_header = credentials_value
+                logger.info("Using credentials from config cache")
+
         # Only forward if we have an auth header
         if auth_header:
             # Ensure the provider_specific_header structure exists
@@ -175,8 +188,54 @@ def forward_oauth(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwa
                     "event": "oauth_forwarding",
                     "user_agent": user_agent,
                     "model": routed_model,
-                    "auth_present": bool(auth_header),  # Just indicate if auth is present
+                    "auth_present": bool(auth_header),
                 },
             )
+
+    return data
+
+
+def forward_apikey(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+    """Forward x-api-key header from incoming request to proxied request.
+
+    This hook simply forwards the x-api-key header if it exists in the incoming request.
+
+    Args:
+        data: Request data from LiteLLM
+        user_api_key_dict: User API key dictionary
+        **kwargs: Additional keyword arguments
+
+    Returns:
+        Modified request data with x-api-key header forwarded (if present)
+    """
+    request = data.get("proxy_server_request")
+    if request is None:
+        # No proxy server request, skip API key forwarding
+        return data
+
+    # Get the x-api-key from incoming request headers
+    secret_fields = data.get("secret_fields") or {}
+    raw_headers = secret_fields.get("raw_headers") or {}
+    api_key = raw_headers.get("x-api-key", "")
+
+    # Only forward if we have an API key
+    if api_key:
+        # Ensure the provider_specific_header structure exists
+        if "provider_specific_header" not in data:
+            data["provider_specific_header"] = {}
+        if "extra_headers" not in data["provider_specific_header"]:
+            data["provider_specific_header"]["extra_headers"] = {}
+
+        # Set the x-api-key header
+        data["provider_specific_header"]["extra_headers"]["x-api-key"] = api_key
+
+        # Log API key forwarding (without exposing the key)
+        logger.info(
+            "Forwarding request with x-api-key header",
+            extra={
+                "event": "apikey_forwarding",
+                "api_key_present": True,
+            },
+        )
 
     return data

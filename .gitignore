@@ -67,3 +67,4 @@ poetry.lock
 *.sqlite
 /.ccproxy
 .envrc
+dumps
