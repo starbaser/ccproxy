@@ -16,7 +16,7 @@ class TestRequestClassifierIntegration:
         config = CCProxyConfig()
         config.rules = [
             RuleConfig("large_context", "ccproxy.rules.TokenCountRule", [{"threshold": 10000}]),
-            RuleConfig("background", "ccproxy.rules.MatchModelRule", [{"model_name": "claude-3-5-haiku"}]),
+            RuleConfig("background", "ccproxy.rules.MatchModelRule", [{"model_name": "claude-haiku-4-5-20251001"}]),
             RuleConfig("think", "ccproxy.rules.ThinkingRule", []),
             RuleConfig("web_search", "ccproxy.rules.MatchToolRule", [{"tool_name": "web_search"}]),
         ]
@@ -38,7 +38,7 @@ class TestRequestClassifierIntegration:
         # Request that matches multiple rules
         request = {
             "token_count": 15000,  # > 10000 threshold
-            "model": "claude-3-5-haiku",  # Would match background
+            "model": "claude-haiku-4-5-20251001",  # Would match background
             "thinking": True,  # Would match thinking
             "tools": ["web_search"],  # Would match web_search
         }
@@ -49,7 +49,7 @@ class TestRequestClassifierIntegration:
         """Test that background model has second priority."""
         request = {
             "token_count": 5000,  # Below threshold
-            "model": "claude-3-5-haiku-20241022",  # Matches background
+            "model": "claude-haiku-4-5-20251001-20241022",  # Matches background
             "thinking": True,  # Would match thinking
             "tools": ["web_search"],  # Would match web_search
         }
@@ -92,7 +92,7 @@ class TestRequestClassifierIntegration:
     def test_realistic_claude_code_request(self, classifier: RequestClassifier) -> None:
         """Test with a realistic Claude Code API request."""
         request = {
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-5-20250929",
             "messages": [
                 {"role": "user", "content": "Write a Python function to calculate fibonacci"},
             ],
@@ -110,7 +110,7 @@ class TestRequestClassifierIntegration:
         # This will be ~5001 tokens, need to double for >10000
         long_content = varied_text * 3  # ~15,003 tokens
         request = {
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-5-20250929",
             "messages": [
                 {"role": "user", "content": long_content},
             ],
@@ -121,7 +121,7 @@ class TestRequestClassifierIntegration:
     def test_realistic_thinking_request(self, classifier: RequestClassifier) -> None:
         """Test with a realistic thinking request."""
         request = {
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-5-20250929",
             "messages": [
                 {"role": "user", "content": "Solve this complex problem..."},
             ],
@@ -133,7 +133,7 @@ class TestRequestClassifierIntegration:
     def test_realistic_background_task(self, classifier: RequestClassifier) -> None:
         """Test with a realistic background task using haiku."""
         request = {
-            "model": "claude-3-5-haiku",
+            "model": "claude-haiku-4-5-20251001",
             "messages": [
                 {"role": "user", "content": "Format this JSON data"},
             ],
@@ -145,7 +145,7 @@ class TestRequestClassifierIntegration:
     def test_realistic_web_search_request(self, classifier: RequestClassifier) -> None:
         """Test with a realistic web search request."""
         request = {
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-5-20250929",
             "messages": [
                 {"role": "user", "content": "Search for the latest news about AI"},
             ],

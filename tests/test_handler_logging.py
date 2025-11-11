@@ -56,7 +56,7 @@ class TestHandlerLoggingHookMethods:
             mock_router = Mock(spec=ModelRouter)
             mock_router.get_model_for_label.return_value = {
                 "model_name": "default",
-                "litellm_params": {"model": "claude-sonnet-4-20250514"},
+                "litellm_params": {"model": "claude-sonnet-4-5-20250929"},
             }
             mock_get_router.return_value = mock_router
 
@@ -72,7 +72,7 @@ class TestHandlerLoggingHookMethods:
                 data["metadata"]["ccproxy_alias_model"] = None
                 # Add model field if missing (simulating model_router hook)
                 if "model" not in data:
-                    data["model"] = "claude-sonnet-4-20250514"
+                    data["model"] = "claude-sonnet-4-5-20250929"
                 return data
 
             mock_config.load_hooks.return_value = [mock_rule_evaluator]
@@ -88,7 +88,7 @@ class TestHandlerLoggingHookMethods:
             assert "metadata" in result
             assert result["metadata"]["ccproxy_model_name"] == "default"
             assert result["metadata"]["ccproxy_alias_model"] is None
-            assert result["model"] == "claude-sonnet-4-20250514"
+            assert result["model"] == "claude-sonnet-4-5-20250929"
 
     @pytest.mark.asyncio
     async def test_handler_with_debug_hook_logging(self) -> None:
@@ -172,7 +172,7 @@ class TestHandlerLoggingHookMethods:
 
         handler._log_routing_decision(
             model_name="token_count",
-            original_model="claude-sonnet-4-20250514",
+            original_model="claude-sonnet-4-5-20250929",
             routed_model="gemini-2.0-flash-exp",
             model_config=model_config,
         )
@@ -185,7 +185,7 @@ class TestHandlerLoggingHookMethods:
         extra = call_args[1]["extra"]
         assert extra["event"] == "ccproxy_routing"
         assert extra["model_name"] == "token_count"
-        assert extra["original_model"] == "claude-sonnet-4-20250514"
+        assert extra["original_model"] == "claude-sonnet-4-5-20250929"
         assert extra["routed_model"] == "gemini-2.0-flash-exp"
         assert extra["is_passthrough"] is False
 

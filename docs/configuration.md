@@ -120,9 +120,7 @@ litellm:
 ccproxy:
   debug: true
 
-  # Optional: Shell command to load credentials at startup (for OAuth only)
-  # Executed once during config initialization, result is cached
-  # Raises error if command fails (fail-fast validation)
+  # Optional: Shell command to load oauth token on startup (for standalone mode)
   credentials: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
 
   # Processing hooks (executed in order)
@@ -130,9 +128,9 @@ ccproxy:
     - ccproxy.hooks.rule_evaluator # Evaluates rules
     - ccproxy.hooks.model_router # Routes to models
 
-    # Choose ONE based on your Claude Code authentication:
-    - ccproxy.hooks.forward_oauth # For subscription account (OAuth)
-    # - ccproxy.hooks.forward_apikey # For API key authentication
+    # Choose ONE:
+    - ccproxy.hooks.forward_oauth # subscription account
+    # - ccproxy.hooks.forward_apikey # api key
 
   # Routing rules (evaluated in order)
   rules:
@@ -160,7 +158,7 @@ ccproxy:
 ```
 
 - **`litellm`**: LiteLLM proxy server process (See `litellm --help`)
-- **`ccproxy.credentials`**: Optional shell command to load credentials at startup (cached, fail-fast)
+- **`ccproxy.credentials`**: Optional shell command to load credentials at startup for use as a standalone LiteLLM server
 - **`ccproxy.hooks`**: A list of hooks that are executed in series during the `async_pre_call_hook`
 - **`ccproxy.rules`**: Request routing rules (evaluated in order)
 
@@ -308,9 +306,9 @@ ccproxy:
 
 #### forward_oauth
 
-Forwards OAuth tokens to Anthropic API requests with automatic fallback to cached credentials.
+Forwards OAuth tokens to Anthropic API requests
 
-**Use when:** Claude Code is configured with a subscription account (OAuth authentication)
+**Use when:** Claude Code is configured with a subscription account
 
 **Features:**
 

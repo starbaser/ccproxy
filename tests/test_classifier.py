@@ -20,7 +20,7 @@ class TestRequestClassifier:
         config = CCProxyConfig(debug=True)
         config.rules = [
             RuleConfig("token_count", "ccproxy.rules.TokenCountRule", [{"threshold": 50000}]),
-            RuleConfig("background", "ccproxy.rules.MatchModelRule", [{"model_name": "claude-3-5-haiku"}]),
+            RuleConfig("background", "ccproxy.rules.MatchModelRule", [{"model_name": "claude-haiku-4-5-20251001"}]),
             RuleConfig("think", "ccproxy.rules.ThinkingRule", []),
             RuleConfig("web_search", "ccproxy.rules.MatchToolRule", [{"tool_name": "web_search"}]),
         ]
@@ -87,6 +87,9 @@ class TestRequestClassifier:
 
     def test_multiple_rules_priority(self, classifier: RequestClassifier, config: CCProxyConfig) -> None:
         """Test that rules are evaluated in order."""
+        # Clear existing rules first to avoid interference
+        classifier._clear_rules()
+
         # Create mock rules
         rule1 = mock.Mock(spec=ClassificationRule)
         rule1.evaluate.return_value = False  # Doesn't match
@@ -103,7 +106,7 @@ class TestRequestClassifier:
         classifier.add_rule("think", rule3)
 
         # Classify
-        request = {"model": "claude-3-haiku", "messages": []}
+        request = {"model": "claude-haiku-4-5-20251001", "messages": []}
         result = classifier.classify(request)
 
         # Should return the first matching rule

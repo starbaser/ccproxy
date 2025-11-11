@@ -167,7 +167,7 @@ curl --location 'http://0.0.0.0:4000/chat/completions' \
     --header 'Authorization: Bearer sk-1234' \
     --header 'x-litellm-disable-callbacks: langfuse' \
     --data '{
-    "model": "claude-sonnet-4-20250514",
+    "model": "claude-sonnet-4-5-20250929",
     "messages": [
         {
         "role": "user",

@@ -6,6 +6,20 @@
 
 It works by intercepting Claude Code's requests through a [LiteLLM Proxy Server](https://docs.litellm.ai/docs/simple_proxy), allowing you to route different types of requests to the most suitable model - keep your unlimited Claude for standard coding, send large contexts to Gemini's 2M token window, route web searches to Perplexity, all while Claude Code thinks it's talking to the standard API.
 
+**New ✨**: Use your subscription without Claude Code! The Anthropic SDK and LiteLLM SDK examples in [`examples/`](examples/) allow you to use your logged in claude.ai account for arbitrary API requests:
+
+```py
+ # Streaming with litellm.acompletion()
+response = await litellm.acompletion(
+    messages=[{"role": "user", "content": "Count from 1 to 5."}],
+    model="claude-haiku-4-5-20251001",
+    max_tokens=200,
+    stream=True,
+    api_base="http://127.0.0.1:4000",
+    api_key="sk-proxy-dummy",  # key is not real, `ccproxy` handles real auth
+)
+```
+
 > ⚠️ **Note**: While core functionality is complete, real-world testing and community input are welcomed. Please [open an issue](https://github.com/starbased-co/ccproxy/issues) to share your experience, report bugs, or suggest improvements, or even better, submit a PR!
 
 ## Installation
@@ -54,6 +68,10 @@ This file controls how `ccproxy` hooks into your Claude Code requests and how to
 ```yaml
 ccproxy:
   debug: true
+
+  # Optional: Shell command to load oauth token on startup (for litellm/anthropic sdk)
+  credentials: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+
   hooks:
     - ccproxy.hooks.rule_evaluator # evaluates rules against request 󰁎─┬─ (optional, needed for
     - ccproxy.hooks.model_router # routes to appropriate model       󰁎─┘  rules & routing)
@@ -105,13 +123,13 @@ graph LR
 
     subgraph config_yaml["<code>config.yaml</code>"]
         subgraph aliases[" "]
-            A1["<div style='text-align:left'><code>model_name: default</code><br/><code>litellm_params:</code><br/><code>&nbsp;&nbsp;model: claude-sonnet-4-20250514</code></div>"]
+            A1["<div style='text-align:left'><code>model_name: default</code><br/><code>litellm_params:</code><br/><code>&nbsp;&nbsp;model: claude-sonnet-4-5-20250929</code></div>"]
             A2["<div style='text-align:left'><code>model_name: think</code><br/><code>litellm_params:</code><br/><code>&nbsp;&nbsp;model: claude-opus-4-1-20250805</code></div>"]
             A3["<div style='text-align:left'><code>model_name: background</code><br/><code>litellm_params:</code><br/><code>&nbsp;&nbsp;model: claude-3-5-haiku-20241022</code></div>"]
         end
 
         subgraph models[" "]
-            M1["<div style='text-align:left'><code>model_name: claude-sonnet-4-20250514</code><br/><code>litellm_params:</code><br/><code>&nbsp;&nbsp;model: anthropic/claude-sonnet-4-20250514</code></div>"]
+            M1["<div style='text-align:left'><code>model_name: claude-sonnet-4-5-20250929</code><br/><code>litellm_params:</code><br/><code>&nbsp;&nbsp;model: anthropic/claude-sonnet-4-5-20250929</code></div>"]
             M2["<div style='text-align:left'><code>model_name: claude-opus-4-1-20250805</code><br/><code>litellm_params:</code><br/><code>&nbsp;&nbsp;model: anthropic/claude-opus-4-1-20250805</code></div>"]
             M3["<div style='text-align:left'><code>model_name: claude-3-5-haiku-20241022</code><br/><code>litellm_params:</code><br/><code>&nbsp;&nbsp;model: anthropic/claude-3-5-haiku-20241022</code></div>"]
         end
@@ -149,7 +167,7 @@ model_list:
   # aliases here are used to select a deployment below
   - model_name: default
     litellm_params:
-      model: claude-sonnet-4-20250514
+      model: claude-sonnet-4-5-20250929
 
   - model_name: think
     litellm_params:
@@ -160,9 +178,9 @@ model_list:
       model: claude-3-5-haiku-20241022
 
   # deployments
-  - model_name: claude-sonnet-4-20250514
+  - model_name: claude-sonnet-4-5-20250929
     litellm_params:
-      model: anthropic/claude-sonnet-4-20250514
+      model: anthropic/claude-sonnet-4-5-20250929
       api_base: https://api.anthropic.com
 
   - model_name: claude-opus-4-1-20250805

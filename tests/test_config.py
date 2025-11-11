@@ -60,16 +60,16 @@ ccproxy:
     - name: background
       rule: ccproxy.rules.MatchModelRule
       params:
-        - model_name: claude-3-5-haiku
+        - model_name: claude-haiku-4-5-20251001
 """
         litellm_yaml_content = """
 model_list:
   - model_name: default
     litellm_params:
-      model: claude-sonnet-4-20250514
+      model: claude-sonnet-4-5-20250929
   - model_name: background
     litellm_params:
-      model: claude-3-5-haiku-20241022
+      model: claude-haiku-4-5-20251001-20241022
   - model_name: think
     litellm_params:
       model: claude-opus-4-1-20250805
@@ -301,14 +301,14 @@ ccproxy:
             {
                 "model_name": "default",
                 "litellm_params": {
-                    "model": "anthropic/claude-sonnet-4-20250514",
+                    "model": "anthropic/claude-sonnet-4-5-20250929",
                     "api_base": "https://api.anthropic.com",
                 },
             },
             {
                 "model_name": "background",
                 "litellm_params": {
-                    "model": "anthropic/claude-3-5-haiku-20241022",
+                    "model": "anthropic/claude-haiku-4-5-20251001-20241022",
                     "api_base": "https://api.anthropic.com",
                 },
             },

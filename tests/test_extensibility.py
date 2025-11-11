@@ -51,7 +51,7 @@ class TestClassifierExtensibility:
 
         # Test that custom rule works
         request = {
-            "model": "claude-3-5-sonnet",
+            "model": "claude-sonnet-4-5-20250929",
             "messages": [{"role": "user", "content": "Hello"}],
             "headers": {"X-Priority": "low"},
         }
@@ -97,7 +97,7 @@ class TestClassifierExtensibility:
         classifier.add_rule("think", env_rule)
 
         request = {
-            "model": "claude-3-5-sonnet",
+            "model": "claude-sonnet-4-5-20250929",
             "metadata": {"environment": "staging"},
         }
 
@@ -118,7 +118,7 @@ class TestClassifierExtensibility:
         # Test that default rules no longer apply
         # This would normally trigger TokenCountRule
         request = {
-            "model": "claude-3-5-sonnet",
+            "model": "claude-sonnet-4-5-20250929",
             "token_count": 100000,  # Would trigger token_count normally
         }
 
@@ -196,7 +196,7 @@ class TestClassifierExtensibility:
 
             # Test custom rule
             request = {
-                "model": "claude-3-5-sonnet",
+                "model": "claude-sonnet-4-5-20250929",
                 "metadata": {"environment": "production"},
             }
             model_name = classifier.classify(request)

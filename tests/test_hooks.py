@@ -26,7 +26,7 @@ def mock_router():
 
     # Default successful routing
     router.get_model_for_label.return_value = {
-        "litellm_params": {"model": "claude-sonnet-4-20250514", "api_base": "https://api.anthropic.com"}
+        "litellm_params": {"model": "claude-sonnet-4-5-20250929", "api_base": "https://api.anthropic.com"}
     }
 
     return router
@@ -36,7 +36,7 @@ def mock_router():
 def basic_request_data():
     """Create basic request data for testing."""
     return {
-        "model": "claude-3-5-haiku-20241022",
+        "model": "claude-haiku-4-5-20251001-20241022",
         "messages": [{"role": "user", "content": "test message"}],
     }
 
@@ -65,7 +65,7 @@ class TestRuleEvaluator:
 
         # Verify metadata was added
         assert "metadata" in result
-        assert result["metadata"]["ccproxy_alias_model"] == "claude-3-5-haiku-20241022"
+        assert result["metadata"]["ccproxy_alias_model"] == "claude-haiku-4-5-20251001-20241022"
         assert result["metadata"]["ccproxy_model_name"] == "test_model_name"
 
         # Verify classifier was called
@@ -74,7 +74,7 @@ class TestRuleEvaluator:
     def test_rule_evaluator_existing_metadata(self, mock_classifier, user_api_key_dict):
         """Test rule_evaluator preserves existing metadata."""
         data_with_metadata = {
-            "model": "claude-3-5-haiku-20241022",
+            "model": "claude-haiku-4-5-20251001-20241022",
             "messages": [{"role": "user", "content": "test"}],
             "metadata": {"existing_key": "existing_value"},
         }
@@ -83,7 +83,7 @@ class TestRuleEvaluator:
 
         # Verify existing metadata preserved and new metadata added
         assert result["metadata"]["existing_key"] == "existing_value"
-        assert result["metadata"]["ccproxy_alias_model"] == "claude-3-5-haiku-20241022"
+        assert result["metadata"]["ccproxy_alias_model"] == "claude-haiku-4-5-20251001-20241022"
         assert result["metadata"]["ccproxy_model_name"] == "test_model_name"
 
     def test_rule_evaluator_missing_classifier(self, basic_request_data, user_api_key_dict, caplog):
@@ -132,8 +132,8 @@ class TestModelRouter:
         result = model_router(data_with_metadata, user_api_key_dict, router=mock_router)
 
         # Verify model was routed
-        assert result["model"] == "claude-sonnet-4-20250514"
-        assert result["metadata"]["ccproxy_litellm_model"] == "claude-sonnet-4-20250514"
+        assert result["model"] == "claude-sonnet-4-5-20250929"
+        assert result["metadata"]["ccproxy_litellm_model"] == "claude-sonnet-4-5-20250929"
         assert "ccproxy_model_config" in result["metadata"]
 
         # Verify router was called
@@ -215,7 +215,7 @@ class TestModelRouter:
         mock_router.get_model_for_label.side_effect = [
             None,  # First call
             {  # Second call after reload
-                "litellm_params": {"model": "claude-sonnet-4-20250514"}
+                "litellm_params": {"model": "claude-sonnet-4-5-20250929"}
             },
         ]
 
@@ -227,8 +227,8 @@ class TestModelRouter:
         # Should reload and succeed
         mock_router.reload_models.assert_called_once()
         assert mock_router.get_model_for_label.call_count == 2
-        assert result["model"] == "claude-sonnet-4-20250514"
-        assert "Successfully routed after model reload: test_model -> claude-sonnet-4-20250514" in caplog.text
+        assert result["model"] == "claude-sonnet-4-5-20250929"
+        assert "Successfully routed after model reload: test_model -> claude-sonnet-4-5-20250929" in caplog.text
 
     def test_model_router_no_config_reload_fails(self, mock_router, user_api_key_dict):
         """Test model_router raises error when reload fails."""
@@ -254,14 +254,14 @@ class TestModelRouter:
 
         data = {
             "model": "original_model",
-            "metadata": {"ccproxy_model_name": "default", "ccproxy_alias_model": "claude-sonnet-4-20250514"},
+            "metadata": {"ccproxy_model_name": "default", "ccproxy_alias_model": "claude-sonnet-4-5-20250929"},
         }
 
         result = model_router(data, user_api_key_dict, router=mock_router)
 
         # Should keep original model and not call router
         assert result["model"] == "original_model"
-        assert result["metadata"]["ccproxy_litellm_model"] == "claude-sonnet-4-20250514"
+        assert result["metadata"]["ccproxy_litellm_model"] == "claude-sonnet-4-5-20250929"
         assert result["metadata"]["ccproxy_model_config"] is None
         mock_router.get_model_for_label.assert_not_called()
 
@@ -278,7 +278,7 @@ class TestModelRouter:
 
         data = {
             "model": "original_model",
-            "metadata": {"ccproxy_model_name": "default", "ccproxy_alias_model": "claude-sonnet-4-20250514"},
+            "metadata": {"ccproxy_model_name": "default", "ccproxy_alias_model": "claude-sonnet-4-5-20250929"},
         }
 
         result = model_router(data, user_api_key_dict, router=mock_router)
@@ -321,7 +321,7 @@ class TestForwardOAuth:
 
     def test_forward_oauth_no_proxy_request(self, user_api_key_dict):
         """Test forward_oauth handles missing proxy_server_request."""
-        data = {"model": "claude-sonnet-4-20250514", "metadata": {"ccproxy_litellm_model": "claude-sonnet-4-20250514"}}
+        data = {"model": "claude-sonnet-4-5-20250929", "metadata": {"ccproxy_litellm_model": "claude-sonnet-4-5-20250929"}}
 
         result = forward_oauth(data, user_api_key_dict)
 
@@ -331,9 +331,9 @@ class TestForwardOAuth:
     def test_forward_oauth_claude_cli_anthropic_api_base(self, user_api_key_dict, caplog):
         """Test OAuth forwarding for claude-cli with Anthropic API base."""
         data = {
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-5-20250929",
             "metadata": {
-                "ccproxy_litellm_model": "claude-sonnet-4-20250514",
+                "ccproxy_litellm_model": "claude-sonnet-4-5-20250929",
                 "ccproxy_model_config": {"litellm_params": {"api_base": "https://api.anthropic.com"}},
             },
             "proxy_server_request": {"headers": {"user-agent": "claude-cli/1.0.62 (external, cli)"}},
@@ -354,9 +354,9 @@ class TestForwardOAuth:
     def test_forward_oauth_claude_cli_anthropic_hostname(self, user_api_key_dict):
         """Test OAuth forwarding for claude-cli with anthropic.com hostname."""
         data = {
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-5-20250929",
             "metadata": {
-                "ccproxy_litellm_model": "claude-sonnet-4-20250514",
+                "ccproxy_litellm_model": "claude-sonnet-4-5-20250929",
                 "ccproxy_model_config": {"litellm_params": {"api_base": "https://anthropic.com/v1/messages"}},
             },
             "proxy_server_request": {"headers": {"user-agent": "claude-cli/1.0.62 (external, cli)"}},
@@ -371,9 +371,9 @@ class TestForwardOAuth:
     def test_forward_oauth_claude_cli_custom_provider_anthropic(self, user_api_key_dict):
         """Test OAuth forwarding with custom_llm_provider=anthropic."""
         data = {
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-5-20250929",
             "metadata": {
-                "ccproxy_litellm_model": "claude-sonnet-4-20250514",
+                "ccproxy_litellm_model": "claude-sonnet-4-5-20250929",
                 "ccproxy_model_config": {"litellm_params": {"custom_llm_provider": "anthropic"}},
             },
             "proxy_server_request": {"headers": {"user-agent": "claude-cli/1.0.62 (external, cli)"}},
@@ -388,9 +388,9 @@ class TestForwardOAuth:
     def test_forward_oauth_claude_cli_anthropic_prefix_model(self, user_api_key_dict):
         """Test OAuth forwarding for anthropic/ prefix models."""
         data = {
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-5-20250929",
             "metadata": {
-                "ccproxy_litellm_model": "anthropic/claude-sonnet-4-20250514",
+                "ccproxy_litellm_model": "anthropic/claude-sonnet-4-5-20250929",
                 "ccproxy_model_config": {"litellm_params": {}},
             },
             "proxy_server_request": {"headers": {"user-agent": "claude-cli/1.0.62 (external, cli)"}},
@@ -405,9 +405,9 @@ class TestForwardOAuth:
     def test_forward_oauth_claude_cli_claude_prefix_model(self, user_api_key_dict):
         """Test OAuth forwarding for claude prefix models."""
         data = {
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-5-20250929",
             "metadata": {
-                "ccproxy_litellm_model": "claude-sonnet-4-20250514",
+                "ccproxy_litellm_model": "claude-sonnet-4-5-20250929",
                 "ccproxy_model_config": {"litellm_params": {}},
             },
             "proxy_server_request": {"headers": {"user-agent": "claude-cli/1.0.62 (external, cli)"}},
@@ -422,9 +422,9 @@ class TestForwardOAuth:
     def test_forward_oauth_non_claude_cli_user_agent(self, user_api_key_dict):
         """Test no OAuth forwarding for non-claude-cli user agents."""
         data = {
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-5-20250929",
             "metadata": {
-                "ccproxy_litellm_model": "claude-sonnet-4-20250514",
+                "ccproxy_litellm_model": "claude-sonnet-4-5-20250929",
                 "ccproxy_model_config": {"litellm_params": {"api_base": "https://api.anthropic.com"}},
             },
             "proxy_server_request": {"headers": {"user-agent": "Mozilla/5.0"}},
@@ -456,9 +456,9 @@ class TestForwardOAuth:
     def test_forward_oauth_vertex_provider(self, user_api_key_dict):
         """Test no OAuth forwarding for Vertex AI provider."""
         data = {
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-5-20250929",
             "metadata": {
-                "ccproxy_litellm_model": "vertex/claude-3-5-sonnet",
+                "ccproxy_litellm_model": "vertex/claude-sonnet-4-5-20250929",
                 "ccproxy_model_config": {
                     "litellm_params": {
                         "api_base": "https://us-central1-aiplatform.googleapis.com",
@@ -484,9 +484,9 @@ class TestForwardOAuth:
         set_config_instance(config)
 
         data = {
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-5-20250929",
             "metadata": {
-                "ccproxy_litellm_model": "claude-sonnet-4-20250514",
+                "ccproxy_litellm_model": "claude-sonnet-4-5-20250929",
                 "ccproxy_model_config": {"litellm_params": {"api_base": "https://api.anthropic.com"}},
             },
             "proxy_server_request": {"headers": {"user-agent": "claude-cli/1.0.62 (external, cli)"}},
@@ -509,9 +509,9 @@ class TestForwardOAuth:
         set_config_instance(config)
 
         data = {
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-5-20250929",
             "metadata": {
-                "ccproxy_litellm_model": "claude-sonnet-4-20250514",
+                "ccproxy_litellm_model": "claude-sonnet-4-5-20250929",
                 "ccproxy_model_config": {"litellm_params": {"api_base": "https://api.anthropic.com"}},
             },
             "proxy_server_request": {"headers": {"user-agent": "claude-cli/1.0.62 (external, cli)"}},
@@ -526,9 +526,9 @@ class TestForwardOAuth:
     def test_forward_oauth_preserves_existing_extra_headers(self, user_api_key_dict):
         """Test OAuth forwarding preserves existing extra_headers."""
         data = {
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-5-20250929",
             "metadata": {
-                "ccproxy_litellm_model": "claude-sonnet-4-20250514",
+                "ccproxy_litellm_model": "claude-sonnet-4-5-20250929",
                 "ccproxy_model_config": {"litellm_params": {"api_base": "https://api.anthropic.com"}},
             },
             "provider_specific_header": {"extra_headers": {"existing-header": "existing-value"}},
@@ -545,9 +545,9 @@ class TestForwardOAuth:
     def test_forward_oauth_creates_provider_specific_header_structure(self, user_api_key_dict):
         """Test OAuth forwarding creates provider_specific_header structure when missing."""
         data = {
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-5-20250929",
             "metadata": {
-                "ccproxy_litellm_model": "claude-sonnet-4-20250514",
+                "ccproxy_litellm_model": "claude-sonnet-4-5-20250929",
                 "ccproxy_model_config": {"litellm_params": {"api_base": "https://api.anthropic.com"}},
             },
             "proxy_server_request": {"headers": {"user-agent": "claude-cli/1.0.62 (external, cli)"}},
@@ -565,9 +565,9 @@ class TestForwardOAuth:
     def test_forward_oauth_invalid_api_base_url(self, user_api_key_dict):
         """Test OAuth forwarding handles invalid API base URLs gracefully."""
         data = {
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-5-20250929",
             "metadata": {
-                "ccproxy_litellm_model": "claude-sonnet-4-20250514",
+                "ccproxy_litellm_model": "claude-sonnet-4-5-20250929",
                 "ccproxy_model_config": {"litellm_params": {"api_base": "invalid-url"}},
             },
             "proxy_server_request": {"headers": {"user-agent": "claude-cli/1.0.62 (external, cli)"}},
@@ -582,9 +582,9 @@ class TestForwardOAuth:
     def test_forward_oauth_missing_model_config(self, user_api_key_dict):
         """Test OAuth forwarding with missing model config."""
         data = {
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-5-20250929",
             "metadata": {
-                "ccproxy_litellm_model": "claude-sonnet-4-20250514"
+                "ccproxy_litellm_model": "claude-sonnet-4-5-20250929"
                 # ccproxy_model_config is missing
             },
             "proxy_server_request": {"headers": {"user-agent": "claude-cli/1.0.62 (external, cli)"}},
@@ -599,9 +599,9 @@ class TestForwardOAuth:
     def test_forward_oauth_empty_headers(self, user_api_key_dict):
         """Test OAuth forwarding with empty headers."""
         data = {
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-5-20250929",
             "metadata": {
-                "ccproxy_litellm_model": "claude-sonnet-4-20250514",
+                "ccproxy_litellm_model": "claude-sonnet-4-5-20250929",
                 "ccproxy_model_config": {"litellm_params": {"api_base": "https://api.anthropic.com"}},
             },
             "proxy_server_request": {
@@ -620,9 +620,9 @@ class TestForwardOAuth:
         # Create a data structure that will cause urlparse to fail
         # Using a mock to simulate this
         data = {
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-5-20250929",
             "metadata": {
-                "ccproxy_litellm_model": "claude-sonnet-4-20250514",
+                "ccproxy_litellm_model": "claude-sonnet-4-5-20250929",
                 "ccproxy_model_config": {"litellm_params": {"api_base": "https://api.anthropic.com"}},
             },
             "proxy_server_request": {"headers": {"user-agent": "claude-cli/1.0.62 (external, cli)"}},
@@ -664,10 +664,10 @@ class TestForwardOAuth:
     def test_forward_oauth_none_model_config(self, user_api_key_dict):
         """Test forward_oauth handles None model_config (passthrough mode)."""
         data = {
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-5-20250929",
             "proxy_server_request": {"headers": {"user-agent": "claude-cli/1.0.0"}},
             "metadata": {
-                "ccproxy_litellm_model": "claude-sonnet-4-20250514",
+                "ccproxy_litellm_model": "claude-sonnet-4-5-20250929",
                 "ccproxy_model_config": None,  # This happens in passthrough mode
             },
             "secret_fields": {"raw_headers": {"authorization": "Bearer sk-ant-api03-test"}},
@@ -695,12 +695,12 @@ class TestForwardOAuthWithCredentialsFallback:
         set_config_instance(config)
 
         data = {
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-5-20250929",
             "proxy_server_request": {"headers": {"user-agent": "claude-cli/1.0.0"}},
             "metadata": {
-                "ccproxy_litellm_model": "claude-sonnet-4-20250514",
+                "ccproxy_litellm_model": "claude-sonnet-4-5-20250929",
                 "ccproxy_model_config": {
-                    "litellm_params": {"model": "claude-sonnet-4-20250514", "api_base": "https://api.anthropic.com"}
+                    "litellm_params": {"model": "claude-sonnet-4-5-20250929", "api_base": "https://api.anthropic.com"}
                 },
             },
             "secret_fields": {"raw_headers": {"authorization": "Bearer header-token"}},
@@ -722,12 +722,12 @@ class TestForwardOAuthWithCredentialsFallback:
         set_config_instance(config)
 
         data = {
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-5-20250929",
             "proxy_server_request": {"headers": {"user-agent": "claude-cli/1.0.0"}},
             "metadata": {
-                "ccproxy_litellm_model": "claude-sonnet-4-20250514",
+                "ccproxy_litellm_model": "claude-sonnet-4-5-20250929",
                 "ccproxy_model_config": {
-                    "litellm_params": {"model": "claude-sonnet-4-20250514", "api_base": "https://api.anthropic.com"}
+                    "litellm_params": {"model": "claude-sonnet-4-5-20250929", "api_base": "https://api.anthropic.com"}
                 },
             },
             "secret_fields": {
@@ -751,12 +751,12 @@ class TestForwardOAuthWithCredentialsFallback:
         set_config_instance(config)
 
         data = {
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-5-20250929",
             "proxy_server_request": {"headers": {"user-agent": "claude-cli/1.0.0"}},
             "metadata": {
-                "ccproxy_litellm_model": "claude-sonnet-4-20250514",
+                "ccproxy_litellm_model": "claude-sonnet-4-5-20250929",
                 "ccproxy_model_config": {
-                    "litellm_params": {"model": "claude-sonnet-4-20250514", "api_base": "https://api.anthropic.com"}
+                    "litellm_params": {"model": "claude-sonnet-4-5-20250929", "api_base": "https://api.anthropic.com"}
                 },
             },
             "secret_fields": {"raw_headers": {}},
@@ -777,12 +777,12 @@ class TestForwardOAuthWithCredentialsFallback:
         set_config_instance(config)
 
         data = {
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-5-20250929",
             "proxy_server_request": {"headers": {"user-agent": "claude-cli/1.0.0"}},
             "metadata": {
-                "ccproxy_litellm_model": "claude-sonnet-4-20250514",
+                "ccproxy_litellm_model": "claude-sonnet-4-5-20250929",
                 "ccproxy_model_config": {
-                    "litellm_params": {"model": "claude-sonnet-4-20250514", "api_base": "https://api.anthropic.com"}
+                    "litellm_params": {"model": "claude-sonnet-4-5-20250929", "api_base": "https://api.anthropic.com"}
                 },
             },
             "secret_fields": {"raw_headers": {}},

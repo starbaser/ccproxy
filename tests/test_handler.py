@@ -41,13 +41,13 @@ class TestCCProxyRouting:
                 {
                     "model_name": "default",
                     "litellm_params": {
-                        "model": "claude-sonnet-4-20250514",
+                        "model": "claude-sonnet-4-5-20250929",
                     },
                 },
                 {
                     "model_name": "background",
                     "litellm_params": {
-                        "model": "claude-3-5-haiku-20241022",
+                        "model": "claude-haiku-4-5-20251001-20241022",
                     },
                 },
                 {
@@ -89,7 +89,7 @@ class TestCCProxyRouting:
                     {
                         "name": "background",
                         "rule": "ccproxy.rules.MatchModelRule",
-                        "params": [{"model_name": "claude-3-5-haiku-20241022"}],
+                        "params": [{"model_name": "claude-haiku-4-5-20251001-20241022"}],
                     },
                     {
                         "name": "think",
@@ -131,11 +131,11 @@ class TestCCProxyRouting:
         test_model_list = [
             {
                 "model_name": "default",
-                "litellm_params": {"model": "claude-sonnet-4-20250514"},
+                "litellm_params": {"model": "claude-sonnet-4-5-20250929"},
             },
             {
                 "model_name": "background",
-                "litellm_params": {"model": "claude-3-5-haiku-20241022"},
+                "litellm_params": {"model": "claude-haiku-4-5-20251001-20241022"},
             },
             {
                 "model_name": "think",
@@ -162,13 +162,13 @@ class TestCCProxyRouting:
             with patch.dict("sys.modules", {"litellm.proxy": mock_module}):
                 handler = CCProxyHandler()
                 request_data = {
-                    "model": "claude-sonnet-4-20250514",
+                    "model": "claude-sonnet-4-5-20250929",
                     "messages": [{"role": "user", "content": "Hello"}],
                 }
                 user_api_key_dict = {}
 
                 result = await handler.async_pre_call_hook(request_data, user_api_key_dict)
-                assert result["model"] == "claude-sonnet-4-20250514"
+                assert result["model"] == "claude-sonnet-4-5-20250929"
         finally:
             clear_config_instance()
             clear_router()
@@ -184,11 +184,11 @@ class TestCCProxyRouting:
         test_model_list = [
             {
                 "model_name": "default",
-                "litellm_params": {"model": "claude-sonnet-4-20250514"},
+                "litellm_params": {"model": "claude-sonnet-4-5-20250929"},
             },
             {
                 "model_name": "background",
-                "litellm_params": {"model": "claude-3-5-haiku-20241022"},
+                "litellm_params": {"model": "claude-haiku-4-5-20251001-20241022"},
             },
             {
                 "model_name": "think",
@@ -215,13 +215,13 @@ class TestCCProxyRouting:
             with patch.dict("sys.modules", {"litellm.proxy": mock_module}):
                 handler = CCProxyHandler()
                 request_data = {
-                    "model": "claude-3-5-haiku-20241022",
+                    "model": "claude-haiku-4-5-20251001-20241022",
                     "messages": [{"role": "user", "content": "Format this code"}],
                 }
                 user_api_key_dict = {}
 
                 result = await handler.async_pre_call_hook(request_data, user_api_key_dict)
-                assert result["model"] == "claude-3-5-haiku-20241022"
+                assert result["model"] == "claude-haiku-4-5-20251001-20241022"
         finally:
             clear_config_instance()
             clear_router()
@@ -239,13 +239,13 @@ class TestHandlerHookMethods:
                 {
                     "model_name": "default",
                     "litellm_params": {
-                        "model": "claude-sonnet-4-20250514",
+                        "model": "claude-sonnet-4-5-20250929",
                     },
                 },
                 {
                     "model_name": "background",
                     "litellm_params": {
-                        "model": "claude-3-5-haiku-20241022",
+                        "model": "claude-haiku-4-5-20251001-20241022",
                     },
                 },
             ],
@@ -264,7 +264,7 @@ class TestHandlerHookMethods:
                     {
                         "name": "background",
                         "rule": "ccproxy.rules.MatchModelRule",
-                        "params": [{"model_name": "claude-3-5-haiku-20241022"}],
+                        "params": [{"model_name": "claude-haiku-4-5-20251001-20241022"}],
                     },
                 ],
             }
@@ -304,7 +304,7 @@ class TestHandlerHookMethods:
         mock_proxy_server.llm_router.model_list = [
             {
                 "model_name": "default",
-                "litellm_params": {"model": "claude-sonnet-4-20250514"},
+                "litellm_params": {"model": "claude-sonnet-4-5-20250929"},
             },
         ]
 
@@ -352,7 +352,7 @@ class TestHandlerHookMethods:
         """Test async_pre_call_hook with completion call type."""
         # Create mock data
         data = {
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-5-20250929",
             "messages": [{"role": "user", "content": "Hello"}],
         }
         user_api_key_dict = {}
@@ -431,11 +431,11 @@ class TestCCProxyHandler:
         test_model_list = [
             {
                 "model_name": "default",
-                "litellm_params": {"model": "claude-sonnet-4-20250514"},
+                "litellm_params": {"model": "claude-sonnet-4-5-20250929"},
             },
             {
                 "model_name": "background",
-                "litellm_params": {"model": "claude-3-5-haiku-20241022"},
+                "litellm_params": {"model": "claude-haiku-4-5-20251001-20241022"},
             },
         ]
 
@@ -473,13 +473,13 @@ class TestCCProxyHandler:
                 {
                     "model_name": "default",
                     "litellm_params": {
-                        "model": "claude-sonnet-4-20250514",
+                        "model": "claude-sonnet-4-5-20250929",
                     },
                 },
                 {
                     "model_name": "background",
                     "litellm_params": {
-                        "model": "claude-3-5-haiku-20241022",
+                        "model": "claude-haiku-4-5-20251001-20241022",
                     },
                 },
             ],
@@ -498,7 +498,7 @@ class TestCCProxyHandler:
                     {
                         "name": "background",
                         "rule": "ccproxy.rules.MatchModelRule",
-                        "params": [{"model_name": "claude-3-5-haiku-20241022"}],
+                        "params": [{"model_name": "claude-haiku-4-5-20251001-20241022"}],
                     },
                 ],
             }
@@ -521,7 +521,7 @@ class TestCCProxyHandler:
     async def test_async_pre_call_hook(self, handler):
         """Test async_pre_call_hook modifies request correctly."""
         request_data = {
-            "model": "claude-3-5-haiku-20241022",
+            "model": "claude-haiku-4-5-20251001-20241022",
             "messages": [{"role": "user", "content": "Hello"}],
         }
         user_api_key_dict = {}
@@ -533,17 +533,17 @@ class TestCCProxyHandler:
         )
 
         # Check model was routed
-        assert modified_data["model"] == "claude-3-5-haiku-20241022"
+        assert modified_data["model"] == "claude-haiku-4-5-20251001-20241022"
 
         # Check metadata was added
         assert "metadata" in modified_data
         assert modified_data["metadata"]["ccproxy_model_name"] == "background"
-        assert modified_data["metadata"]["ccproxy_alias_model"] == "claude-3-5-haiku-20241022"
+        assert modified_data["metadata"]["ccproxy_alias_model"] == "claude-haiku-4-5-20251001-20241022"
 
     async def test_async_pre_call_hook_preserves_existing_metadata(self, handler):
         """Test that existing metadata is preserved."""
         request_data = {
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-5-20250929",
             "messages": [{"role": "user", "content": "Hello"}],
             "metadata": {
                 "existing_key": "existing_value",
@@ -562,7 +562,7 @@ class TestCCProxyHandler:
 
         # Check new metadata added
         assert modified_data["metadata"]["ccproxy_model_name"] == "default"
-        assert modified_data["metadata"]["ccproxy_alias_model"] == "claude-sonnet-4-20250514"
+        assert modified_data["metadata"]["ccproxy_alias_model"] == "claude-sonnet-4-5-20250929"
 
     async def test_handler_uses_config_threshold(self):
         """Test that handler uses context threshold from config."""
@@ -604,7 +604,7 @@ class TestCCProxyHandler:
                 {
                     "model_name": "default",
                     "litellm_params": {
-                        "model": "claude-sonnet-4-20250514",
+                        "model": "claude-sonnet-4-5-20250929",
                     },
                 },
                 {
@@ -629,7 +629,7 @@ class TestCCProxyHandler:
                 base_text = "The quick brown fox jumps over the lazy dog. " * 50  # ~501 tokens
                 large_message = base_text * 21  # ~10521 tokens (above 10000 threshold)
                 request_data = {
-                    "model": "claude-sonnet-4-20250514",
+                    "model": "claude-sonnet-4-5-20250929",
                     "messages": [{"role": "user", "content": large_message}],
                 }
                 user_api_key_dict = {}
@@ -779,7 +779,7 @@ class TestCCProxyHandler:
             handler._log_routing_decision(
                 model_name="default",
                 original_model="gpt-4",
-                routed_model="claude-3-5-sonnet",
+                routed_model="claude-sonnet-4-5-20250929",
                 model_config=None,  # This triggers the fallback path
             )
 
@@ -803,8 +803,8 @@ class TestCCProxyHandler:
             model_config = {"model_info": {"some": "config"}}
             handler._log_routing_decision(
                 model_name="default",
-                original_model="claude-3-5-sonnet",
-                routed_model="claude-3-5-sonnet",  # Same as original = passthrough
+                original_model="claude-sonnet-4-5-20250929",
+                routed_model="claude-sonnet-4-5-20250929",  # Same as original = passthrough
                 model_config=model_config,
             )
 
