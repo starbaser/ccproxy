@@ -424,3 +424,158 @@ ccproxy:
             finally:
                 os.chdir(original_cwd)
                 clear_config_instance()
+
+
+class TestCredentialsLoading:
+    """Tests for credentials loading at config startup."""
+
+    def test_credentials_loaded_at_startup_success(self) -> None:
+        """Test that credentials are loaded successfully during config initialization."""
+        yaml_content = """
+ccproxy:
+  credentials: echo 'test-token-123'
+  debug: true
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(yaml_content)
+            yaml_path = Path(f.name)
+
+        try:
+            config = CCProxyConfig.from_yaml(yaml_path)
+
+            # Credentials should be loaded and cached
+            assert config.credentials_value == "test-token-123"
+            assert config.credentials == "echo 'test-token-123'"
+
+        finally:
+            yaml_path.unlink()
+
+    def test_credentials_loaded_with_whitespace_stripped(self) -> None:
+        """Test that whitespace is stripped from credentials output."""
+        yaml_content = """
+ccproxy:
+  credentials: echo '  token-with-spaces  '
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(yaml_content)
+            yaml_path = Path(f.name)
+
+        try:
+            config = CCProxyConfig.from_yaml(yaml_path)
+            assert config.credentials_value == "token-with-spaces"
+
+        finally:
+            yaml_path.unlink()
+
+    def test_credentials_shell_command_failure(self) -> None:
+        """Test that config loading fails when credentials shell command fails."""
+        yaml_content = """
+ccproxy:
+  credentials: exit 1
+  debug: true
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(yaml_content)
+            yaml_path = Path(f.name)
+
+        try:
+            # Should raise RuntimeError when shell command fails
+            import pytest
+
+            with pytest.raises(RuntimeError, match="Credentials shell command failed with exit code 1"):
+                CCProxyConfig.from_yaml(yaml_path)
+
+        finally:
+            yaml_path.unlink()
+
+    def test_credentials_shell_command_empty_output(self) -> None:
+        """Test that config loading fails when credentials shell command returns empty output."""
+        yaml_content = """
+ccproxy:
+  credentials: echo -n ''
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(yaml_content)
+            yaml_path = Path(f.name)
+
+        try:
+            # Should raise RuntimeError when output is empty
+            import pytest
+
+            with pytest.raises(RuntimeError, match="Credentials shell command returned empty output"):
+                CCProxyConfig.from_yaml(yaml_path)
+
+        finally:
+            yaml_path.unlink()
+
+    def test_credentials_shell_command_timeout(self) -> None:
+        """Test that config loading fails when credentials shell command times out."""
+        yaml_content = """
+ccproxy:
+  credentials: sleep 10
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(yaml_content)
+            yaml_path = Path(f.name)
+
+        try:
+            # Should raise RuntimeError when command times out
+            import pytest
+
+            with pytest.raises(RuntimeError, match="Credentials shell command timed out after 5 seconds"):
+                CCProxyConfig.from_yaml(yaml_path)
+
+        finally:
+            yaml_path.unlink()
+
+    def test_credentials_not_configured(self) -> None:
+        """Test that config loads successfully when no credentials configured."""
+        yaml_content = """
+ccproxy:
+  debug: true
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(yaml_content)
+            yaml_path = Path(f.name)
+
+        try:
+            config = CCProxyConfig.from_yaml(yaml_path)
+
+            # Should load successfully with no credentials
+            assert config.credentials is None
+            assert config.credentials_value is None
+
+        finally:
+            yaml_path.unlink()
+
+    def test_credentials_value_property_readonly(self) -> None:
+        """Test that credentials_value is accessible via property."""
+        config = CCProxyConfig(credentials=None)
+        config._credentials_value = "cached-token"
+
+        # Should be accessible via property
+        assert config.credentials_value == "cached-token"
+
+    def test_credentials_cached_once(self) -> None:
+        """Test that credentials are cached and not re-executed."""
+        yaml_content = """
+ccproxy:
+  credentials: echo 'initial-token'
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(yaml_content)
+            yaml_path = Path(f.name)
+
+        try:
+            config = CCProxyConfig.from_yaml(yaml_path)
+
+            # Get the cached value
+            first_value = config.credentials_value
+            assert first_value == "initial-token"
+
+            # Accessing again should return same cached value
+            second_value = config.credentials_value
+            assert second_value == first_value
+
+        finally:
+            yaml_path.unlink()

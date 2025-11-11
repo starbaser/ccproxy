@@ -37,6 +37,7 @@ litellm --config /etc/litellm/config.yaml
 
 import importlib
 import logging
+import subprocess
 import threading
 from pathlib import Path
 from typing import Any
@@ -120,6 +121,12 @@ class CCProxyConfig(BaseSettings):
     metrics_enabled: bool = True
     default_model_passthrough: bool = True
 
+    # Credentials shell command (e.g., for OAuth tokens or API keys)
+    credentials: str | None = None
+
+    # Cached credentials value (loaded at startup)
+    _credentials_value: str | None = None
+
     # Hook configurations (function import paths)
     hooks: list[str] = Field(default_factory=list)
 
@@ -131,6 +138,55 @@ class CCProxyConfig(BaseSettings):
 
     # Path to LiteLLM config (for model lookups)
     litellm_config_path: Path = Field(default_factory=lambda: Path("./config.yaml"))
+
+    @property
+    def credentials_value(self) -> str | None:
+        """Get the cached credentials value.
+
+        Returns:
+            Cached credentials string or None if not configured
+        """
+        return self._credentials_value
+
+    def _load_credentials(self) -> None:
+        """Execute shell command to load credentials at startup.
+
+        Raises:
+            RuntimeError: If shell command fails to execute or returns empty credentials
+        """
+        if not self.credentials:
+            # No credentials command configured
+            self._credentials_value = None
+            return
+
+        try:
+            # Execute shell command
+            result = subprocess.run(  # noqa: S602
+                self.credentials,
+                shell=True,  # Intentional: credentials is user-configured command
+                capture_output=True,
+                text=True,
+                timeout=5,  # 5 second timeout
+            )
+
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"Credentials shell command failed with exit code {result.returncode}: {result.stderr.strip()}"
+                )
+
+            credentials = result.stdout.strip()
+            if not credentials:
+                raise RuntimeError("Credentials shell command returned empty output")
+
+            self._credentials_value = credentials
+            logger.debug("Successfully loaded credentials from shell command at startup")
+
+        except subprocess.TimeoutExpired as e:
+            raise RuntimeError("Credentials shell command timed out after 5 seconds") from e
+        except Exception as e:
+            if isinstance(e, RuntimeError):
+                raise
+            raise RuntimeError(f"Failed to execute credentials shell command: {e}") from e
 
     def load_hooks(self) -> list[Any]:
         """Load hook functions from their import paths.
@@ -183,6 +239,9 @@ class CCProxyConfig(BaseSettings):
 
         Returns:
             CCProxyConfig instance
+
+        Raises:
+            RuntimeError: If credentials shell command fails during startup
         """
         instance = cls(ccproxy_config_path=yaml_path, **kwargs)
 
@@ -201,6 +260,8 @@ class CCProxyConfig(BaseSettings):
                     instance.metrics_enabled = ccproxy_data["metrics_enabled"]
                 if "default_model_passthrough" in ccproxy_data:
                     instance.default_model_passthrough = ccproxy_data["default_model_passthrough"]
+                if "credentials" in ccproxy_data:
+                    instance.credentials = ccproxy_data["credentials"]
 
                 # Load hooks
                 hooks_data = ccproxy_data.get("hooks", [])
@@ -218,6 +279,9 @@ class CCProxyConfig(BaseSettings):
                         if name and rule_path:
                             rule_config = RuleConfig(name, rule_path, params)
                             instance.rules.append(rule_config)
+
+        # Load credentials at startup (raises RuntimeError if fails)
+        instance._load_credentials()
 
         return instance
 

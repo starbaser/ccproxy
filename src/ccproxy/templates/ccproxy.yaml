@@ -1,9 +1,11 @@
 ccproxy:
   debug: true
+  credentials: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
   hooks:
     - ccproxy.hooks.rule_evaluator # evaluates rules against request
     - ccproxy.hooks.model_router # routes to appropriate model (coupled with rule_evaluator)
     - ccproxy.hooks.forward_oauth # forwards oauth token for requests to anthropic (place after any routing logic)
+    # - ccproxy.hooks.forward_apikey # forwards x-api-key header from request (enable if needed)
 
   default_model_passthrough: true # use the original model that Claude Code requested when no routing rule matches
   rules:
