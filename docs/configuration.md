@@ -53,32 +53,22 @@ model_list:
   # Default model for regular use
   - model_name: default
     litellm_params:
-      model: claude-sonnet-4-20250514
+      model: claude-sonnet-4-5-20250929
 
   # Background model for low-cost operations
   - model_name: background
     litellm_params:
-      model: claude-3-5-haiku-20241022
+      model: claude-haiku-4-5-20251001
 
   # Thinking model for complex reasoning
   - model_name: think
     litellm_params:
       model: claude-opus-4-1-20250805
 
-  # Large context model for >60k tokens
-  - model_name: token_count
-    litellm_params:
-      model: gemini-2.5-pro
-
-  # Web search model for tool usage
-  - model_name: web_search
-    litellm_params:
-      model: gemini-2.5-flash
-
   # Anthropic provided claude models, no `api_key` needed
-  - model_name: claude-sonnet-4-20250514
+  - model_name: claude-sonnet-4-5-20250929
     litellm_params:
-      model: anthropic/claude-sonnet-4-20250514
+      model: anthropic/claude-sonnet-4-5-20250929
       api_base: https://api.anthropic.com
 
   - model_name: claude-opus-4-1-20250805
@@ -86,18 +76,10 @@ model_list:
       model: anthropic/claude-opus-4-1-20250805
       api_base: https://api.anthropic.com
 
-  - model_name: claude-3-5-haiku-20241022
+  - model_name: claude-haiku-4-5-20251001
     litellm_params:
-      model: anthropic/claude-3-5-haiku-20241022
+      model: anthropic/claude-haiku-4-5-20251001
       api_base: https://api.anthropic.com
-
-  # Add any other provider/model supported by LiteLLM
-
-  - model_name: gemini-2.5-pro
-    litellm_params:
-      model: gemini/gemini-2.5-pro
-      api_base: https://generativelanguage.googleapis.com
-      api_key: os.environ/GOOGLE_API_KEY
 
 # LiteLLM settings
 litellm_settings:
@@ -110,14 +92,14 @@ general_settings:
 
 Each `model_name` can be either:
 
-- A configured LiteLLM model (e.g., `claude-sonnet-4-20250514`)
+- A configured LiteLLM model (e.g., `claude-sonnet-4-5-20250929`)
 - The name of a rule configured in `ccproxy.yaml` (e.g., `default`, `background`, `think`)
 
 Model names in `config.yaml` must correspond to rule names in `ccproxy.yaml`. When a rule matches, `ccproxy` routes to the model with the same `model_name`.
 
 - **Minimum requirements for Claude Code**: For Claude Code to function properly, your `config.yaml` must include at minimum:
   - **Rule-based models**: `default`, `background`, and `think`
-  - **Claude models**: `claude-sonnet-4-20250514`, `claude-3-5-haiku-20241022`, and `claude-opus-4-1-20250805` (all with `api_base: https://api.anthropic.com`)
+  - **Claude models**: `claude-sonnet-4-5-20250929`, `claude-haiku-4-5-20251001`, and `claude-opus-4-1-20250805` (all with `api_base: https://api.anthropic.com`)
 
 See the [LiteLLM documentation](https://docs.litellm.ai/docs/proxy/configs) for more information.
 
@@ -164,7 +146,7 @@ ccproxy:
     - name: background
       rule: ccproxy.rules.MatchModelRule
       params:
-        - model_name: claude-3-5-haiku-20241022
+        - model_name: claude-haiku-4-5-20251001
 
     # Route thinking requests to reasoning model
     - name: think
@@ -264,13 +246,15 @@ ccproxy:
 ### Common Use Cases
 
 **Claude Code with subscription account (OAuth):**
+
 ```yaml
 credentials: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
 hooks:
-  - ccproxy.hooks.forward_oauth  # Use forward_oauth for OAuth tokens
+  - ccproxy.hooks.forward_oauth # Use forward_oauth for OAuth tokens
 ```
 
 **Loading from custom script:**
+
 ```yaml
 credentials: "~/bin/get-auth-token.sh"
 ```
@@ -278,6 +262,7 @@ credentials: "~/bin/get-auth-token.sh"
 ### Hook Integration
 
 The `credentials` field is used by the `forward_oauth` hook as a fallback when:
+
 1. No authorization header exists in the incoming request
 2. The request is targeting an Anthropic API endpoint
 3. Credentials were successfully loaded at startup
@@ -328,12 +313,14 @@ Forwards OAuth tokens to Anthropic API requests with automatic fallback to cache
 **Use when:** Claude Code is configured with a subscription account (OAuth authentication)
 
 **Features:**
+
 - Forwards existing authorization headers
 - Falls back to `credentials` field if no header present
 - Only activates for Anthropic API endpoints
 - Automatically adds "Bearer" prefix if needed
 
 **Configuration:**
+
 ```yaml
 ccproxy:
   credentials: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
@@ -348,11 +335,13 @@ Forwards x-api-key headers from incoming requests to proxied requests.
 **Use when:** Claude Code is configured with an Anthropic API key (not a subscription account)
 
 **Features:**
+
 - Forwards x-api-key header from request to proxied request
 - No credentials fallback mechanism
 - Simple header passthrough
 
 **Configuration:**
+
 ```yaml
 ccproxy:
   hooks:
@@ -360,6 +349,7 @@ ccproxy:
 ```
 
 **Important**: Choose ONE of these hooks based on your Claude Code authentication method:
+
 - **Subscription account** → Use `forward_oauth`
 - **API key** → Use `forward_apikey`
 
@@ -447,7 +437,7 @@ rules:
   - name: background
     rule: ccproxy.rules.MatchModelRule
     params:
-      - model_name: claude-3-5-haiku-20241022
+      - model_name: claude-haiku-4-5-20251001
 
   - name: reasoning
     rule: ccproxy.rules.MatchModelRule
