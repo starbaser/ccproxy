@@ -264,9 +264,14 @@ ccproxy:
 credentials: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
 ```
 
+**Using Anthropic API key (alternative to OAuth):**
+```yaml
+credentials: "echo $ANTHROPIC_API_KEY"
+```
+
 **Loading from environment file:**
 ```yaml
-credentials: "grep API_KEY ~/.env | cut -d= -f2"
+credentials: "grep ANTHROPIC_API_KEY ~/.env | cut -d= -f2"
 ```
 
 **Using custom script:**
@@ -329,14 +334,27 @@ Forwards OAuth tokens to Anthropic API requests with automatic fallback to cache
 - Falls back to `credentials` field if no header present
 - Only activates for Anthropic API endpoints
 - Automatically adds "Bearer" prefix if needed
+- Supports both OAuth tokens and API keys
 
 **Configuration:**
+
+Using Claude Code OAuth (default):
 ```yaml
 ccproxy:
   credentials: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
   hooks:
     - ccproxy.hooks.forward_oauth
 ```
+
+Using Anthropic API key instead:
+```yaml
+ccproxy:
+  credentials: "echo $ANTHROPIC_API_KEY"
+  hooks:
+    - ccproxy.hooks.forward_oauth
+```
+
+**Note**: The `forward_oauth` hook works with both OAuth tokens and API keys. The name reflects its primary use case (OAuth for Claude Code), but it handles any Authorization header value.
 
 #### forward_apikey
 
