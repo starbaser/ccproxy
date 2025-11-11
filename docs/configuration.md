@@ -138,11 +138,17 @@ litellm:
 ccproxy:
   debug: true
 
+  # Optional: Shell command to load credentials at startup
+  # Executed once during config initialization, result is cached
+  # Raises error if command fails (fail-fast validation)
+  credentials: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+
   # Processing hooks (executed in order)
   hooks:
     - ccproxy.hooks.rule_evaluator # Evaluates rules
     - ccproxy.hooks.model_router # Routes to models
-    - ccproxy.hooks.forward_oauth # Forwards OAuth tokens
+    - ccproxy.hooks.forward_oauth # Forwards OAuth tokens (uses credentials fallback)
+    # - ccproxy.hooks.forward_apikey # Optional: forwards x-api-key header
 
   # Routing rules (evaluated in order)
   rules:
@@ -170,6 +176,7 @@ ccproxy:
 ```
 
 - **`litellm`**: LiteLLM proxy server process (See `litellm --help`)
+- **`ccproxy.credentials`**: Optional shell command to load credentials at startup (cached, fail-fast)
 - **`ccproxy.hooks`**: A list of hooks that are executed in series during the `async_pre_call_hook`
 - **`ccproxy.rules`**: Request routing rules (evaluated in order)
 
@@ -179,6 +186,15 @@ ccproxy:
 2. **MatchModelRule**: Routes specific model requests
 3. **ThinkingRule**: Routes requests with thinking fields
 4. **MatchToolRule**: Routes based on tool usage
+
+#### Built-in Hooks
+
+1. **rule_evaluator**: Evaluates rules against the request to determine routing
+2. **model_router**: Maps rule names to model configurations
+3. **forward_oauth**: Forwards OAuth tokens to Anthropic API (with credentials fallback)
+4. **forward_apikey**: Forwards x-api-key headers from incoming requests
+
+**Note**: Only `forward_oauth` is required for Claude Code to function properly.
 
 #### Rule Parameters
 
@@ -223,6 +239,50 @@ This file is referenced in `config.yaml` under `litellm_settings.callbacks`.
 3. **Model Selection**: Request routed to appropriate model
 4. **Response**: Response returned through LiteLLM proxy
 
+## Credentials Management
+
+The `credentials` field in `ccproxy.yaml` allows you to load authentication tokens via shell command at startup. This is particularly useful for automatically loading OAuth tokens from Claude Code's credential storage.
+
+### Configuration
+
+```yaml
+ccproxy:
+  credentials: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+```
+
+### Behavior
+
+- **Execution**: Shell command runs once during config initialization
+- **Caching**: Result is cached for the lifetime of the proxy process
+- **Validation**: Raises `RuntimeError` if command fails (fail-fast)
+- **Usage**: Credentials are used as fallback by `forward_oauth` hook
+
+### Common Use Cases
+
+**Loading Claude Code OAuth token:**
+```yaml
+credentials: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+```
+
+**Loading from environment file:**
+```yaml
+credentials: "grep API_KEY ~/.env | cut -d= -f2"
+```
+
+**Using custom script:**
+```yaml
+credentials: "~/bin/get-auth-token.sh"
+```
+
+### Hook Integration
+
+The `forward_oauth` hook automatically uses cached credentials when:
+1. No authorization header exists in the incoming request
+2. The request is targeting an Anthropic API endpoint
+3. Credentials were successfully loaded at startup
+
+This provides seamless OAuth token forwarding for Claude Code without manual header management.
+
 ## Custom Rules
 
 Create custom routing rules by implementing the `ClassificationRule` interface:
@@ -257,6 +317,42 @@ ccproxy:
 `ccproxy` provides a hook system that allows you to extend and customize its behavior beyond the built-in rule routing system. Hooks are Python functions that can intercept and modify requests, implement custom logging, filtering, or integrate with external systems. The rule routing system is just itself a custom hook.
 
 Only the `forward_oauth` is required for Claude Code to function properly.
+
+### Built-in Hook Details
+
+#### forward_oauth
+
+Forwards OAuth tokens to Anthropic API requests with automatic fallback to cached credentials.
+
+**Features:**
+- Forwards existing authorization headers
+- Falls back to `credentials` field if no header present
+- Only activates for Anthropic API endpoints
+- Automatically adds "Bearer" prefix if needed
+
+**Configuration:**
+```yaml
+ccproxy:
+  credentials: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+  hooks:
+    - ccproxy.hooks.forward_oauth
+```
+
+#### forward_apikey
+
+Forwards x-api-key headers from incoming requests to proxied requests.
+
+**Features:**
+- Simple header forwarding (no fallback mechanism)
+- Only forwards if x-api-key header exists in request
+- Useful for custom API integrations
+
+**Configuration:**
+```yaml
+ccproxy:
+  hooks:
+    - ccproxy.hooks.forward_apikey
+```
 
 ### Example: Request Logging Hook
 
