@@ -1,6 +1,7 @@
 """ccproxy handler - Main LiteLLM CustomLogger implementation."""
 
 import logging
+import os
 from typing import Any, TypedDict
 
 from litellm.integrations.custom_logger import CustomLogger
@@ -41,6 +42,9 @@ class CCProxyHandler(CustomLogger):
         if config.debug and self.hooks:
             hook_names = [f"{h.__module__}.{h.__name__}" for h in self.hooks]
             logger.debug(f"Loaded {len(self.hooks)} hooks: {', '.join(hook_names)}")
+
+        # Validate Langfuse configuration
+        self._check_langfuse_config()
 
     async def async_pre_call_hook(
         self,

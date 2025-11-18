@@ -1,5 +1,6 @@
 """ccproxy CLI for managing the LiteLLM proxy server - Tyro implementation."""
 
+import json
 import logging
 import logging.config
 import os
@@ -7,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import time
+from builtins import print as builtin_print
 from pathlib import Path
 from typing import Annotated
 
@@ -79,6 +81,9 @@ class Logs:
 @attrs.define
 class Status:
     """Show the status of LiteLLM proxy and ccproxy configuration."""
+
+    json: bool = False
+    """Output status as JSON with boolean values."""
 
 
 # @attrs.define
@@ -523,34 +528,29 @@ def view_logs(config_dir: Path, follow: bool = False, lines: int = 100) -> None:
             sys.exit(1)
 
 
-def show_status(config_dir: Path) -> None:
+def show_status(config_dir: Path, json_output: bool = False) -> None:
     """Show the status of LiteLLM proxy and ccproxy configuration.
 
     Args:
         config_dir: Configuration directory to check
+        json_output: Output status as JSON with boolean values
     """
-    console = Console()
-
     # Check LiteLLM proxy status
     pid_file = config_dir / "litellm.lock"
     log_file = config_dir / "litellm.log"
 
     proxy_running = False
-    proxy_pid = None
 
     if pid_file.exists():
         try:
             pid = int(pid_file.read_text().strip())
             # Check if process is still running
             try:
-                os.kill(pid, 0)  # This doesn't kill, just checks if process exists
+                os.kill(pid, 0)
                 proxy_running = True
-                proxy_pid = pid
             except ProcessLookupError:
-                # Process is not running, stale PID file
                 pass
         except (ValueError, OSError):
-            # Invalid PID file
             pass
 
     # Check configuration files
@@ -558,72 +558,69 @@ def show_status(config_dir: Path) -> None:
     litellm_config = config_dir / "config.yaml"
     user_hooks = config_dir / "ccproxy.py"
 
-    # Load proxy configuration for host/port info
-    proxy_host = "127.0.0.1"
-    proxy_port = 4000
-
+    # Build config paths dict
+    config_paths = {}
     if ccproxy_config.exists():
+        config_paths["ccproxy.yaml"] = str(ccproxy_config)
+    if litellm_config.exists():
+        config_paths["config.yaml"] = str(litellm_config)
+    if user_hooks.exists():
+        config_paths["ccproxy.py"] = str(user_hooks)
+
+    # Extract callbacks from config.yaml
+    callbacks = []
+    if litellm_config.exists():
         try:
-            with ccproxy_config.open() as f:
-                config = yaml.safe_load(f)
-            litellm_settings = config.get("litellm", {}) if config else {}
-            proxy_host = litellm_settings.get("host", "127.0.0.1")
-            proxy_port = litellm_settings.get("port", 4000)
+            with litellm_config.open() as f:
+                config_data = yaml.safe_load(f)
+            litellm_settings = config_data.get("litellm_settings", {}) if config_data else {}
+            callbacks = litellm_settings.get("callbacks", [])
         except (yaml.YAMLError, OSError):
             pass
 
-    # Create status table
-    table = Table(show_header=True, header_style="bold cyan")
-    table.add_column("Component", style="white", width=20)
-    table.add_column("Status", width=15)
-    table.add_column("Details", style="dim")
+    # Build status data
+    status_data = {
+        "proxy": proxy_running,
+        "config": config_paths,
+        "callbacks": callbacks,
+        "log": str(log_file) if log_file.exists() else None,
+    }
 
-    # LiteLLM Proxy status
-    if proxy_running:
-        table.add_row(
-            "LiteLLM Proxy", "[green]Running[/green]", f"PID: {proxy_pid}, URL: http://{proxy_host}:{proxy_port}"
-        )
+    if json_output:
+        builtin_print(json.dumps(status_data, indent=2))
     else:
-        table.add_row("LiteLLM Proxy", "[red]Stopped[/red]", "Use 'ccproxy start' to start")
+        # Rich table output
+        console = Console()
 
-    # Configuration files
-    if ccproxy_config.exists():
-        table.add_row("ccproxy.yaml", "[green]Found[/green]", str(ccproxy_config))
-    else:
-        table.add_row("ccproxy.yaml", "[red]Missing[/red]", "Use 'ccproxy install' to create")
+        table = Table(show_header=False, show_lines=True)
+        table.add_column("Key", style="white", width=15)
+        table.add_column("Value", style="yellow")
 
-    if litellm_config.exists():
-        table.add_row("config.yaml", "[green]Found[/green]", str(litellm_config))
-    else:
-        table.add_row("config.yaml", "[red]Missing[/red]", "Use 'ccproxy install' to create")
+        # Proxy status
+        proxy_status = "[green]true[/green]" if status_data["proxy"] else "[red]false[/red]"
+        table.add_row("proxy", proxy_status)
 
-    if user_hooks.exists():
-        table.add_row("ccproxy.py", "[green]Found[/green]", str(user_hooks))
-    else:
-        table.add_row("ccproxy.py", "[yellow]Optional[/yellow]", "User hooks file")
+        # Config files
+        if status_data["config"]:
+            config_display = "\n".join(
+                f"[cyan]{key}[/cyan]: {value}" for key, value in status_data["config"].items()
+            )
+        else:
+            config_display = "[red]No config files found[/red]"
+        table.add_row("config", config_display)
 
-    # Log file
-    if log_file.exists():
-        try:
-            log_size = log_file.stat().st_size
-            if log_size > 0:
-                table.add_row("Log File", "[green]Active[/green]", f"{log_file} ({log_size} bytes)")
-            else:
-                table.add_row("Log File", "[yellow]Empty[/yellow]", str(log_file))
-        except OSError:
-            table.add_row("Log File", "[red]Error[/red]", "Cannot read log file")
-    else:
-        table.add_row("Log File", "[yellow]None[/yellow]", "No log file found")
+        # Callbacks
+        if status_data["callbacks"]:
+            callbacks_display = "\n".join(f"[green]• {cb}[/green]" for cb in status_data["callbacks"])
+        else:
+            callbacks_display = "[dim]No callbacks configured[/dim]"
+        table.add_row("callbacks", callbacks_display)
 
-    # Display the status
-    console.print(Panel(table, title="[bold]ccproxy Status[/bold]", border_style="blue"))
+        # Log file
+        log_display = status_data["log"] if status_data["log"] else "[yellow]No log file[/yellow]"
+        table.add_row("log", log_display)
 
-    # Add helpful hints
-    if not proxy_running:
-        console.print("\n[yellow]💡 Tip:[/yellow] Start the proxy with [cyan]ccproxy start[/cyan]")
-
-    if not (ccproxy_config.exists() and litellm_config.exists()):
-        console.print("\n[yellow]💡 Tip:[/yellow] Install configuration with [cyan]ccproxy install[/cyan]")
+        console.print(Panel(table, title="[bold]ccproxy Status[/bold]", border_style="blue"))
 
 
 def main(
@@ -680,7 +677,7 @@ def main(
         view_logs(config_dir, follow=cmd.follow, lines=cmd.lines)
 
     elif isinstance(cmd, Status):
-        show_status(config_dir)
+        show_status(config_dir, json_output=cmd.json)
 
 
 def entry_point() -> None:

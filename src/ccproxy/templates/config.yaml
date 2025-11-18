@@ -1,19 +1,9 @@
 # See https://docs.litellm.ai/docs/proxy/configs
 model_list:
-  # Default model for regular use
+  # Default model
   - model_name: default
     litellm_params:
       model: claude-sonnet-4-5-20250929
-
-  # Background model, see: https://docs.anthropic.com/en/docs/claude-code/costs#background-token-usage
-  - model_name: background
-    litellm_params:
-      model: claude-haiku-4-5-20251001
-
-  # Thinking model for complex reasoning (request.body.think = true)
-  - model_name: think
-    litellm_params:
-      model: claude-opus-4-1-20250805
 
   # Anthropic provided claude models, no `api_key` needed
   - model_name: claude-sonnet-4-5-20250929
@@ -31,12 +21,17 @@ model_list:
       model: anthropic/claude-haiku-4-5-20251001
       api_base: https://api.anthropic.com
 
+  - model_name: claude-3-5-haiku-20241022
+    litellm_params:
+      model: anthropic/claude-3-5-haiku-20241022
+      api_base: https://api.anthropic.com
+
 litellm_settings:
   callbacks:
     - ccproxy.handler
-  #   - langfuse
-  # success_callback:
-  #   - langfuse
+    - langfuse
+  success_callback:
+    - langfuse
 
 general_settings:
   forward_client_headers_to_llm_api: true

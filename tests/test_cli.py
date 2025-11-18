@@ -1,5 +1,6 @@
 """Tests for the ccproxy CLI."""
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -12,10 +13,12 @@ from ccproxy.cli import (
     Logs,
     Run,
     Start,
+    Status,
     Stop,
     install_config,
     main,
     run_with_proxy,
+    show_status,
     start_litellm,
     stop_litellm,
     view_logs,
@@ -599,6 +602,148 @@ class TestViewLogs:
         mock_popen.assert_called_once_with(["cat"], stdin=subprocess.PIPE)
 
 
+class TestShowStatus:
+    """Test suite for show_status function."""
+
+    @patch("os.kill")
+    def test_status_json_proxy_running(self, mock_kill: Mock, tmp_path: Path, capsys) -> None:
+        """Test status JSON output with proxy running."""
+        # Create config files
+        ccproxy_config = tmp_path / "ccproxy.yaml"
+        ccproxy_config.write_text("litellm: {}")
+
+        litellm_config = tmp_path / "config.yaml"
+        litellm_config.write_text("""
+litellm_settings:
+  callbacks:
+    - ccproxy.handler
+    - langfuse
+""")
+
+        user_hooks = tmp_path / "ccproxy.py"
+        user_hooks.write_text("# hooks")
+
+        log_file = tmp_path / "litellm.log"
+        log_file.write_text("log content")
+
+        # Create PID file
+        pid_file = tmp_path / "litellm.lock"
+        pid_file.write_text("12345")
+
+        # Mock process is running
+        mock_kill.return_value = None
+
+        show_status(tmp_path, json_output=True)
+
+        captured = capsys.readouterr()
+        status = json.loads(captured.out)
+        assert status["proxy"] is True
+        assert status["config"]["ccproxy.yaml"] == str(ccproxy_config)
+        assert status["config"]["config.yaml"] == str(litellm_config)
+        assert status["config"]["ccproxy.py"] == str(user_hooks)
+        assert status["callbacks"] == ["ccproxy.handler", "langfuse"]
+        assert status["log"] == str(log_file)
+
+    def test_status_json_proxy_stopped(self, tmp_path: Path, capsys) -> None:
+        """Test status JSON output with proxy stopped."""
+        # Create only config files
+        ccproxy_config = tmp_path / "ccproxy.yaml"
+        ccproxy_config.write_text("litellm: {}")
+
+        litellm_config = tmp_path / "config.yaml"
+        litellm_config.write_text("litellm_settings: {}")
+
+        show_status(tmp_path, json_output=True)
+
+        captured = capsys.readouterr()
+        status = json.loads(captured.out)
+        assert status["proxy"] is False
+        assert status["config"]["ccproxy.yaml"] == str(ccproxy_config)
+        assert status["config"]["config.yaml"] == str(litellm_config)
+        assert "ccproxy.py" not in status["config"]
+        assert status["callbacks"] == []
+        assert status["log"] is None
+
+    def test_status_json_no_config(self, tmp_path: Path, capsys) -> None:
+        """Test status JSON output with no config files."""
+        show_status(tmp_path, json_output=True)
+
+        captured = capsys.readouterr()
+        status = json.loads(captured.out)
+        assert status["proxy"] is False
+        assert status["config"] == {}
+        assert status["callbacks"] == []
+        assert status["log"] is None
+
+    @patch("os.kill")
+    def test_status_json_with_stale_pid(self, mock_kill: Mock, tmp_path: Path, capsys) -> None:
+        """Test status JSON output with stale PID file."""
+        # Create PID file
+        pid_file = tmp_path / "litellm.lock"
+        pid_file.write_text("12345")
+
+        # Mock process is not running
+        mock_kill.side_effect = ProcessLookupError()
+
+        show_status(tmp_path, json_output=True)
+
+        captured = capsys.readouterr()
+        status = json.loads(captured.out)
+        assert status["proxy"] is False
+
+    @patch("os.kill")
+    def test_status_rich_output_proxy_running(self, mock_kill: Mock, tmp_path: Path, capsys) -> None:
+        """Test status rich output with proxy running."""
+        # Create config files
+        ccproxy_config = tmp_path / "ccproxy.yaml"
+        ccproxy_config.write_text("litellm: {}")
+
+        litellm_config = tmp_path / "config.yaml"
+        litellm_config.write_text("""
+litellm_settings:
+  callbacks:
+    - ccproxy.handler
+""")
+
+        log_file = tmp_path / "litellm.log"
+        log_file.write_text("log content")
+
+        # Create PID file
+        pid_file = tmp_path / "litellm.lock"
+        pid_file.write_text("12345")
+
+        # Mock process is running
+        mock_kill.return_value = None
+
+        show_status(tmp_path, json_output=False)
+
+        captured = capsys.readouterr()
+        assert "ccproxy Status" in captured.out
+        assert "proxy" in captured.out
+        assert "true" in captured.out
+        assert "config" in captured.out
+        assert "ccproxy.yaml" in captured.out
+        assert "callbacks" in captured.out
+        assert "ccproxy.handler" in captured.out
+
+    def test_status_rich_output_no_callbacks(self, tmp_path: Path, capsys) -> None:
+        """Test status rich output with no callbacks configured."""
+        litellm_config = tmp_path / "config.yaml"
+        litellm_config.write_text("litellm_settings: {}")
+
+        show_status(tmp_path, json_output=False)
+
+        captured = capsys.readouterr()
+        assert "No callbacks configured" in captured.out
+
+    def test_status_rich_output_no_config(self, tmp_path: Path, capsys) -> None:
+        """Test status rich output with no config files."""
+        show_status(tmp_path, json_output=False)
+
+        captured = capsys.readouterr()
+        assert "No config files found" in captured.out
+
+
 class TestMainFunction:
     """Test suite for main CLI function using Tyro."""
 
@@ -685,3 +830,19 @@ class TestMainFunction:
         main(cmd, config_dir=tmp_path)
 
         mock_logs.assert_called_once_with(tmp_path, follow=True, lines=50)
+
+    @patch("ccproxy.cli.show_status")
+    def test_main_status_command(self, mock_status: Mock, tmp_path: Path) -> None:
+        """Test main with status command."""
+        cmd = Status(json=False)
+        main(cmd, config_dir=tmp_path)
+
+        mock_status.assert_called_once_with(tmp_path, json_output=False)
+
+    @patch("ccproxy.cli.show_status")
+    def test_main_status_command_json(self, mock_status: Mock, tmp_path: Path) -> None:
+        """Test main with status command with JSON output."""
+        cmd = Status(json=True)
+        main(cmd, config_dir=tmp_path)
+
+        mock_status.assert_called_once_with(tmp_path, json_output=True)
