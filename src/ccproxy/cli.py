@@ -282,8 +282,18 @@ def start_litellm(config_dir: Path, args: list[str] | None = None, detach: bool 
     # Set environment variable for ccproxy configuration location
     os.environ["CCPROXY_CONFIG_DIR"] = str(config_dir.absolute())
 
-    # Build litellm command
-    cmd = ["litellm", "--config", str(config_path)]
+    # Build litellm command using the bundled version from the same venv
+    # This avoids PATH conflicts with standalone litellm installations
+    # Get the bin directory from the current Python interpreter's location
+    venv_bin = Path(sys.executable).parent
+    litellm_path = venv_bin / "litellm"
+
+    if not litellm_path.exists():
+        print(f"Error: litellm not found in virtual environment at {litellm_path}", file=sys.stderr)
+        print("Make sure ccproxy is installed with: uv tool install claude-ccproxy --with 'litellm[proxy]'", file=sys.stderr)
+        sys.exit(1)
+
+    cmd = [str(litellm_path), "--config", str(config_path)]
 
     # Add any additional arguments
     if args:
