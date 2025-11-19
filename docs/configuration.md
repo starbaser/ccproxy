@@ -18,9 +18,11 @@ Additionally, `ccproxy.py` is automatically generated when you start the proxy b
 ccproxy requires LiteLLM to be installed in the same environment. This is handled automatically when using the recommended installation method:
 
 ```bash
-# Install ccproxy with litellm bundled
-uv tool install --from git+https://github.com/starbased-co/ccproxy.git \
-  claude-ccproxy --with 'litellm[proxy]'
+# Install from PyPI
+uv tool install claude-ccproxy --with 'litellm[proxy]'
+
+# Or from GitHub (latest)
+uv tool install git+https://github.com/starbased-co/ccproxy.git --with 'litellm[proxy]'
 ```
 
 ### Install Configuration Files
