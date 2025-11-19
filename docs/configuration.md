@@ -8,7 +8,7 @@ This guide covers `ccproxy`'s configuration system, including all configuration 
 
 1. **`config.yaml`** - LiteLLM proxy configuration (models, API keys, etc.)
 2. **`ccproxy.yaml`** - ccproxy-specific settings (rules, hooks, debug options)
-3. **`ccproxy.py`** - Handler instantiation for LiteLLM integration
+3. **`ccproxy.py`** - Handler instantiation template for LiteLLM integration
 
 ## Installation
 
@@ -26,7 +26,7 @@ If you prefer to set up manually, download the template files:
 # Create the ccproxy configuration directory
 mkdir -p ~/.ccproxy
 
-# Download the callback file
+# Download the handler template
 curl -o ~/.ccproxy/ccproxy.py \
   https://raw.githubusercontent.com/starbased-co/ccproxy/main/src/ccproxy/templates/ccproxy.py
 
@@ -198,18 +198,36 @@ params:
   - keyword: "keyword_value"
 ```
 
-### ccproxy.py (Handler Integration)
+### ccproxy.py (Auto-Generated Handler)
 
-This file instantiates the `ccproxy` handler for LiteLLM integration.
+**This file is auto-generated** by `ccproxy start` and should not be edited manually.
 
+The handler file imports and instantiates the configured handler class for LiteLLM callbacks. The handler class is specified in `ccproxy.yaml` using the `handler` configuration field.
+
+**Configuration:**
+```yaml
+ccproxy:
+  handler: "ccproxy.handler:CCProxyHandler"  # module_path:ClassName
+```
+
+**Generated structure:**
 ```python
+# Auto-generated - DO NOT EDIT
 from ccproxy.handler import CCProxyHandler
-
-# Create the instance that LiteLLM will use
 handler = CCProxyHandler()
 ```
 
-This file is referenced in `config.yaml` under `litellm_settings.callbacks`.
+The file is referenced in `config.yaml` under `litellm_settings.callbacks` as `ccproxy.handler`.
+
+**Custom Handlers:**
+
+To use a custom handler class, update `ccproxy.yaml`:
+```yaml
+ccproxy:
+  handler: "mypackage.custom:MyHandler"
+```
+
+Then run `ccproxy start` to regenerate the handler file with your custom handler.
 
 ## Request Routing Flow
 

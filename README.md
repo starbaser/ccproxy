@@ -42,9 +42,10 @@ ccproxy install
 
 tree ~/.ccproxy
 # ~/.ccproxy
-# ├── ccproxy.py
 # ├── ccproxy.yaml
 # └── config.yaml
+
+# ccproxy.py is auto-generated when you start the proxy
 
 # Start the proxy server
 ccproxy start --detach

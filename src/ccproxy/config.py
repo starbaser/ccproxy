@@ -121,6 +121,9 @@ class CCProxyConfig(BaseSettings):
     metrics_enabled: bool = True
     default_model_passthrough: bool = True
 
+    # Handler import path (e.g., "ccproxy.handler:CCProxyHandler")
+    handler: str = "ccproxy.handler:CCProxyHandler"
+
     # Credentials shell command (e.g., for OAuth tokens or API keys)
     credentials: str | None = None
 

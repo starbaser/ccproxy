@@ -104,8 +104,8 @@ Custom rules can be created by implementing the ClassificationRule interface and
 ### Configuration Files
 
 - `~/.ccproxy/config.yaml` - LiteLLM proxy configuration with model definitions
-- `~/.ccproxy/ccproxy.yaml` - ccproxy-specific configuration (rules, hooks, debug settings)
-- `~/.ccproxy/ccproxy.py` - Optional user hooks for custom request/response processing
+- `~/.ccproxy/ccproxy.yaml` - ccproxy-specific configuration (rules, hooks, debug settings, handler path)
+- `~/.ccproxy/ccproxy.py` - Auto-generated handler file (created on `ccproxy start` based on `handler` config)
 
 ## Testing Patterns
 

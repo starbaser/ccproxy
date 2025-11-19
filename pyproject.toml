@@ -1,19 +1,19 @@
 [project]
-name = "ccproxy"
-version = "1.0.0"
-description = "LiteLLM-based transformation hook system for context-aware routing"
+name = "claude-ccproxy"
+version = "1.1.1"
+description = "Scriptable Claude Code LiteLLM-based proxy"
 readme = "README.md"
 requires-python = ">=3.11"
-license = {text = "AGPL-3.0-or-later"}
+license = { text = "AGPL-3.0-or-later" }
 keywords = ["litellm", "proxy", "routing", "ai", "llm"]
 classifiers = [
-    "Development Status :: 5 - Production/Stable",
-    "Intended Audience :: Developers",
-    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Topic :: Software Development :: Libraries :: Python Modules",
+  "Development Status :: 5 - Production/Stable",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
   "litellm[proxy]>=1.13.0",

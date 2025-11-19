@@ -43,9 +43,6 @@ class CCProxyHandler(CustomLogger):
             hook_names = [f"{h.__module__}.{h.__name__}" for h in self.hooks]
             logger.debug(f"Loaded {len(self.hooks)} hooks: {', '.join(hook_names)}")
 
-        # Validate Langfuse configuration
-        self._check_langfuse_config()
-
     async def async_pre_call_hook(
         self,
         data: dict[str, Any],
