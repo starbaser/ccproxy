@@ -1,5 +1,6 @@
 ccproxy:
   debug: true
+  handler: "ccproxy.handler:CCProxyHandler"
   credentials: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
   hooks:
     - ccproxy.hooks.rule_evaluator # evaluates rules against request

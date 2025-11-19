@@ -15,6 +15,7 @@ from ccproxy.cli import (
     Start,
     Status,
     Stop,
+    generate_handler_file,
     install_config,
     main,
     run_with_proxy,
@@ -215,10 +216,9 @@ class TestInstallConfig:
         templates_dir = tmp_path / "templates"
         templates_dir.mkdir()
 
-        # Create template files
+        # Create template files (ccproxy.py is no longer a template - it's auto-generated on start)
         (templates_dir / "ccproxy.yaml").write_text("test: config")
         (templates_dir / "config.yaml").write_text("litellm: config")
-        (templates_dir / "ccproxy.py").write_text("# hook code")
 
         mock_get_templates.return_value = templates_dir
 
@@ -227,7 +227,7 @@ class TestInstallConfig:
 
         assert (config_dir / "ccproxy.yaml").exists()
         assert (config_dir / "config.yaml").exists()
-        assert (config_dir / "ccproxy.py").exists()
+        # ccproxy.py is not installed - it's generated on startup
 
         captured = capsys.readouterr()
         assert "Installation complete!" in captured.out
@@ -253,7 +253,6 @@ class TestInstallConfig:
         templates_dir.mkdir()
         (templates_dir / "ccproxy.yaml").write_text("new: config")
         (templates_dir / "config.yaml").write_text("new: litellm")
-        (templates_dir / "ccproxy.py").write_text("# new hook")
 
         mock_get_templates.return_value = templates_dir
 
@@ -282,7 +281,7 @@ class TestInstallConfig:
 
         captured = capsys.readouterr()
         assert "Warning: Template config.yaml not found" in captured.err
-        assert "Warning: Template ccproxy.py not found" in captured.err
+        # ccproxy.py is no longer a template, so no warning expected
 
     def test_install_template_dir_error(self, tmp_path: Path) -> None:
         """Test install when get_templates_dir raises RuntimeError."""
@@ -310,6 +309,146 @@ class TestInstallConfig:
 
         # Verify file wasn't overwritten
         assert (config_dir / "ccproxy.yaml").read_text() == "existing content"
+
+
+class TestHandlerGeneration:
+    """Test suite for generate_handler_file function."""
+
+    def test_generate_handler_default(self, tmp_path: Path) -> None:
+        """Test handler generation with default configuration."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        # Create minimal ccproxy.yaml with default handler
+        (config_dir / "ccproxy.yaml").write_text(
+            """
+ccproxy:
+  handler: "ccproxy.handler:CCProxyHandler"
+"""
+        )
+
+        generate_handler_file(config_dir)
+
+        handler_file = config_dir / "ccproxy.py"
+        assert handler_file.exists()
+
+        content = handler_file.read_text()
+        assert "from ccproxy.handler import CCProxyHandler" in content
+        assert "handler = CCProxyHandler()" in content
+        assert "Auto-generated" in content
+        assert "DO NOT EDIT" in content
+
+    def test_generate_handler_custom(self, tmp_path: Path) -> None:
+        """Test handler generation with custom handler class."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        # Create ccproxy.yaml with custom handler
+        (config_dir / "ccproxy.yaml").write_text(
+            """
+ccproxy:
+  handler: "mypackage.custom:MyCustomHandler"
+"""
+        )
+
+        generate_handler_file(config_dir)
+
+        handler_file = config_dir / "ccproxy.py"
+        content = handler_file.read_text()
+        assert "from mypackage.custom import MyCustomHandler" in content
+        assert "handler = MyCustomHandler()" in content
+
+    def test_generate_handler_no_colon(self, tmp_path: Path) -> None:
+        """Test handler generation with module path only (no colon)."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        # Handler without colon should use CCProxyHandler as class name
+        (config_dir / "ccproxy.yaml").write_text(
+            """
+ccproxy:
+  handler: "ccproxy.handler"
+"""
+        )
+
+        generate_handler_file(config_dir)
+
+        handler_file = config_dir / "ccproxy.py"
+        content = handler_file.read_text()
+        assert "from ccproxy.handler import CCProxyHandler" in content
+        assert "handler = CCProxyHandler()" in content
+
+    def test_generate_handler_missing_config(self, tmp_path: Path) -> None:
+        """Test handler generation when ccproxy.yaml doesn't exist."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        # Should use default handler when config is missing
+        generate_handler_file(config_dir)
+
+        handler_file = config_dir / "ccproxy.py"
+        assert handler_file.exists()
+        content = handler_file.read_text()
+        assert "from ccproxy.handler import CCProxyHandler" in content
+        assert "handler = CCProxyHandler()" in content
+
+    def test_generate_handler_malformed_yaml(self, tmp_path: Path) -> None:
+        """Test handler generation with malformed YAML."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        # Create malformed YAML
+        (config_dir / "ccproxy.yaml").write_text("invalid: {yaml: [")
+
+        # Should fall back to default handler
+        generate_handler_file(config_dir)
+
+        handler_file = config_dir / "ccproxy.py"
+        assert handler_file.exists()
+        content = handler_file.read_text()
+        assert "from ccproxy.handler import CCProxyHandler" in content
+
+    def test_generate_handler_missing_handler_key(self, tmp_path: Path) -> None:
+        """Test handler generation when handler key is missing from config."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        # Config without handler key
+        (config_dir / "ccproxy.yaml").write_text(
+            """
+ccproxy:
+  debug: true
+"""
+        )
+
+        # Should fall back to default handler
+        generate_handler_file(config_dir)
+
+        handler_file = config_dir / "ccproxy.py"
+        content = handler_file.read_text()
+        assert "from ccproxy.handler import CCProxyHandler" in content
+
+    def test_generate_handler_overwrite_existing(self, tmp_path: Path) -> None:
+        """Test that handler generation overwrites existing file."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        handler_file = config_dir / "ccproxy.py"
+        handler_file.write_text("# old content")
+
+        (config_dir / "ccproxy.yaml").write_text(
+            """
+ccproxy:
+  handler: "new.module:NewHandler"
+"""
+        )
+
+        generate_handler_file(config_dir)
+
+        content = handler_file.read_text()
+        assert "# old content" not in content
+        assert "from new.module import NewHandler" in content
+        assert "handler = NewHandler()" in content
 
 
 class TestRunWithProxy:
