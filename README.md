@@ -24,12 +24,38 @@ response = await litellm.acompletion(
 
 ## Installation
 
-```bash
-# Recommended: install as a uv tool
-uv tool install git+https://github.com/starbased-co/ccproxy.git
+**Important:** ccproxy must be installed with LiteLLM in the same environment so that LiteLLM can import the ccproxy handler.
 
-# Alternative: Install with pip
+### Recommended: Install as uv tool
+
+```bash
+# Install ccproxy with litellm bundled
+uv tool install --from git+https://github.com/starbased-co/ccproxy.git \
+  claude-ccproxy --with 'litellm[proxy]'
+```
+
+This installs:
+- `ccproxy` command (for managing the proxy)
+- `litellm` bundled in the same environment (so it can import ccproxy's handler)
+
+### Alternative: Install with pip
+
+```bash
+# Install both packages in the same virtual environment
 pip install git+https://github.com/starbased-co/ccproxy.git
+pip install 'litellm[proxy]'
+```
+
+**Note:** With pip, both packages must be in the same virtual environment.
+
+### Verify Installation
+
+```bash
+ccproxy --help
+# Should show ccproxy commands
+
+which litellm
+# Should point to litellm in ccproxy's environment
 ```
 
 ## Usage
@@ -263,6 +289,81 @@ The `ccproxy run` command sets up the following environment variables:
 - `ANTHROPIC_BASE_URL` - For Anthropic SDK compatibility
 - `OPENAI_API_BASE` - For OpenAI SDK compatibility
 - `OPENAI_BASE_URL` - For OpenAI SDK compatibility
+
+## Development Setup
+
+When developing ccproxy locally:
+
+```bash
+cd /path/to/ccproxy
+
+# Install in development mode with litellm bundled
+uv tool install --from . claude-ccproxy --with 'litellm[proxy]' --force
+
+# After making changes, reinstall
+uv tool install --from . claude-ccproxy \
+  --with 'litellm[proxy]' \
+  --force \
+  --reinstall-package claude-ccproxy
+
+# Restart the proxy to regenerate handler file
+ccproxy stop
+ccproxy start --detach
+
+# Run tests
+uv run pytest
+```
+
+The handler file (`~/.ccproxy/ccproxy.py`) is automatically regenerated on every `ccproxy start`.
+
+## Troubleshooting
+
+### ImportError: Could not import handler from ccproxy
+
+**Symptom:** LiteLLM fails to start with import errors like:
+```
+ImportError: Could not import handler from ccproxy
+```
+
+**Cause:** LiteLLM and ccproxy are in different isolated environments.
+
+**Solution:** Reinstall ccproxy with litellm bundled:
+
+```bash
+# Using uv tool
+uv tool install --from git+https://github.com/starbased-co/ccproxy.git \
+  claude-ccproxy --with 'litellm[proxy]' --force
+
+# Or for local development
+cd /path/to/ccproxy
+uv tool install --from . claude-ccproxy --with 'litellm[proxy]' --force
+```
+
+### Handler Configuration Not Updating
+
+**Symptom:** Changes to `handler` field in `ccproxy.yaml` don't take effect.
+
+**Cause:** Handler file is only regenerated on `ccproxy start`.
+
+**Solution:**
+```bash
+ccproxy stop
+ccproxy start --detach
+# This regenerates ~/.ccproxy/ccproxy.py
+```
+
+### Verifying Installation
+
+Check that ccproxy is accessible to litellm:
+
+```bash
+# Find litellm's environment
+which litellm
+
+# Check if ccproxy is installed in the same environment
+$(dirname $(which litellm))/python -c "import ccproxy; print(ccproxy.__file__)"
+# Should print path without errors
+```
 
 ## Contributing
 
