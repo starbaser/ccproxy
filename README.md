@@ -29,9 +29,11 @@ response = await litellm.acompletion(
 ### Recommended: Install as uv tool
 
 ```bash
-# Install ccproxy with litellm bundled
-uv tool install --from git+https://github.com/starbased-co/ccproxy.git \
-  claude-ccproxy --with 'litellm[proxy]'
+# Install from PyPI
+uv tool install claude-ccproxy --with 'litellm[proxy]'
+
+# Or install from GitHub (latest)
+uv tool install git+https://github.com/starbased-co/ccproxy.git --with 'litellm[proxy]'
 ```
 
 This installs:
@@ -330,9 +332,11 @@ ImportError: Could not import handler from ccproxy
 **Solution:** Reinstall ccproxy with litellm bundled:
 
 ```bash
-# Using uv tool
-uv tool install --from git+https://github.com/starbased-co/ccproxy.git \
-  claude-ccproxy --with 'litellm[proxy]' --force
+# Using uv tool (from PyPI)
+uv tool install claude-ccproxy --with 'litellm[proxy]' --force
+
+# Or from GitHub (latest)
+uv tool install git+https://github.com/starbased-co/ccproxy.git --with 'litellm[proxy]' --force
 
 # Or for local development
 cd /path/to/ccproxy
