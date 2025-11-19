@@ -144,3 +144,47 @@ Key dependencies include:
 - **tiktoken** - Token counting
 - **anthropic** - Anthropic API client
 - **rich** - Terminal output formatting
+
+## Development Workflow
+
+### Local Development Setup
+
+ccproxy must be installed with litellm in the same environment so that LiteLLM can import the ccproxy handler:
+
+```bash
+# Install with litellm bundled
+uv tool install --from . claude-ccproxy --with 'litellm[proxy]' --force
+```
+
+### Making Changes
+
+After modifying code:
+
+```bash
+# 1. Reinstall with changes
+uv tool install --from . claude-ccproxy \
+  --with 'litellm[proxy]' \
+  --force \
+  --reinstall-package claude-ccproxy
+
+# 2. Restart proxy to regenerate handler
+ccproxy stop
+ccproxy start --detach
+
+# 3. Verify
+ccproxy status
+
+# 4. Run tests
+uv run pytest
+```
+
+### Why Bundle with LiteLLM?
+
+LiteLLM imports `ccproxy.handler:CCProxyHandler` at runtime from the auto-generated `~/.ccproxy/ccproxy.py` file. Both must be in the same Python environment:
+
+- `uv tool install ccproxy` → isolated env
+- `uv tool install litellm` → different isolated env ❌
+
+Solution: Install together so they share the same environment ✅
+
+The handler file is automatically regenerated on every `ccproxy start` based on the `handler` configuration in `ccproxy.yaml`.

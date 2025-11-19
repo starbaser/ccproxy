@@ -4,42 +4,41 @@ This guide covers `ccproxy`'s configuration system, including all configuration 
 
 ## Overview
 
-`ccproxy` uses three main configuration files:
+`ccproxy` uses two main configuration files:
 
 1. **`config.yaml`** - LiteLLM proxy configuration (models, API keys, etc.)
-2. **`ccproxy.yaml`** - ccproxy-specific settings (rules, hooks, debug options)
-3. **`ccproxy.py`** - Handler instantiation template for LiteLLM integration
+2. **`ccproxy.yaml`** - ccproxy-specific settings (rules, hooks, handler, debug options)
+
+Additionally, `ccproxy.py` is automatically generated when you start the proxy based on the `handler` configuration in `ccproxy.yaml`.
 
 ## Installation
 
-Install configuration templates to `~/.ccproxy/`:
+### Prerequisites
+
+ccproxy requires LiteLLM to be installed in the same environment. This is handled automatically when using the recommended installation method:
+
+```bash
+# Install ccproxy with litellm bundled
+uv tool install --from git+https://github.com/starbased-co/ccproxy.git \
+  claude-ccproxy --with 'litellm[proxy]'
+```
+
+### Install Configuration Files
 
 ```bash
 ccproxy install
 ```
 
-### Manual Setup
+This creates:
+- `~/.ccproxy/ccproxy.yaml` - ccproxy configuration (rules, hooks, handler)
+- `~/.ccproxy/config.yaml` - LiteLLM proxy configuration (models, API keys)
 
-If you prefer to set up manually, download the template files:
+### Auto-Generated Files
 
-```bash
-# Create the ccproxy configuration directory
-mkdir -p ~/.ccproxy
+When you start the proxy, ccproxy automatically generates:
+- `~/.ccproxy/ccproxy.py` - Handler file that LiteLLM imports
 
-# Download the handler template
-curl -o ~/.ccproxy/ccproxy.py \
-  https://raw.githubusercontent.com/starbased-co/ccproxy/main/src/ccproxy/templates/ccproxy.py
-
-# Download the LiteLLM config
-curl -o ~/.ccproxy/config.yaml \
-  https://raw.githubusercontent.com/starbased-co/ccproxy/main/src/ccproxy/templates/config.yaml
-
-# Download ccproxy's config
-curl -o ~/.ccproxy/ccproxy.yaml \
-  https://raw.githubusercontent.com/starbased-co/ccproxy/main/src/ccproxy/templates/ccproxy.yaml
-```
-
-This creates the configuration files from the built-in templates.
+**Do not edit `ccproxy.py` manually** - it's regenerated on every `ccproxy start` based on your `handler` configuration.
 
 ## Configuration Files
 
@@ -119,6 +118,10 @@ litellm:
 # ccproxy-specific configuration
 ccproxy:
   debug: true
+
+  # Handler class for LiteLLM callbacks (auto-generates ccproxy.py)
+  # Format: "module.path:ClassName" or just "module.path" (defaults to CCProxyHandler)
+  handler: "ccproxy.handler:CCProxyHandler"
 
   # Optional: Shell command to load oauth token on startup (for standalone mode)
   credentials: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
