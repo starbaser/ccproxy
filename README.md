@@ -1,5 +1,7 @@
 # `ccproxy` - Claude Code Proxy
 
+![Discord](https://img.shields.io/discord/1418762336982007960?style=social&logo=discord&logoColor=%235865F2&label=Share%20your%20shine%20%E2%AC%98!%20Join%20starbased%40HQ&link=https%3A%2F%2Fdiscord.gg%2XBvrkZfrQC)
+
 [![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/starbased-co/ccproxy)
 
 `ccproxy` unlocks the full potential of your Claude MAX subscription by enabling Claude Code to seamlessly use unlimited Claude models alongside other LLM providers like OpenAI, Gemini, and Perplexity.
@@ -37,6 +39,7 @@ uv tool install git+https://github.com/starbased-co/ccproxy.git --with 'litellm[
 ```
 
 This installs:
+
 - `ccproxy` command (for managing the proxy)
 - `litellm` bundled in the same environment (so it can import ccproxy's handler)
 
@@ -323,6 +326,7 @@ The handler file (`~/.ccproxy/ccproxy.py`) is automatically regenerated on every
 ### ImportError: Could not import handler from ccproxy
 
 **Symptom:** LiteLLM fails to start with import errors like:
+
 ```
 ImportError: Could not import handler from ccproxy
 ```
@@ -350,6 +354,7 @@ uv tool install --from . claude-ccproxy --with 'litellm[proxy]' --force
 **Cause:** Handler file is only regenerated on `ccproxy start`.
 
 **Solution:**
+
 ```bash
 ccproxy stop
 ccproxy start --detach
