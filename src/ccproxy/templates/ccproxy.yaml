@@ -1,11 +1,22 @@
 ccproxy:
   debug: true
   handler: "ccproxy.handler:CCProxyHandler"
-  credentials: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+
+  # OAuth token sources - shell commands to retrieve tokens for each provider
+  oat_sources:
+    # Simple string form
+    anthropic: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+
+    # Extended form with custom User-Agent
+    # gemini:
+    #   command: "jq -r '.access_token' ~/.gemini/oauth_creds.json"
+    #   user_agent: "MyApp/1.0.0"
+
   hooks:
     - ccproxy.hooks.rule_evaluator # evaluates rules against request
     - ccproxy.hooks.model_router # routes to appropriate model (coupled with rule_evaluator)
-    - ccproxy.hooks.forward_oauth # forwards oauth token for requests to anthropic (place after any routing logic)
+    - ccproxy.hooks.capture_headers # captures HTTP headers with sensitive value redaction
+    - ccproxy.hooks.forward_oauth # forwards oauth token to provider (place after routing logic)
     # - ccproxy.hooks.forward_apikey # forwards x-api-key header from request (enable if needed)
 
   # uses the original model that Claude Code requested when no routing rule matches.
