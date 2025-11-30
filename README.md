@@ -156,13 +156,13 @@ graph LR
     subgraph config_yaml["<code>config.yaml</code>"]
         subgraph aliases[" "]
             A1["<div style='text-align:left'><code>model_name: default</code><br/><code>litellm_params:</code><br/><code>&nbsp;&nbsp;model: claude-sonnet-4-5-20250929</code></div>"]
-            A2["<div style='text-align:left'><code>model_name: think</code><br/><code>litellm_params:</code><br/><code>&nbsp;&nbsp;model: claude-opus-4-1-20250805</code></div>"]
+            A2["<div style='text-align:left'><code>model_name: think</code><br/><code>litellm_params:</code><br/><code>&nbsp;&nbsp;model: claude-opus-4-5-20251101</code></div>"]
             A3["<div style='text-align:left'><code>model_name: background</code><br/><code>litellm_params:</code><br/><code>&nbsp;&nbsp;model: claude-3-5-haiku-20241022</code></div>"]
         end
 
         subgraph models[" "]
             M1["<div style='text-align:left'><code>model_name: claude-sonnet-4-5-20250929</code><br/><code>litellm_params:</code><br/><code>&nbsp;&nbsp;model: anthropic/claude-sonnet-4-5-20250929</code></div>"]
-            M2["<div style='text-align:left'><code>model_name: claude-opus-4-1-20250805</code><br/><code>litellm_params:</code><br/><code>&nbsp;&nbsp;model: anthropic/claude-opus-4-1-20250805</code></div>"]
+            M2["<div style='text-align:left'><code>model_name: claude-opus-4-5-20251101</code><br/><code>litellm_params:</code><br/><code>&nbsp;&nbsp;model: anthropic/claude-opus-4-5-20251101</code></div>"]
             M3["<div style='text-align:left'><code>model_name: claude-3-5-haiku-20241022</code><br/><code>litellm_params:</code><br/><code>&nbsp;&nbsp;model: anthropic/claude-3-5-haiku-20241022</code></div>"]
         end
     end
@@ -203,7 +203,7 @@ model_list:
 
   - model_name: think
     litellm_params:
-      model: claude-opus-4-1-20250805
+      model: claude-opus-4-5-20251101
 
   - model_name: background
     litellm_params:
@@ -215,9 +215,9 @@ model_list:
       model: anthropic/claude-sonnet-4-5-20250929
       api_base: https://api.anthropic.com
 
-  - model_name: claude-opus-4-1-20250805
+  - model_name: claude-opus-4-5-20251101
     litellm_params:
-      model: anthropic/claude-opus-4-1-20250805
+      model: anthropic/claude-opus-4-5-20251101
       api_base: https://api.anthropic.com
 
   - model_name: claude-3-5-haiku-20241022

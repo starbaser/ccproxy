@@ -197,7 +197,7 @@ class TestModelMatchRule:
 
     def test_other_models(self, rule: MatchModelRule, config: CCProxyConfig) -> None:
         """Test request with other models."""
-        models = ["gpt-4", "claude-opus-4-1-20250805", "claude-sonnet-4-5-20250929", "gpt-3.5-turbo"]
+        models = ["gpt-4", "claude-opus-4-5-20251101", "claude-sonnet-4-5-20250929", "gpt-3.5-turbo"]
         for model in models:
             request = {"model": model}
             assert rule.evaluate(request, config) is False

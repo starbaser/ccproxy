@@ -10,7 +10,7 @@ curl https://api.anthropic.com/v1/messages \
   -H "x-api-key: $ANTHROPIC_API_KEY" \
   -H "anthropic-version: 2023-06-01" \
   -d '{
-    "model": "claude-opus-4-1-20250805",
+    "model": "claude-opus-4-5-20251101",
     "max_tokens": 1024,
     "system": [
       {
@@ -374,7 +374,7 @@ curl https://api.anthropic.com/v1/messages \
      --header "content-type: application/json" \
      --data \
 '{
-    "model": "claude-opus-4-1-20250805",
+    "model": "claude-opus-4-5-20251101",
     "max_tokens": 1024,
     "system": [
         {
@@ -420,7 +420,7 @@ curl https://api.anthropic.com/v1/messages \
      --header "content-type: application/json" \
      --data \
 '{
-    "model": "claude-opus-4-1-20250805",
+    "model": "claude-opus-4-5-20251101",
     "max_tokens": 1024,
     "tools": [
         {
@@ -498,7 +498,7 @@ curl https://api.anthropic.com/v1/messages \
      --header "content-type: application/json" \
      --data \
 '{
-    "model": "claude-opus-4-1-20250805",
+    "model": "claude-opus-4-5-20251101",
     "max_tokens": 1024,
     "system": [
         {
@@ -563,7 +563,7 @@ curl https://api.anthropic.com/v1/messages \
      --header "content-type: application/json" \
      --data \
 '{
-    "model": "claude-opus-4-1-20250805",
+    "model": "claude-opus-4-5-20251101",
     "max_tokens": 1024,
     "tools": [
         {
