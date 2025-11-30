@@ -43,10 +43,24 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import Field
+from pydantic import BaseModel, Field, PrivateAttr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
+
+
+class OAuthSource(BaseModel):
+    """OAuth token source configuration.
+
+    Can be specified as either a simple string (shell command) or
+    an object with command and optional user_agent.
+    """
+
+    command: str
+    """Shell command to retrieve the OAuth token"""
+
+    user_agent: str | None = None
+    """Optional custom User-Agent header to send with requests using this token"""
 
 # Import proxy_server to access runtime configuration
 try:
@@ -124,11 +138,16 @@ class CCProxyConfig(BaseSettings):
     # Handler import path (e.g., "ccproxy.handler:CCProxyHandler")
     handler: str = "ccproxy.handler:CCProxyHandler"
 
-    # Credentials shell command (e.g., for OAuth tokens or API keys)
-    credentials: str | None = None
+    # OAuth token sources - dict mapping provider name to shell command or OAuthSource
+    # Example: {"anthropic": "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"}
+    # Extended: {"gemini": {"command": "jq -r '.token' ~/.gemini/creds.json", "user_agent": "MyApp/1.0"}}
+    oat_sources: dict[str, str | OAuthSource] = Field(default_factory=dict)
 
-    # Cached credentials value (loaded at startup)
-    _credentials_value: str | None = None
+    # Cached OAuth tokens (loaded at startup) - dict mapping provider name to token
+    _oat_values: dict[str, str] = PrivateAttr(default_factory=dict)
+
+    # Cached OAuth user agents (loaded at startup) - dict mapping provider name to user-agent
+    _oat_user_agents: dict[str, str] = PrivateAttr(default_factory=dict)
 
     # Hook configurations (function import paths)
     hooks: list[str] = Field(default_factory=list)
@@ -143,53 +162,127 @@ class CCProxyConfig(BaseSettings):
     litellm_config_path: Path = Field(default_factory=lambda: Path("./config.yaml"))
 
     @property
-    def credentials_value(self) -> str | None:
-        """Get the cached credentials value.
+    def oat_values(self) -> dict[str, str]:
+        """Get the cached OAuth token values.
 
         Returns:
-            Cached credentials string or None if not configured
+            Dict mapping provider name to OAuth token
         """
-        return self._credentials_value
+        return self._oat_values
+
+    def get_oauth_token(self, provider: str) -> str | None:
+        """Get OAuth token for a specific provider.
+
+        Args:
+            provider: Provider name (e.g., "anthropic", "gemini")
+
+        Returns:
+            OAuth token string or None if not configured for this provider
+        """
+        return self._oat_values.get(provider)
+
+    def get_oauth_user_agent(self, provider: str) -> str | None:
+        """Get custom User-Agent for a specific provider.
+
+        Args:
+            provider: Provider name (e.g., "anthropic", "gemini")
+
+        Returns:
+            Custom User-Agent string or None if not configured for this provider
+        """
+        return self._oat_user_agents.get(provider)
 
     def _load_credentials(self) -> None:
-        """Execute shell command to load credentials at startup.
+        """Execute shell commands to load OAuth tokens for all configured providers at startup.
 
         Raises:
-            RuntimeError: If shell command fails to execute or returns empty credentials
+            RuntimeError: If any shell command fails to execute or returns empty token
         """
-        if not self.credentials:
-            # No credentials command configured
-            self._credentials_value = None
+        if not self.oat_sources:
+            # No OAuth sources configured
+            self._oat_values = {}
+            self._oat_user_agents = {}
             return
 
-        try:
-            # Execute shell command
-            result = subprocess.run(  # noqa: S602
-                self.credentials,
-                shell=True,  # Intentional: credentials is user-configured command
-                capture_output=True,
-                text=True,
-                timeout=5,  # 5 second timeout
-            )
+        loaded_tokens = {}
+        loaded_user_agents = {}
+        errors = []
 
-            if result.returncode != 0:
-                raise RuntimeError(
-                    f"Credentials shell command failed with exit code {result.returncode}: {result.stderr.strip()}"
+        for provider, source in self.oat_sources.items():
+            # Normalize to OAuthSource for consistent handling
+            if isinstance(source, str):
+                oauth_source = OAuthSource(command=source)
+            elif isinstance(source, OAuthSource):
+                oauth_source = source
+            elif isinstance(source, dict):
+                # Handle dict from YAML
+                oauth_source = OAuthSource(**source)
+            else:
+                error_msg = f"Invalid OAuth source type for provider '{provider}': {type(source)}"
+                logger.error(error_msg)
+                errors.append(error_msg)
+                continue
+
+            try:
+                # Execute shell command
+                result = subprocess.run(  # noqa: S602
+                    oauth_source.command,
+                    shell=True,  # Intentional: command is user-configured
+                    capture_output=True,
+                    text=True,
+                    timeout=5,  # 5 second timeout
                 )
 
-            credentials = result.stdout.strip()
-            if not credentials:
-                raise RuntimeError("Credentials shell command returned empty output")
+                if result.returncode != 0:
+                    error_msg = (
+                        f"OAuth command for provider '{provider}' failed with exit code "
+                        f"{result.returncode}: {result.stderr.strip()}"
+                    )
+                    logger.error(error_msg)
+                    errors.append(error_msg)
+                    continue
 
-            self._credentials_value = credentials
-            logger.debug("Successfully loaded credentials from shell command at startup")
+                token = result.stdout.strip()
+                if not token:
+                    error_msg = f"OAuth command for provider '{provider}' returned empty output"
+                    logger.error(error_msg)
+                    errors.append(error_msg)
+                    continue
 
-        except subprocess.TimeoutExpired as e:
-            raise RuntimeError("Credentials shell command timed out after 5 seconds") from e
-        except Exception as e:
-            if isinstance(e, RuntimeError):
-                raise
-            raise RuntimeError(f"Failed to execute credentials shell command: {e}") from e
+                loaded_tokens[provider] = token
+                logger.debug(f"Successfully loaded OAuth token for provider '{provider}'")
+
+                # Store user-agent if specified
+                if oauth_source.user_agent:
+                    loaded_user_agents[provider] = oauth_source.user_agent
+                    logger.debug(f"Loaded custom User-Agent for provider '{provider}': {oauth_source.user_agent}")
+
+            except subprocess.TimeoutExpired:
+                error_msg = f"OAuth command for provider '{provider}' timed out after 5 seconds"
+                logger.error(error_msg)
+                errors.append(error_msg)
+            except Exception as e:
+                error_msg = f"Failed to execute OAuth command for provider '{provider}': {e}"
+                logger.error(error_msg)
+                errors.append(error_msg)
+
+        # Store successfully loaded tokens and user-agents
+        self._oat_values = loaded_tokens
+        self._oat_user_agents = loaded_user_agents
+
+        # If we had errors but successfully loaded some tokens, log warning
+        if errors and loaded_tokens:
+            logger.warning(
+                f"Loaded OAuth tokens for {len(loaded_tokens)} provider(s), "
+                f"but {len(errors)} provider(s) failed to load"
+            )
+
+        # If all providers failed, raise error
+        if errors and not loaded_tokens:
+            raise RuntimeError(
+                f"Failed to load OAuth tokens for all {len(self.oat_sources)} provider(s):\n"
+                + "\n".join(f"  - {err}" for err in errors)
+            )
 
     def load_hooks(self) -> list[Any]:
         """Load hook functions from their import paths.
@@ -263,8 +356,28 @@ class CCProxyConfig(BaseSettings):
                     instance.metrics_enabled = ccproxy_data["metrics_enabled"]
                 if "default_model_passthrough" in ccproxy_data:
                     instance.default_model_passthrough = ccproxy_data["default_model_passthrough"]
+                if "oat_sources" in ccproxy_data:
+                    instance.oat_sources = ccproxy_data["oat_sources"]
+
+                # Backwards compatibility: migrate deprecated 'credentials' field
                 if "credentials" in ccproxy_data:
-                    instance.credentials = ccproxy_data["credentials"]
+                    logger.error(
+                        "DEPRECATED: The 'credentials' field is deprecated and will be removed in a future version. "
+                        "Please migrate to 'oat_sources' in your ccproxy.yaml configuration. "
+                        "Example:\n"
+                        "  oat_sources:\n"
+                        "    anthropic: \"jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json\"\n"
+                        "The deprecated 'credentials' field has been automatically migrated to "
+                        "oat_sources['anthropic'] for this session."
+                    )
+                    # Migrate credentials to oat_sources for anthropic provider
+                    if "anthropic" not in instance.oat_sources:
+                        instance.oat_sources["anthropic"] = ccproxy_data["credentials"]
+                    else:
+                        logger.warning(
+                            "Both 'credentials' and 'oat_sources[\"anthropic\"]' are configured. "
+                            "Using 'oat_sources[\"anthropic\"]' and ignoring deprecated 'credentials' field."
+                        )
 
                 # Load hooks
                 hooks_data = ccproxy_data.get("hooks", [])
