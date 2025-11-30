@@ -738,7 +738,7 @@ class TestCCProxyHandler:
 
                 # Test with request that doesn't match any rule
                 request_data = {
-                    "model": "claude-opus-4-1-20250805",
+                    "model": "claude-opus-4-5-20251101",
                     "messages": [{"role": "user", "content": "Hello"}],
                     "token_count": 100,  # Below threshold
                 }
@@ -748,7 +748,7 @@ class TestCCProxyHandler:
                 result = await handler.async_pre_call_hook(request_data, user_api_key_dict)
 
                 # Verify request continues with original model
-                assert result["model"] == "claude-opus-4-1-20250805"
+                assert result["model"] == "claude-opus-4-5-20251101"
 
                 # Test with missing model field
                 request_data_no_model = {

@@ -72,7 +72,7 @@ model_list:
       model: claude-haiku-4-5-20251001-20241022
   - model_name: think
     litellm_params:
-      model: claude-opus-4-1-20250805
+      model: claude-opus-4-5-20251101
   - model_name: token_count
     litellm_params:
       model: gemini-2.5-pro

@@ -67,7 +67,7 @@ class TestModelRouter:
 
     def test_get_model_for_label_with_string(self) -> None:
         """Test get_model_for_label with string labels."""
-        test_model_list = [{"model_name": "think", "litellm_params": {"model": "claude-opus-4-1-20250805"}}]
+        test_model_list = [{"model_name": "think", "litellm_params": {"model": "claude-opus-4-5-20251101"}}]
 
         router = self._create_router_with_models(test_model_list)
 

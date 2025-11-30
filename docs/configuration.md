@@ -64,7 +64,7 @@ model_list:
   # Thinking model for complex reasoning
   - model_name: think
     litellm_params:
-      model: claude-opus-4-1-20250805
+      model: claude-opus-4-5-20251101
 
   # Anthropic provided claude models, no `api_key` needed
   - model_name: claude-sonnet-4-5-20250929
@@ -72,9 +72,9 @@ model_list:
       model: anthropic/claude-sonnet-4-5-20250929
       api_base: https://api.anthropic.com
 
-  - model_name: claude-opus-4-1-20250805
+  - model_name: claude-opus-4-5-20251101
     litellm_params:
-      model: anthropic/claude-opus-4-1-20250805
+      model: anthropic/claude-opus-4-5-20251101
       api_base: https://api.anthropic.com
 
   - model_name: claude-haiku-4-5-20251001
@@ -100,7 +100,7 @@ Model names in `config.yaml` must correspond to rule names in `ccproxy.yaml`. Wh
 
 - **Minimum requirements for Claude Code**: For Claude Code to function properly, your `config.yaml` must include at minimum:
   - **Rule-based models**: `default`, `background`, and `think`
-  - **Claude models**: `claude-sonnet-4-5-20250929`, `claude-haiku-4-5-20251001`, and `claude-opus-4-1-20250805` (all with `api_base: https://api.anthropic.com`)
+  - **Claude models**: `claude-sonnet-4-5-20250929`, `claude-haiku-4-5-20251001`, and `claude-opus-4-5-20251101` (all with `api_base: https://api.anthropic.com`)
 
 See the [LiteLLM documentation](https://docs.litellm.ai/docs/proxy/configs) for more information.
 
@@ -463,5 +463,5 @@ rules:
   - name: reasoning
     rule: ccproxy.rules.MatchModelRule
     params:
-      - model_name: claude-opus-4-1-20250805
+      - model_name: claude-opus-4-5-20251101
 ```
