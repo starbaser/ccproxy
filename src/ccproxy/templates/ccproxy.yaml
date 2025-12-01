@@ -15,7 +15,11 @@ ccproxy:
   hooks:
     - ccproxy.hooks.rule_evaluator # evaluates rules against request
     - ccproxy.hooks.model_router # routes to appropriate model (coupled with rule_evaluator)
-    - ccproxy.hooks.capture_headers # captures HTTP headers with sensitive value redaction
+    - ccproxy.hooks.capture_headers # captures all HTTP headers with sensitive value redaction
+    # Hook with params example - capture only specific headers:
+    # - hook: ccproxy.hooks.capture_headers
+    #   params:
+    #     headers: [user-agent, x-request-id, content-type]
     - ccproxy.hooks.forward_oauth # forwards oauth token to provider (place after routing logic)
     # - ccproxy.hooks.forward_apikey # forwards x-api-key header from request (enable if needed)
 

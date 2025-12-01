@@ -75,7 +75,7 @@ class TestHandlerLoggingHookMethods:
                     data["model"] = "claude-sonnet-4-5-20250929"
                 return data
 
-            mock_config.load_hooks.return_value = [mock_rule_evaluator]
+            mock_config.load_hooks.return_value = [(mock_rule_evaluator, {})]
             mock_get_config.return_value = mock_config
 
             handler = CCProxyHandler()
@@ -107,7 +107,7 @@ class TestHandlerLoggingHookMethods:
             mock_hook.__module__ = "test_module"
             mock_hook.__name__ = "test_hook"
 
-            mock_config.load_hooks.return_value = [mock_hook]
+            mock_config.load_hooks.return_value = [(mock_hook, {})]
             mock_get_config.return_value = mock_config
 
             mock_router = Mock()
@@ -139,7 +139,7 @@ class TestHandlerLoggingHookMethods:
                 raise ValueError("Hook failed!")
             failing_hook.__name__ = "failing_hook"
 
-            mock_config.load_hooks.return_value = [failing_hook]
+            mock_config.load_hooks.return_value = [(failing_hook, {})]
             mock_get_config.return_value = mock_config
 
             handler = CCProxyHandler()

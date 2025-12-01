@@ -631,14 +631,29 @@ def show_status(config_dir: Path, json_output: bool = False) -> None:
     if user_hooks.exists():
         config_paths["ccproxy.py"] = str(user_hooks)
 
-    # Extract callbacks from config.yaml
+    # Extract callbacks and model_list from config.yaml
     callbacks = []
+    model_list = []
     if litellm_config.exists():
         try:
             with litellm_config.open() as f:
                 config_data = yaml.safe_load(f)
-            litellm_settings = config_data.get("litellm_settings", {}) if config_data else {}
-            callbacks = litellm_settings.get("callbacks", [])
+            if config_data:
+                litellm_settings = config_data.get("litellm_settings", {})
+                callbacks = litellm_settings.get("callbacks", [])
+                model_list = config_data.get("model_list", [])
+        except (yaml.YAMLError, OSError):
+            pass
+
+    # Extract hooks from ccproxy.yaml
+    hooks = []
+    if ccproxy_config.exists():
+        try:
+            with ccproxy_config.open() as f:
+                ccproxy_data = yaml.safe_load(f)
+            if ccproxy_data:
+                ccproxy_section = ccproxy_data.get("ccproxy", {})
+                hooks = ccproxy_section.get("hooks", [])
         except (yaml.YAMLError, OSError):
             pass
 
@@ -647,6 +662,8 @@ def show_status(config_dir: Path, json_output: bool = False) -> None:
         "proxy": proxy_running,
         "config": config_paths,
         "callbacks": callbacks,
+        "hooks": hooks,
+        "model_list": model_list,
         "log": str(log_file) if log_file.exists() else None,
     }
 
@@ -685,6 +702,66 @@ def show_status(config_dir: Path, json_output: bool = False) -> None:
         table.add_row("log", log_display)
 
         console.print(Panel(table, title="[bold]ccproxy Status[/bold]", border_style="blue"))
+
+        # Hooks table
+        if status_data["hooks"]:
+            hooks_table = Table(show_header=True, show_lines=True)
+            hooks_table.add_column("#", style="dim", width=3)
+            hooks_table.add_column("Hook", style="cyan")
+            hooks_table.add_column("Parameters", style="yellow")
+
+            for i, hook in enumerate(status_data["hooks"], 1):
+                if isinstance(hook, str):
+                    # Simple string format - extract function name
+                    hook_name = hook.split(".")[-1]
+                    hook_path = hook
+                    params_display = "[dim]none[/dim]"
+                else:
+                    # Dict format with params
+                    hook_path = hook.get("hook", "")
+                    hook_name = hook_path.split(".")[-1] if hook_path else ""
+                    params = hook.get("params", {})
+                    if params:
+                        params_display = ", ".join(f"{k}={v}" for k, v in params.items())
+                    else:
+                        params_display = "[dim]none[/dim]"
+
+                hooks_table.add_row(str(i), f"[bold]{hook_name}[/bold]\n[dim]{hook_path}[/dim]", params_display)
+
+            console.print(Panel(hooks_table, title="[bold]Hooks[/bold]", border_style="green"))
+
+        # Model deployments table
+        if status_data["model_list"]:
+            models_table = Table(show_header=True, show_lines=True, expand=True)
+            models_table.add_column("Model Name", style="cyan", no_wrap=True)
+            models_table.add_column("Provider Model", style="yellow", no_wrap=True)
+            models_table.add_column("API Base", style="dim", no_wrap=True)
+
+            # Build lookup for resolving model aliases
+            model_lookup = {m.get("model_name", ""): m for m in status_data["model_list"]}
+
+            for model in status_data["model_list"]:
+                model_name = model.get("model_name", "")
+                litellm_params = model.get("litellm_params", {})
+                provider_model = litellm_params.get("model", "")
+                api_base = litellm_params.get("api_base")
+
+                # Resolve API base from target model if this is an alias
+                if not api_base and provider_model in model_lookup:
+                    target = model_lookup[provider_model]
+                    api_base = target.get("litellm_params", {}).get("api_base")
+
+                # Shorten API base to just the hostname
+                if api_base:
+                    from urllib.parse import urlparse
+                    parsed = urlparse(api_base)
+                    api_base_display = parsed.netloc or api_base
+                else:
+                    api_base_display = "[dim]default[/dim]"
+
+                models_table.add_row(model_name, provider_model, api_base_display)
+
+            console.print(Panel(models_table, title="[bold]Model Deployments[/bold]", border_style="magenta"))
 
 
 def main(
