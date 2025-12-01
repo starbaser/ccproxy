@@ -129,9 +129,19 @@ def model_router(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwar
 
 
 def capture_headers(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
-    """Capture all HTTP headers for Langfuse with sensitive value redaction."""
+    """Capture HTTP headers for Langfuse with sensitive value redaction.
+
+    Args:
+        data: Request data from LiteLLM
+        user_api_key_dict: User API key dictionary
+        **kwargs: Additional keyword arguments including:
+            - headers: Optional list of header names to capture (captures all if not specified)
+    """
     if "metadata" not in data:
         data["metadata"] = {}
+
+    # Get optional headers filter from params
+    headers_filter: list[str] | None = kwargs.get("headers")
 
     request = data.get("proxy_server_request", {})
     headers = request.get("headers", {})
@@ -148,8 +158,14 @@ def capture_headers(data: dict[str, Any], user_api_key_dict: dict[str, Any], **k
 
     captured = {}
     for name, value in all_headers.items():
-        if value:
-            captured[name.lower()] = _redact_value(name, str(value))
+        if not value:
+            continue
+        name_lower = name.lower()
+        # Filter headers if a filter list is provided
+        if headers_filter is not None:
+            if name_lower not in [h.lower() for h in headers_filter]:
+                continue
+        captured[name_lower] = _redact_value(name, str(value))
 
     data["metadata"]["http_headers"] = captured
     data["metadata"]["http_method"] = request.get("method", "")

@@ -70,6 +70,20 @@ except ImportError:
     proxy_server = None
 
 
+class HookConfig:
+    """Configuration for a single hook with optional parameters."""
+
+    def __init__(self, hook_path: str, params: dict[str, Any] | None = None) -> None:
+        """Initialize a hook configuration.
+
+        Args:
+            hook_path: Python import path to the hook function
+            params: Optional parameters to pass to the hook via kwargs
+        """
+        self.hook_path = hook_path
+        self.params = params or {}
+
+
 class RuleConfig:
     """Configuration for a single classification rule."""
 
@@ -149,8 +163,8 @@ class CCProxyConfig(BaseSettings):
     # Cached OAuth user agents (loaded at startup) - dict mapping provider name to user-agent
     _oat_user_agents: dict[str, str] = PrivateAttr(default_factory=dict)
 
-    # Hook configurations (function import paths)
-    hooks: list[str] = Field(default_factory=list)
+    # Hook configurations (function import paths or dict with params)
+    hooks: list[str | dict[str, Any]] = Field(default_factory=list)
 
     # Rule configurations
     rules: list[RuleConfig] = Field(default_factory=list)
@@ -284,24 +298,38 @@ class CCProxyConfig(BaseSettings):
                 + "\n".join(f"  - {err}" for err in errors)
             )
 
-    def load_hooks(self) -> list[Any]:
+    def load_hooks(self) -> list[tuple[Any, dict[str, Any]]]:
         """Load hook functions from their import paths.
 
         Returns:
-            List of callable hook functions
+            List of (hook_function, params) tuples
 
         Raises:
             ImportError: If a hook cannot be imported
         """
         loaded_hooks = []
-        for hook_path in self.hooks:
+        for hook_entry in self.hooks:
+            # Parse hook entry (string or dict format)
+            if isinstance(hook_entry, str):
+                hook_path = hook_entry
+                params: dict[str, Any] = {}
+            elif isinstance(hook_entry, dict):
+                hook_path = hook_entry.get("hook", "")
+                params = hook_entry.get("params", {})
+                if not hook_path:
+                    logger.error(f"Hook entry missing 'hook' key: {hook_entry}")
+                    continue
+            else:
+                logger.error(f"Invalid hook entry type: {type(hook_entry)}")
+                continue
+
             try:
                 # Import the hook function
                 module_path, func_name = hook_path.rsplit(".", 1)
                 module = importlib.import_module(module_path)
                 hook_func = getattr(module, func_name)
-                loaded_hooks.append(hook_func)
-                logger.debug(f"Loaded hook: {hook_path}")
+                loaded_hooks.append((hook_func, params))
+                logger.debug(f"Loaded hook: {hook_path}" + (f" with params: {params}" if params else ""))
             except (ImportError, AttributeError) as e:
                 logger.error(f"Failed to load hook {hook_path}: {e}")
                 # Continue loading other hooks even if one fails

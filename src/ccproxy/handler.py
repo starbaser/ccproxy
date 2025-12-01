@@ -37,10 +37,10 @@ class CCProxyHandler(CustomLogger):
         if config.debug:
             logger.setLevel(logging.DEBUG)
 
-        # Load hooks from configuration
+        # Load hooks from configuration (list of (hook_func, params) tuples)
         self.hooks = config.load_hooks()
         if config.debug and self.hooks:
-            hook_names = [f"{h.__module__}.{h.__name__}" for h in self.hooks]
+            hook_names = [f"{h.__module__}.{h.__name__}" for h, _ in self.hooks]
             logger.debug(f"Loaded {len(self.hooks)} hooks: {', '.join(hook_names)}")
 
     async def async_pre_call_hook(
@@ -55,9 +55,9 @@ class CCProxyHandler(CustomLogger):
             print(f"🧠 Thinking parameters: {thinking_params}")
 
         # Run all processors in sequence with error handling
-        for hook in self.hooks:
+        for hook, params in self.hooks:
             try:
-                data = hook(data, user_api_key_dict, classifier=self.classifier, router=self.router)
+                data = hook(data, user_api_key_dict, classifier=self.classifier, router=self.router, **params)
             except Exception as e:
                 logger.error(
                     f"Hook {hook.__name__} failed with error: {e}",
