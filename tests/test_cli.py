@@ -51,7 +51,10 @@ class TestStartProxy:
             start_litellm(tmp_path)
 
         assert exc_info.value.code == 0
-        mock_run.assert_called_once_with(["litellm", "--config", str(config_file)], env=ANY)
+        # Check the command structure - first arg is the litellm executable path
+        call_args = mock_run.call_args[0][0]
+        assert call_args[0].endswith("litellm")
+        assert call_args[1:] == ["--config", str(config_file)]
 
     @patch("subprocess.run")
     def test_litellm_with_args(self, mock_run: Mock, tmp_path: Path) -> None:
@@ -65,9 +68,10 @@ class TestStartProxy:
             start_litellm(tmp_path, args=["--debug", "--port", "8080"])
 
         assert exc_info.value.code == 0
-        mock_run.assert_called_once_with(
-            ["litellm", "--config", str(config_file), "--debug", "--port", "8080"], env=ANY
-        )
+        # Check the command structure - first arg is the litellm executable path
+        call_args = mock_run.call_args[0][0]
+        assert call_args[0].endswith("litellm")
+        assert call_args[1:] == ["--config", str(config_file), "--debug", "--port", "8080"]
 
     @patch("subprocess.run")
     def test_litellm_command_not_found(self, mock_run: Mock, tmp_path: Path, capsys) -> None:
