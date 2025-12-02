@@ -410,6 +410,7 @@ ccproxy:
         mock_module.proxy_server = mock_proxy_server
 
         # Create config with multiple providers with different user-agents
+        # Use passthrough mode so the requested model is used directly
         yaml_content = """
 ccproxy:
   oat_sources:
@@ -419,7 +420,7 @@ ccproxy:
     vertex_ai:
       command: echo 'vertex-ai-token-456'
       user_agent: VertexAIClient/2.0
-  default_model_passthrough: false
+  default_model_passthrough: true
   hooks:
     - ccproxy.hooks.rule_evaluator
     - ccproxy.hooks.model_router

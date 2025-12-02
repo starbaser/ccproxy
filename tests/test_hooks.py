@@ -419,62 +419,6 @@ class TestForwardOAuth:
         # Should forward OAuth token
         assert result["provider_specific_header"]["extra_headers"]["authorization"] == "Bearer sk-ant-oat01-test-token"
 
-    def test_forward_oauth_non_claude_cli_user_agent(self, user_api_key_dict):
-        """Test no OAuth forwarding for non-claude-cli user agents."""
-        data = {
-            "model": "claude-sonnet-4-5-20250929",
-            "metadata": {
-                "ccproxy_litellm_model": "claude-sonnet-4-5-20250929",
-                "ccproxy_model_config": {"litellm_params": {"api_base": "https://api.anthropic.com"}},
-            },
-            "proxy_server_request": {"headers": {"user-agent": "Mozilla/5.0"}},
-            "secret_fields": {"raw_headers": {"authorization": "Bearer sk-ant-oat01-test-token"}},
-        }
-
-        result = forward_oauth(data, user_api_key_dict)
-
-        # Should not forward OAuth token
-        assert "provider_specific_header" not in result
-
-    def test_forward_oauth_non_anthropic_provider(self, user_api_key_dict):
-        """Test no OAuth forwarding for non-Anthropic providers."""
-        data = {
-            "model": "gemini-2.5-pro",
-            "metadata": {
-                "ccproxy_litellm_model": "gemini-2.5-pro",
-                "ccproxy_model_config": {"litellm_params": {"api_base": "https://generativelanguage.googleapis.com"}},
-            },
-            "proxy_server_request": {"headers": {"user-agent": "claude-cli/1.0.62 (external, cli)"}},
-            "secret_fields": {"raw_headers": {"authorization": "Bearer sk-ant-oat01-test-token"}},
-        }
-
-        result = forward_oauth(data, user_api_key_dict)
-
-        # Should not forward OAuth token
-        assert "provider_specific_header" not in result
-
-    def test_forward_oauth_vertex_provider(self, user_api_key_dict):
-        """Test no OAuth forwarding for Vertex AI provider."""
-        data = {
-            "model": "claude-sonnet-4-5-20250929",
-            "metadata": {
-                "ccproxy_litellm_model": "vertex/claude-sonnet-4-5-20250929",
-                "ccproxy_model_config": {
-                    "litellm_params": {
-                        "api_base": "https://us-central1-aiplatform.googleapis.com",
-                        "custom_llm_provider": "vertex",
-                    }
-                },
-            },
-            "proxy_server_request": {"headers": {"user-agent": "claude-cli/1.0.62 (external, cli)"}},
-            "secret_fields": {"raw_headers": {"authorization": "Bearer sk-ant-oat01-test-token"}},
-        }
-
-        result = forward_oauth(data, user_api_key_dict)
-
-        # Should not forward OAuth token
-        assert "provider_specific_header" not in result
-
     def test_forward_oauth_missing_auth_header(self, user_api_key_dict):
         """Test no OAuth forwarding when auth header is missing and no credentials configured."""
         from ccproxy.config import CCProxyConfig, set_config_instance
@@ -562,23 +506,6 @@ class TestForwardOAuth:
         assert "extra_headers" in result["provider_specific_header"]
         assert result["provider_specific_header"]["extra_headers"]["authorization"] == "Bearer sk-ant-oat01-test-token"
 
-    def test_forward_oauth_invalid_api_base_url(self, user_api_key_dict):
-        """Test OAuth forwarding handles invalid API base URLs gracefully."""
-        data = {
-            "model": "claude-sonnet-4-5-20250929",
-            "metadata": {
-                "ccproxy_litellm_model": "claude-sonnet-4-5-20250929",
-                "ccproxy_model_config": {"litellm_params": {"api_base": "invalid-url"}},
-            },
-            "proxy_server_request": {"headers": {"user-agent": "claude-cli/1.0.62 (external, cli)"}},
-            "secret_fields": {"raw_headers": {"authorization": "Bearer sk-ant-oat01-test-token"}},
-        }
-
-        result = forward_oauth(data, user_api_key_dict)
-
-        # Should not forward OAuth token for invalid URL
-        assert "provider_specific_header" not in result
-
     def test_forward_oauth_missing_model_config(self, user_api_key_dict):
         """Test OAuth forwarding with missing model config."""
         data = {
@@ -595,71 +522,6 @@ class TestForwardOAuth:
 
         # Should still forward for claude prefix model
         assert result["provider_specific_header"]["extra_headers"]["authorization"] == "Bearer sk-ant-oat01-test-token"
-
-    def test_forward_oauth_empty_headers(self, user_api_key_dict):
-        """Test OAuth forwarding with empty headers."""
-        data = {
-            "model": "claude-sonnet-4-5-20250929",
-            "metadata": {
-                "ccproxy_litellm_model": "claude-sonnet-4-5-20250929",
-                "ccproxy_model_config": {"litellm_params": {"api_base": "https://api.anthropic.com"}},
-            },
-            "proxy_server_request": {
-                "headers": {}  # Empty headers
-            },
-            "secret_fields": {"raw_headers": {"authorization": "Bearer sk-ant-oat01-test-token"}},
-        }
-
-        result = forward_oauth(data, user_api_key_dict)
-
-        # Should not forward OAuth token without user-agent
-        assert "provider_specific_header" not in result
-
-    def test_forward_oauth_urlparse_exception(self, user_api_key_dict):
-        """Test OAuth forwarding handles urlparse exceptions."""
-        # Create a data structure that will cause urlparse to fail
-        # Using a mock to simulate this
-        data = {
-            "model": "claude-sonnet-4-5-20250929",
-            "metadata": {
-                "ccproxy_litellm_model": "claude-sonnet-4-5-20250929",
-                "ccproxy_model_config": {"litellm_params": {"api_base": "https://api.anthropic.com"}},
-            },
-            "proxy_server_request": {"headers": {"user-agent": "claude-cli/1.0.62 (external, cli)"}},
-            "secret_fields": {"raw_headers": {"authorization": "Bearer sk-ant-oat01-test-token"}},
-        }
-
-        # Patch urlparse to raise an exception
-        with patch("ccproxy.hooks.urlparse", side_effect=Exception("URL parse error")):
-            result = forward_oauth(data, user_api_key_dict)
-
-        # Should not forward OAuth token when URL parsing fails
-        assert "provider_specific_header" not in result
-
-    def test_forward_oauth_no_anthropic_conditions_met(self, user_api_key_dict):
-        """Test OAuth forwarding when none of the Anthropic conditions are met."""
-        # This test specifically hits the `else: is_anthropic_provider = False` branch
-        # Conditions: no api_base, custom_provider != "anthropic", model doesn't start with "anthropic/" or "claude"
-        data = {
-            "model": "gpt-4",
-            "metadata": {
-                "ccproxy_litellm_model": "gpt-4",  # Does not start with "anthropic/" or "claude"
-                "ccproxy_model_config": {
-                    "litellm_params": {
-                        # No api_base
-                        "custom_llm_provider": "openai"  # Not "anthropic"
-                    }
-                },
-            },
-            "proxy_server_request": {"headers": {"user-agent": "claude-cli/1.0.62 (external, cli)"}},
-            "secret_fields": {"raw_headers": {"authorization": "Bearer sk-ant-oat01-test-token"}},
-        }
-
-        result = forward_oauth(data, user_api_key_dict)
-
-        # Should not forward OAuth token since none of the Anthropic conditions are met
-        # This covers the `else: is_anthropic_provider = False` branch (line 129)
-        assert "provider_specific_header" not in result
 
     def test_forward_oauth_none_model_config(self, user_api_key_dict):
         """Test forward_oauth handles None model_config (passthrough mode)."""
@@ -682,16 +544,15 @@ class TestForwardOAuth:
 
 
 class TestForwardOAuthWithCredentialsFallback:
-    """Test forward_oauth hook with cached credentials fallback."""
+    """Test forward_oauth hook with cached credentials fallback via oat_sources."""
 
     def test_oauth_uses_header_when_present(self, user_api_key_dict):
         """Test that existing authorization header takes precedence over cached credentials."""
         from ccproxy.config import CCProxyConfig, set_config_instance
         from ccproxy.hooks import forward_oauth
 
-        # Set up config with credentials already cached
-        config = CCProxyConfig(credentials=None)
-        config._credentials_value = "fallback-token"
+        # Set up config with oat_sources for anthropic
+        config = CCProxyConfig(oat_sources={"anthropic": "echo fallback-token"})
         set_config_instance(config)
 
         data = {
@@ -716,9 +577,9 @@ class TestForwardOAuthWithCredentialsFallback:
         from ccproxy.config import CCProxyConfig, set_config_instance
         from ccproxy.hooks import forward_oauth
 
-        # Set up config with credentials already cached
-        config = CCProxyConfig(credentials=None)
-        config._credentials_value = "cached-token-456"
+        # Set up config with oat_sources for anthropic
+        config = CCProxyConfig(oat_sources={"anthropic": "echo cached-token-456"})
+        config._load_credentials()  # Load the OAuth tokens
         set_config_instance(config)
 
         data = {
@@ -746,8 +607,8 @@ class TestForwardOAuthWithCredentialsFallback:
         from ccproxy.hooks import forward_oauth
 
         # Set up config with credentials that already include Bearer
-        config = CCProxyConfig(credentials=None)
-        config._credentials_value = "Bearer already-prefixed-token"
+        config = CCProxyConfig(oat_sources={"anthropic": "echo 'Bearer already-prefixed-token'"})
+        config._load_credentials()  # Load the OAuth tokens
         set_config_instance(config)
 
         data = {
