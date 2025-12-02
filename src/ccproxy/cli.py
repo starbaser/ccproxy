@@ -823,6 +823,30 @@ def main(
 
 def entry_point() -> None:
     """Entry point for the ccproxy command."""
+    # Handle 'run' subcommand specially to avoid tyro parsing command arguments
+    # This allows: ccproxy run claude -p foo  (without needing --)
+    args = sys.argv[1:]
+
+    # Find 'run' subcommand position (skip past any global flags like --config-dir)
+    subcommands = {"start", "stop", "restart", "install", "logs", "status", "run"}
+    run_idx = None
+    for i, arg in enumerate(args):
+        if arg == "run":
+            run_idx = i
+            break
+        # Stop if we hit a different subcommand
+        if arg in subcommands:
+            break
+
+    if run_idx is not None:
+        # Extract command after 'run'
+        command_args = args[run_idx + 1 :]
+
+        # Only insert '--' if not already present (backwards compatibility)
+        if command_args and command_args[0] != "--":
+            # Rebuild argv: keep everything up to and including 'run', then '--' to escape the rest
+            sys.argv = [sys.argv[0]] + args[: run_idx + 1] + ["--"] + command_args
+
     tyro.cli(main)
 
 
