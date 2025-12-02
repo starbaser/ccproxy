@@ -7,7 +7,7 @@ import pytest
 
 from ccproxy.classifier import RequestClassifier
 from ccproxy.config import clear_config_instance
-from ccproxy.hooks import forward_apikey, forward_oauth, model_router, rule_evaluator
+from ccproxy.hooks import capture_headers, forward_apikey, forward_oauth, model_router, rule_evaluator
 from ccproxy.router import ModelRouter, clear_router
 
 
@@ -321,7 +321,10 @@ class TestForwardOAuth:
 
     def test_forward_oauth_no_proxy_request(self, user_api_key_dict):
         """Test forward_oauth handles missing proxy_server_request."""
-        data = {"model": "claude-sonnet-4-5-20250929", "metadata": {"ccproxy_litellm_model": "claude-sonnet-4-5-20250929"}}
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "metadata": {"ccproxy_litellm_model": "claude-sonnet-4-5-20250929"},
+        }
 
         result = forward_oauth(data, user_api_key_dict)
 
@@ -699,3 +702,394 @@ class TestForwardApiKey:
         # Should not add any x-api-key header
         if "provider_specific_header" in result:
             assert "x-api-key" not in result["provider_specific_header"].get("extra_headers", {})
+
+
+class TestCaptureHeadersHook:
+    """Test the capture_headers hook function."""
+
+    def test_basic_header_capture_all_headers(self, user_api_key_dict):
+        """Test capturing all headers when no filter is provided."""
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {
+                "headers": {
+                    "content-type": "application/json",
+                    "user-agent": "claude-cli/1.0.0",
+                    "x-custom-header": "custom-value",
+                },
+                "method": "POST",
+                "url": "https://api.anthropic.com/v1/messages",
+            },
+        }
+
+        result = capture_headers(data, user_api_key_dict)
+
+        # Should capture all headers
+        assert "metadata" in result
+        assert "http_headers" in result["metadata"]
+        assert result["metadata"]["http_headers"]["content-type"] == "application/json"
+        assert result["metadata"]["http_headers"]["user-agent"] == "claude-cli/1.0.0"
+        assert result["metadata"]["http_headers"]["x-custom-header"] == "custom-value"
+        assert result["metadata"]["http_method"] == "POST"
+        assert result["metadata"]["http_path"] == "/v1/messages"
+
+    def test_header_filtering(self, user_api_key_dict):
+        """Test capturing only specified headers with filter."""
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {
+                "headers": {
+                    "content-type": "application/json",
+                    "user-agent": "claude-cli/1.0.0",
+                    "x-custom-header": "custom-value",
+                },
+                "method": "POST",
+                "url": "https://api.anthropic.com/v1/messages",
+            },
+        }
+
+        # Filter to only capture content-type and user-agent
+        result = capture_headers(data, user_api_key_dict, headers=["content-type", "user-agent"])
+
+        # Should only capture filtered headers
+        assert "http_headers" in result["metadata"]
+        assert result["metadata"]["http_headers"]["content-type"] == "application/json"
+        assert result["metadata"]["http_headers"]["user-agent"] == "claude-cli/1.0.0"
+        assert "x-custom-header" not in result["metadata"]["http_headers"]
+
+    def test_header_filtering_case_insensitive(self, user_api_key_dict):
+        """Test header filtering is case-insensitive."""
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {
+                "headers": {
+                    "Content-Type": "application/json",
+                    "User-Agent": "claude-cli/1.0.0",
+                },
+                "method": "POST",
+            },
+        }
+
+        # Filter with lowercase names
+        result = capture_headers(data, user_api_key_dict, headers=["content-type", "user-agent"])
+
+        # Should match case-insensitively
+        assert "content-type" in result["metadata"]["http_headers"]
+        assert "user-agent" in result["metadata"]["http_headers"]
+
+    def test_authorization_header_redaction(self, user_api_key_dict):
+        """Test authorization header is redacted properly."""
+
+        class MockSecretFields:
+            def __init__(self):
+                self.raw_headers = {"authorization": "Bearer sk-ant-oat01-1234567890abcdef"}
+
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {"headers": {}, "method": "POST"},
+            "secret_fields": MockSecretFields(),
+        }
+
+        result = capture_headers(data, user_api_key_dict)
+
+        # Should redact but keep prefix and suffix
+        assert "http_headers" in result["metadata"]
+        auth_value = result["metadata"]["http_headers"]["authorization"]
+        assert auth_value.startswith("Bearer sk-ant-")
+        assert auth_value.endswith("cdef")
+        assert "..." in auth_value
+        assert "1234567890ab" not in auth_value
+
+    def test_authorization_header_redaction_no_prefix(self, user_api_key_dict):
+        """Test authorization header redaction when no standard prefix."""
+
+        class MockSecretFields:
+            def __init__(self):
+                self.raw_headers = {"authorization": "custom-token-1234567890"}
+
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {"headers": {}, "method": "POST"},
+            "secret_fields": MockSecretFields(),
+        }
+
+        result = capture_headers(data, user_api_key_dict)
+
+        # Should still redact with suffix
+        auth_value = result["metadata"]["http_headers"]["authorization"]
+        assert "..." in auth_value
+        assert auth_value.endswith("7890")
+
+    def test_x_api_key_redaction(self, user_api_key_dict):
+        """Test x-api-key header is redacted properly."""
+
+        class MockSecretFields:
+            def __init__(self):
+                self.raw_headers = {"x-api-key": "sk-openai-1234567890abcdef"}
+
+        data = {
+            "model": "gpt-4",
+            "proxy_server_request": {"headers": {}, "method": "POST"},
+            "secret_fields": MockSecretFields(),
+        }
+
+        result = capture_headers(data, user_api_key_dict)
+
+        # Should redact but keep prefix and suffix
+        api_key = result["metadata"]["http_headers"]["x-api-key"]
+        assert api_key.startswith("sk-openai-")
+        assert api_key.endswith("cdef")
+        assert "..." in api_key
+
+    def test_cookie_full_redaction(self, user_api_key_dict):
+        """Test cookie header is fully redacted."""
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {
+                "headers": {"cookie": "session=abc123; user_id=456"},
+                "method": "POST",
+            },
+        }
+
+        result = capture_headers(data, user_api_key_dict)
+
+        # Should fully redact cookie
+        assert result["metadata"]["http_headers"]["cookie"] == "[REDACTED]"
+
+    def test_missing_headers_handling(self, user_api_key_dict):
+        """Test handling of missing or empty headers."""
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {
+                "headers": {"empty-header": "", "null-header": None},
+                "method": "POST",
+            },
+        }
+
+        result = capture_headers(data, user_api_key_dict)
+
+        # Should skip empty/None headers
+        assert "empty-header" not in result["metadata"]["http_headers"]
+        assert "null-header" not in result["metadata"]["http_headers"]
+
+    def test_metadata_initialization(self, user_api_key_dict):
+        """Test metadata is initialized when not present."""
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {"headers": {"content-type": "application/json"}, "method": "POST"},
+        }
+
+        result = capture_headers(data, user_api_key_dict)
+
+        # Should create metadata
+        assert "metadata" in result
+        assert "http_headers" in result["metadata"]
+        assert result["metadata"]["http_headers"]["content-type"] == "application/json"
+
+    def test_existing_metadata_preserved(self, user_api_key_dict):
+        """Test existing metadata is preserved."""
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "metadata": {"existing_key": "existing_value"},
+            "proxy_server_request": {"headers": {"content-type": "application/json"}, "method": "POST"},
+        }
+
+        result = capture_headers(data, user_api_key_dict)
+
+        # Should preserve existing metadata
+        assert result["metadata"]["existing_key"] == "existing_value"
+        assert "http_headers" in result["metadata"]
+
+    def test_http_method_capture(self, user_api_key_dict):
+        """Test HTTP method is captured correctly."""
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {"headers": {}, "method": "GET"},
+        }
+
+        result = capture_headers(data, user_api_key_dict)
+
+        assert result["metadata"]["http_method"] == "GET"
+
+    def test_http_path_capture(self, user_api_key_dict):
+        """Test HTTP path is extracted from URL."""
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {
+                "headers": {},
+                "method": "POST",
+                "url": "https://api.anthropic.com/v1/messages?query=test",
+            },
+        }
+
+        result = capture_headers(data, user_api_key_dict)
+
+        # Should extract path without query params
+        assert result["metadata"]["http_path"] == "/v1/messages"
+
+    def test_http_path_empty_url(self, user_api_key_dict):
+        """Test HTTP path handling when URL is empty."""
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {"headers": {}, "method": "POST", "url": ""},
+        }
+
+        result = capture_headers(data, user_api_key_dict)
+
+        # Should not add http_path for empty URL
+        assert "http_path" not in result["metadata"]
+
+    def test_raw_headers_from_secret_fields(self, user_api_key_dict):
+        """Test raw headers from secret_fields are merged."""
+
+        class MockSecretFields:
+            def __init__(self):
+                self.raw_headers = {"authorization": "Bearer sk-ant-oat01-test1234"}
+
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {"headers": {"content-type": "application/json"}, "method": "POST"},
+            "secret_fields": MockSecretFields(),
+        }
+
+        result = capture_headers(data, user_api_key_dict)
+
+        # Should have both regular and raw headers
+        assert "content-type" in result["metadata"]["http_headers"]
+        assert "authorization" in result["metadata"]["http_headers"]
+
+    def test_raw_headers_priority(self, user_api_key_dict):
+        """Test raw headers override regular headers."""
+
+        class MockSecretFields:
+            def __init__(self):
+                self.raw_headers = {"content-type": "application/json"}
+
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {"headers": {"content-type": "text/plain"}, "method": "POST"},
+            "secret_fields": MockSecretFields(),
+        }
+
+        result = capture_headers(data, user_api_key_dict)
+
+        # Raw headers should take precedence
+        assert result["metadata"]["http_headers"]["content-type"] == "application/json"
+
+    def test_no_proxy_server_request(self, user_api_key_dict):
+        """Test handling when proxy_server_request is missing."""
+        data = {"model": "claude-sonnet-4-5-20250929"}
+
+        result = capture_headers(data, user_api_key_dict)
+
+        # Should create empty metadata
+        assert "metadata" in result
+        assert result["metadata"]["http_headers"] == {}
+        assert result["metadata"]["http_method"] == ""
+
+    def test_empty_headers_dict(self, user_api_key_dict):
+        """Test handling when headers dict is empty."""
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {"headers": {}, "method": "POST"},
+        }
+
+        result = capture_headers(data, user_api_key_dict)
+
+        # Should create empty http_headers
+        assert result["metadata"]["http_headers"] == {}
+        assert result["metadata"]["http_method"] == "POST"
+
+    def test_secret_fields_missing_raw_headers(self, user_api_key_dict):
+        """Test handling when secret_fields exists but has no raw_headers."""
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {"headers": {"content-type": "application/json"}, "method": "POST"},
+            "secret_fields": {},
+        }
+
+        result = capture_headers(data, user_api_key_dict)
+
+        # Should only capture regular headers
+        assert result["metadata"]["http_headers"]["content-type"] == "application/json"
+
+    def test_secret_fields_with_raw_headers_attribute(self, user_api_key_dict):
+        """Test handling when secret_fields is object with raw_headers attribute."""
+
+        class MockSecretFields:
+            def __init__(self):
+                self.raw_headers = {"authorization": "Bearer sk-ant-test1234"}
+
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {"headers": {}, "method": "POST"},
+            "secret_fields": MockSecretFields(),
+        }
+
+        result = capture_headers(data, user_api_key_dict)
+
+        # Should capture from raw_headers attribute
+        assert "authorization" in result["metadata"]["http_headers"]
+
+    def test_secret_fields_raw_headers_none(self, user_api_key_dict):
+        """Test handling when raw_headers attribute is None."""
+
+        class MockSecretFields:
+            def __init__(self):
+                self.raw_headers = None
+
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {"headers": {"content-type": "application/json"}, "method": "POST"},
+            "secret_fields": MockSecretFields(),
+        }
+
+        result = capture_headers(data, user_api_key_dict)
+
+        # Should only capture regular headers
+        assert result["metadata"]["http_headers"]["content-type"] == "application/json"
+
+    def test_long_header_value_truncation(self, user_api_key_dict):
+        """Test non-sensitive headers are truncated to 200 chars."""
+        long_value = "x" * 300
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {"headers": {"x-long-header": long_value}, "method": "POST"},
+        }
+
+        result = capture_headers(data, user_api_key_dict)
+
+        # Should truncate to 200 chars
+        assert len(result["metadata"]["http_headers"]["x-long-header"]) == 200
+        assert result["metadata"]["http_headers"]["x-long-header"] == "x" * 200
+
+    def test_multiple_headers_with_mixed_filtering(self, user_api_key_dict):
+        """Test filtering with mix of allowed and blocked headers."""
+
+        class MockSecretFields:
+            def __init__(self):
+                self.raw_headers = {"authorization": "Bearer sk-ant-test1234"}
+
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {
+                "headers": {
+                    "content-type": "application/json",
+                    "user-agent": "claude-cli/1.0.0",
+                    "x-custom-1": "value1",
+                    "x-custom-2": "value2",
+                },
+                "method": "POST",
+            },
+            "secret_fields": MockSecretFields(),
+        }
+
+        # Only capture specific headers
+        result = capture_headers(data, user_api_key_dict, headers=["content-type", "authorization"])
+
+        # Should only have filtered headers
+        assert len(result["metadata"]["http_headers"]) == 2
+        assert "content-type" in result["metadata"]["http_headers"]
+        assert "authorization" in result["metadata"]["http_headers"]
+        assert "user-agent" not in result["metadata"]["http_headers"]
+        assert "x-custom-1" not in result["metadata"]["http_headers"]

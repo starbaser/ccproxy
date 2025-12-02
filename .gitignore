@@ -68,3 +68,4 @@ poetry.lock
 /.ccproxy
 .envrc
 dumps
+langfuse/
