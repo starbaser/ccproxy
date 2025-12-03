@@ -1,6 +1,7 @@
 """Comprehensive tests for ccproxy hooks."""
 
 import logging
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -705,7 +706,25 @@ class TestForwardApiKey:
 
 
 class TestCaptureHeadersHook:
-    """Test the capture_headers hook function."""
+    """Test the capture_headers hook function.
+
+    The capture_headers hook outputs to metadata["trace_metadata"] for LangFuse compatibility.
+    Headers are stored as "header_{name}" keys, plus "http_method" and "http_path".
+    """
+
+    def _get_trace_metadata(self, result: dict) -> dict[str, Any]:
+        """Extract trace_metadata from result data."""
+        return result.get("metadata", {}).get("trace_metadata", {})
+
+    def _get_headers(self, result: dict) -> dict[str, str]:
+        """Helper to extract header values into a dict for easier assertions."""
+        trace_metadata = self._get_trace_metadata(result)
+        headers = {}
+        for key, value in trace_metadata.items():
+            if key.startswith("header_"):
+                header_name = key[7:]  # Remove "header_" prefix
+                headers[header_name] = value
+        return headers
 
     def test_basic_header_capture_all_headers(self, user_api_key_dict):
         """Test capturing all headers when no filter is provided."""
@@ -724,14 +743,16 @@ class TestCaptureHeadersHook:
 
         result = capture_headers(data, user_api_key_dict)
 
-        # Should capture all headers
         assert "metadata" in result
-        assert "http_headers" in result["metadata"]
-        assert result["metadata"]["http_headers"]["content-type"] == "application/json"
-        assert result["metadata"]["http_headers"]["user-agent"] == "claude-cli/1.0.0"
-        assert result["metadata"]["http_headers"]["x-custom-header"] == "custom-value"
-        assert result["metadata"]["http_method"] == "POST"
-        assert result["metadata"]["http_path"] == "/v1/messages"
+        assert "trace_metadata" in result["metadata"]
+
+        headers = self._get_headers(result)
+        trace_meta = self._get_trace_metadata(result)
+        assert headers["content-type"] == "application/json"
+        assert headers["user-agent"] == "claude-cli/1.0.0"
+        assert headers["x-custom-header"] == "custom-value"
+        assert trace_meta["http_method"] == "POST"
+        assert trace_meta["http_path"] == "/v1/messages"
 
     def test_header_filtering(self, user_api_key_dict):
         """Test capturing only specified headers with filter."""
@@ -748,14 +769,12 @@ class TestCaptureHeadersHook:
             },
         }
 
-        # Filter to only capture content-type and user-agent
         result = capture_headers(data, user_api_key_dict, headers=["content-type", "user-agent"])
 
-        # Should only capture filtered headers
-        assert "http_headers" in result["metadata"]
-        assert result["metadata"]["http_headers"]["content-type"] == "application/json"
-        assert result["metadata"]["http_headers"]["user-agent"] == "claude-cli/1.0.0"
-        assert "x-custom-header" not in result["metadata"]["http_headers"]
+        headers = self._get_headers(result)
+        assert headers["content-type"] == "application/json"
+        assert headers["user-agent"] == "claude-cli/1.0.0"
+        assert "x-custom-header" not in headers
 
     def test_header_filtering_case_insensitive(self, user_api_key_dict):
         """Test header filtering is case-insensitive."""
@@ -770,12 +789,11 @@ class TestCaptureHeadersHook:
             },
         }
 
-        # Filter with lowercase names
         result = capture_headers(data, user_api_key_dict, headers=["content-type", "user-agent"])
 
-        # Should match case-insensitively
-        assert "content-type" in result["metadata"]["http_headers"]
-        assert "user-agent" in result["metadata"]["http_headers"]
+        headers = self._get_headers(result)
+        assert "content-type" in headers
+        assert "user-agent" in headers
 
     def test_authorization_header_redaction(self, user_api_key_dict):
         """Test authorization header is redacted properly."""
@@ -792,9 +810,8 @@ class TestCaptureHeadersHook:
 
         result = capture_headers(data, user_api_key_dict)
 
-        # Should redact but keep prefix and suffix
-        assert "http_headers" in result["metadata"]
-        auth_value = result["metadata"]["http_headers"]["authorization"]
+        headers = self._get_headers(result)
+        auth_value = headers["authorization"]
         assert auth_value.startswith("Bearer sk-ant-")
         assert auth_value.endswith("cdef")
         assert "..." in auth_value
@@ -815,8 +832,8 @@ class TestCaptureHeadersHook:
 
         result = capture_headers(data, user_api_key_dict)
 
-        # Should still redact with suffix
-        auth_value = result["metadata"]["http_headers"]["authorization"]
+        headers = self._get_headers(result)
+        auth_value = headers["authorization"]
         assert "..." in auth_value
         assert auth_value.endswith("7890")
 
@@ -835,8 +852,8 @@ class TestCaptureHeadersHook:
 
         result = capture_headers(data, user_api_key_dict)
 
-        # Should redact but keep prefix and suffix
-        api_key = result["metadata"]["http_headers"]["x-api-key"]
+        headers = self._get_headers(result)
+        api_key = headers["x-api-key"]
         assert api_key.startswith("sk-openai-")
         assert api_key.endswith("cdef")
         assert "..." in api_key
@@ -853,8 +870,8 @@ class TestCaptureHeadersHook:
 
         result = capture_headers(data, user_api_key_dict)
 
-        # Should fully redact cookie
-        assert result["metadata"]["http_headers"]["cookie"] == "[REDACTED]"
+        headers = self._get_headers(result)
+        assert headers["cookie"] == "[REDACTED]"
 
     def test_missing_headers_handling(self, user_api_key_dict):
         """Test handling of missing or empty headers."""
@@ -868,9 +885,9 @@ class TestCaptureHeadersHook:
 
         result = capture_headers(data, user_api_key_dict)
 
-        # Should skip empty/None headers
-        assert "empty-header" not in result["metadata"]["http_headers"]
-        assert "null-header" not in result["metadata"]["http_headers"]
+        headers = self._get_headers(result)
+        assert "empty-header" not in headers
+        assert "null-header" not in headers
 
     def test_metadata_initialization(self, user_api_key_dict):
         """Test metadata is initialized when not present."""
@@ -881,10 +898,10 @@ class TestCaptureHeadersHook:
 
         result = capture_headers(data, user_api_key_dict)
 
-        # Should create metadata
         assert "metadata" in result
-        assert "http_headers" in result["metadata"]
-        assert result["metadata"]["http_headers"]["content-type"] == "application/json"
+        assert "trace_metadata" in result["metadata"]
+        headers = self._get_headers(result)
+        assert headers["content-type"] == "application/json"
 
     def test_existing_metadata_preserved(self, user_api_key_dict):
         """Test existing metadata is preserved."""
@@ -896,9 +913,8 @@ class TestCaptureHeadersHook:
 
         result = capture_headers(data, user_api_key_dict)
 
-        # Should preserve existing metadata
         assert result["metadata"]["existing_key"] == "existing_value"
-        assert "http_headers" in result["metadata"]
+        assert "trace_metadata" in result["metadata"]
 
     def test_http_method_capture(self, user_api_key_dict):
         """Test HTTP method is captured correctly."""
@@ -909,7 +925,8 @@ class TestCaptureHeadersHook:
 
         result = capture_headers(data, user_api_key_dict)
 
-        assert result["metadata"]["http_method"] == "GET"
+        trace_meta = self._get_trace_metadata(result)
+        assert trace_meta["http_method"] == "GET"
 
     def test_http_path_capture(self, user_api_key_dict):
         """Test HTTP path is extracted from URL."""
@@ -924,8 +941,8 @@ class TestCaptureHeadersHook:
 
         result = capture_headers(data, user_api_key_dict)
 
-        # Should extract path without query params
-        assert result["metadata"]["http_path"] == "/v1/messages"
+        trace_meta = self._get_trace_metadata(result)
+        assert trace_meta["http_path"] == "/v1/messages"
 
     def test_http_path_empty_url(self, user_api_key_dict):
         """Test HTTP path handling when URL is empty."""
@@ -936,8 +953,8 @@ class TestCaptureHeadersHook:
 
         result = capture_headers(data, user_api_key_dict)
 
-        # Should not add http_path for empty URL
-        assert "http_path" not in result["metadata"]
+        trace_meta = self._get_trace_metadata(result)
+        assert "http_path" not in trace_meta
 
     def test_raw_headers_from_secret_fields(self, user_api_key_dict):
         """Test raw headers from secret_fields are merged."""
@@ -954,9 +971,9 @@ class TestCaptureHeadersHook:
 
         result = capture_headers(data, user_api_key_dict)
 
-        # Should have both regular and raw headers
-        assert "content-type" in result["metadata"]["http_headers"]
-        assert "authorization" in result["metadata"]["http_headers"]
+        headers = self._get_headers(result)
+        assert "content-type" in headers
+        assert "authorization" in headers
 
     def test_raw_headers_priority(self, user_api_key_dict):
         """Test raw headers override regular headers."""
@@ -973,8 +990,8 @@ class TestCaptureHeadersHook:
 
         result = capture_headers(data, user_api_key_dict)
 
-        # Raw headers should take precedence
-        assert result["metadata"]["http_headers"]["content-type"] == "application/json"
+        headers = self._get_headers(result)
+        assert headers["content-type"] == "application/json"
 
     def test_no_proxy_server_request(self, user_api_key_dict):
         """Test handling when proxy_server_request is missing."""
@@ -982,10 +999,10 @@ class TestCaptureHeadersHook:
 
         result = capture_headers(data, user_api_key_dict)
 
-        # Should create empty metadata
         assert "metadata" in result
-        assert result["metadata"]["http_headers"] == {}
-        assert result["metadata"]["http_method"] == ""
+        assert "trace_metadata" in result["metadata"]
+        trace_meta = self._get_trace_metadata(result)
+        assert trace_meta == {}
 
     def test_empty_headers_dict(self, user_api_key_dict):
         """Test handling when headers dict is empty."""
@@ -996,9 +1013,10 @@ class TestCaptureHeadersHook:
 
         result = capture_headers(data, user_api_key_dict)
 
-        # Should create empty http_headers
-        assert result["metadata"]["http_headers"] == {}
-        assert result["metadata"]["http_method"] == "POST"
+        headers = self._get_headers(result)
+        assert headers == {}
+        trace_meta = self._get_trace_metadata(result)
+        assert trace_meta["http_method"] == "POST"
 
     def test_secret_fields_missing_raw_headers(self, user_api_key_dict):
         """Test handling when secret_fields exists but has no raw_headers."""
@@ -1010,8 +1028,8 @@ class TestCaptureHeadersHook:
 
         result = capture_headers(data, user_api_key_dict)
 
-        # Should only capture regular headers
-        assert result["metadata"]["http_headers"]["content-type"] == "application/json"
+        headers = self._get_headers(result)
+        assert headers["content-type"] == "application/json"
 
     def test_secret_fields_with_raw_headers_attribute(self, user_api_key_dict):
         """Test handling when secret_fields is object with raw_headers attribute."""
@@ -1028,8 +1046,8 @@ class TestCaptureHeadersHook:
 
         result = capture_headers(data, user_api_key_dict)
 
-        # Should capture from raw_headers attribute
-        assert "authorization" in result["metadata"]["http_headers"]
+        headers = self._get_headers(result)
+        assert "authorization" in headers
 
     def test_secret_fields_raw_headers_none(self, user_api_key_dict):
         """Test handling when raw_headers attribute is None."""
@@ -1046,8 +1064,8 @@ class TestCaptureHeadersHook:
 
         result = capture_headers(data, user_api_key_dict)
 
-        # Should only capture regular headers
-        assert result["metadata"]["http_headers"]["content-type"] == "application/json"
+        headers = self._get_headers(result)
+        assert headers["content-type"] == "application/json"
 
     def test_long_header_value_truncation(self, user_api_key_dict):
         """Test non-sensitive headers are truncated to 200 chars."""
@@ -1059,9 +1077,9 @@ class TestCaptureHeadersHook:
 
         result = capture_headers(data, user_api_key_dict)
 
-        # Should truncate to 200 chars
-        assert len(result["metadata"]["http_headers"]["x-long-header"]) == 200
-        assert result["metadata"]["http_headers"]["x-long-header"] == "x" * 200
+        headers = self._get_headers(result)
+        assert len(headers["x-long-header"]) == 200
+        assert headers["x-long-header"] == "x" * 200
 
     def test_multiple_headers_with_mixed_filtering(self, user_api_key_dict):
         """Test filtering with mix of allowed and blocked headers."""
@@ -1084,12 +1102,11 @@ class TestCaptureHeadersHook:
             "secret_fields": MockSecretFields(),
         }
 
-        # Only capture specific headers
         result = capture_headers(data, user_api_key_dict, headers=["content-type", "authorization"])
 
-        # Should only have filtered headers
-        assert len(result["metadata"]["http_headers"]) == 2
-        assert "content-type" in result["metadata"]["http_headers"]
-        assert "authorization" in result["metadata"]["http_headers"]
-        assert "user-agent" not in result["metadata"]["http_headers"]
-        assert "x-custom-1" not in result["metadata"]["http_headers"]
+        headers = self._get_headers(result)
+        assert len(headers) == 2
+        assert "content-type" in headers
+        assert "authorization" in headers
+        assert "user-agent" not in headers
+        assert "x-custom-1" not in headers

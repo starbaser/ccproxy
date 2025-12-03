@@ -1,5 +1,7 @@
 import logging
 import re
+import threading
+import time
 from typing import Any
 
 from litellm.litellm_core_utils.get_llm_provider_logic import get_llm_provider
@@ -10,6 +12,34 @@ from ccproxy.router import ModelRouter
 
 # Set up structured logging
 logger = logging.getLogger(__name__)
+
+# Global storage for request metadata, keyed by litellm_call_id
+# Required because LiteLLM doesn't preserve custom metadata from async_pre_call_hook
+# to logging callbacks - only internal fields like user_id and hidden_params survive.
+_request_metadata_store: dict[str, tuple[dict[str, Any], float]] = {}
+_store_lock = threading.Lock()
+_STORE_TTL = 60.0  # Clean up entries older than 60 seconds
+
+
+def store_request_metadata(call_id: str, metadata: dict[str, Any]) -> None:
+    """Store metadata for a request by its call ID."""
+    with _store_lock:
+        _request_metadata_store[call_id] = (metadata, time.time())
+        # Clean up old entries
+        now = time.time()
+        expired = [k for k, (_, ts) in _request_metadata_store.items() if now - ts > _STORE_TTL]
+        for k in expired:
+            del _request_metadata_store[k]
+
+
+def get_request_metadata(call_id: str) -> dict[str, Any]:
+    """Retrieve metadata for a request by its call ID."""
+    with _store_lock:
+        entry = _request_metadata_store.get(call_id)
+        if entry:
+            metadata, _ = entry
+            return metadata
+        return {}
 
 # Headers containing secrets - redact but show prefix/suffix for identification
 SENSITIVE_PATTERNS = {
@@ -129,7 +159,10 @@ def model_router(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwar
 
 
 def capture_headers(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
-    """Capture HTTP headers for Langfuse with sensitive value redaction.
+    """Capture HTTP headers as LangFuse trace_metadata with sensitive value redaction.
+
+    Headers are added to metadata["trace_metadata"] which flows to LangFuse trace metadata.
+    This is the proper mechanism for structured key-value data (tags are for categorization only).
 
     Args:
         data: Request data from LiteLLM
@@ -139,6 +172,10 @@ def capture_headers(data: dict[str, Any], user_api_key_dict: dict[str, Any], **k
     """
     if "metadata" not in data:
         data["metadata"] = {}
+    if "trace_metadata" not in data["metadata"]:
+        data["metadata"]["trace_metadata"] = {}
+
+    trace_metadata = data["metadata"]["trace_metadata"]
 
     # Get optional headers filter from params
     headers_filter: list[str] | None = kwargs.get("headers")
@@ -156,7 +193,6 @@ def capture_headers(data: dict[str, Any], user_api_key_dict: dict[str, Any], **k
     # Merge headers (raw has auth, cleaned has rest)
     all_headers = {**headers, **raw_headers}
 
-    captured = {}
     for name, value in all_headers.items():
         if not value:
             continue
@@ -165,16 +201,30 @@ def capture_headers(data: dict[str, Any], user_api_key_dict: dict[str, Any], **k
         if headers_filter is not None:
             if name_lower not in [h.lower() for h in headers_filter]:
                 continue
-        captured[name_lower] = _redact_value(name, str(value))
+        # Add to trace_metadata with header_ prefix
+        redacted_value = _redact_value(name, str(value))
+        trace_metadata[f"header_{name_lower}"] = redacted_value
 
-    data["metadata"]["http_headers"] = captured
-    data["metadata"]["http_method"] = request.get("method", "")
+    # Add HTTP method and path
+    http_method = request.get("method", "")
+    if http_method:
+        trace_metadata["http_method"] = http_method
 
     url = request.get("url", "")
     if url:
         from urllib.parse import urlparse
+        path = urlparse(url).path
+        if path:
+            trace_metadata["http_path"] = path
 
-        data["metadata"]["http_path"] = urlparse(url).path
+    # Store in global store for retrieval in success callback
+    # LiteLLM doesn't preserve custom metadata through its internal flow
+    call_id = data.get("litellm_call_id")
+    if not call_id:
+        import uuid
+        call_id = str(uuid.uuid4())
+        data["litellm_call_id"] = call_id
+    store_request_metadata(call_id, {"trace_metadata": trace_metadata.copy()})
 
     return data
 

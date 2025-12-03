@@ -32,6 +32,7 @@ class CCProxyHandler(CustomLogger):
         super().__init__()
         self.classifier = RequestClassifier()
         self.router = get_router()
+        self._langfuse_client = None
 
         config = get_config()
         if config.debug:
@@ -42,6 +43,17 @@ class CCProxyHandler(CustomLogger):
         if config.debug and self.hooks:
             hook_names = [f"{h.__module__}.{h.__name__}" for h, _ in self.hooks]
             logger.debug(f"Loaded {len(self.hooks)} hooks: {', '.join(hook_names)}")
+
+    @property
+    def langfuse(self):
+        """Lazy-loaded Langfuse client."""
+        if self._langfuse_client is None:
+            try:
+                from langfuse import Langfuse
+                self._langfuse_client = Langfuse()
+            except Exception:
+                pass
+        return self._langfuse_client
 
     async def async_pre_call_hook(
         self,
@@ -186,6 +198,28 @@ class CCProxyHandler(CustomLogger):
             start_time: Request start timestamp
             end_time: Request completion timestamp
         """
+        # Retrieve stored metadata and update Langfuse trace
+        from ccproxy.hooks import get_request_metadata
+        call_id = kwargs.get("litellm_call_id")
+        litellm_params = kwargs.get("litellm_params", {})
+        if not call_id:
+            call_id = litellm_params.get("litellm_call_id")
+        stored = get_request_metadata(call_id) if call_id else {}
+
+        if stored and self.langfuse:
+            standard_logging_obj = kwargs.get("standard_logging_object")
+            if standard_logging_obj:
+                trace_id = standard_logging_obj.get("trace_id")
+                if trace_id:
+                    try:
+                        # Update trace with stored metadata
+                        trace_metadata = stored.get("trace_metadata", {})
+                        if trace_metadata:
+                            self.langfuse.trace(id=trace_id, metadata=trace_metadata)
+                            self.langfuse.flush()
+                    except Exception as e:
+                        logger.debug(f"Failed to update Langfuse trace: {e}")
+
         metadata = kwargs.get("metadata", {})
         model_name = metadata.get("ccproxy_model_name", "unknown")
 
