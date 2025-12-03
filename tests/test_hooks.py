@@ -8,7 +8,14 @@ import pytest
 
 from ccproxy.classifier import RequestClassifier
 from ccproxy.config import clear_config_instance
-from ccproxy.hooks import capture_headers, forward_apikey, forward_oauth, model_router, rule_evaluator
+from ccproxy.hooks import (
+    capture_headers,
+    extract_session_id,
+    forward_apikey,
+    forward_oauth,
+    model_router,
+    rule_evaluator,
+)
 from ccproxy.router import ModelRouter, clear_router
 
 
@@ -1110,3 +1117,180 @@ class TestCaptureHeadersHook:
         assert "authorization" in headers
         assert "user-agent" not in headers
         assert "x-custom-1" not in headers
+
+
+class TestExtractSessionId:
+    """Test the extract_session_id hook function.
+
+    Claude Code embeds session info in the metadata.user_id field with format:
+    user_{hash}_account_{uuid}_session_{uuid}
+    """
+
+    def test_extract_session_id_full_format(self, user_api_key_dict):
+        """Test extraction from full Claude Code user_id format."""
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {
+                "body": {
+                    "metadata": {
+                        "user_id": "user_e53ac6083b2e0160d086641d3099fb09829d77e5b4ef8e6146f92588d76041dc_account_a929b7ef-d758-4a98-b88e-07166e6c8537_session_d2101641-25fd-4f4b-b8de-30cf972ee5d3"
+                    }
+                }
+            },
+        }
+
+        result = extract_session_id(data, user_api_key_dict)
+
+        assert "metadata" in result
+        assert result["metadata"]["session_id"] == "d2101641-25fd-4f4b-b8de-30cf972ee5d3"
+        assert "trace_metadata" in result["metadata"]
+        trace_meta = result["metadata"]["trace_metadata"]
+        assert trace_meta["claude_user_hash"] == "e53ac6083b2e0160d086641d3099fb09829d77e5b4ef8e6146f92588d76041dc"
+        assert trace_meta["claude_account_id"] == "a929b7ef-d758-4a98-b88e-07166e6c8537"
+
+    def test_extract_session_id_preserves_existing_metadata(self, user_api_key_dict):
+        """Test that existing metadata is preserved."""
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "metadata": {"existing_key": "existing_value"},
+            "proxy_server_request": {
+                "body": {
+                    "metadata": {
+                        "user_id": "user_abc123_account_uuid1_session_uuid2"
+                    }
+                }
+            },
+        }
+
+        result = extract_session_id(data, user_api_key_dict)
+
+        assert result["metadata"]["existing_key"] == "existing_value"
+        assert result["metadata"]["session_id"] == "uuid2"
+
+    def test_extract_session_id_no_session_in_user_id(self, user_api_key_dict):
+        """Test handling when user_id doesn't contain session."""
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {
+                "body": {
+                    "metadata": {
+                        "user_id": "regular_user_id_without_session"
+                    }
+                }
+            },
+        }
+
+        result = extract_session_id(data, user_api_key_dict)
+
+        assert "metadata" in result
+        assert "session_id" not in result["metadata"]
+
+    def test_extract_session_id_empty_user_id(self, user_api_key_dict):
+        """Test handling when user_id is empty."""
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {
+                "body": {
+                    "metadata": {
+                        "user_id": ""
+                    }
+                }
+            },
+        }
+
+        result = extract_session_id(data, user_api_key_dict)
+
+        assert "metadata" in result
+        assert "session_id" not in result["metadata"]
+
+    def test_extract_session_id_no_metadata_in_body(self, user_api_key_dict):
+        """Test handling when body has no metadata."""
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {
+                "body": {}
+            },
+        }
+
+        result = extract_session_id(data, user_api_key_dict)
+
+        assert "metadata" in result
+        assert "session_id" not in result["metadata"]
+
+    def test_extract_session_id_no_body(self, user_api_key_dict):
+        """Test handling when proxy_server_request has no body."""
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {},
+        }
+
+        result = extract_session_id(data, user_api_key_dict)
+
+        assert "metadata" in result
+        assert "session_id" not in result["metadata"]
+
+    def test_extract_session_id_no_proxy_request(self, user_api_key_dict):
+        """Test handling when proxy_server_request is missing."""
+        data = {"model": "claude-sonnet-4-5-20250929"}
+
+        result = extract_session_id(data, user_api_key_dict)
+
+        assert "metadata" in result
+        assert "session_id" not in result["metadata"]
+
+    def test_extract_session_id_body_not_dict(self, user_api_key_dict):
+        """Test handling when body is not a dict."""
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {
+                "body": "string body"
+            },
+        }
+
+        result = extract_session_id(data, user_api_key_dict)
+
+        assert "metadata" in result
+        assert "session_id" not in result["metadata"]
+
+    def test_extract_session_id_no_account_in_prefix(self, user_api_key_dict):
+        """Test handling when user_id has session but no account."""
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {
+                "body": {
+                    "metadata": {
+                        "user_id": "user_abc123_session_uuid2"
+                    }
+                }
+            },
+        }
+
+        result = extract_session_id(data, user_api_key_dict)
+
+        assert result["metadata"]["session_id"] == "uuid2"
+        trace_meta = result["metadata"].get("trace_metadata", {})
+        assert "claude_user_hash" not in trace_meta
+        assert "claude_account_id" not in trace_meta
+
+    def test_extract_session_id_preserves_existing_trace_metadata(self, user_api_key_dict):
+        """Test that existing trace_metadata is preserved."""
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "metadata": {
+                "trace_metadata": {"existing_trace_key": "existing_trace_value"}
+            },
+            "proxy_server_request": {
+                "body": {
+                    "metadata": {
+                        "user_id": "user_hash123_account_acct456_session_sess789"
+                    }
+                }
+            },
+        }
+
+        result = extract_session_id(data, user_api_key_dict)
+
+        trace_meta = result["metadata"]["trace_metadata"]
+        assert trace_meta["existing_trace_key"] == "existing_trace_value"
+        assert trace_meta["claude_user_hash"] == "hash123"
+        assert trace_meta["claude_account_id"] == "acct456"
