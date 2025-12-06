@@ -10,6 +10,7 @@ the standard litellm.acompletion() interface instead.
 """
 
 import asyncio
+
 import litellm
 from rich.console import Console
 from rich.panel import Panel
@@ -43,10 +44,7 @@ async def simple_request() -> None:
 
     console.print("[green]Response:[/green]")
     console.print(response.choices[0].message.content)
-    console.print(
-        f"\n[dim]Tokens: {response.usage.prompt_tokens} in, "
-        f"{response.usage.completion_tokens} out[/dim]"
-    )
+    console.print(f"\n[dim]Tokens: {response.usage.prompt_tokens} in, {response.usage.completion_tokens} out[/dim]")
 
 
 async def streaming_request() -> None:

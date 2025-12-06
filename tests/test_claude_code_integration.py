@@ -18,14 +18,13 @@ import yaml
 def find_free_port() -> int:
     """Find a free port to use for testing."""
     with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
-        s.bind(('', 0))
+        s.bind(("", 0))
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         return s.getsockname()[1]
 
 
 @pytest.mark.skipif(
-    subprocess.run(["which", "claude"], capture_output=True).returncode != 0,
-    reason="claude command not available"
+    subprocess.run(["which", "claude"], capture_output=True).returncode != 0, reason="claude command not available"
 )
 class TestClaudeCodeE2E:
     """End-to-end test that validates claude command works through ccproxy."""
@@ -43,28 +42,20 @@ class TestClaudeCodeE2E:
                         "model_name": "default",
                         "litellm_params": {
                             "model": "claude-sonnet-4-5-20250929",
-                            "api_base": "https://api.anthropic.com"
-                        }
+                            "api_base": "https://api.anthropic.com",
+                        },
                     }
                 ]
             }
 
             # Create minimal ccproxy config
             ccproxy_config = {
-                "litellm": {
-                    "host": "127.0.0.1",
-                    "port": find_free_port(),
-                    "num_workers": 1,
-                    "telemetry": False
-                },
+                "litellm": {"host": "127.0.0.1", "port": find_free_port(), "num_workers": 1, "telemetry": False},
                 "ccproxy": {
                     "debug": False,
-                    "hooks": [
-                        "ccproxy.hooks.model_router",
-                        "ccproxy.hooks.forward_oauth"
-                    ],
-                    "rules": []
-                }
+                    "hooks": ["ccproxy.hooks.model_router", "ccproxy.hooks.forward_oauth"],
+                    "rules": [],
+                },
             }
 
             # Write config files
@@ -103,10 +94,8 @@ fi
             cwd=test_config_dir,
             capture_output=True,
             text=True,
-            timeout=10
+            timeout=10,
         )
 
         assert result.returncode == 0, f"Command failed. stdout: {result.stdout}, stderr: {result.stderr}"
         assert "SUCCESS" in result.stdout
-
-

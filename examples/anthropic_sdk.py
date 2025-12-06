@@ -47,10 +47,7 @@ def simple_request() -> None:
 
         console.print("[green]Response:[/green]")
         console.print(response.content[0].text)
-        console.print(
-            f"\n[dim]Tokens: {response.usage.input_tokens} in, "
-            f"{response.usage.output_tokens} out[/dim]"
-        )
+        console.print(f"\n[dim]Tokens: {response.usage.input_tokens} in, {response.usage.output_tokens} out[/dim]")
 
     except anthropic.APIError as e:
         err_console.print(f"[bold red]API Error:[/bold red] {e}")
@@ -85,10 +82,7 @@ def main() -> None:
     """Run examples."""
     try:
         # Check if running
-        console.print(
-            "[yellow]Note:[/yellow] This script requires ccproxy running with "
-            "credentials configuration.\n"
-        )
+        console.print("[yellow]Note:[/yellow] This script requires ccproxy running with credentials configuration.\n")
 
         # Simple request
         simple_request()

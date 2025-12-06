@@ -43,11 +43,17 @@ class TestModelRouter:
         test_model_list = [
             {
                 "model_name": "default",
-                "litellm_params": {"model": "anthropic/claude-sonnet-4-5-20250929", "api_base": "https://api.anthropic.com"},
+                "litellm_params": {
+                    "model": "anthropic/claude-sonnet-4-5-20250929",
+                    "api_base": "https://api.anthropic.com",
+                },
             },
             {
                 "model_name": "background",
-                "litellm_params": {"model": "anthropic/claude-haiku-4-5-20251001-20241022", "api_base": "https://api.anthropic.com"},
+                "litellm_params": {
+                    "model": "anthropic/claude-haiku-4-5-20251001-20241022",
+                    "api_base": "https://api.anthropic.com",
+                },
                 "model_info": {"priority": "low"},
             },
         ]

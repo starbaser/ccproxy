@@ -41,6 +41,7 @@ def get_request_metadata(call_id: str) -> dict[str, Any]:
             return metadata
         return {}
 
+
 # Headers containing secrets - redact but show prefix/suffix for identification
 SENSITIVE_PATTERNS = {
     "authorization": r"^(Bearer sk-[a-z]+-|Bearer |sk-[a-z]+-)",  # Keep "Bearer sk-ant-" or "Bearer " or "sk-ant-"
@@ -254,6 +255,7 @@ def capture_headers(data: dict[str, Any], user_api_key_dict: dict[str, Any], **k
     url = request.get("url", "")
     if url:
         from urllib.parse import urlparse
+
         path = urlparse(url).path
         if path:
             trace_metadata["http_path"] = path
@@ -263,6 +265,7 @@ def capture_headers(data: dict[str, Any], user_api_key_dict: dict[str, Any], **k
     call_id = data.get("litellm_call_id")
     if not call_id:
         import uuid
+
         call_id = str(uuid.uuid4())
         data["litellm_call_id"] = call_id
     store_request_metadata(call_id, {"trace_metadata": trace_metadata.copy()})

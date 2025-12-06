@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field, PrivateAttr, field_validator
+from pydantic import BaseModel, Field, PrivateAttr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -61,6 +61,7 @@ class OAuthSource(BaseModel):
 
     user_agent: str | None = None
     """Optional custom User-Agent header to send with requests using this token"""
+
 
 # Import proxy_server to access runtime configuration
 try:

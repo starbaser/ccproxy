@@ -233,7 +233,9 @@ ccproxy:
                 assert "extra_headers" in result["provider_specific_header"]
                 assert result["provider_specific_header"]["extra_headers"]["user-agent"] == "MyCustomApp/3.0.0"
                 # Authorization should also be forwarded
-                assert result["provider_specific_header"]["extra_headers"]["authorization"] == "Bearer vertex-ai-token-123"
+                assert (
+                    result["provider_specific_header"]["extra_headers"]["authorization"] == "Bearer vertex-ai-token-123"
+                )
 
         finally:
             yaml_path.unlink()
@@ -306,7 +308,9 @@ ccproxy:
                 # user-agent should not be in extra_headers
                 assert "user-agent" not in result["provider_specific_header"]["extra_headers"]
                 # Authorization should still be forwarded
-                assert result["provider_specific_header"]["extra_headers"]["authorization"] == "Bearer anthropic-token-123"
+                assert (
+                    result["provider_specific_header"]["extra_headers"]["authorization"] == "Bearer anthropic-token-123"
+                )
 
         finally:
             yaml_path.unlink()

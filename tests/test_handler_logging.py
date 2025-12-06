@@ -104,6 +104,7 @@ class TestHandlerLoggingHookMethods:
 
             def mock_hook(data, user_api_key_dict, **kwargs):
                 return data
+
             mock_hook.__module__ = "test_module"
             mock_hook.__name__ = "test_hook"
 
@@ -137,6 +138,7 @@ class TestHandlerLoggingHookMethods:
 
             def failing_hook(data, user_api_key_dict, **kwargs):
                 raise ValueError("Hook failed!")
+
             failing_hook.__name__ = "failing_hook"
 
             mock_config.load_hooks.return_value = [(failing_hook, {})]
@@ -153,8 +155,6 @@ class TestHandlerLoggingHookMethods:
             args = mock_logger.error.call_args[0]
             assert "Hook failing_hook failed with error" in args[0]
             assert "Hook failed!" in args[0]
-
-
 
     @patch("ccproxy.handler.logger")
     def test_log_routing_decision(self, mock_logger: Mock) -> None:

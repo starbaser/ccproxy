@@ -2,7 +2,7 @@
 
 import inspect
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 from rich import box
 from rich.console import Console
@@ -114,7 +114,7 @@ def debug_table(
         console.print(Pretty(obj))
 
 
-def _print_dict(data: Dict[Any, Any], title: str, max_width: int | None, compact: bool) -> None:
+def _print_dict(data: dict[Any, Any], title: str, max_width: int | None, compact: bool) -> None:
     """Print dictionary as table."""
     table = Table(
         title=f"[cyan]{title}[/cyan]",
@@ -134,7 +134,7 @@ def _print_dict(data: Dict[Any, Any], title: str, max_width: int | None, compact
     console.print(table)
 
 
-def _print_list(data: List[Any] | Tuple[Any, ...], title: str, max_width: int | None, compact: bool) -> None:
+def _print_list(data: list[Any] | tuple[Any, ...], title: str, max_width: int | None, compact: bool) -> None:
     """Print list/tuple as table."""
     table = Table(
         title=f"[cyan]{title}[/cyan] ({len(data)} items)",

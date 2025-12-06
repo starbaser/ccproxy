@@ -1153,13 +1153,7 @@ class TestExtractSessionId:
         data = {
             "model": "claude-sonnet-4-5-20250929",
             "metadata": {"existing_key": "existing_value"},
-            "proxy_server_request": {
-                "body": {
-                    "metadata": {
-                        "user_id": "user_abc123_account_uuid1_session_uuid2"
-                    }
-                }
-            },
+            "proxy_server_request": {"body": {"metadata": {"user_id": "user_abc123_account_uuid1_session_uuid2"}}},
         }
 
         result = extract_session_id(data, user_api_key_dict)
@@ -1171,13 +1165,7 @@ class TestExtractSessionId:
         """Test handling when user_id doesn't contain session."""
         data = {
             "model": "claude-sonnet-4-5-20250929",
-            "proxy_server_request": {
-                "body": {
-                    "metadata": {
-                        "user_id": "regular_user_id_without_session"
-                    }
-                }
-            },
+            "proxy_server_request": {"body": {"metadata": {"user_id": "regular_user_id_without_session"}}},
         }
 
         result = extract_session_id(data, user_api_key_dict)
@@ -1189,13 +1177,7 @@ class TestExtractSessionId:
         """Test handling when user_id is empty."""
         data = {
             "model": "claude-sonnet-4-5-20250929",
-            "proxy_server_request": {
-                "body": {
-                    "metadata": {
-                        "user_id": ""
-                    }
-                }
-            },
+            "proxy_server_request": {"body": {"metadata": {"user_id": ""}}},
         }
 
         result = extract_session_id(data, user_api_key_dict)
@@ -1207,9 +1189,7 @@ class TestExtractSessionId:
         """Test handling when body has no metadata."""
         data = {
             "model": "claude-sonnet-4-5-20250929",
-            "proxy_server_request": {
-                "body": {}
-            },
+            "proxy_server_request": {"body": {}},
         }
 
         result = extract_session_id(data, user_api_key_dict)
@@ -1242,9 +1222,7 @@ class TestExtractSessionId:
         """Test handling when body is not a dict."""
         data = {
             "model": "claude-sonnet-4-5-20250929",
-            "proxy_server_request": {
-                "body": "string body"
-            },
+            "proxy_server_request": {"body": "string body"},
         }
 
         result = extract_session_id(data, user_api_key_dict)
@@ -1256,13 +1234,7 @@ class TestExtractSessionId:
         """Test handling when user_id has session but no account."""
         data = {
             "model": "claude-sonnet-4-5-20250929",
-            "proxy_server_request": {
-                "body": {
-                    "metadata": {
-                        "user_id": "user_abc123_session_uuid2"
-                    }
-                }
-            },
+            "proxy_server_request": {"body": {"metadata": {"user_id": "user_abc123_session_uuid2"}}},
         }
 
         result = extract_session_id(data, user_api_key_dict)
@@ -1276,16 +1248,8 @@ class TestExtractSessionId:
         """Test that existing trace_metadata is preserved."""
         data = {
             "model": "claude-sonnet-4-5-20250929",
-            "metadata": {
-                "trace_metadata": {"existing_trace_key": "existing_trace_value"}
-            },
-            "proxy_server_request": {
-                "body": {
-                    "metadata": {
-                        "user_id": "user_hash123_account_acct456_session_sess789"
-                    }
-                }
-            },
+            "metadata": {"trace_metadata": {"existing_trace_key": "existing_trace_value"}},
+            "proxy_server_request": {"body": {"metadata": {"user_id": "user_hash123_account_acct456_session_sess789"}}},
         }
 
         result = extract_session_id(data, user_api_key_dict)
