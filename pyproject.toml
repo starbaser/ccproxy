@@ -1,6 +1,6 @@
 [project]
 name = "claude-ccproxy"
-version = "1.1.1"
+version = "1.2.0"
 description = "Scriptable Claude Code LiteLLM-based proxy"
 readme = "README.md"
 requires-python = ">=3.11"
