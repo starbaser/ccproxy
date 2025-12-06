@@ -65,7 +65,9 @@ class ModelRouter:
             self._models_loaded = True
 
             if self._available_models:
-                logger.info(f"Successfully loaded {len(self._available_models)} models: {sorted(self._available_models)}")
+                logger.info(
+                    f"Successfully loaded {len(self._available_models)} models: {sorted(self._available_models)}"
+                )
             else:
                 logger.error("No models were loaded from LiteLLM proxy - check configuration")
 

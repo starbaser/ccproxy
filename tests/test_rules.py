@@ -89,10 +89,7 @@ class TestTokenCountRule:
         rule = TokenCountRule(threshold=10)
 
         # Test with GPT-4 model to trigger line 68
-        request = {
-            "model": "gpt-4",
-            "messages": [{"content": "This is a test message"}]
-        }
+        request = {"model": "gpt-4", "messages": [{"content": "This is a test message"}]}
         # This should trigger the GPT tokenizer path
         result = rule.evaluate(request, config)
         assert isinstance(result, bool)
@@ -102,10 +99,7 @@ class TestTokenCountRule:
         rule = TokenCountRule(threshold=10)
 
         # Test with Gemini model to trigger line 74
-        request = {
-            "model": "gemini-pro",
-            "messages": [{"content": "This is a test message"}]
-        }
+        request = {"model": "gemini-pro", "messages": [{"content": "This is a test message"}]}
         # This should trigger the Gemini tokenizer path
         result = rule.evaluate(request, config)
         assert isinstance(result, bool)
@@ -117,18 +111,16 @@ class TestTokenCountRule:
         rule = TokenCountRule(threshold=10)
 
         # Mock tiktoken import to fail, triggering the except block on lines 81-83
-        with patch('builtins.__import__') as mock_import:
+        with patch("builtins.__import__") as mock_import:
+
             def import_side_effect(name, *args, **kwargs):
-                if name == 'tiktoken':
+                if name == "tiktoken":
                     raise ImportError("Mock tiktoken import error")
                 return __import__(name, *args, **kwargs)
 
             mock_import.side_effect = import_side_effect
 
-            request = {
-                "model": "gpt-4",
-                "messages": [{"content": "Test message"}]
-            }
+            request = {"model": "gpt-4", "messages": [{"content": "Test message"}]}
             # Should fall back to estimation when tiktoken import fails
             result = rule.evaluate(request, config)
             assert isinstance(result, bool)
@@ -143,10 +135,10 @@ class TestTokenCountRule:
         mock_tokenizer = MagicMock()
         mock_tokenizer.encode.side_effect = Exception("Encoding error")
 
-        with patch.object(rule, '_get_tokenizer', return_value=mock_tokenizer):
+        with patch.object(rule, "_get_tokenizer", return_value=mock_tokenizer):
             request = {
                 "model": "gpt-4",
-                "messages": [{"content": "Test message with sufficient length to exceed threshold"}]
+                "messages": [{"content": "Test message with sufficient length to exceed threshold"}],
             }
             # Should fall back to estimation when encoding fails
             result = rule.evaluate(request, config)
@@ -159,13 +151,15 @@ class TestTokenCountRule:
         # Test with multi-modal content structure
         request = {
             "model": "gpt-4",
-            "messages": [{
-                "content": [
-                    {"type": "text", "text": "This is text content"},
-                    {"type": "image", "image_url": "http://example.com/image.jpg"},
-                    {"type": "text", "text": "More text content"}
-                ]
-            }]
+            "messages": [
+                {
+                    "content": [
+                        {"type": "text", "text": "This is text content"},
+                        {"type": "image", "image_url": "http://example.com/image.jpg"},
+                        {"type": "text", "text": "More text content"},
+                    ]
+                }
+            ],
         }
         # Should extract text from multi-modal content
         result = rule.evaluate(request, config)
@@ -310,15 +304,7 @@ class TestMatchToolRule:
         """Test OpenAI function format (line 234)."""
         # Test OpenAI function.name format to cover line 234
         request = {
-            "tools": [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "web_search_api",
-                        "description": "Search the web"
-                    }
-                }
-            ]
+            "tools": [{"type": "function", "function": {"name": "web_search_api", "description": "Search the web"}}]
         }
         assert rule.evaluate(request, config) is True
 

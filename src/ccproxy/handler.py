@@ -1,11 +1,10 @@
 """ccproxy handler - Main LiteLLM CustomLogger implementation."""
 
 import logging
-import os
 from typing import Any, TypedDict
 
 from litellm.integrations.custom_logger import CustomLogger
-from rich import print, inspect
+from rich import print
 
 from ccproxy.classifier import RequestClassifier
 from ccproxy.config import get_config
@@ -50,6 +49,7 @@ class CCProxyHandler(CustomLogger):
         if self._langfuse_client is None:
             try:
                 from langfuse import Langfuse
+
                 self._langfuse_client = Langfuse()
             except Exception:
                 pass
@@ -200,6 +200,7 @@ class CCProxyHandler(CustomLogger):
         """
         # Retrieve stored metadata and update Langfuse trace
         from ccproxy.hooks import get_request_metadata
+
         call_id = kwargs.get("litellm_call_id")
         litellm_params = kwargs.get("litellm_params", {})
         if not call_id:
