@@ -61,6 +61,14 @@ class CCProxyHandler(CustomLogger):
         user_api_key_dict: dict[str, Any],
         **kwargs: Any,
     ) -> dict[str, Any]:
+        # Skip custom routing for LiteLLM internal health checks
+        # Health checks need to validate actual configured models, not routed ones
+        metadata = data.get("metadata", {})
+        tags = metadata.get("tags", [])
+        if "litellm-internal-health-check" in tags:
+            logger.debug("Skipping hooks for health check request")
+            return data
+
         # Debug: Print thinking parameters if present
         thinking_params = data.get("thinking")
         if thinking_params is not None:
