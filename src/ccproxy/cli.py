@@ -676,8 +676,9 @@ def show_status(config_dir: Path, json_output: bool = False) -> None:
         except (yaml.YAMLError, OSError):
             pass
 
-    # Extract hooks from ccproxy.yaml
+    # Extract hooks and proxy URL from ccproxy.yaml
     hooks = []
+    proxy_url = None
     if ccproxy_config.exists():
         try:
             with ccproxy_config.open() as f:
@@ -685,12 +686,18 @@ def show_status(config_dir: Path, json_output: bool = False) -> None:
             if ccproxy_data:
                 ccproxy_section = ccproxy_data.get("ccproxy", {})
                 hooks = ccproxy_section.get("hooks", [])
+                # Get proxy URL from litellm config section
+                litellm_section = ccproxy_data.get("litellm", {})
+                host = os.environ.get("HOST", litellm_section.get("host", "127.0.0.1"))
+                port = int(os.environ.get("PORT", litellm_section.get("port", 4000)))
+                proxy_url = f"http://{host}:{port}"
         except (yaml.YAMLError, OSError):
             pass
 
     # Build status data
     status_data = {
         "proxy": proxy_running,
+        "url": proxy_url,
         "config": config_paths,
         "callbacks": callbacks,
         "hooks": hooks,
