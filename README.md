@@ -1,8 +1,10 @@
 # `ccproxy` - Claude Code Proxy
 
-![Discord](https://img.shields.io/discord/1418762336982007960?style=social&logo=discord&logoColor=%235865F2&label=Share%20your%20shine%20%E2%AC%98!%20Join%20starbased%40HQ&link=https%3A%2F%2Fdiscord.gg%2XBvrkZfrQC)
+<a href="https://discord.gg/HDuYQAFsbw"><img alt="Discord" src="https://img.shields.io/discord/1418762336982007960?style=for-the-badge&logo=discord&logoColor=%235865F2&label=Share%20your%20shine%20%E2%AC%98!%20Join%20the%20Discord"></a>
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/starbased-co/ccproxy)
+> [Join the Discord](https://discord.gg/HDuYQAFsbw) for questions, sharing setups, and contributing to development.
+
+[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/starbased-co/ccproxy)
 
 `ccproxy` unlocks the full potential of your Claude MAX subscription by enabling Claude Code to seamlessly use unlimited Claude models alongside other LLM providers like OpenAI, Gemini, and Perplexity.
 

@@ -634,8 +634,9 @@ class TestRunWithProxy:
         assert "Configuration not found" in captured.err
         assert "Run 'ccproxy install' first" in captured.err
 
+    @patch("ccproxy.mitm.process.is_running")
     @patch("subprocess.run")
-    def test_run_with_proxy_success(self, mock_run: Mock, tmp_path: Path) -> None:
+    def test_run_with_proxy_success(self, mock_run: Mock, mock_mitm_running: Mock, tmp_path: Path) -> None:
         """Test successful command execution with proxy environment."""
         config_file = tmp_path / "ccproxy.yaml"
         config_file.write_text("""
@@ -645,6 +646,7 @@ litellm:
 """)
 
         mock_run.return_value = Mock(returncode=0)
+        mock_mitm_running.return_value = (False, None)
 
         with pytest.raises(SystemExit) as exc_info:
             run_with_proxy(tmp_path, ["echo", "test"])
@@ -656,11 +658,10 @@ litellm:
         env = call_args[1]["env"]
         assert env["OPENAI_API_BASE"] == "http://192.168.1.1:8888"
         assert env["ANTHROPIC_BASE_URL"] == "http://192.168.1.1:8888"
-        # HTTP_PROXY should not be set to avoid CONNECT issues
-        assert "HTTP_PROXY" not in env or env.get("HTTP_PROXY") == os.environ.get("HTTP_PROXY")
 
+    @patch("ccproxy.mitm.process.is_running")
     @patch("subprocess.run")
-    def test_run_with_env_override(self, mock_run: Mock, tmp_path: Path) -> None:
+    def test_run_with_env_override(self, mock_run: Mock, mock_mitm_running: Mock, tmp_path: Path) -> None:
         """Test run with environment variable overrides."""
         config_file = tmp_path / "ccproxy.yaml"
         config_file.write_text("""
@@ -670,6 +671,7 @@ litellm:
 """)
 
         mock_run.return_value = Mock(returncode=0)
+        mock_mitm_running.return_value = (False, None)
 
         with (
             patch.dict(os.environ, {"HOST": "10.0.0.1", "PORT": "9999"}),
@@ -681,7 +683,66 @@ litellm:
         call_args = mock_run.call_args
         env = call_args[1]["env"]
         assert env["OPENAI_API_BASE"] == "http://10.0.0.1:9999"
-        # HTTP_PROXY should not be set to avoid CONNECT issues
+
+    @patch("ccproxy.mitm.process.is_running")
+    @patch("subprocess.run")
+    def test_run_with_mitm_running(self, mock_run: Mock, mock_mitm_running: Mock, tmp_path: Path) -> None:
+        """Test run with mitmproxy running routes through mitm."""
+        config_file = tmp_path / "ccproxy.yaml"
+        config_file.write_text("""
+litellm:
+  host: 127.0.0.1
+  port: 4000
+ccproxy:
+  mitm:
+    port: 8081
+""")
+
+        mock_run.return_value = Mock(returncode=0)
+        mock_mitm_running.return_value = (True, 12345)
+
+        with pytest.raises(SystemExit) as exc_info:
+            run_with_proxy(tmp_path, ["echo", "test"])
+
+        assert exc_info.value.code == 0
+
+        # Check environment variables route through mitmproxy
+        call_args = mock_run.call_args
+        env = call_args[1]["env"]
+        assert env["HTTPS_PROXY"] == "http://localhost:8081"
+        assert env["HTTP_PROXY"] == "http://localhost:8081"
+        assert env["OPENAI_API_BASE"] == "http://localhost:8081"
+        assert env["ANTHROPIC_BASE_URL"] == "http://localhost:8081"
+
+    @patch("ccproxy.mitm.process.is_running")
+    @patch("subprocess.run")
+    def test_run_with_mitm_not_running(self, mock_run: Mock, mock_mitm_running: Mock, tmp_path: Path) -> None:
+        """Test run with mitmproxy not running routes directly to LiteLLM."""
+        config_file = tmp_path / "ccproxy.yaml"
+        config_file.write_text("""
+litellm:
+  host: 127.0.0.1
+  port: 4000
+ccproxy:
+  mitm:
+    port: 8081
+""")
+
+        mock_run.return_value = Mock(returncode=0)
+        mock_mitm_running.return_value = (False, None)
+
+        with pytest.raises(SystemExit) as exc_info:
+            run_with_proxy(tmp_path, ["echo", "test"])
+
+        assert exc_info.value.code == 0
+
+        # Check environment variables route directly to LiteLLM
+        call_args = mock_run.call_args
+        env = call_args[1]["env"]
+        assert env["OPENAI_API_BASE"] == "http://127.0.0.1:4000"
+        assert env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:4000"
+        # HTTP_PROXY should not be set when mitm is not running
+        assert "HTTPS_PROXY" not in env or env.get("HTTPS_PROXY") == os.environ.get("HTTPS_PROXY")
         assert "HTTP_PROXY" not in env or env.get("HTTP_PROXY") == os.environ.get("HTTP_PROXY")
 
     @patch("subprocess.run")

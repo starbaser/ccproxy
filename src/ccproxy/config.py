@@ -63,6 +63,40 @@ class OAuthSource(BaseModel):
     """Optional custom User-Agent header to send with requests using this token"""
 
 
+class MitmConfig(BaseModel):
+    """Configuration for mitmproxy traffic capture."""
+
+    enabled: bool = False
+    """Enable mitmproxy traffic capture"""
+
+    port: int = 8081
+    """Port for mitmproxy to listen on"""
+
+    upstream_proxy: str = "http://localhost:4000"
+    """Upstream proxy server URL (typically LiteLLM)"""
+
+    max_body_size: int = 65536
+    """Maximum request/response body size to capture (bytes)"""
+
+    capture_bodies: bool = True
+    """Whether to capture request/response bodies"""
+
+    excluded_hosts: list[str] = Field(default_factory=list)
+    """List of hosts to exclude from capture"""
+
+    cert_dir: Path | None = None
+    """Optional directory for SSL certificates"""
+
+    llm_hosts: list[str] = Field(
+        default_factory=lambda: [
+            "api.anthropic.com",
+            "api.openai.com",
+            "generativelanguage.googleapis.com",
+        ]
+    )
+    """List of hosts considered LLM providers for traffic classification"""
+
+
 # Import proxy_server to access runtime configuration
 try:
     from litellm.proxy import proxy_server
@@ -152,6 +186,9 @@ class CCProxyConfig(BaseSettings):
 
     # Handler import path (e.g., "ccproxy.handler:CCProxyHandler")
     handler: str = "ccproxy.handler:CCProxyHandler"
+
+    # Mitmproxy configuration
+    mitm: MitmConfig = Field(default_factory=MitmConfig)
 
     # OAuth token sources - dict mapping provider name to shell command or OAuthSource
     # Example: {"anthropic": "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"}
@@ -387,6 +424,8 @@ class CCProxyConfig(BaseSettings):
                     instance.default_model_passthrough = ccproxy_data["default_model_passthrough"]
                 if "oat_sources" in ccproxy_data:
                     instance.oat_sources = ccproxy_data["oat_sources"]
+                if "mitm" in ccproxy_data:
+                    instance.mitm = MitmConfig(**ccproxy_data["mitm"])
 
                 # Backwards compatibility: migrate deprecated 'credentials' field
                 if "credentials" in ccproxy_data:

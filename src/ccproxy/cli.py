@@ -86,6 +86,45 @@ class Status:
     """Output status as JSON with boolean values."""
 
 
+@attrs.define
+class MitmStart:
+    """Start the mitmproxy traffic capture proxy."""
+
+    port: int = 8081
+    """Port for mitmproxy to listen on."""
+
+    detach: Annotated[bool, tyro.conf.arg(aliases=["-d"])] = False
+    """Run in background."""
+
+    upstream: str = "http://localhost:4000"
+    """Upstream proxy URL (LiteLLM)."""
+
+
+@attrs.define
+class MitmStop:
+    """Stop the mitmproxy traffic capture proxy."""
+
+
+@attrs.define
+class MitmStatus:
+    """Show mitmproxy status."""
+
+    json: Annotated[bool, tyro.conf.arg(aliases=["-j"])] = False
+    """Output as JSON."""
+
+
+@attrs.define
+class Mitm:
+    """Manage mitmproxy traffic capture."""
+
+    cmd: Annotated[
+        Annotated[MitmStart, tyro.conf.subcommand("start")]
+        | Annotated[MitmStop, tyro.conf.subcommand("stop")]
+        | Annotated[MitmStatus, tyro.conf.subcommand("status")],
+        tyro.conf.arg(name=""),
+    ]
+
+
 # @attrs.define
 # class ShellIntegration:
 #     """Generate shell integration for automatic claude aliasing."""
@@ -98,7 +137,7 @@ class Status:
 
 
 # Type alias for all subcommands
-Command = Start | Install | Run | Stop | Restart | Logs | Status
+Command = Start | Install | Run | Stop | Restart | Logs | Status | Mitm
 
 
 def setup_logging() -> None:
@@ -168,6 +207,8 @@ def run_with_proxy(config_dir: Path, command: list[str]) -> None:
         config_dir: Configuration directory
         command: Command and arguments to execute
     """
+    from ccproxy.mitm.process import is_running as mitm_is_running
+
     # Load litellm config to get proxy settings
     ccproxy_config_path = config_dir / "ccproxy.yaml"
     if not ccproxy_config_path.exists():
@@ -180,22 +221,32 @@ def run_with_proxy(config_dir: Path, command: list[str]) -> None:
         config = yaml.safe_load(f)
 
     litellm_config = config.get("litellm", {}) if config else {}
+    mitm_config = config.get("ccproxy", {}).get("mitm", {}) if config else {}
 
     # Get proxy settings with defaults
     host = os.environ.get("HOST", litellm_config.get("host", "127.0.0.1"))
     port = int(os.environ.get("PORT", litellm_config.get("port", 4000)))
+    mitm_port = mitm_config.get("port", 8081)
 
     # Set up environment for the subprocess
     env = os.environ.copy()
 
-    # Set proxy environment variables
-    proxy_url = f"http://{host}:{port}"
-    env["OPENAI_API_BASE"] = f"{proxy_url}"
-    env["OPENAI_BASE_URL"] = f"{proxy_url}"
-    env["ANTHROPIC_BASE_URL"] = f"{proxy_url}"
+    # Auto-configure HTTPS_PROXY based on what's running
+    mitm_running, _ = mitm_is_running(config_dir)
 
-    # Don't set HTTP_PROXY/HTTPS_PROXY as these cause Claude Code to treat
-    # the LiteLLM server as a general HTTP proxy, not an API endpoint
+    if mitm_running:
+        # Route through mitmproxy first
+        proxy_url = f"http://localhost:{mitm_port}"
+        env["HTTPS_PROXY"] = proxy_url
+        env["HTTP_PROXY"] = proxy_url
+    else:
+        # Route directly to LiteLLM
+        proxy_url = f"http://{host}:{port}"
+
+    # Set API base URL environment variables
+    env["OPENAI_API_BASE"] = proxy_url
+    env["OPENAI_BASE_URL"] = proxy_url
+    env["ANTHROPIC_BASE_URL"] = proxy_url
 
     # Execute the command with the proxy environment
     try:
@@ -623,6 +674,71 @@ def view_logs(config_dir: Path, follow: bool = False, lines: int = 100) -> None:
             sys.exit(1)
 
 
+def handle_mitm_start(config_dir: Path, port: int, upstream: str, detach: bool) -> None:
+    """Handle the mitm start command.
+
+    Args:
+        config_dir: Configuration directory for PID and log files
+        port: Port for mitmproxy to listen on
+        upstream: Upstream proxy URL
+        detach: Run in background mode
+    """
+    from ccproxy.mitm import start_mitm
+
+    start_mitm(config_dir, port=port, upstream=upstream, detach=detach)
+
+
+def handle_mitm_stop(config_dir: Path) -> None:
+    """Handle the mitm stop command.
+
+    Args:
+        config_dir: Configuration directory
+    """
+    from ccproxy.mitm import stop_mitm
+
+    success = stop_mitm(config_dir)
+    sys.exit(0 if success else 1)
+
+
+def handle_mitm_status(config_dir: Path, json_output: bool) -> None:
+    """Handle the mitm status command.
+
+    Args:
+        config_dir: Configuration directory
+        json_output: Output as JSON
+    """
+    from ccproxy.mitm import get_mitm_status
+
+    status = get_mitm_status(config_dir)
+
+    if json_output:
+        builtin_print(json.dumps(status, indent=2))
+    else:
+        console = Console()
+
+        table = Table(show_header=False, show_lines=True)
+        table.add_column("Key", style="white", width=15)
+        table.add_column("Value", style="yellow")
+
+        # Running status
+        running_status = "[green]true[/green]" if status["running"] else "[red]false[/red]"
+        table.add_row("running", running_status)
+
+        if status["running"]:
+            # PID
+            table.add_row("pid", str(status["pid"]))
+
+            # PID file
+            if "pid_file" in status:
+                table.add_row("pid_file", status["pid_file"])
+
+            # Log file
+            if "log_file" in status and status["log_file"]:
+                table.add_row("log_file", status["log_file"])
+
+        console.print(Panel(table, title="[bold]Mitmproxy Status[/bold]", border_style="blue"))
+
+
 def show_status(config_dir: Path, json_output: bool = False) -> None:
     """Show the status of LiteLLM proxy and ccproxy configuration.
 
@@ -857,6 +973,14 @@ def main(
     elif isinstance(cmd, Status):
         show_status(config_dir, json_output=cmd.json)
 
+    elif isinstance(cmd, Mitm):
+        if isinstance(cmd.cmd, MitmStart):
+            handle_mitm_start(config_dir, port=cmd.cmd.port, upstream=cmd.cmd.upstream, detach=cmd.cmd.detach)
+        elif isinstance(cmd.cmd, MitmStop):
+            handle_mitm_stop(config_dir)
+        elif isinstance(cmd.cmd, MitmStatus):
+            handle_mitm_status(config_dir, json_output=cmd.cmd.json)
+
 
 def entry_point() -> None:
     """Entry point for the ccproxy command."""
@@ -865,7 +989,7 @@ def entry_point() -> None:
     args = sys.argv[1:]
 
     # Find 'run' subcommand position (skip past any global flags like --config-dir)
-    subcommands = {"start", "stop", "restart", "install", "logs", "status", "run"}
+    subcommands = {"start", "stop", "restart", "install", "logs", "status", "run", "mitm"}
     run_idx = None
     for i, arg in enumerate(args):
         if arg == "run":

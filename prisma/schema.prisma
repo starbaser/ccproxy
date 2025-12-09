@@ -1,0 +1,61 @@
+// CCProxy Prisma Schema
+// Manages HTTP/HTTPS traffic traces captured by mitmproxy
+
+generator client {
+  provider             = "prisma-client-py"
+  interface            = "asyncio"
+  recursive_type_depth = 5
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model CCProxy_HttpTraces {
+  trace_id String @id @default(uuid())
+
+  // Request data
+  method             String
+  url                String
+  host               String
+  path               String
+  request_headers    Json   @default("{}")
+  request_body       Bytes?
+  request_body_size  Int    @default(0)
+  request_content_type String?
+
+  // Response data
+  status_code        Int?
+  response_headers   Json   @default("{}")
+  response_body      Bytes?
+  response_body_size Int    @default(0)
+  response_content_type String?
+
+  // Timing
+  start_time  DateTime
+  end_time    DateTime?
+  duration_ms Float?
+
+  // Connection metadata
+  client_ip   String?
+  server_ip   String?
+  server_port Int?
+  is_https    Boolean @default(false)
+
+  // Error handling
+  error_message String?
+  error_type    String?
+
+  // Traffic classification
+  traffic_type String @default("unknown")
+
+  // Audit
+  created_at DateTime @default(now())
+
+  @@index([start_time])
+  @@index([host])
+  @@index([traffic_type])
+  @@index([created_at])
+  @@index([status_code])
+}

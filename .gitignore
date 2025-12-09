@@ -69,3 +69,9 @@ poetry.lock
 .envrc
 dumps
 langfuse/
+checkpoints/
+handoff.md
+
+# Prisma generated client
+prisma/migrations/
+node_modules/
