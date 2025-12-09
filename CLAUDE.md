@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
+**CRITICAL**: The project name is `ccproxy` (lowercase). Do NOT refer to the project as "CCProxy". The PascalCase form is used exclusively for class names (e.g., `CCProxyHandler`, `CCProxyConfig`).
+
 `ccproxy` is a command-line tool that intercepts and routes Claude Code's requests to different LLM providers via a LiteLLM proxy server. It enables intelligent request routing based on token count, model type, tool usage, or custom rules.
 
 ## Development Commands
