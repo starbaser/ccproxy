@@ -5,7 +5,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 from mitmproxy import http
-from prisma import Base64, Json
 
 from ccproxy.config import MitmConfig
 from ccproxy.mitm.storage import TraceStorage
@@ -64,40 +63,33 @@ class CCProxyMitmAddon:
         # Everything else is web traffic
         return "web"
 
-    def _truncate_body(self, body: bytes | None) -> Base64 | None:
-        """Truncate body to configured max size and encode as Base64.
+    def _truncate_body(self, body: bytes | None) -> bytes | None:
+        """Truncate body to configured max size.
 
         Args:
             body: Request or response body
 
         Returns:
-            Base64-encoded truncated body or None if empty
+            Truncated body or None if empty
         """
         if not body:
             return None
 
-        # Truncate if needed
         if len(body) > self.config.max_body_size:
-            body = body[: self.config.max_body_size]
+            return body[: self.config.max_body_size]
 
-        # Encode as Base64 for Prisma
-        return Base64.encode(body)
+        return body
 
-    def _serialize_headers(self, headers: Any) -> Json:
-        """Convert mitmproxy headers to Prisma Json object.
+    def _serialize_headers(self, headers: Any) -> dict[str, str]:
+        """Convert mitmproxy headers to dict.
 
         Args:
             headers: Mitmproxy headers object
 
         Returns:
-            Prisma Json object containing header name -> value mapping
+            Dict of header name -> value
         """
-        # Convert headers to dict and ensure all values are strings
-        result = {}
-        for key, value in headers.items():
-            # Ensure key and value are properly typed
-            result[str(key)] = str(value)
-        return Json(result)
+        return {str(k): str(v) for k, v in headers.items()}
 
     async def request(self, flow: http.HTTPFlow) -> None:
         """Capture request and create initial trace.
@@ -188,7 +180,7 @@ class CCProxyMitmAddon:
             # Prepare error data
             error_data = {
                 "status_code": 0,  # Indicate error state
-                "response_headers": Json({}),
+                "response_headers": {},
                 "error_message": str(error),
                 "end_time": datetime.now(UTC),
             }

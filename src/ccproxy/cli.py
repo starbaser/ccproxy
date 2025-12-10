@@ -106,21 +106,12 @@ class MitmStop:
 
 
 @attrs.define
-class MitmStatus:
-    """Show mitmproxy status."""
-
-    json: Annotated[bool, tyro.conf.arg(aliases=["-j"])] = False
-    """Output as JSON."""
-
-
-@attrs.define
 class Mitm:
     """Manage mitmproxy traffic capture."""
 
     cmd: Annotated[
         Annotated[MitmStart, tyro.conf.subcommand("start")]
-        | Annotated[MitmStop, tyro.conf.subcommand("stop")]
-        | Annotated[MitmStatus, tyro.conf.subcommand("status")],
+        | Annotated[MitmStop, tyro.conf.subcommand("stop")],
         tyro.conf.arg(name=""),
     ]
 
@@ -700,45 +691,6 @@ def handle_mitm_stop(config_dir: Path) -> None:
     sys.exit(0 if success else 1)
 
 
-def handle_mitm_status(config_dir: Path, json_output: bool) -> None:
-    """Handle the mitm status command.
-
-    Args:
-        config_dir: Configuration directory
-        json_output: Output as JSON
-    """
-    from ccproxy.mitm import get_mitm_status
-
-    status = get_mitm_status(config_dir)
-
-    if json_output:
-        builtin_print(json.dumps(status, indent=2))
-    else:
-        console = Console()
-
-        table = Table(show_header=False, show_lines=True)
-        table.add_column("Key", style="white", width=15)
-        table.add_column("Value", style="yellow")
-
-        # Running status
-        running_status = "[green]true[/green]" if status["running"] else "[red]false[/red]"
-        table.add_row("running", running_status)
-
-        if status["running"]:
-            # PID
-            table.add_row("pid", str(status["pid"]))
-
-            # PID file
-            if "pid_file" in status:
-                table.add_row("pid_file", status["pid_file"])
-
-            # Log file
-            if "log_file" in status and status["log_file"]:
-                table.add_row("log_file", status["log_file"])
-
-        console.print(Panel(table, title="[bold]Mitmproxy Status[/bold]", border_style="blue"))
-
-
 def show_status(config_dir: Path, json_output: bool = False) -> None:
     """Show the status of LiteLLM proxy and ccproxy configuration.
 
@@ -746,6 +698,8 @@ def show_status(config_dir: Path, json_output: bool = False) -> None:
         config_dir: Configuration directory to check
         json_output: Output status as JSON with boolean values
     """
+    from ccproxy.mitm.process import is_running as mitm_is_running
+
     # Check LiteLLM proxy status
     pid_file = config_dir / "litellm.lock"
     log_file = config_dir / "litellm.log"
@@ -792,9 +746,10 @@ def show_status(config_dir: Path, json_output: bool = False) -> None:
         except (yaml.YAMLError, OSError):
             pass
 
-    # Extract hooks and proxy URL from ccproxy.yaml
+    # Extract hooks, proxy URL, and MITM config from ccproxy.yaml
     hooks = []
     proxy_url = None
+    mitm_config = {}
     if ccproxy_config.exists():
         try:
             with ccproxy_config.open() as f:
@@ -802,6 +757,7 @@ def show_status(config_dir: Path, json_output: bool = False) -> None:
             if ccproxy_data:
                 ccproxy_section = ccproxy_data.get("ccproxy", {})
                 hooks = ccproxy_section.get("hooks", [])
+                mitm_config = ccproxy_section.get("mitm", {})
                 # Get proxy URL from litellm config section
                 litellm_section = ccproxy_data.get("litellm", {})
                 host = os.environ.get("HOST", litellm_section.get("host", "127.0.0.1"))
@@ -809,6 +765,11 @@ def show_status(config_dir: Path, json_output: bool = False) -> None:
                 proxy_url = f"http://{host}:{port}"
         except (yaml.YAMLError, OSError):
             pass
+
+    # Check MITM status
+    mitm_running, mitm_pid = mitm_is_running(config_dir)
+    mitm_enabled = mitm_config.get("enabled", False)
+    mitm_port = mitm_config.get("port", 8081)
 
     # Build status data
     status_data = {
@@ -819,6 +780,12 @@ def show_status(config_dir: Path, json_output: bool = False) -> None:
         "hooks": hooks,
         "model_list": model_list,
         "log": str(log_file) if log_file.exists() else None,
+        "mitm": {
+            "enabled": mitm_enabled,
+            "running": mitm_running,
+            "pid": mitm_pid,
+            "port": mitm_port if mitm_running else None,
+        },
     }
 
     if json_output:
@@ -834,6 +801,30 @@ def show_status(config_dir: Path, json_output: bool = False) -> None:
         # Proxy status
         proxy_status = "[green]true[/green]" if status_data["proxy"] else "[red]false[/red]"
         table.add_row("proxy", proxy_status)
+
+        # MITM status
+        mitm_info = status_data["mitm"]
+        mitm_parts = []
+
+        # Enabled status
+        enabled_str = "[green]enabled[/green]" if mitm_info["enabled"] else "[dim]disabled[/dim]"
+        mitm_parts.append(enabled_str)
+
+        # Running status
+        if mitm_info["running"]:
+            running_str = "[green]running[/green]"
+            mitm_parts.append(running_str)
+
+            # Add port and PID details
+            if mitm_info["port"]:
+                mitm_parts.append(f"port: [cyan]{mitm_info['port']}[/cyan]")
+            if mitm_info["pid"]:
+                mitm_parts.append(f"pid: [cyan]{mitm_info['pid']}[/cyan]")
+        else:
+            mitm_parts.append("[red]stopped[/red]")
+
+        mitm_display = " | ".join(mitm_parts)
+        table.add_row("mitm", mitm_display)
 
         # Config files
         if status_data["config"]:
@@ -978,8 +969,6 @@ def main(
             handle_mitm_start(config_dir, port=cmd.cmd.port, upstream=cmd.cmd.upstream, detach=cmd.cmd.detach)
         elif isinstance(cmd.cmd, MitmStop):
             handle_mitm_stop(config_dir)
-        elif isinstance(cmd.cmd, MitmStatus):
-            handle_mitm_status(config_dir, json_output=cmd.cmd.json)
 
 
 def entry_point() -> None:

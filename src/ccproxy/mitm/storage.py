@@ -4,9 +4,30 @@ import asyncio
 import logging
 from typing import Any
 
-from prisma import Prisma  # type: ignore[attr-defined]
+from prisma import Prisma
+from prisma.fields import Base64, Json
 
 logger = logging.getLogger(__name__)
+
+
+def _convert_for_prisma(data: dict[str, Any]) -> dict[str, Any]:
+    """Convert Python types to Prisma-compatible types.
+
+    Args:
+        data: Dict with raw Python types
+
+    Returns:
+        Dict with Prisma-compatible types (Json, Base64)
+    """
+    result = {}
+    for key, value in data.items():
+        if isinstance(value, dict):
+            result[key] = Json(value)
+        elif isinstance(value, bytes):
+            result[key] = Base64.encode(value)
+        else:
+            result[key] = value
+    return result
 
 
 class TraceStorage:
@@ -94,7 +115,8 @@ class TraceStorage:
             data: Trace data
         """
         try:
-            await self.client.ccproxy_httptraces.create(data=data)
+            prisma_data = _convert_for_prisma(data)
+            await self.client.ccproxy_httptraces.create(data=prisma_data)
             logger.debug("Created trace: %s", data.get("trace_id"))
         except Exception as e:
             logger.error("Failed to create trace %s: %s", data.get("trace_id"), e, exc_info=True)
@@ -117,7 +139,8 @@ class TraceStorage:
             data: Response data
         """
         try:
-            await self.client.ccproxy_httptraces.update(where={"trace_id": trace_id}, data=data)
+            prisma_data = _convert_for_prisma(data)
+            await self.client.ccproxy_httptraces.update(where={"trace_id": trace_id}, data=prisma_data)
             logger.debug("Completed trace: %s", trace_id)
         except Exception as e:
             logger.error("Failed to complete trace %s: %s", trace_id, e, exc_info=True)
