@@ -34,6 +34,9 @@ class Start:
     detach: Annotated[bool, tyro.conf.arg(aliases=["-d"])] = False
     """Run in background and save PID to litellm.lock."""
 
+    mitm: Annotated[bool, tyro.conf.arg(aliases=["-m"])] = False
+    """Also start mitmproxy for traffic capture."""
+
 
 @attrs.define
 class Install:
@@ -86,36 +89,6 @@ class Status:
     """Output status as JSON with boolean values."""
 
 
-@attrs.define
-class MitmStart:
-    """Start the mitmproxy traffic capture proxy."""
-
-    port: int = 8081
-    """Port for mitmproxy to listen on."""
-
-    detach: Annotated[bool, tyro.conf.arg(aliases=["-d"])] = False
-    """Run in background."""
-
-    upstream: str = "http://localhost:4000"
-    """Upstream proxy URL (LiteLLM)."""
-
-
-@attrs.define
-class MitmStop:
-    """Stop the mitmproxy traffic capture proxy."""
-
-
-@attrs.define
-class Mitm:
-    """Manage mitmproxy traffic capture."""
-
-    cmd: Annotated[
-        Annotated[MitmStart, tyro.conf.subcommand("start")]
-        | Annotated[MitmStop, tyro.conf.subcommand("stop")],
-        tyro.conf.arg(name=""),
-    ]
-
-
 # @attrs.define
 # class ShellIntegration:
 #     """Generate shell integration for automatic claude aliasing."""
@@ -128,7 +101,7 @@ class Mitm:
 
 
 # Type alias for all subcommands
-Command = Start | Install | Run | Stop | Restart | Logs | Status | Mitm
+Command = Start | Install | Run | Stop | Restart | Logs | Status
 
 
 def setup_logging() -> None:
@@ -327,13 +300,14 @@ handler = {class_name}()
     handler_file.write_text(content)
 
 
-def start_litellm(config_dir: Path, args: list[str] | None = None, detach: bool = False) -> None:
+def start_litellm(config_dir: Path, args: list[str] | None = None, detach: bool = False, mitm: bool = False) -> None:
     """Start the LiteLLM proxy server with ccproxy configuration.
 
     Args:
         config_dir: Configuration directory containing config files
         args: Additional arguments to pass to litellm command
         detach: Run in background mode with PID tracking
+        mitm: Also start MITM proxy for traffic capture
     """
     # Check if config exists
     config_path = config_dir / "config.yaml"
@@ -341,6 +315,12 @@ def start_litellm(config_dir: Path, args: list[str] | None = None, detach: bool 
         print(f"Error: Configuration not found at {config_path}", file=sys.stderr)
         print("Run 'ccproxy install' first to set up configuration.", file=sys.stderr)
         sys.exit(1)
+
+    # Start MITM proxy first if requested and in detach mode
+    if mitm and detach:
+        from ccproxy.mitm import start_mitm
+        print("Starting MITM proxy...")
+        start_mitm(config_dir, detach=True)
 
     # Generate the handler file before starting LiteLLM
     try:
@@ -440,6 +420,15 @@ def stop_litellm(config_dir: Path) -> bool:
     Returns:
         True if server was stopped successfully, False otherwise
     """
+    # Also stop MITM if it's running
+    from ccproxy.mitm import stop_mitm
+    from ccproxy.mitm.process import is_running as mitm_is_running
+
+    mitm_running, _ = mitm_is_running(config_dir)
+    if mitm_running:
+        print("Stopping MITM proxy...")
+        stop_mitm(config_dir)
+
     pid_file = config_dir / "litellm.lock"
 
     # Check if PID file exists
@@ -663,32 +652,6 @@ def view_logs(config_dir: Path, follow: bool = False, lines: int = 100) -> None:
         except OSError as e:
             print(f"[red]Error reading log file: {e}[/red]", file=sys.stderr)
             sys.exit(1)
-
-
-def handle_mitm_start(config_dir: Path, port: int, upstream: str, detach: bool) -> None:
-    """Handle the mitm start command.
-
-    Args:
-        config_dir: Configuration directory for PID and log files
-        port: Port for mitmproxy to listen on
-        upstream: Upstream proxy URL
-        detach: Run in background mode
-    """
-    from ccproxy.mitm import start_mitm
-
-    start_mitm(config_dir, port=port, upstream=upstream, detach=detach)
-
-
-def handle_mitm_stop(config_dir: Path) -> None:
-    """Handle the mitm stop command.
-
-    Args:
-        config_dir: Configuration directory
-    """
-    from ccproxy.mitm import stop_mitm
-
-    success = stop_mitm(config_dir)
-    sys.exit(0 if success else 1)
 
 
 def show_status(config_dir: Path, json_output: bool = False) -> None:
@@ -926,7 +889,7 @@ def main(
 
     # Handle each command type
     if isinstance(cmd, Start):
-        start_litellm(config_dir, args=cmd.args, detach=cmd.detach)
+        start_litellm(config_dir, args=cmd.args, detach=cmd.detach, mitm=cmd.mitm)
 
     elif isinstance(cmd, Install):
         install_config(config_dir, force=cmd.force)
@@ -943,6 +906,10 @@ def main(
         sys.exit(0 if success else 1)
 
     elif isinstance(cmd, Restart):
+        # Check if MITM is running before stopping
+        from ccproxy.mitm.process import is_running as mitm_is_running
+        mitm_was_running, _ = mitm_is_running(config_dir)
+
         # Stop the server first
         pid_file = config_dir / "litellm.lock"
         if pid_file.exists():
@@ -954,21 +921,15 @@ def main(
         # Wait for clean shutdown
         time.sleep(1)
 
-        # Start the server
+        # Start the server with same MITM state
         print("Starting LiteLLM server...")
-        start_litellm(config_dir, args=cmd.args, detach=cmd.detach)
+        start_litellm(config_dir, args=cmd.args, detach=cmd.detach, mitm=mitm_was_running)
 
     elif isinstance(cmd, Logs):
         view_logs(config_dir, follow=cmd.follow, lines=cmd.lines)
 
     elif isinstance(cmd, Status):
         show_status(config_dir, json_output=cmd.json)
-
-    elif isinstance(cmd, Mitm):
-        if isinstance(cmd.cmd, MitmStart):
-            handle_mitm_start(config_dir, port=cmd.cmd.port, upstream=cmd.cmd.upstream, detach=cmd.cmd.detach)
-        elif isinstance(cmd.cmd, MitmStop):
-            handle_mitm_stop(config_dir)
 
 
 def entry_point() -> None:
@@ -978,7 +939,7 @@ def entry_point() -> None:
     args = sys.argv[1:]
 
     # Find 'run' subcommand position (skip past any global flags like --config-dir)
-    subcommands = {"start", "stop", "restart", "install", "logs", "status", "run", "mitm"}
+    subcommands = {"start", "stop", "restart", "install", "logs", "status", "run"}
     run_idx = None
     for i, arg in enumerate(args):
         if arg == "run":

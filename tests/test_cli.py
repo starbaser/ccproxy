@@ -1123,7 +1123,7 @@ class TestMainFunction:
         cmd = Start(args=["--debug", "--port", "8080"])
         main(cmd, config_dir=tmp_path)
 
-        mock_litellm.assert_called_once_with(tmp_path, args=["--debug", "--port", "8080"], detach=False)
+        mock_litellm.assert_called_once_with(tmp_path, args=["--debug", "--port", "8080"], detach=False, mitm=False)
 
     @patch("ccproxy.cli.start_litellm")
     def test_main_litellm_no_args(self, mock_litellm: Mock, tmp_path: Path) -> None:
@@ -1131,7 +1131,7 @@ class TestMainFunction:
         cmd = Start()
         main(cmd, config_dir=tmp_path)
 
-        mock_litellm.assert_called_once_with(tmp_path, args=None, detach=False)
+        mock_litellm.assert_called_once_with(tmp_path, args=None, detach=False, mitm=False)
 
     @patch("ccproxy.cli.start_litellm")
     def test_main_litellm_detach(self, mock_litellm: Mock, tmp_path: Path) -> None:
@@ -1139,7 +1139,7 @@ class TestMainFunction:
         cmd = Start(detach=True)
         main(cmd, config_dir=tmp_path)
 
-        mock_litellm.assert_called_once_with(tmp_path, args=None, detach=True)
+        mock_litellm.assert_called_once_with(tmp_path, args=None, detach=True, mitm=False)
 
     @patch("ccproxy.cli.install_config")
     def test_main_install_command(self, mock_install: Mock, tmp_path: Path) -> None:
@@ -1179,7 +1179,7 @@ class TestMainFunction:
             main(cmd)
 
             # Check that litellm was called with the default config dir
-            mock_litellm.assert_called_once_with(tmp_path / ".ccproxy", args=None, detach=False)
+            mock_litellm.assert_called_once_with(tmp_path / ".ccproxy", args=None, detach=False, mitm=False)
 
     @patch("ccproxy.cli.stop_litellm")
     def test_main_stop_command(self, mock_stop: Mock, tmp_path: Path) -> None:
