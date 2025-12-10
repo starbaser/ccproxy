@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
+**CRITICAL**: The project name is `ccproxy` (lowercase). Do NOT refer to the project as "CCProxy". The PascalCase form is used exclusively for class names (e.g., `CCProxyHandler`, `CCProxyConfig`).
+
 `ccproxy` is a command-line tool that intercepts and routes Claude Code's requests to different LLM providers via a LiteLLM proxy server. It enables intelligent request routing based on token count, model type, tool usage, or custom rules.
 
 ## Development Commands
@@ -90,7 +92,7 @@ The codebase follows a modular architecture with clear separation of concerns:
 - **rules.py**: Defines `ClassificationRule` abstract base class and built-in rules (TokenCountRule, MatchModelRule, ThinkingRule, MatchToolRule).
 - **router.py**: Manages model configurations from LiteLLM proxy server and provides fallback logic.
 - **config.py**: Configuration management using Pydantic, loads from `ccproxy.yaml`.
-- **hooks.py**: Built-in hooks (rule_evaluator, model_router, forward_oauth) that process requests.
+- **hooks.py**: Built-in hooks (rule_evaluator, model_router, forward_oauth, extract_session_id, capture_headers, forward_apikey) that process requests.
 - **cli.py**: Tyro-based CLI interface for managing the proxy server.
 
 ### Rule System
@@ -154,29 +156,23 @@ Key dependencies include:
 ccproxy must be installed with litellm in the same environment so that LiteLLM can import the ccproxy handler:
 
 ```bash
-# Install with litellm bundled
-uv tool install --from . claude-ccproxy --with 'litellm[proxy]' --force
+# Install in editable mode with litellm bundled
+uv tool install --editable . --with 'litellm[proxy]' --force
 ```
 
 ### Making Changes
 
-After modifying code:
+With editable mode, source changes are reflected immediately. Just restart the proxy:
 
 ```bash
-# 1. Reinstall with changes
-uv tool install --from . claude-ccproxy \
-  --with 'litellm[proxy]' \
-  --force \
-  --reinstall-package claude-ccproxy
-
-# 2. Restart proxy to regenerate handler
+# Restart proxy to regenerate handler and pick up changes
 ccproxy stop
 ccproxy start --detach
 
-# 3. Verify
+# Verify
 ccproxy status
 
-# 4. Run tests
+# Run tests
 uv run pytest
 ```
 

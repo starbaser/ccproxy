@@ -1,10 +1,6 @@
-# `ccproxy` - Claude Code Proxy
+# `ccproxy` - Claude Code Proxy [![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/starbased-co/ccproxy)
 
-<a href="https://discord.gg/HDuYQAFsbw"><img alt="Discord" src="https://img.shields.io/discord/1418762336982007960?style=for-the-badge&logo=discord&logoColor=%235865F2&label=Share%20your%20shine%20%E2%AC%98!%20Join%20the%20Discord"></a>
-
-> [Join the Discord](https://discord.gg/HDuYQAFsbw) for questions, sharing setups, and contributing to development.
-
-[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/starbased-co/ccproxy)
+> [Join starbased HQ](https://discord.gg/HDuYQAFsbw) for questions, sharing setups, and contributing to development.
 
 `ccproxy` unlocks the full potential of your Claude MAX subscription by enabling Claude Code to seamlessly use unlimited Claude models alongside other LLM providers like OpenAI, Gemini, and Perplexity.
 
@@ -103,13 +99,22 @@ This file controls how `ccproxy` hooks into your Claude Code requests and how to
 ccproxy:
   debug: true
 
-  # Optional: Shell command to load oauth token on startup (for litellm/anthropic sdk)
-  credentials: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+  # OAuth token sources - map provider names to shell commands
+  # Tokens are loaded at startup for SDK/API access outside Claude Code
+  oat_sources:
+    anthropic: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+    # Extended format with custom User-Agent:
+    # gemini:
+    #   command: "jq -r '.token' ~/.gemini/creds.json"
+    #   user_agent: "MyApp/1.0"
 
   hooks:
-    - ccproxy.hooks.rule_evaluator # evaluates rules against request 󰁎─┬─ (optional, needed for
-    - ccproxy.hooks.model_router # routes to appropriate model       󰁎─┘  rules & routing)
-    - ccproxy.hooks.forward_oauth # required for claude code's oauth token
+    - ccproxy.hooks.rule_evaluator    # evaluates rules against request (needed for routing)
+    - ccproxy.hooks.model_router      # routes to appropriate model
+    - ccproxy.hooks.forward_oauth     # forwards OAuth token to provider
+    - ccproxy.hooks.extract_session_id  # extracts session ID for LangFuse tracking
+    # - ccproxy.hooks.capture_headers  # logs HTTP headers (with redaction)
+    # - ccproxy.hooks.forward_apikey   # forwards x-api-key header
   rules:
     # example rules
     - name: token_count
@@ -253,6 +258,30 @@ See [`rules.py`](src/ccproxy/rules.py) for implementing your own rules.
 
 Custom rules (and hooks) are loaded with the same mechanism that LiteLLM uses to import the custom callbacks, that is, they are imported as by the LiteLLM python process as named module from within it's virtual environment (e.g. `import custom_rule_file.custom_rule_function`), or as a python script adjacent to `config.yaml`.
 
+## Hooks
+
+Hooks are functions that process requests at different stages. Configure them in `ccproxy.yaml`:
+
+| Hook | Description |
+|------|-------------|
+| `rule_evaluator` | Evaluates rules and labels requests for routing |
+| `model_router` | Routes requests to appropriate model based on labels |
+| `forward_oauth` | Forwards OAuth tokens to providers (supports multi-provider with custom User-Agent) |
+| `forward_apikey` | Forwards `x-api-key` header to proxied requests |
+| `extract_session_id` | Extracts session ID from Claude Code's `user_id` for LangFuse tracking |
+| `capture_headers` | Logs HTTP headers as LangFuse trace metadata (with sensitive value redaction) |
+
+Hooks can accept parameters via configuration:
+
+```yaml
+hooks:
+  - hook: ccproxy.hooks.capture_headers
+    params:
+      - headers: ["user-agent", "x-request-id"]  # Optional: filter specific headers
+```
+
+See [`hooks.py`](src/ccproxy/hooks.py) for implementing custom hooks.
+
 ## CLI Commands
 
 `ccproxy` provides several commands for managing the proxy server:
@@ -267,15 +296,15 @@ ccproxy start [--detach]
 # Stop LiteLLM
 ccproxy stop
 
-# Check that the proxy server is working
-ccproxy status
+# Check proxy server status (includes url field for tool detection)
+ccproxy status         # Human-readable output
+ccproxy status --json  # JSON output with url field
 
 # View proxy server logs
 ccproxy logs [-f] [-n LINES]
 
 # Run any command with proxy environment variables
 ccproxy run <command> [args...]
-
 ```
 
 After installation and setup, you can run any command through the `ccproxy`:
@@ -304,24 +333,25 @@ When developing ccproxy locally:
 ```bash
 cd /path/to/ccproxy
 
-# Install in development mode with litellm bundled
-uv tool install --from . claude-ccproxy --with 'litellm[proxy]' --force
+# Install in editable mode with litellm bundled
+# Changes to source code are reflected immediately without reinstalling
+uv tool install --editable . --with 'litellm[proxy]' --force
 
-# After making changes, reinstall
-uv tool install --from . claude-ccproxy \
-  --with 'litellm[proxy]' \
-  --force \
-  --reinstall-package claude-ccproxy
-
-# Restart the proxy to regenerate handler file
+# Restart the proxy to pick up code changes
 ccproxy stop
 ccproxy start --detach
 
 # Run tests
 uv run pytest
+
+# Linting & formatting
+uv run ruff format .
+uv run ruff check --fix .
 ```
 
-The handler file (`~/.ccproxy/ccproxy.py`) is automatically regenerated on every `ccproxy start`.
+The `--editable` flag enables live code changes without reinstallation. The handler file (`~/.ccproxy/ccproxy.py`) is automatically regenerated on every `ccproxy start`.
+
+**Note:** Custom `ccproxy.py` files are preserved - auto-generation only overwrites files containing the `# AUTO-GENERATED` marker.
 
 ## Troubleshooting
 
@@ -344,9 +374,9 @@ uv tool install claude-ccproxy --with 'litellm[proxy]' --force
 # Or from GitHub (latest)
 uv tool install git+https://github.com/starbased-co/ccproxy.git --with 'litellm[proxy]' --force
 
-# Or for local development
+# Or for local development (editable mode)
 cd /path/to/ccproxy
-uv tool install --from . claude-ccproxy --with 'litellm[proxy]' --force
+uv tool install --editable . --with 'litellm[proxy]' --force
 ```
 
 ### Handler Configuration Not Updating

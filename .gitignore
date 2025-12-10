@@ -69,8 +69,15 @@ poetry.lock
 .envrc
 dumps
 langfuse/
-checkpoints/
 handoff.md
+
+# ML artifacts
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+tensorboard/
+runs/
 
 # Prisma generated client
 prisma/migrations/
