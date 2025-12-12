@@ -1,10 +1,12 @@
 """ccproxy CLI for managing the LiteLLM proxy server - Tyro implementation."""
 
+import contextlib
 import json
 import logging
 import logging.config
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -20,6 +22,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from ccproxy.process import is_process_running, write_pid
 from ccproxy.utils import get_templates_dir
 
 
@@ -167,47 +170,35 @@ def install_config(config_dir: Path, force: bool = False) -> None:
 def run_with_proxy(config_dir: Path, command: list[str]) -> None:
     """Run a command with ccproxy environment variables set.
 
+    The main port (default 4000) is always the entry point:
+    - Without MITM: LiteLLM runs on port 4000
+    - With MITM: MITM runs on port 4000, forwards to LiteLLM on a random port
+
     Args:
         config_dir: Configuration directory
         command: Command and arguments to execute
     """
-    from ccproxy.mitm.process import is_running as mitm_is_running
-
-    # Load litellm config to get proxy settings
+    # Load config to get proxy settings
     ccproxy_config_path = config_dir / "ccproxy.yaml"
     if not ccproxy_config_path.exists():
         print(f"Error: Configuration not found at {ccproxy_config_path}", file=sys.stderr)
         print("Run 'ccproxy install' first to set up configuration.", file=sys.stderr)
         sys.exit(1)
 
-    # Load config
     with ccproxy_config_path.open() as f:
         config = yaml.safe_load(f)
 
     litellm_config = config.get("litellm", {}) if config else {}
-    mitm_config = config.get("ccproxy", {}).get("mitm", {}) if config else {}
 
-    # Get proxy settings with defaults
+    # Get proxy settings - port 4000 is always the entry point
     host = os.environ.get("HOST", litellm_config.get("host", "127.0.0.1"))
     port = int(os.environ.get("PORT", litellm_config.get("port", 4000)))
-    mitm_port = mitm_config.get("port", 8081)
 
     # Set up environment for the subprocess
     env = os.environ.copy()
 
-    # Auto-configure HTTPS_PROXY based on what's running
-    mitm_running, _ = mitm_is_running(config_dir)
-
-    if mitm_running:
-        # Route through mitmproxy first
-        proxy_url = f"http://localhost:{mitm_port}"
-        env["HTTPS_PROXY"] = proxy_url
-        env["HTTP_PROXY"] = proxy_url
-    else:
-        # Route directly to LiteLLM
-        proxy_url = f"http://{host}:{port}"
-
-    # Set API base URL environment variables
+    # Always point to the main port (4000) - either LiteLLM or MITM in front
+    proxy_url = f"http://{host}:{port}"
     env["OPENAI_API_BASE"] = proxy_url
     env["OPENAI_BASE_URL"] = proxy_url
     env["ANTHROPIC_BASE_URL"] = proxy_url
@@ -309,18 +300,14 @@ def start_litellm(config_dir: Path, args: list[str] | None = None, detach: bool 
         detach: Run in background mode with PID tracking
         mitm: Also start MITM proxy for traffic capture
     """
+    from ccproxy.utils import find_available_port
+
     # Check if config exists
     config_path = config_dir / "config.yaml"
     if not config_path.exists():
         print(f"Error: Configuration not found at {config_path}", file=sys.stderr)
         print("Run 'ccproxy install' first to set up configuration.", file=sys.stderr)
         sys.exit(1)
-
-    # Start MITM proxy first if requested and in detach mode
-    if mitm and detach:
-        from ccproxy.mitm import start_mitm
-        print("Starting MITM proxy...")
-        start_mitm(config_dir, detach=True)
 
     # Generate the handler file before starting LiteLLM
     try:
@@ -329,12 +316,45 @@ def start_litellm(config_dir: Path, args: list[str] | None = None, detach: bool 
         print(f"Error generating handler file: {e}", file=sys.stderr)
         sys.exit(1)
 
+    # Load litellm settings from ccproxy.yaml
+    ccproxy_config_path = config_dir / "ccproxy.yaml"
+    litellm_host = "127.0.0.1"
+    main_port = 4000  # The port users connect to
+
+    if ccproxy_config_path.exists():
+        with ccproxy_config_path.open() as f:
+            ccproxy_config = yaml.safe_load(f)
+            if ccproxy_config:
+                litellm_section = ccproxy_config.get("litellm", {})
+                litellm_host = os.environ.get("HOST", litellm_section.get("host", "127.0.0.1"))
+                main_port = int(os.environ.get("PORT", litellm_section.get("port", 4000)))
+
+    # Determine LiteLLM's actual port
+    # When MITM enabled: MITM takes main_port, LiteLLM gets random port
+    # When MITM disabled: LiteLLM runs on main_port directly
+    if mitm:
+        litellm_port = find_available_port()
+        # Write LiteLLM port to state file for status/other tools
+        litellm_port_file = config_dir / ".litellm_port"
+        litellm_port_file.write_text(str(litellm_port))
+    else:
+        litellm_port = main_port
+        # Remove port file if it exists (not using MITM)
+        litellm_port_file = config_dir / ".litellm_port"
+        if litellm_port_file.exists():
+            litellm_port_file.unlink()
+
     # Set environment variable for ccproxy configuration location
-    os.environ["CCPROXY_CONFIG_DIR"] = str(config_dir.absolute())
+    env = os.environ.copy()
+    env["CCPROXY_CONFIG_DIR"] = str(config_dir.absolute())
+
+    # When MITM is enabled, route LiteLLM's outbound traffic through MITM
+    if mitm:
+        mitm_proxy_url = f"http://localhost:{main_port}"
+        env["HTTPS_PROXY"] = mitm_proxy_url
+        env["HTTP_PROXY"] = mitm_proxy_url
 
     # Build litellm command using the bundled version from the same venv
-    # This avoids PATH conflicts with standalone litellm installations
-    # Get the bin directory from the current Python interpreter's location
     venv_bin = Path(sys.executable).parent
     litellm_path = venv_bin / "litellm"
 
@@ -346,11 +366,27 @@ def start_litellm(config_dir: Path, args: list[str] | None = None, detach: bool 
         )
         sys.exit(1)
 
-    cmd = [str(litellm_path), "--config", str(config_path)]
+    cmd = [
+        str(litellm_path),
+        "--config",
+        str(config_path),
+        "--host",
+        litellm_host,
+        "--port",
+        str(litellm_port),
+    ]
 
     # Add any additional arguments
     if args:
         cmd.extend(args)
+
+    # Start MITM first if enabled (it will listen on main_port and forward to litellm_port)
+    if mitm:
+        from ccproxy.mitm import start_mitm
+
+        print("Starting MITM proxy...")
+        # MITM listens on main_port (4000) and forwards to LiteLLM's random port
+        start_mitm(config_dir, port=main_port, litellm_port=litellm_port, detach=True)
 
     if detach:
         # Run in background mode
@@ -358,21 +394,11 @@ def start_litellm(config_dir: Path, args: list[str] | None = None, detach: bool 
         log_file = config_dir / "litellm.log"
 
         # Check if already running
-        if pid_file.exists():
-            try:
-                pid = int(pid_file.read_text().strip())
-                # Check if process is still running
-                try:
-                    os.kill(pid, 0)  # This doesn't kill, just checks if process exists
-                    print(f"LiteLLM is already running with PID {pid}", file=sys.stderr)
-                    print("To stop it, run: `ccproxy stop`", file=sys.stderr)
-                    sys.exit(1)
-                except ProcessLookupError:
-                    # Process is not running, clean up stale PID file
-                    pid_file.unlink()
-            except (ValueError, OSError):
-                # Invalid PID file, remove it
-                pid_file.unlink()
+        running, pid = is_process_running(pid_file)
+        if running:
+            print(f"LiteLLM is already running with PID {pid}", file=sys.stderr)
+            print("To stop it, run: `ccproxy stop`", file=sys.stderr)
+            sys.exit(1)
 
         # Start process in background
         try:
@@ -383,11 +409,11 @@ def start_litellm(config_dir: Path, args: list[str] | None = None, detach: bool 
                     stdout=log,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,  # Detach from parent process group
-                    env=os.environ.copy(),  # Pass environment variables including CCPROXY_CONFIG_DIR
+                    env=env,
                 )
 
             # Save PID
-            pid_file.write_text(str(process.pid))
+            write_pid(pid_file, process.pid)
 
             print("LiteLLM started in background")
             print(f"Log file: {log_file}")
@@ -401,7 +427,7 @@ def start_litellm(config_dir: Path, args: list[str] | None = None, detach: bool 
         # Execute litellm command in foreground
         try:
             # S603: Command construction is safe - we control the litellm path
-            result = subprocess.run(cmd, env=os.environ.copy())  # noqa: S603
+            result = subprocess.run(cmd, env=env)  # noqa: S603
             sys.exit(result.returncode)
         except FileNotFoundError:
             print("Error: litellm command not found.", file=sys.stderr)
@@ -423,6 +449,7 @@ def stop_litellm(config_dir: Path) -> bool:
     # Also stop MITM if it's running
     from ccproxy.mitm import stop_mitm
     from ccproxy.mitm.process import is_running as mitm_is_running
+    from ccproxy.process import read_pid
 
     mitm_running, _ = mitm_is_running(config_dir)
     if mitm_running:
@@ -436,41 +463,42 @@ def stop_litellm(config_dir: Path) -> bool:
         print("No LiteLLM server is running (PID file not found)", file=sys.stderr)
         return False
 
+    # Read PID to display in messages
+    pid = read_pid(pid_file)
+    if pid is None:
+        print("Error reading PID file", file=sys.stderr)
+        return False
+
+    # Check if process is running
+    running, _ = is_process_running(pid_file)
+    if not running:
+        print(f"LiteLLM server was not running (stale PID: {pid})")
+        return False
+
+    # Attempt to stop the process
+    print(f"Stopping LiteLLM server (PID: {pid})...")
+
+    # Stop the process and capture whether force kill was needed
+    # We need to replicate stop_process logic to know which method was used
     try:
-        pid = int(pid_file.read_text().strip())
+        os.kill(pid, signal.SIGTERM)
+        time.sleep(0.5)
 
-        # Check if process is still running
+        # Check if still running
         try:
-            os.kill(pid, 0)  # Check if process exists
-
-            # Process exists, kill it
-            print(f"Stopping LiteLLM server (PID: {pid})...")
-            os.kill(pid, 15)  # SIGTERM - graceful shutdown
-
-            # Wait a moment for graceful shutdown
-            time.sleep(0.5)
-
-            # Check if still running
-            try:
-                os.kill(pid, 0)
-                # Still running, force kill
-                os.kill(pid, 9)  # SIGKILL
-                print(f"Force killed LiteLLM server (PID: {pid})")
-            except ProcessLookupError:
-                print(f"LiteLLM server stopped successfully (PID: {pid})")
-
-            # Remove PID file
-            pid_file.unlink()
-            return True
-
+            os.kill(pid, 0)
+            # Still running, force kill
+            os.kill(pid, signal.SIGKILL)
+            print(f"Force killed LiteLLM server (PID: {pid})")
         except ProcessLookupError:
-            # Process is not running, clean up stale PID file
-            print(f"LiteLLM server was not running (stale PID: {pid})")
-            pid_file.unlink()
-            return False
+            print(f"LiteLLM server stopped successfully (PID: {pid})")
 
-    except (ValueError, OSError) as e:
-        print(f"Error reading PID file: {e}", file=sys.stderr)
+        # Remove PID file
+        pid_file.unlink()
+        return True
+
+    except OSError as e:
+        print(f"Error stopping process: {e}", file=sys.stderr)
         return False
 
 
@@ -667,19 +695,7 @@ def show_status(config_dir: Path, json_output: bool = False) -> None:
     pid_file = config_dir / "litellm.lock"
     log_file = config_dir / "litellm.log"
 
-    proxy_running = False
-
-    if pid_file.exists():
-        try:
-            pid = int(pid_file.read_text().strip())
-            # Check if process is still running
-            try:
-                os.kill(pid, 0)
-                proxy_running = True
-            except ProcessLookupError:
-                pass
-        except (ValueError, OSError):
-            pass
+    proxy_running, _ = is_process_running(pid_file)
 
     # Check configuration files
     ccproxy_config = config_dir / "ccproxy.yaml"
@@ -732,7 +748,16 @@ def show_status(config_dir: Path, json_output: bool = False) -> None:
     # Check MITM status
     mitm_running, mitm_pid = mitm_is_running(config_dir)
     mitm_enabled = mitm_config.get("enabled", False)
-    mitm_port = mitm_config.get("port", 8081)
+
+    # Get ports - main port is always the entry point (4000 by default)
+    main_port = 4000
+    litellm_actual_port = main_port  # Default: LiteLLM on main port
+
+    # Read actual LiteLLM port from state file (when MITM is running)
+    litellm_port_file = config_dir / ".litellm_port"
+    if litellm_port_file.exists():
+        with contextlib.suppress(ValueError, OSError):
+            litellm_actual_port = int(litellm_port_file.read_text().strip())
 
     # Build status data
     status_data = {
@@ -747,7 +772,8 @@ def show_status(config_dir: Path, json_output: bool = False) -> None:
             "enabled": mitm_enabled,
             "running": mitm_running,
             "pid": mitm_pid,
-            "port": mitm_port if mitm_running else None,
+            "main_port": main_port,
+            "litellm_port": litellm_actual_port,
         },
     }
 
@@ -767,26 +793,19 @@ def show_status(config_dir: Path, json_output: bool = False) -> None:
 
         # MITM status
         mitm_info = status_data["mitm"]
-        mitm_parts = []
 
-        # Enabled status
-        enabled_str = "[green]enabled[/green]" if mitm_info["enabled"] else "[dim]disabled[/dim]"
-        mitm_parts.append(enabled_str)
-
-        # Running status
         if mitm_info["running"]:
-            running_str = "[green]running[/green]"
-            mitm_parts.append(running_str)
-
-            # Add port and PID details
-            if mitm_info["port"]:
-                mitm_parts.append(f"port: [cyan]{mitm_info['port']}[/cyan]")
+            # Show traffic flow: MITM (4000) → LiteLLM (random port)
+            main_port = mitm_info["main_port"]
+            litellm_port = mitm_info["litellm_port"]
+            mitm_display = (
+                f"[green]running[/green] on [cyan]{main_port}[/cyan] → litellm on [cyan]{litellm_port}[/cyan]"
+            )
             if mitm_info["pid"]:
-                mitm_parts.append(f"pid: [cyan]{mitm_info['pid']}[/cyan]")
+                mitm_display += f" [dim](pid: {mitm_info['pid']})[/dim]"
         else:
-            mitm_parts.append("[red]stopped[/red]")
+            mitm_display = "[dim]stopped[/dim]"
 
-        mitm_display = " | ".join(mitm_parts)
         table.add_row("mitm", mitm_display)
 
         # Config files
@@ -908,6 +927,7 @@ def main(
     elif isinstance(cmd, Restart):
         # Check if MITM is running before stopping
         from ccproxy.mitm.process import is_running as mitm_is_running
+
         mitm_was_running, _ = mitm_is_running(config_dir)
 
         # Stop the server first

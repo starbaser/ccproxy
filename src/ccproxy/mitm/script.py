@@ -3,17 +3,24 @@
 This script is loaded by mitmdump to capture HTTP/HTTPS traffic and store
 traces in PostgreSQL via the CCProxyMitmAddon.
 
+In reverse proxy mode, mitmproxy handles forwarding to LiteLLM automatically.
+This addon focuses on logging/storage of traffic.
+
 Usage:
-    mitmdump --mode upstream:http://localhost:4000 -s script.py
+    mitmdump --mode reverse:http://localhost:{litellm_port} -s script.py
 """
+
+from __future__ import annotations
 
 import logging
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ccproxy.config import MitmConfig
 from ccproxy.mitm.addon import CCProxyMitmAddon
-from ccproxy.mitm.storage import TraceStorage
+
+if TYPE_CHECKING:
+    from ccproxy.mitm.storage import TraceStorage
 
 # Configure logging
 logging.basicConfig(
@@ -36,32 +43,55 @@ class CCProxyScript:
         """Called when addon is loaded by mitmproxy."""
         logger.info("Loading CCProxy mitmproxy addon...")
 
-        # Get configuration from environment or use defaults
+        # Get configuration from environment
+        mitm_port = int(os.environ.get("CCPROXY_MITM_PORT", "4000"))
+        litellm_port = int(os.environ.get("CCPROXY_LITELLM_PORT", "4001"))
+
         self.config = MitmConfig(
-            port=int(os.environ.get("CCPROXY_MITM_PORT", "8081")),
-            upstream_proxy=os.environ.get("CCPROXY_MITM_UPSTREAM", "http://localhost:4000"),
+            port=mitm_port,
+            upstream_proxy=f"http://localhost:{litellm_port}",
             max_body_size=int(os.environ.get("CCPROXY_MITM_MAX_BODY_SIZE", "65536")),
         )
+
+        logger.info("MITM listening on port %d, forwarding to LiteLLM on port %d", mitm_port, litellm_port)
 
         database_url = os.environ.get("DATABASE_URL")
         if not database_url:
             logger.warning("DATABASE_URL not set - traces will not be persisted")
-            self._initialized = True
             return
 
-        self.storage = TraceStorage(database_url)
-        logger.info("CCProxy addon configured (storage will connect on first request)")
+        try:
+            from ccproxy.mitm.storage import TraceStorage
+
+            self.storage = TraceStorage(database_url)
+            logger.info("Storage configured (will connect on first request)")
+        except Exception as e:
+            logger.warning("Failed to initialize storage: %s - traces will not be persisted", e)
 
     async def running(self) -> None:
         """Called when mitmproxy is fully running - async context available."""
-        if self.storage and not self._initialized:
+        if self._initialized:
+            return
+
+        assert self.config is not None
+
+        if self.storage:
             try:
                 await self.storage.connect()
-                self.addon = CCProxyMitmAddon(self.storage, self.config)  # type: ignore[arg-type]
+                self.addon = CCProxyMitmAddon(self.storage, self.config)
                 self._initialized = True
-                logger.info("CCProxy addon initialized successfully")
+                logger.info("CCProxy addon initialized with storage")
             except Exception as e:
                 logger.error("Failed to connect storage: %s", e)
+                # Still create addon without storage for logging
+                self.addon = CCProxyMitmAddon(storage=None, config=self.config)
+                self._initialized = True
+                logger.info("CCProxy addon initialized without storage")
+        else:
+            # No storage configured
+            self.addon = CCProxyMitmAddon(storage=None, config=self.config)
+            self._initialized = True
+            logger.info("CCProxy addon initialized (no storage)")
 
     async def done(self) -> None:
         """Called when mitmproxy shuts down."""

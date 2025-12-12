@@ -1,6 +1,8 @@
 """Utility functions for ccproxy."""
 
 import inspect
+import random
+import socket
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +57,30 @@ def get_template_file(filename: str) -> Path:
         raise FileNotFoundError(f"Template file not found: {filename}")
 
     return template_path
+
+
+def find_available_port(start: int = 49152, end: int = 65535) -> int:
+    """Find a random available port in the ephemeral range.
+
+    Args:
+        start: Start of port range (default: 49152, IANA ephemeral start)
+        end: End of port range (default: 65535)
+
+    Returns:
+        An available port number
+
+    Raises:
+        RuntimeError: If no available port found after 100 attempts
+    """
+    for _ in range(100):
+        port = random.randint(start, end)
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(("127.0.0.1", port))
+                return port
+            except OSError:
+                continue
+    raise RuntimeError(f"Could not find available port in range {start}-{end}")
 
 
 def calculate_duration_ms(start_time: Any, end_time: Any) -> float:

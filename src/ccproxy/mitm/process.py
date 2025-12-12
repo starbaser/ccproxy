@@ -2,11 +2,13 @@
 
 import logging
 import os
-import signal
 import subprocess
 import sys
-import time
 from pathlib import Path
+
+from ccproxy.process import is_process_running as shared_is_process_running
+from ccproxy.process import stop_process as shared_stop_process
+from ccproxy.process import write_pid
 
 logger = logging.getLogger(__name__)
 
@@ -45,39 +47,23 @@ def is_running(config_dir: Path) -> tuple[bool, int | None]:
         Tuple of (is_running, pid or None)
     """
     pid_file = get_pid_file(config_dir)
-
-    if not pid_file.exists():
-        return False, None
-
-    try:
-        pid = int(pid_file.read_text().strip())
-
-        # Check if process is actually running
-        try:
-            os.kill(pid, 0)  # This doesn't kill, just checks if process exists
-            return True, pid
-        except ProcessLookupError:
-            # Process is not running, clean up stale PID file
-            pid_file.unlink()
-            return False, None
-
-    except (ValueError, OSError):
-        # Invalid PID file
-        return False, None
+    return shared_is_process_running(pid_file)
 
 
 def start_mitm(
     config_dir: Path,
-    port: int = 8081,
-    upstream: str = "http://localhost:4000",
+    port: int = 4000,
+    litellm_port: int = 4001,
     detach: bool = False,
 ) -> None:
-    """Start the mitmproxy traffic capture proxy.
+    """Start the mitmproxy traffic capture proxy in reverse proxy mode.
+
+    MITM sits in front of LiteLLM, forwarding requests transparently.
 
     Args:
         config_dir: Configuration directory for PID and log files
-        port: Port for mitmproxy to listen on
-        upstream: Upstream proxy URL (LiteLLM)
+        port: Port for mitmproxy to listen on (main port, e.g., 4000)
+        litellm_port: Port where LiteLLM is running
         detach: Run in background mode
     """
     # Check if already running
@@ -105,29 +91,26 @@ def start_mitm(
         logger.error(f"Addon script not found at {script_path}")
         sys.exit(1)
 
-    # Build mitmdump command
-    # Use upstream mode to forward traffic to LiteLLM
+    # Build mitmdump command in reverse proxy mode
+    # Reverse mode forwards requests directly to LiteLLM without CONNECT tunneling
     cmd = [
         str(mitmdump_path),
-        "--mode",
-        f"upstream:{upstream}",
-        "--listen-port",
-        str(port),
-        "--set",
-        "stream_large_bodies=1m",  # Stream large bodies
-        "-s",
-        str(script_path),  # Load CCProxy addon
+        "--mode", f"reverse:http://localhost:{litellm_port}",
+        "--listen-port", str(port),
+        "--set", "stream_large_bodies=1m",
+        "-s", str(script_path),
     ]
 
-    # Pass environment to subprocess (needed for DATABASE_URL)
+    # Pass environment to subprocess
     env = os.environ.copy()
     env["CCPROXY_MITM_PORT"] = str(port)
-    env["CCPROXY_MITM_UPSTREAM"] = upstream
+    env["CCPROXY_LITELLM_PORT"] = str(litellm_port)
+    env["CCPROXY_CONFIG_DIR"] = str(config_dir)
 
     if detach:
         # Run in background mode
-        logger.info(f"Starting mitmproxy in background on port {port}")
-        logger.info(f"Upstream: {upstream}")
+        logger.info(f"Starting mitmproxy in reverse mode on port {port}")
+        logger.info(f"Forwarding to LiteLLM on port {litellm_port}")
         logger.info(f"Log file: {log_file}")
 
         try:
@@ -142,7 +125,7 @@ def start_mitm(
                 )
 
             # Save PID
-            pid_file.write_text(str(process.pid))
+            write_pid(pid_file, process.pid)
             logger.info(f"Mitmproxy started with PID {process.pid}")
 
         except FileNotFoundError:
@@ -152,8 +135,8 @@ def start_mitm(
 
     else:
         # Run in foreground
-        logger.info(f"Starting mitmproxy on port {port}")
-        logger.info(f"Upstream: {upstream}")
+        logger.info(f"Starting mitmproxy in reverse mode on port {port}")
+        logger.info(f"Forwarding to LiteLLM on port {litellm_port}")
 
         try:
             # S603: Command construction is safe - we control the mitmdump path
@@ -183,42 +166,7 @@ def stop_mitm(config_dir: Path) -> bool:
         logger.error("No mitmproxy server is running (PID file not found)")
         return False
 
-    try:
-        pid = int(pid_file.read_text().strip())
-
-        # Check if process is still running
-        try:
-            os.kill(pid, 0)  # Check if process exists
-
-            # Process exists, kill it
-            logger.info(f"Stopping mitmproxy server (PID: {pid})...")
-            os.kill(pid, signal.SIGTERM)  # Graceful shutdown
-
-            # Wait a moment for graceful shutdown
-            time.sleep(0.5)
-
-            # Check if still running
-            try:
-                os.kill(pid, 0)
-                # Still running, force kill
-                os.kill(pid, signal.SIGKILL)
-                logger.info(f"Force killed mitmproxy server (PID: {pid})")
-            except ProcessLookupError:
-                logger.info(f"Mitmproxy server stopped successfully (PID: {pid})")
-
-            # Remove PID file
-            pid_file.unlink()
-            return True
-
-        except ProcessLookupError:
-            # Process is not running, clean up stale PID file
-            logger.warning(f"Mitmproxy server was not running (stale PID: {pid})")
-            pid_file.unlink()
-            return False
-
-    except (ValueError, OSError) as e:
-        logger.error(f"Error reading PID file: {e}")
-        return False
+    return shared_stop_process(pid_file)
 
 
 def get_mitm_status(config_dir: Path) -> dict[str, bool | int | str | None]:

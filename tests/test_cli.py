@@ -54,7 +54,9 @@ class TestStartProxy:
         # Check the command structure - first arg is the litellm executable path
         call_args = mock_run.call_args[0][0]
         assert call_args[0].endswith("litellm")
-        assert call_args[1:] == ["--config", str(config_file)]
+        # Now includes --host and --port by default
+        assert call_args[1:5] == ["--config", str(config_file), "--host", "127.0.0.1"]
+        assert "--port" in call_args
 
     @patch("subprocess.run")
     def test_litellm_with_args(self, mock_run: Mock, tmp_path: Path) -> None:
@@ -71,7 +73,12 @@ class TestStartProxy:
         # Check the command structure - first arg is the litellm executable path
         call_args = mock_run.call_args[0][0]
         assert call_args[0].endswith("litellm")
-        assert call_args[1:] == ["--config", str(config_file), "--debug", "--port", "8080"]
+        # Now includes --host and --port by default, plus user args appended
+        assert "--config" in call_args
+        assert "--host" in call_args
+        assert "--debug" in call_args
+        # User port should override default
+        assert call_args[-2:] == ["--port", "8080"]
 
     @patch("subprocess.run")
     def test_litellm_command_not_found(self, mock_run: Mock, tmp_path: Path, capsys) -> None:
@@ -126,7 +133,9 @@ class TestStartProxy:
         captured = capsys.readouterr()
         assert "LiteLLM started in background" in captured.out
         assert "Log file:" in captured.out
-        assert str(tmp_path / "litellm.log") in captured.out
+        # Path may be wrapped in output, so check without newlines
+        output_flat = captured.out.replace("\n", "")
+        assert "litellm.log" in output_flat
 
     @patch("os.kill")
     def test_litellm_detach_already_running(self, mock_kill: Mock, tmp_path: Path, capsys) -> None:
@@ -687,7 +696,7 @@ litellm:
     @patch("ccproxy.mitm.process.is_running")
     @patch("subprocess.run")
     def test_run_with_mitm_running(self, mock_run: Mock, mock_mitm_running: Mock, tmp_path: Path) -> None:
-        """Test run with mitmproxy running routes through mitm."""
+        """Test run with MITM - client still connects to main port (transparent proxy)."""
         config_file = tmp_path / "ccproxy.yaml"
         config_file.write_text("""
 litellm:
@@ -706,13 +715,15 @@ ccproxy:
 
         assert exc_info.value.code == 0
 
-        # Check environment variables route through mitmproxy
+        # New architecture: client always connects to main port (4000)
+        # MITM is transparent - sits on main port and forwards to LiteLLM
         call_args = mock_run.call_args
         env = call_args[1]["env"]
-        assert env["HTTPS_PROXY"] == "http://localhost:8081"
-        assert env["HTTP_PROXY"] == "http://localhost:8081"
-        assert env["OPENAI_API_BASE"] == "http://localhost:8081"
-        assert env["ANTHROPIC_BASE_URL"] == "http://localhost:8081"
+        # No HTTPS_PROXY/HTTP_PROXY set on client (MITM handles this transparently)
+        assert "HTTPS_PROXY" not in env or env.get("HTTPS_PROXY") == os.environ.get("HTTPS_PROXY")
+        # All API URLs point to main port
+        assert env["OPENAI_API_BASE"] == "http://127.0.0.1:4000"
+        assert env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:4000"
 
     @patch("ccproxy.mitm.process.is_running")
     @patch("subprocess.run")

@@ -1,13 +1,21 @@
-"""Mitmproxy addon for HTTP/HTTPS traffic capture."""
+"""Mitmproxy addon for HTTP/HTTPS traffic capture.
+
+In reverse proxy mode, mitmproxy handles forwarding automatically.
+This addon focuses on logging/storage of traffic.
+"""
+
+from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from mitmproxy import http
 
 from ccproxy.config import MitmConfig
-from ccproxy.mitm.storage import TraceStorage
+
+if TYPE_CHECKING:
+    from ccproxy.mitm.storage import TraceStorage
 
 logger = logging.getLogger(__name__)
 
@@ -15,11 +23,15 @@ logger = logging.getLogger(__name__)
 class CCProxyMitmAddon:
     """Mitmproxy addon that captures all HTTP/HTTPS traffic and stores in PostgreSQL."""
 
-    def __init__(self, storage: TraceStorage, config: MitmConfig) -> None:
+    def __init__(
+        self,
+        storage: TraceStorage | None,
+        config: MitmConfig,
+    ) -> None:
         """Initialize the addon.
 
         Args:
-            storage: Storage backend for traces
+            storage: Storage backend for traces (None if no persistence)
             config: Mitmproxy configuration
         """
         self.storage = storage
@@ -38,17 +50,8 @@ class CCProxyMitmAddon:
         host_lower = host.lower()
         path_lower = path.lower()
 
-        # LLM API patterns
-        llm_patterns = [
-            "api.anthropic.com",
-            "api.openai.com",
-            "generativelanguage.googleapis.com",
-            "api.cohere.ai",
-            "bedrock",
-            "azure.com/openai",
-        ]
-
-        for pattern in llm_patterns:
+        # Check LLM patterns from config
+        for pattern in self.config.llm_hosts:
             if pattern in host_lower:
                 return "llm"
 
@@ -94,17 +97,22 @@ class CCProxyMitmAddon:
     async def request(self, flow: http.HTTPFlow) -> None:
         """Capture request and create initial trace.
 
+        Note: In reverse proxy mode, mitmproxy handles forwarding automatically.
+        This method only captures the request for logging/storage.
+
         Args:
             flow: HTTP flow object
         """
+        # Skip trace capture if no storage configured
+        if self.storage is None:
+            return
+
         try:
-            # Extract request data
             request = flow.request
             host = request.pretty_host
             path = request.path
             traffic_type = self._classify_traffic(host, path)
 
-            # Prepare trace data
             trace_data = {
                 "trace_id": flow.id,
                 "traffic_type": traffic_type,
@@ -113,13 +121,16 @@ class CCProxyMitmAddon:
                 "host": host,
                 "path": path,
                 "request_headers": self._serialize_headers(request.headers),
-                "request_body": self._truncate_body(request.content),
                 "start_time": datetime.now(UTC),
             }
 
-            # Create trace
-            await self.storage.create_trace(trace_data)
+            # Add body fields if capture_bodies is enabled
+            if self.config.capture_bodies:
+                trace_data["request_body"] = self._truncate_body(request.content)
+                trace_data["request_body_size"] = len(request.content) if request.content else 0
+                trace_data["request_content_type"] = request.headers.get("content-type", "")
 
+            await self.storage.create_trace(trace_data)
             logger.debug("Captured request: %s %s (trace_id: %s)", request.method, request.pretty_url, flow.id)
 
         except Exception as e:
@@ -131,8 +142,10 @@ class CCProxyMitmAddon:
         Args:
             flow: HTTP flow object
         """
+        if self.storage is None:
+            return
+
         try:
-            # Extract response data
             response = flow.response
             if not response:
                 return
@@ -146,10 +159,15 @@ class CCProxyMitmAddon:
             response_data = {
                 "status_code": response.status_code,
                 "response_headers": self._serialize_headers(response.headers),
-                "response_body": self._truncate_body(response.content),
                 "duration_ms": duration_ms,
                 "end_time": datetime.now(UTC),
             }
+
+            # Add body fields if capture_bodies is enabled
+            if self.config.capture_bodies:
+                response_data["response_body"] = self._truncate_body(response.content)
+                response_data["response_body_size"] = len(response.content) if response.content else 0
+                response_data["response_content_type"] = response.headers.get("content-type", "")
 
             # Complete trace
             await self.storage.complete_trace(flow.id, response_data)
@@ -171,8 +189,10 @@ class CCProxyMitmAddon:
         Args:
             flow: HTTP flow object
         """
+        if self.storage is None:
+            return
+
         try:
-            # Extract error information
             error = flow.error
             if not error:
                 return
