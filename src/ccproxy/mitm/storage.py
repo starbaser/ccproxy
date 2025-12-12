@@ -103,8 +103,11 @@ class TraceStorage:
         if not trace_id:
             raise ValueError("trace_id is required in trace data")
 
-        # Queue the create operation
-        await self._write_queue.put({"type": "create", "data": data})
+        # Queue the create operation (non-blocking)
+        try:
+            self._write_queue.put_nowait({"type": "create", "data": data})
+        except asyncio.QueueFull:
+            logger.warning("Write queue full, dropping trace %s", trace_id)
 
         return trace_id
 
@@ -128,8 +131,11 @@ class TraceStorage:
             trace_id: Trace identifier
             data: Response data including status_code, response_headers, response_body, etc.
         """
-        # Queue the complete operation
-        await self._write_queue.put({"type": "complete", "trace_id": trace_id, "data": data})
+        # Queue the complete operation (non-blocking)
+        try:
+            self._write_queue.put_nowait({"type": "complete", "trace_id": trace_id, "data": data})
+        except asyncio.QueueFull:
+            logger.warning("Write queue full, dropping completion for trace %s", trace_id)
 
     async def _do_complete_trace(self, trace_id: str, data: dict[str, Any]) -> None:
         """Update trace record with response data.
