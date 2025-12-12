@@ -400,6 +400,31 @@ ccproxy:
     # - ccproxy.hooks.forward_apikey # Or this, for API key
 ```
 
+### Hook Parameters
+
+Hooks can accept parameters via the `hook:` + `params:` format:
+
+```yaml
+ccproxy:
+  hooks:
+    # Simple form (no params)
+    - ccproxy.hooks.rule_evaluator
+
+    # Dict form with params
+    - hook: ccproxy.hooks.capture_headers
+      params:
+        headers: [user-agent, x-request-id, content-type]
+```
+
+Parameters are passed to the hook function via `**kwargs`:
+
+```python
+def my_hook(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+    # Access params from kwargs
+    threshold = kwargs.get("threshold", 1000)
+    return data
+```
+
 ## Debugging
 
 Enable debug output in `ccproxy.yaml`:
