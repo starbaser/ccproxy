@@ -16,6 +16,11 @@ def cleanup():
     clear_config_instance()
     clear_router()
 
+    # Clear handler status
+    from ccproxy.handler import CCProxyHandler
+
+    CCProxyHandler._last_status = None
+
 
 @pytest.fixture
 def mock_proxy_server():

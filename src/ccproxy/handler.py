@@ -1,6 +1,7 @@
 """ccproxy handler - Main LiteLLM CustomLogger implementation."""
 
 import logging
+from datetime import datetime
 from typing import Any, TypedDict
 
 from litellm.integrations.custom_logger import CustomLogger
@@ -27,6 +28,8 @@ class RequestData(TypedDict, total=False):
 class CCProxyHandler(CustomLogger):
     """Main module of ccproxy, an instance of CCProxyHandler is instantiated in the LiteLLM callback python script"""
 
+    _last_status: dict[str, Any] | None = None  # Class-level state
+
     def __init__(self) -> None:
         super().__init__()
         self.classifier = RequestClassifier()
@@ -43,6 +46,33 @@ class CCProxyHandler(CustomLogger):
             hook_names = [f"{h.__module__}.{h.__name__}" for h, _ in self.hooks]
             logger.debug(f"Loaded {len(self.hooks)} hooks: {', '.join(hook_names)}")
 
+        # Register custom routes with LiteLLM proxy (for statusline integration)
+        self._register_routes()
+
+    _routes_registered: bool = False  # Class-level flag to prevent duplicate registration
+
+    def _register_routes(self) -> None:
+        """Register custom routes with LiteLLM proxy for statusline integration."""
+        if CCProxyHandler._routes_registered:
+            return
+
+        try:
+            from litellm.proxy.proxy_server import app
+
+            from ccproxy.routes import router as ccproxy_router
+
+            # Check if router already registered (by checking for our endpoint)
+            existing_routes = [r.path for r in app.routes]
+            if "/ccproxy/status" not in existing_routes:
+                app.include_router(ccproxy_router)
+                logger.debug("Registered ccproxy custom routes")
+
+            CCProxyHandler._routes_registered = True
+        except ImportError:
+            logger.debug("LiteLLM proxy server not available for route registration")
+        except Exception as e:
+            logger.debug(f"Could not register custom routes: {e}")
+
     @property
     def langfuse(self):
         """Lazy-loaded Langfuse client."""
@@ -54,6 +84,11 @@ class CCProxyHandler(CustomLogger):
             except Exception:
                 pass
         return self._langfuse_client
+
+    @classmethod
+    def get_status(cls) -> dict[str, Any] | None:
+        """Get the last routing status for statusline widget."""
+        return cls._last_status
 
     async def async_pre_call_hook(
         self,
@@ -100,6 +135,15 @@ class CCProxyHandler(CustomLogger):
             model_config=metadata.get("ccproxy_model_config"),
             is_passthrough=metadata.get("ccproxy_is_passthrough", False),
         )
+
+        # Update status for statusline widget
+        CCProxyHandler._last_status = {
+            "rule": metadata.get("ccproxy_model_name"),
+            "model": metadata.get("ccproxy_litellm_model") or data.get("model"),
+            "original_model": metadata.get("ccproxy_alias_model"),
+            "is_passthrough": metadata.get("ccproxy_is_passthrough", False),
+            "timestamp": datetime.now().isoformat(),
+        }
 
         return data
 
