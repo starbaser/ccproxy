@@ -49,6 +49,25 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 logger = logging.getLogger(__name__)
 
 
+class StatuslineConfig(BaseModel):
+    """Statusline widget configuration (Starship-style)."""
+
+    format: str = "⸢$status⸥"
+    """Format string with $status placeholder"""
+
+    symbol: str = ""
+    """Symbol/icon prefix (available as $symbol in format)"""
+
+    on: str = "ccproxy: ON"
+    """Status text when proxy is active"""
+
+    off: str = "ccproxy: OFF"
+    """Status text when proxy is inactive"""
+
+    disabled: bool = False
+    """Disable statusline output entirely"""
+
+
 class OAuthSource(BaseModel):
     """OAuth token source configuration.
 
@@ -152,6 +171,9 @@ class CCProxyConfig(BaseSettings):
 
     # Handler import path (e.g., "ccproxy.handler:CCProxyHandler")
     handler: str = "ccproxy.handler:CCProxyHandler"
+
+    # Statusline configuration
+    statusline: StatuslineConfig = Field(default_factory=StatuslineConfig)
 
     # OAuth token sources - dict mapping provider name to shell command or OAuthSource
     # Example: {"anthropic": "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"}
@@ -387,6 +409,14 @@ class CCProxyConfig(BaseSettings):
                     instance.default_model_passthrough = ccproxy_data["default_model_passthrough"]
                 if "oat_sources" in ccproxy_data:
                     instance.oat_sources = ccproxy_data["oat_sources"]
+
+                # Load statusline configuration
+                if "statusline" in ccproxy_data:
+                    statusline_data = ccproxy_data["statusline"]
+                    if isinstance(statusline_data, dict):
+                        instance.statusline = StatuslineConfig(**statusline_data)
+                    else:
+                        logger.warning(f"Invalid statusline config format: {type(statusline_data)}")
 
                 # Backwards compatibility: migrate deprecated 'credentials' field
                 if "credentials" in ccproxy_data:

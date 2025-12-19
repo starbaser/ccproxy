@@ -203,6 +203,80 @@ params:
   - keyword: "keyword_value"
 ```
 
+### Statusline Configuration
+
+The `statusline` section configures the [ccstatusline](https://github.com/sirmalloc/ccstatusline) widget output. Uses Starship-style format strings with variable placeholders.
+
+```yaml
+ccproxy:
+  statusline:
+    format: "⸢$status⸥"    # Template with $status and $symbol variables
+    symbol: ""             # Symbol/icon prefix (available as $symbol)
+    on: "ccproxy: ON"      # Status text when proxy is active
+    off: "ccproxy: OFF"    # Status text when proxy is inactive
+    disabled: false        # Disable statusline output entirely
+```
+
+#### Format String Variables
+
+| Variable | Description |
+|----------|-------------|
+| `$status` | Replaced with `on` or `off` value based on proxy state |
+| `$symbol` | Replaced with `symbol` value |
+
+#### Examples
+
+**Default (Unicode brackets):**
+```yaml
+statusline:
+  format: "⸢$status⸥"
+  on: "ccproxy: ON"
+  off: "ccproxy: OFF"
+```
+Output: `⸢ccproxy: ON⸥` or `⸢ccproxy: OFF⸥`
+
+**With symbol:**
+```yaml
+statusline:
+  format: "$symbol $status"
+  symbol: ""
+  on: "active"
+  off: "inactive"
+```
+Output: ` active` or ` inactive`
+
+**Emoji only:**
+```yaml
+statusline:
+  format: "$status"
+  on: "🟢"
+  off: "🔴"
+```
+Output: `🟢` or `🔴`
+
+**Hide when inactive:**
+```yaml
+statusline:
+  format: "$symbol"
+  symbol: ""
+  on: "active"
+  off: ""          # Empty = no output when inactive
+```
+
+**Disabled:**
+```yaml
+statusline:
+  disabled: true
+```
+
+#### Installation
+
+```bash
+ccproxy statusline install [--force] [--use-bun]
+```
+
+This configures Claude Code's `statusLine` hook and adds a ccproxy widget to ccstatusline.
+
 ### ccproxy.py (Auto-Generated Handler)
 
 **This file is auto-generated** by `ccproxy start` and should not be edited manually.

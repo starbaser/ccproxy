@@ -60,11 +60,29 @@ def format_status_output(status: dict[str, Any] | None, proxy_reachable: bool = 
         proxy_reachable: Whether the proxy endpoint was reachable
 
     Returns:
-        Formatted status string
+        Formatted status string (empty if disabled or status text is empty)
     """
-    if not proxy_reachable or status is None:
-        return "⸢ccproxy: OFF⸥"
-    return "⸢ccproxy: ON⸥"
+    from ccproxy.config import get_config
+
+    config = get_config()
+    sl = config.statusline
+
+    if sl.disabled:
+        return ""
+
+    # Determine status text
+    status_text = sl.on if (proxy_reachable and status is not None) else sl.off
+
+    # Empty status text = empty output (no format processing)
+    if not status_text:
+        return ""
+
+    # Apply format string substitutions
+    output = sl.format
+    output = output.replace("$status", status_text)
+    output = output.replace("$symbol", sl.symbol)
+
+    return output
 
 
 def check_npm_available() -> bool:

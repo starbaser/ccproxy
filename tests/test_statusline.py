@@ -9,6 +9,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from ccproxy.config import CCProxyConfig, StatuslineConfig, clear_config_instance, set_config_instance
 from ccproxy.handler import CCProxyHandler
 from ccproxy.routes import router
 from ccproxy.statusline import (
@@ -100,6 +101,13 @@ class TestQueryStatus:
 class TestFormatStatusOutput:
     """Test suite for format_status_output function."""
 
+    @pytest.fixture(autouse=True)
+    def setup_config(self) -> None:
+        """Set up default config before each test."""
+        clear_config_instance()
+        config = CCProxyConfig()
+        set_config_instance(config)
+
     def test_format_proxy_reachable_with_status(self) -> None:
         """Test format returns ON when proxy is reachable."""
         status = {
@@ -138,6 +146,103 @@ class TestFormatStatusOutput:
         result = format_status_output({}, proxy_reachable=True)
 
         assert result == "⸢ccproxy: ON⸥"
+
+    def test_format_with_custom_config(self) -> None:
+        """Test format uses custom statusline configuration."""
+        config = CCProxyConfig()
+        config.statusline = StatuslineConfig(
+            format="[$status]",
+            on="PROXY ACTIVE",
+            off="PROXY INACTIVE",
+        )
+        set_config_instance(config)
+
+        result_on = format_status_output({"rule": "test"}, proxy_reachable=True)
+        result_off = format_status_output(None, proxy_reachable=False)
+
+        assert result_on == "[PROXY ACTIVE]"
+        assert result_off == "[PROXY INACTIVE]"
+
+    def test_format_empty_on_returns_empty(self) -> None:
+        """Test format returns empty string when on value is empty."""
+        config = CCProxyConfig()
+        config.statusline = StatuslineConfig(on="", off="ccproxy: OFF")
+        set_config_instance(config)
+
+        result = format_status_output({"rule": "test"}, proxy_reachable=True)
+
+        assert result == ""
+
+    def test_format_empty_off_returns_empty(self) -> None:
+        """Test format returns empty string when off value is empty."""
+        config = CCProxyConfig()
+        config.statusline = StatuslineConfig(on="ccproxy: ON", off="")
+        set_config_instance(config)
+
+        result = format_status_output(None, proxy_reachable=False)
+
+        assert result == ""
+
+    def test_format_disabled_returns_empty(self) -> None:
+        """Test format returns empty string when disabled flag is set."""
+        config = CCProxyConfig()
+        config.statusline = StatuslineConfig(disabled=True)
+        set_config_instance(config)
+
+        result_on = format_status_output({"rule": "test"}, proxy_reachable=True)
+        result_off = format_status_output(None, proxy_reachable=False)
+
+        assert result_on == ""
+        assert result_off == ""
+
+    def test_format_with_symbol(self) -> None:
+        """Test format string with symbol variable."""
+        config = CCProxyConfig()
+        config.statusline = StatuslineConfig(
+            format="$symbol $status",
+            symbol="",
+            on="ON",
+            off="OFF",
+        )
+        set_config_instance(config)
+
+        result_on = format_status_output({"rule": "test"}, proxy_reachable=True)
+        result_off = format_status_output(None, proxy_reachable=False)
+
+        assert result_on == " ON"
+        assert result_off == " OFF"
+
+    def test_format_custom_format_string(self) -> None:
+        """Test custom format string with multiple variables."""
+        config = CCProxyConfig()
+        config.statusline = StatuslineConfig(
+            format="[$symbol:$status]",
+            symbol="",
+            on="active",
+            off="inactive",
+        )
+        set_config_instance(config)
+
+        result_on = format_status_output({"rule": "test"}, proxy_reachable=True)
+        result_off = format_status_output(None, proxy_reachable=False)
+
+        assert result_on == "[:active]"
+        assert result_off == "[:inactive]"
+
+    def test_format_symbol_only(self) -> None:
+        """Test format string with symbol only (no status text)."""
+        config = CCProxyConfig()
+        config.statusline = StatuslineConfig(
+            format="$symbol",
+            symbol="",
+            on="active",
+            off="inactive",
+        )
+        set_config_instance(config)
+
+        result = format_status_output({"rule": "test"}, proxy_reachable=True)
+
+        assert result == ""
 
 
 class TestInstallStatusline:
