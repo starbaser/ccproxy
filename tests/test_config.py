@@ -7,6 +7,7 @@ from unittest import mock
 from ccproxy.config import (
     CCProxyConfig,
     RuleConfig,
+    StatuslineConfig,
     clear_config_instance,
     get_config,
 )
@@ -23,6 +24,12 @@ class TestCCProxyConfig:
         assert config.litellm_config_path == Path("./config.yaml")
         assert config.ccproxy_config_path == Path("./ccproxy.yaml")
         assert config.rules == []
+        assert isinstance(config.statusline, StatuslineConfig)
+        assert config.statusline.format == "⸢$status⸥"
+        assert config.statusline.symbol == ""
+        assert config.statusline.on == "ccproxy: ON"
+        assert config.statusline.off == "ccproxy: OFF"
+        assert config.statusline.disabled is False
 
     def test_config_attributes(self) -> None:
         """Test config attributes can be set directly."""
@@ -150,6 +157,61 @@ ccproxy:
             assert len(config.rules) == 1
             assert config.rules[0].model_name == "custom_rule"
             assert config.rules[0].params == [{"threshold": 70000}]
+
+        finally:
+            yaml_path.unlink()
+
+    def test_statusline_config_from_yaml(self) -> None:
+        """Test loading statusline configuration from YAML."""
+        yaml_content = """
+ccproxy:
+  debug: false
+  statusline:
+    format: "[$status]"
+    symbol: ""
+    "on": "PROXY ACTIVE"
+    "off": "PROXY INACTIVE"
+    disabled: false
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(yaml_content)
+            yaml_path = Path(f.name)
+
+        try:
+            config = CCProxyConfig.from_yaml(yaml_path)
+
+            # Check statusline config was loaded
+            assert config.statusline.format == "[$status]"
+            assert config.statusline.symbol == ""
+            assert config.statusline.on == "PROXY ACTIVE"
+            assert config.statusline.off == "PROXY INACTIVE"
+            assert config.statusline.disabled is False
+
+        finally:
+            yaml_path.unlink()
+
+    def test_statusline_partial_config_from_yaml(self) -> None:
+        """Test loading partial statusline config uses defaults for missing values."""
+        yaml_content = """
+ccproxy:
+  debug: false
+  statusline:
+    "on": "CUSTOM ON"
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(yaml_content)
+            yaml_path = Path(f.name)
+
+        try:
+            config = CCProxyConfig.from_yaml(yaml_path)
+
+            # Custom value
+            assert config.statusline.on == "CUSTOM ON"
+            # Defaults for missing values
+            assert config.statusline.off == "ccproxy: OFF"
+            assert config.statusline.format == "⸢$status⸥"
+            assert config.statusline.symbol == ""
+            assert config.statusline.disabled is False
 
         finally:
             yaml_path.unlink()

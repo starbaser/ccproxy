@@ -203,6 +203,80 @@ params:
   - keyword: "keyword_value"
 ```
 
+### Statusline Configuration
+
+The `statusline` section configures the [ccstatusline](https://github.com/sirmalloc/ccstatusline) widget output. Uses Starship-style format strings with variable placeholders.
+
+```yaml
+ccproxy:
+  statusline:
+    format: "⸢$status⸥"    # Template with $status and $symbol variables
+    symbol: ""             # Symbol/icon prefix (available as $symbol)
+    on: "ccproxy: ON"      # Status text when proxy is active
+    off: "ccproxy: OFF"    # Status text when proxy is inactive
+    disabled: false        # Disable statusline output entirely
+```
+
+#### Format String Variables
+
+| Variable | Description |
+|----------|-------------|
+| `$status` | Replaced with `on` or `off` value based on proxy state |
+| `$symbol` | Replaced with `symbol` value |
+
+#### Examples
+
+**Default (Unicode brackets):**
+```yaml
+statusline:
+  format: "⸢$status⸥"
+  on: "ccproxy: ON"
+  off: "ccproxy: OFF"
+```
+Output: `⸢ccproxy: ON⸥` or `⸢ccproxy: OFF⸥`
+
+**With symbol:**
+```yaml
+statusline:
+  format: "$symbol $status"
+  symbol: ""
+  on: "active"
+  off: "inactive"
+```
+Output: ` active` or ` inactive`
+
+**Emoji only:**
+```yaml
+statusline:
+  format: "$status"
+  on: "🟢"
+  off: "🔴"
+```
+Output: `🟢` or `🔴`
+
+**Hide when inactive:**
+```yaml
+statusline:
+  format: "$symbol"
+  symbol: ""
+  on: "active"
+  off: ""          # Empty = no output when inactive
+```
+
+**Disabled:**
+```yaml
+statusline:
+  disabled: true
+```
+
+#### Installation
+
+```bash
+ccproxy statusline install [--force] [--use-bun]
+```
+
+This configures Claude Code's `statusLine` hook and adds a ccproxy widget to ccstatusline.
+
 ### ccproxy.py (Auto-Generated Handler)
 
 **This file is auto-generated** by `ccproxy start` and should not be edited manually.
@@ -398,6 +472,31 @@ ccproxy:
     - my_hooks.request_logger # Your custom hook
     - ccproxy.hooks.forward_oauth # For subscription account
     # - ccproxy.hooks.forward_apikey # Or this, for API key
+```
+
+### Hook Parameters
+
+Hooks can accept parameters via the `hook:` + `params:` format:
+
+```yaml
+ccproxy:
+  hooks:
+    # Simple form (no params)
+    - ccproxy.hooks.rule_evaluator
+
+    # Dict form with params
+    - hook: ccproxy.hooks.capture_headers
+      params:
+        headers: [user-agent, x-request-id, content-type]
+```
+
+Parameters are passed to the hook function via `**kwargs`:
+
+```python
+def my_hook(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+    # Access params from kwargs
+    threshold = kwargs.get("threshold", 1000)
+    return data
 ```
 
 ## Debugging
