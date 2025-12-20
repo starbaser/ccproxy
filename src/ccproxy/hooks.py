@@ -42,6 +42,14 @@ def get_request_metadata(call_id: str) -> dict[str, Any]:
         return {}
 
 
+# Beta headers required for Claude Code impersonation (Claude Max OAuth support)
+ANTHROPIC_BETA_HEADERS = [
+    "oauth-2025-04-20",
+    "claude-code-20250219",
+    "interleaved-thinking-2025-05-14",
+    "fine-grained-tool-streaming-2025-05-14",
+]
+
 # Headers containing secrets - redact but show prefix/suffix for identification
 SENSITIVE_PATTERNS = {
     "authorization": r"^(Bearer sk-[a-z]+-|Bearer |sk-[a-z]+-)",  # Keep "Bearer sk-ant-" or "Bearer " or "sk-ant-"
@@ -427,5 +435,55 @@ def forward_apikey(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kw
                 "api_key_present": True,
             },
         )
+
+    return data
+
+
+def add_beta_headers(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+    """Add anthropic-beta headers for Claude Code impersonation.
+
+    When routing to Anthropic, adds the required beta headers that allow
+    Claude Max OAuth tokens to be accepted by Anthropic's API.
+    """
+    metadata = data.get("metadata", {})
+    routed_model = metadata.get("ccproxy_litellm_model", "")
+    model_config = metadata.get("ccproxy_model_config") or {}
+
+    if not routed_model:
+        return data
+
+    # Detect provider using same logic as forward_oauth
+    litellm_params = model_config.get("litellm_params", {})
+    api_base = litellm_params.get("api_base")
+    custom_provider = litellm_params.get("custom_llm_provider")
+
+    try:
+        _, provider_name, _, _ = get_llm_provider(
+            model=routed_model,
+            custom_llm_provider=custom_provider,
+            api_base=api_base,
+        )
+    except Exception:
+        return data
+
+    if provider_name != "anthropic":
+        return data
+
+    # Ensure header structure exists
+    if "provider_specific_header" not in data:
+        data["provider_specific_header"] = {}
+    if "extra_headers" not in data["provider_specific_header"]:
+        data["provider_specific_header"]["extra_headers"] = {}
+
+    # Merge beta headers (preserve existing, add ours, dedupe)
+    existing = data["provider_specific_header"]["extra_headers"].get("anthropic-beta", "")
+    existing_list = [b.strip() for b in existing.split(",") if b.strip()]
+    merged = list(dict.fromkeys(ANTHROPIC_BETA_HEADERS + existing_list))
+    data["provider_specific_header"]["extra_headers"]["anthropic-beta"] = ",".join(merged)
+
+    logger.info(
+        "Added anthropic-beta headers for Claude Code impersonation",
+        extra={"event": "beta_headers_added", "model": routed_model},
+    )
 
     return data
