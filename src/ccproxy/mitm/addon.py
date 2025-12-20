@@ -94,15 +94,45 @@ class CCProxyMitmAddon:
         """
         return {str(k): str(v) for k, v in headers.items()}
 
-    async def request(self, flow: http.HTTPFlow) -> None:
-        """Capture request and create initial trace.
+    def _fix_oauth_headers(self, flow: http.HTTPFlow) -> None:
+        """Fix OAuth headers for Anthropic API requests.
 
-        Note: In reverse proxy mode, mitmproxy handles forwarding automatically.
-        This method only captures the request for logging/storage.
+        When using OAuth Bearer tokens with Anthropic, the x-api-key header
+        must be removed so Anthropic uses the Authorization header instead.
+        LiteLLM always sends x-api-key, so we remove it here at the HTTP layer.
 
         Args:
             flow: HTTP flow object
         """
+        request = flow.request
+        host = request.pretty_host.lower()
+
+        # Only process Anthropic API requests
+        if "api.anthropic.com" not in host:
+            return
+
+        auth_header = request.headers.get("authorization", "")
+
+        # Only remove x-api-key if Bearer token is present
+        if not auth_header.lower().startswith("bearer "):
+            return
+
+        if "x-api-key" in request.headers:
+            del request.headers["x-api-key"]
+            logger.info(
+                "Removed x-api-key for OAuth request to %s",
+                host,
+            )
+
+    async def request(self, flow: http.HTTPFlow) -> None:
+        """Process request: fix OAuth headers and capture trace.
+
+        Args:
+            flow: HTTP flow object
+        """
+        # Fix OAuth headers (always, regardless of storage)
+        self._fix_oauth_headers(flow)
+
         # Skip trace capture if no storage configured
         if self.storage is None:
             return
