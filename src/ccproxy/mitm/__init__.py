@@ -2,9 +2,10 @@
 
 from typing import Any
 
-from ccproxy.mitm.process import get_mitm_status, is_running, start_mitm, stop_mitm
+from ccproxy.mitm.process import ProxyMode, get_mitm_status, is_running, start_mitm, stop_mitm
 
 __all__ = [
+    "ProxyMode",
     "start_mitm",
     "stop_mitm",
     "is_running",

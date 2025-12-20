@@ -1,7 +1,6 @@
 """Tests for ccstatusline integration."""
 
 import json
-import subprocess
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -13,8 +12,6 @@ from ccproxy.config import CCProxyConfig, StatuslineConfig, clear_config_instanc
 from ccproxy.handler import CCProxyHandler
 from ccproxy.routes import router
 from ccproxy.statusline import (
-    CCSTATUSLINE_SETTINGS,
-    CLAUDE_SETTINGS,
     check_bun_available,
     check_npm_available,
     format_status_output,
@@ -250,9 +247,7 @@ class TestInstallStatusline:
 
     @patch("ccproxy.statusline.check_npm_available", return_value=True)
     @patch("subprocess.run")
-    def test_install_fresh_npm(
-        self, mock_run: Mock, mock_npm: Mock, tmp_path: Path, capsys
-    ) -> None:
+    def test_install_fresh_npm(self, mock_run: Mock, mock_npm: Mock, tmp_path: Path, capsys) -> None:
         """Test fresh installation with npm."""
         claude_settings = tmp_path / "claude_settings.json"
         cc_settings = tmp_path / "ccstatusline_settings.json"
@@ -327,9 +322,7 @@ class TestInstallStatusline:
 
     @patch("ccproxy.statusline.check_npm_available", return_value=True)
     @patch("subprocess.run")
-    def test_install_existing_no_force(
-        self, mock_run: Mock, mock_npm: Mock, tmp_path: Path, capsys
-    ) -> None:
+    def test_install_existing_no_force(self, mock_run: Mock, mock_npm: Mock, tmp_path: Path, capsys) -> None:
         """Test install with existing config and force=False."""
         claude_settings = tmp_path / "claude_settings.json"
         existing_config = {"statusLine": {"type": "command", "command": "existing"}}
@@ -351,9 +344,7 @@ class TestInstallStatusline:
 
     @patch("ccproxy.statusline.check_npm_available", return_value=True)
     @patch("subprocess.run")
-    def test_install_with_force_overwrites(
-        self, mock_run: Mock, mock_npm: Mock, tmp_path: Path
-    ) -> None:
+    def test_install_with_force_overwrites(self, mock_run: Mock, mock_npm: Mock, tmp_path: Path) -> None:
         """Test install with force=True overwrites existing config."""
         claude_settings = tmp_path / "claude_settings.json"
         cc_settings = tmp_path / "ccstatusline_settings.json"
@@ -393,9 +384,7 @@ class TestInstallStatusline:
 
     @patch("ccproxy.statusline.check_npm_available", return_value=True)
     @patch("subprocess.run")
-    def test_install_json_decode_error(
-        self, mock_run: Mock, mock_npm: Mock, tmp_path: Path, capsys
-    ) -> None:
+    def test_install_json_decode_error(self, mock_run: Mock, mock_npm: Mock, tmp_path: Path, capsys) -> None:
         """Test install handles malformed JSON gracefully."""
         claude_settings = tmp_path / "claude_settings.json"
         claude_settings.parent.mkdir(parents=True, exist_ok=True)
@@ -412,9 +401,7 @@ class TestInstallStatusline:
 
     @patch("ccproxy.statusline.check_npm_available", return_value=True)
     @patch("subprocess.run")
-    def test_install_creates_directories(
-        self, mock_run: Mock, mock_npm: Mock, tmp_path: Path
-    ) -> None:
+    def test_install_creates_directories(self, mock_run: Mock, mock_npm: Mock, tmp_path: Path) -> None:
         """Test install creates parent directories if they don't exist."""
         claude_settings = tmp_path / "nonexistent" / "claude_settings.json"
 

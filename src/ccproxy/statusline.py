@@ -10,7 +10,6 @@ import json
 import logging
 import shutil
 import subprocess
-import sys
 import uuid
 from pathlib import Path
 from typing import Any
@@ -138,8 +137,8 @@ def install_statusline(
 
         # Check if statusLine already configured
         if "statusLine" in settings and not force:
-            print(f"  [yellow]statusLine already configured[/yellow]")
-            print(f"  Use --force to overwrite")
+            print("  [yellow]statusLine already configured[/yellow]")
+            print("  Use --force to overwrite")
         else:
             settings["statusLine"] = {
                 "type": "command",
@@ -147,7 +146,7 @@ def install_statusline(
                 "padding": 0,
             }
             claude_settings_path.write_text(json.dumps(settings, indent=2))
-            print(f"  [green]Added statusLine configuration[/green]")
+            print("  [green]Added statusLine configuration[/green]")
 
     except json.JSONDecodeError as e:
         print(f"  [red]Error parsing {claude_settings_path}: {e}[/red]")
@@ -176,8 +175,8 @@ def install_statusline(
                     break
 
         if ccproxy_widget_exists and not force:
-            print(f"  [yellow]ccproxy widget already configured[/yellow]")
-            print(f"  Use --force to overwrite")
+            print("  [yellow]ccproxy widget already configured[/yellow]")
+            print("  Use --force to overwrite")
         else:
             # Remove existing ccproxy widgets if force
             if force:
@@ -201,17 +200,17 @@ def install_statusline(
 
             cc_settings["lines"] = lines
             CCSTATUSLINE_SETTINGS.write_text(json.dumps(cc_settings, indent=2))
-            print(f"  [green]Added ccproxy widget[/green]")
+            print("  [green]Added ccproxy widget[/green]")
 
     except json.JSONDecodeError as e:
         print(f"  [yellow]Warning: Could not parse {CCSTATUSLINE_SETTINGS}: {e}[/yellow]")
-        print(f"  [dim]Run ccstatusline TUI to configure manually[/dim]")
+        print("  [dim]Run ccstatusline TUI to configure manually[/dim]")
     except OSError as e:
         print(f"  [yellow]Warning: Could not write {CCSTATUSLINE_SETTINGS}: {e}[/yellow]")
-        print(f"  [dim]Run ccstatusline TUI to configure manually[/dim]")
+        print("  [dim]Run ccstatusline TUI to configure manually[/dim]")
 
     # Step 3: Verify ccstatusline is accessible
-    print(f"\n[cyan]Step 3:[/cyan] Verifying ccstatusline installation")
+    print("\n[cyan]Step 3:[/cyan] Verifying ccstatusline installation")
 
     try:
         # Just check if the command exists, don't actually run it
@@ -249,7 +248,7 @@ def uninstall_statusline(claude_config_dir: Path | None = None) -> bool:
 
     claude_settings_path = claude_config_dir / "settings.json" if claude_config_dir else CLAUDE_SETTINGS
 
-    print(f"\n[cyan]Removing statusLine from Claude Code settings[/cyan]")
+    print("\n[cyan]Removing statusLine from Claude Code settings[/cyan]")
 
     try:
         if not claude_settings_path.exists():
@@ -259,12 +258,12 @@ def uninstall_statusline(claude_config_dir: Path | None = None) -> bool:
         settings = json.loads(claude_settings_path.read_text())
 
         if "statusLine" not in settings:
-            print(f"  [yellow]No statusLine configuration found[/yellow]")
+            print("  [yellow]No statusLine configuration found[/yellow]")
             return True
 
         del settings["statusLine"]
         claude_settings_path.write_text(json.dumps(settings, indent=2))
-        print(f"  [green]Removed statusLine configuration[/green]")
+        print("  [green]Removed statusLine configuration[/green]")
 
     except json.JSONDecodeError as e:
         print(f"  [red]Error parsing {claude_settings_path}: {e}[/red]")
@@ -273,11 +272,11 @@ def uninstall_statusline(claude_config_dir: Path | None = None) -> bool:
         print(f"  [red]Error writing {claude_settings_path}: {e}[/red]")
         return False
 
-    print(f"\n[cyan]Removing ccproxy widget from ccstatusline[/cyan]")
+    print("\n[cyan]Removing ccproxy widget from ccstatusline[/cyan]")
 
     try:
         if not CCSTATUSLINE_SETTINGS.exists():
-            print(f"  [yellow]No ccstatusline settings found[/yellow]")
+            print("  [yellow]No ccstatusline settings found[/yellow]")
             return True
 
         cc_settings = json.loads(CCSTATUSLINE_SETTINGS.read_text())
@@ -294,9 +293,9 @@ def uninstall_statusline(claude_config_dir: Path | None = None) -> bool:
         if removed:
             cc_settings["lines"] = lines
             CCSTATUSLINE_SETTINGS.write_text(json.dumps(cc_settings, indent=2))
-            print(f"  [green]Removed ccproxy widget[/green]")
+            print("  [green]Removed ccproxy widget[/green]")
         else:
-            print(f"  [yellow]No ccproxy widget found[/yellow]")
+            print("  [yellow]No ccproxy widget found[/yellow]")
 
     except (json.JSONDecodeError, OSError) as e:
         print(f"  [yellow]Warning: Could not update ccstatusline settings: {e}[/yellow]")
