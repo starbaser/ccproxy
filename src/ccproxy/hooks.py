@@ -1,3 +1,36 @@
+"""LiteLLM hook functions for ccproxy request processing pipeline.
+
+This module provides hooks that are executed during LiteLLM's request lifecycle
+via async_pre_call_hook. Hooks are configured in ccproxy.yaml and executed in order.
+
+Hook Execution Order (typical configuration):
+    1. rule_evaluator - Classify request, determine routing label
+    2. model_router - Route to actual LiteLLM model based on label
+    3. capture_headers - Capture HTTP headers for observability
+    4. forward_oauth - Forward OAuth Bearer tokens to providers
+    5. add_beta_headers - Add anthropic-beta headers for Claude Code
+    6. inject_claude_code_identity - Inject required system message for OAuth
+
+Data Flow:
+    Each hook receives and returns a ``data`` dict containing:
+
+    - model: The model name being requested
+    - messages: The conversation messages
+    - metadata: Dict for storing routing decisions and trace info
+    - proxy_server_request: Original HTTP request info (headers, body, etc.)
+    - secret_fields: Sensitive data including raw_headers with auth
+    - provider_specific_header: Headers to forward to the LLM provider
+
+Metadata Keys Set by Hooks:
+    - ccproxy_alias_model: Original model requested by client
+    - ccproxy_model_name: Classification label from rule evaluation
+    - ccproxy_litellm_model: Actual LiteLLM model to use
+    - ccproxy_model_config: Full model configuration dict
+    - ccproxy_is_passthrough: Whether request bypassed routing
+    - session_id: Extracted session ID for LangFuse
+    - trace_metadata: Dict of key-value pairs for LangFuse traces
+"""
+
 import logging
 import re
 import threading
@@ -10,7 +43,6 @@ from ccproxy.classifier import RequestClassifier
 from ccproxy.config import get_config
 from ccproxy.router import ModelRouter
 
-# Set up structured logging
 logger = logging.getLogger(__name__)
 
 # Global storage for request metadata, keyed by litellm_call_id
@@ -43,6 +75,10 @@ def get_request_metadata(call_id: str) -> dict[str, Any]:
 
 
 # Beta headers required for Claude Code impersonation (Claude Max OAuth support)
+# - oauth-2025-04-20: Enable OAuth Bearer token authentication
+# - claude-code-20250219: Identify as Claude Code client
+# - interleaved-thinking-2025-05-14: Enable extended thinking in responses
+# - fine-grained-tool-streaming-2025-05-14: Enable tool streaming
 ANTHROPIC_BETA_HEADERS = [
     "oauth-2025-04-20",
     "claude-code-20250219",
@@ -50,16 +86,31 @@ ANTHROPIC_BETA_HEADERS = [
     "fine-grained-tool-streaming-2025-05-14",
 ]
 
-# Headers containing secrets - redact but show prefix/suffix for identification
+# Regex patterns for detecting sensitive header values to redact.
+# Pattern captures the prefix to preserve (e.g., "Bearer sk-ant-") while redacting middle.
+# None value means fully redact the entire value.
 SENSITIVE_PATTERNS = {
-    "authorization": r"^(Bearer sk-[a-z]+-|Bearer |sk-[a-z]+-)",  # Keep "Bearer sk-ant-" or "Bearer " or "sk-ant-"
-    "x-api-key": r"^(sk-[a-z]+-)",
-    "cookie": None,  # Fully redact
+    "authorization": r"^(Bearer sk-[a-z]+-|Bearer |sk-[a-z]+-)",  # Keep prefix like "Bearer sk-ant-"
+    "x-api-key": r"^(sk-[a-z]+-)",  # Keep prefix like "sk-ant-"
+    "cookie": None,  # Fully redact - no safe prefix
 }
 
 
 def _redact_value(header: str, value: str) -> str:
-    """Redact sensitive header values, keeping prefix and last 4 chars."""
+    """Redact sensitive header values while preserving identifying prefix and suffix.
+
+    For headers matching SENSITIVE_PATTERNS, extracts the prefix (e.g., "Bearer sk-ant-")
+    and last 4 characters, replacing the middle with "...". This allows identifying
+    the token type without exposing the full secret.
+
+    Args:
+        header: Header name (case-insensitive matching against SENSITIVE_PATTERNS)
+        value: Header value to potentially redact
+
+    Returns:
+        Redacted value like "Bearer sk-ant-...abcd" or "[REDACTED]" for cookies,
+        or truncated value (max 200 chars) for non-sensitive headers.
+    """
     header_lower = header.lower()
     if header_lower in SENSITIVE_PATTERNS:
         pattern = SENSITIVE_PATTERNS[header_lower]
@@ -73,6 +124,22 @@ def _redact_value(header: str, value: str) -> str:
 
 
 def rule_evaluator(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+    """Evaluate classification rules to determine request routing label.
+
+    Runs the RequestClassifier against the request data. The classifier evaluates
+    rules in configured order (first match wins) and returns a label like "thinking",
+    "haiku", or "default".
+
+    Args:
+        data: Request data dict from LiteLLM
+        user_api_key_dict: User API key information (unused)
+        **kwargs: Must contain 'classifier' (RequestClassifier instance)
+
+    Returns:
+        Modified data dict with metadata fields set:
+        - ccproxy_alias_model: Original model from request
+        - ccproxy_model_name: Classification label for routing
+    """
     classifier = kwargs.get("classifier")
     if not isinstance(classifier, RequestClassifier):
         logger.warning("Classifier not found or invalid type in rule_evaluator")
@@ -90,6 +157,32 @@ def rule_evaluator(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kw
 
 
 def model_router(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+    """Route request to actual LiteLLM model based on classification label.
+
+    Takes the ccproxy_model_name from rule_evaluator and looks up the corresponding
+    model configuration from the ModelRouter. Supports passthrough mode where
+    "default" classification keeps the original requested model.
+
+    Routing Logic:
+        1. If label is "default" and passthrough enabled: keep original model
+        2. Otherwise: look up model config for label from router
+        3. If no config found: try reload, then raise ValueError
+
+    Args:
+        data: Request data dict from LiteLLM (must have metadata.ccproxy_model_name)
+        user_api_key_dict: User API key information (unused)
+        **kwargs: Must contain 'router' (ModelRouter instance)
+
+    Returns:
+        Modified data dict with:
+        - model: Updated to routed model name
+        - metadata.ccproxy_litellm_model: The model being used
+        - metadata.ccproxy_model_config: Full model config dict
+        - metadata.ccproxy_is_passthrough: True if using passthrough mode
+
+    Raises:
+        ValueError: If no model configured for label and no default fallback
+    """
     router = kwargs.get("router")
     if not isinstance(router, ModelRouter):
         logger.warning("Router not found or invalid type in model_router")
@@ -284,8 +377,24 @@ def capture_headers(data: dict[str, Any], user_api_key_dict: dict[str, Any], **k
 def forward_oauth(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
     """Forward OAuth token to provider if configured.
 
-    This hook checks if the request is going to a provider that has an OAuth token
-    configured in oat_sources, and if so, forwards that token in the authorization header.
+    Detects the target provider from routing metadata and forwards the OAuth
+    Bearer token from the incoming request. For Anthropic, also clears x-api-key
+    (required for OAuth auth) and sets custom User-Agent if configured.
+
+    Provider Detection:
+        1. Try LiteLLM's get_llm_provider() with model/api_base
+        2. Fallback to name-based detection (claude->anthropic, gpt->openai)
+
+    Args:
+        data: Request data dict from LiteLLM
+        user_api_key_dict: User API key information (unused)
+        **kwargs: Additional keyword arguments (unused)
+
+    Returns:
+        Modified data dict with provider_specific_header.extra_headers set:
+        - authorization: Bearer token
+        - x-api-key: Empty string (for Anthropic OAuth)
+        - user-agent: Custom agent if configured
     """
     request = data.get("proxy_server_request")
     if request is None:
@@ -465,7 +574,18 @@ def add_beta_headers(data: dict[str, Any], user_api_key_dict: dict[str, Any], **
     """Add anthropic-beta headers for Claude Code impersonation.
 
     When routing to Anthropic, adds the required beta headers that allow
-    Claude Max OAuth tokens to be accepted by Anthropic's API.
+    Claude Max OAuth tokens to be accepted by Anthropic's API. Headers are
+    set via both provider_specific_header (for proxy) and extra_headers
+    (for direct completion calls).
+
+    Args:
+        data: Request data dict from LiteLLM
+        user_api_key_dict: User API key information (unused)
+        **kwargs: Additional keyword arguments (unused)
+
+    Returns:
+        Modified data dict with anthropic-beta and anthropic-version headers
+        added to both provider_specific_header.extra_headers and extra_headers.
     """
     metadata = data.get("metadata", {})
     routed_model = metadata.get("ccproxy_litellm_model", "")
@@ -542,6 +662,21 @@ def inject_claude_code_identity(
     Anthropic's OAuth tokens are restricted to Claude Code. To use them, the API
     request must include a system message that starts with "You are Claude Code".
     This hook prepends that required prefix to the system message when OAuth is detected.
+
+    System Message Handling:
+        - String: Prepend prefix with double newline separator
+        - List of content blocks: Insert prefix block at index 0
+        - Missing: Set system to just the prefix
+
+    Args:
+        data: Request data dict from LiteLLM
+        user_api_key_dict: User API key information (unused)
+        **kwargs: Additional keyword arguments (unused)
+
+    Returns:
+        Modified data dict with system message containing required prefix.
+        Only modifies if authorization header contains "Bearer sk-ant-oat"
+        (OAuth token) and routed model contains "claude" (Anthropic provider).
     """
     # Check if this is an OAuth request by looking at the authorization header
     secret_fields = data.get("secret_fields") or {}
@@ -572,9 +707,9 @@ def inject_claude_code_identity(
         elif isinstance(system_msg, list):
             # System is array of content blocks
             has_prefix = any(
-                isinstance(block, dict) and
-                block.get("type") == "text" and
-                CLAUDE_CODE_SYSTEM_PREFIX in block.get("text", "")
+                isinstance(block, dict)
+                and block.get("type") == "text"
+                and CLAUDE_CODE_SYSTEM_PREFIX in block.get("text", "")
                 for block in system_msg
             )
             if not has_prefix:
