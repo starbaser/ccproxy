@@ -113,6 +113,8 @@ Request → CCProxyHandler → Hook Pipeline → Response
   - `extract_session_id` - Extracts session identifiers
   - `capture_headers` - Captures HTTP headers with sensitive redaction (supports `headers` param)
   - `forward_apikey` - Forwards x-api-key header
+  - `add_beta_headers` - Adds anthropic-beta headers for Claude Code OAuth
+  - `inject_claude_code_identity` - Injects required system message for OAuth
 - **cli.py**: Tyro-based CLI interface (~900 lines) for managing the proxy server.
 - **utils.py**: Template discovery and debug utilities (`dt()`, `dv()`, `d()`, `p()`).
 

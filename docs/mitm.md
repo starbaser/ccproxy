@@ -74,32 +74,32 @@ ccproxy:
 
 ## CLI Commands
 
-### Start MITM Proxy
+### Start with MITM Capture
 
 ```bash
-# Start in foreground
-ccproxy mitm start
+# Start LiteLLM proxy with MITM capture enabled
+ccproxy start --mitm --detach
 
-# Start in background
-ccproxy mitm start --detach
-
-# Custom port and upstream
-ccproxy mitm start --port 8082 --upstream http://localhost:5000 -d
+# This starts the dual-proxy architecture:
+# - MITM reverse proxy on :4000 (receives client requests)
+# - LiteLLM on random internal port
+# - MITM forward proxy on :8081 (captures outbound API calls)
 ```
 
 **Options:**
-- `--port`: Port to listen on (default: 8081)
-- `--upstream`: Upstream proxy URL (default: http://localhost:4000)
+- `--mitm`: Enable MITM traffic capture
 - `--detach` / `-d`: Run in background
 
 **Process management:**
-- PID file: `~/.ccproxy/.mitm.lock`
-- Log file: `~/.ccproxy/mitm.log`
+- LiteLLM PID file: `~/.ccproxy/litellm.lock`
+- MITM reverse PID file: `~/.ccproxy/.mitm-reverse.lock`
+- MITM forward PID file: `~/.ccproxy/.mitm-forward.lock`
+- Log files: `~/.ccproxy/litellm.log`, `~/.ccproxy/mitm-*.log`
 
-### Stop MITM Proxy
+### Stop All Proxies
 
 ```bash
-ccproxy mitm stop
+ccproxy stop  # Stops LiteLLM and both MITM proxies
 ```
 
 Sends `SIGTERM` for graceful shutdown, falls back to `SIGKILL` if needed.
@@ -108,21 +108,10 @@ Sends `SIGTERM` for graceful shutdown, falls back to `SIGKILL` if needed.
 
 ```bash
 # Human-readable output
-ccproxy mitm status
+ccproxy status
 
 # JSON output
-ccproxy mitm status --json
-```
-
-**JSON output example:**
-
-```json
-{
-  "running": true,
-  "pid": 12345,
-  "pid_file": "/home/user/.ccproxy/.mitm.lock",
-  "log_file": "/home/user/.ccproxy/mitm.log"
-}
+ccproxy status --json
 ```
 
 ## Database Schema
@@ -271,20 +260,25 @@ ccproxy run claude -p "test"
 # - ANTHROPIC_BASE_URL=http://localhost:8081
 ```
 
-**Traffic flow:**
+**Dual-proxy traffic flow:**
 
 ```
-┌────────┐        ┌──────────┐        ┌──────────┐        ┌────────┐
-│ Client │───────▶│ Mitmproxy│───────▶│ LiteLLM  │───────▶│  LLM   │
-│        │        │  :8081   │        │  :4000   │        │  API   │
-└────────┘        └──────────┘        └──────────┘        └────────┘
-                       │
-                       ↓
-                  ┌──────────┐
-                  │PostgreSQL│
-                  │  Traces  │
-                  └──────────┘
+┌────────┐     ┌───────────┐     ┌──────────┐     ┌───────────┐     ┌────────┐
+│ Client │────▶│ MITM Rev. │────▶│ LiteLLM  │────▶│ MITM Fwd. │────▶│  LLM   │
+│        │     │   :4000   │     │ (random) │     │   :8081   │     │  API   │
+└────────┘     └─────┬─────┘     └──────────┘     └─────┬─────┘     └────────┘
+                     │                                   │
+                     └──────────────┬────────────────────┘
+                                    ↓
+                              ┌──────────┐
+                              │PostgreSQL│
+                              │  Traces  │
+                              └──────────┘
 ```
+
+The dual-proxy architecture captures traffic at both ends:
+- **MITM Reverse** (:4000): Captures incoming client requests before LiteLLM processing
+- **MITM Forward** (:8081): Captures outbound API calls to LLM providers
 
 ### Debugging Workflow
 

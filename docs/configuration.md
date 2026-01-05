@@ -180,6 +180,8 @@ ccproxy:
 2. **model_router**: Maps rule names to model configurations
 3. **forward_oauth**: Forwards OAuth tokens to Anthropic API (for subscription accounts with credentials fallback)
 4. **forward_apikey**: Forwards x-api-key headers from incoming requests (for API key authentication)
+5. **add_beta_headers**: Adds required `anthropic-beta` headers for Claude Code OAuth tokens
+6. **inject_claude_code_identity**: Injects required system message prefix for Anthropic OAuth authentication
 
 **Note**: Use either `forward_oauth` (subscription account) OR `forward_apikey` (API key), depending on your Claude Code authentication method.
 
@@ -498,6 +500,35 @@ def my_hook(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwargs: A
     threshold = kwargs.get("threshold", 1000)
     return data
 ```
+
+### Claude Code OAuth Support
+
+For Claude Max subscription accounts using OAuth tokens, add these hooks to enable full Claude Code functionality:
+
+```yaml
+ccproxy:
+  hooks:
+    - ccproxy.hooks.rule_evaluator
+    - ccproxy.hooks.model_router
+    - ccproxy.hooks.forward_oauth
+    - ccproxy.hooks.add_beta_headers           # Required for OAuth
+    - ccproxy.hooks.inject_claude_code_identity # Required for OAuth
+```
+
+#### add_beta_headers
+
+Adds `anthropic-beta` headers required for Claude Code feature access:
+
+- `oauth-2025-04-20` - OAuth Bearer token authentication
+- `claude-code-20250219` - Claude Code client identification
+- `interleaved-thinking-2025-05-14` - Extended thinking support
+- `fine-grained-tool-streaming-2025-05-14` - Tool streaming
+
+#### inject_claude_code_identity
+
+Injects required system message prefix for Anthropic OAuth tokens. Anthropic validates that OAuth tokens are used only with Claude Code by checking the system message starts with "You are Claude Code".
+
+This hook automatically prepends the required prefix to requests using OAuth Bearer tokens (`sk-ant-oat-*`).
 
 ## Debugging
 
