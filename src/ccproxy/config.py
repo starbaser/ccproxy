@@ -39,6 +39,7 @@ import importlib
 import logging
 import subprocess
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -217,8 +218,14 @@ class CCProxyConfig(BaseSettings):
     # Extended: {"gemini": {"command": "jq -r '.token' ~/.gemini/creds.json", "user_agent": "MyApp/1.0"}}
     oat_sources: dict[str, str | OAuthSource] = Field(default_factory=dict)
 
-    # Cached OAuth tokens (loaded at startup) - dict mapping provider name to token
-    _oat_values: dict[str, str] = PrivateAttr(default_factory=dict)
+    # OAuth TTL in seconds (default 8 hours)
+    oauth_ttl: int = 28800
+
+    # OAuth refresh buffer (refresh at 90% of TTL by default)
+    oauth_refresh_buffer: float = 0.1
+
+    # Cached OAuth tokens (loaded at startup) - dict mapping provider name to (token, timestamp)
+    _oat_values: dict[str, tuple[str, float]] = PrivateAttr(default_factory=dict)
 
     # Cached OAuth user agents (loaded at startup) - dict mapping provider name to user-agent
     _oat_user_agents: dict[str, str] = PrivateAttr(default_factory=dict)
@@ -242,7 +249,7 @@ class CCProxyConfig(BaseSettings):
         Returns:
             Dict mapping provider name to OAuth token
         """
-        return self._oat_values
+        return {provider: token for provider, (token, _) in self._oat_values.items()}
 
     def get_oauth_token(self, provider: str) -> str | None:
         """Get OAuth token for a specific provider.
@@ -253,7 +260,103 @@ class CCProxyConfig(BaseSettings):
         Returns:
             OAuth token string or None if not configured for this provider
         """
-        return self._oat_values.get(provider)
+        entry = self._oat_values.get(provider)
+        return entry[0] if entry else None
+
+    def is_token_expired(self, provider: str) -> bool:
+        """Check if OAuth token for provider needs refresh using TTL buffer rule.
+
+        Args:
+            provider: Provider name (e.g., "anthropic", "gemini")
+
+        Returns:
+            True if token is missing or has exceeded TTL buffer threshold
+        """
+        entry = self._oat_values.get(provider)
+        if not entry:
+            return True
+        _, loaded_at = entry
+        # Refresh at (1 - buffer) of TTL (e.g., 90% through TTL with 0.1 buffer)
+        refresh_threshold = self.oauth_ttl * (1 - self.oauth_refresh_buffer)
+        return time.time() - loaded_at >= refresh_threshold
+
+    def _execute_oauth_command(self, provider: str) -> tuple[str, str | None] | None:
+        """Execute OAuth command for a provider and return (token, user_agent) or None on failure.
+
+        Args:
+            provider: Provider name to fetch token for
+
+        Returns:
+            Tuple of (token, user_agent) on success, None on failure
+        """
+        source = self.oat_sources.get(provider)
+        if not source:
+            logger.warning(f"No OAuth source configured for provider '{provider}'")
+            return None
+
+        # Normalize to OAuthSource
+        if isinstance(source, str):
+            oauth_source = OAuthSource(command=source)
+        elif isinstance(source, OAuthSource):
+            oauth_source = source
+        elif isinstance(source, dict):
+            oauth_source = OAuthSource(**source)
+        else:
+            logger.error(f"Invalid OAuth source type for provider '{provider}': {type(source)}")
+            return None
+
+        try:
+            result = subprocess.run(  # noqa: S602
+                oauth_source.command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+
+            if result.returncode != 0:
+                logger.error(
+                    f"OAuth command for provider '{provider}' failed with exit code "
+                    f"{result.returncode}: {result.stderr.strip()}"
+                )
+                return None
+
+            token = result.stdout.strip()
+            if not token:
+                logger.error(f"OAuth command for provider '{provider}' returned empty output")
+                return None
+
+            return (token, oauth_source.user_agent)
+
+        except subprocess.TimeoutExpired:
+            logger.error(f"OAuth command for provider '{provider}' timed out after 5 seconds")
+            return None
+        except Exception as e:
+            logger.error(f"Failed to execute OAuth command for provider '{provider}': {e}")
+            return None
+
+    def refresh_oauth_token(self, provider: str) -> str | None:
+        """Refresh OAuth token for a specific provider by re-executing its command.
+
+        Thread-safe method that updates the cached token with new value and timestamp.
+
+        Args:
+            provider: Provider name (e.g., "anthropic", "gemini")
+
+        Returns:
+            New token string on success, None on failure
+        """
+        with _config_lock:
+            result = self._execute_oauth_command(provider)
+            if result is None:
+                return None
+
+            token, user_agent = result
+            self._oat_values[provider] = (token, time.time())
+            if user_agent:
+                self._oat_user_agents[provider] = user_agent
+            logger.debug(f"Refreshed OAuth token for provider '{provider}'")
+            return token
 
     def get_oauth_user_agent(self, provider: str) -> str | None:
         """Get custom User-Agent for a specific provider.
@@ -273,85 +376,38 @@ class CCProxyConfig(BaseSettings):
             RuntimeError: If any shell command fails to execute or returns empty token
         """
         if not self.oat_sources:
-            # No OAuth sources configured
             self._oat_values = {}
             self._oat_user_agents = {}
             return
 
-        loaded_tokens = {}
-        loaded_user_agents = {}
-        errors = []
+        loaded_tokens: dict[str, tuple[str, float]] = {}
+        loaded_user_agents: dict[str, str] = {}
+        errors: list[str] = []
+        current_time = time.time()
 
-        for provider, source in self.oat_sources.items():
-            # Normalize to OAuthSource for consistent handling
-            if isinstance(source, str):
-                oauth_source = OAuthSource(command=source)
-            elif isinstance(source, OAuthSource):
-                oauth_source = source
-            elif isinstance(source, dict):
-                # Handle dict from YAML
-                oauth_source = OAuthSource(**source)
-            else:
-                error_msg = f"Invalid OAuth source type for provider '{provider}': {type(source)}"
-                logger.error(error_msg)
-                errors.append(error_msg)
+        for provider in self.oat_sources:
+            result = self._execute_oauth_command(provider)
+            if result is None:
+                errors.append(f"Failed to load OAuth token for provider '{provider}'")
                 continue
 
-            try:
-                # Execute shell command
-                result = subprocess.run(  # noqa: S602
-                    oauth_source.command,
-                    shell=True,  # Intentional: command is user-configured
-                    capture_output=True,
-                    text=True,
-                    timeout=5,  # 5 second timeout
-                )
+            token, user_agent = result
+            loaded_tokens[provider] = (token, current_time)
+            logger.debug(f"Successfully loaded OAuth token for provider '{provider}'")
 
-                if result.returncode != 0:
-                    error_msg = (
-                        f"OAuth command for provider '{provider}' failed with exit code "
-                        f"{result.returncode}: {result.stderr.strip()}"
-                    )
-                    logger.error(error_msg)
-                    errors.append(error_msg)
-                    continue
+            if user_agent:
+                loaded_user_agents[provider] = user_agent
+                logger.debug(f"Loaded custom User-Agent for provider '{provider}': {user_agent}")
 
-                token = result.stdout.strip()
-                if not token:
-                    error_msg = f"OAuth command for provider '{provider}' returned empty output"
-                    logger.error(error_msg)
-                    errors.append(error_msg)
-                    continue
-
-                loaded_tokens[provider] = token
-                logger.debug(f"Successfully loaded OAuth token for provider '{provider}'")
-
-                # Store user-agent if specified
-                if oauth_source.user_agent:
-                    loaded_user_agents[provider] = oauth_source.user_agent
-                    logger.debug(f"Loaded custom User-Agent for provider '{provider}': {oauth_source.user_agent}")
-
-            except subprocess.TimeoutExpired:
-                error_msg = f"OAuth command for provider '{provider}' timed out after 5 seconds"
-                logger.error(error_msg)
-                errors.append(error_msg)
-            except Exception as e:
-                error_msg = f"Failed to execute OAuth command for provider '{provider}': {e}"
-                logger.error(error_msg)
-                errors.append(error_msg)
-
-        # Store successfully loaded tokens and user-agents
         self._oat_values = loaded_tokens
         self._oat_user_agents = loaded_user_agents
 
-        # If we had errors but successfully loaded some tokens, log warning
         if errors and loaded_tokens:
             logger.warning(
                 f"Loaded OAuth tokens for {len(loaded_tokens)} provider(s), "
                 f"but {len(errors)} provider(s) failed to load"
             )
 
-        # If all providers failed, raise error
         if errors and not loaded_tokens:
             raise RuntimeError(
                 f"Failed to load OAuth tokens for all {len(self.oat_sources)} provider(s):\n"
@@ -446,6 +502,10 @@ class CCProxyConfig(BaseSettings):
                     instance.default_model_passthrough = ccproxy_data["default_model_passthrough"]
                 if "oat_sources" in ccproxy_data:
                     instance.oat_sources = ccproxy_data["oat_sources"]
+                if "oauth_ttl" in ccproxy_data:
+                    instance.oauth_ttl = ccproxy_data["oauth_ttl"]
+                if "oauth_refresh_buffer" in ccproxy_data:
+                    instance.oauth_refresh_buffer = ccproxy_data["oauth_refresh_buffer"]
                 if "mitm" in ccproxy_data:
                     instance.mitm = MitmConfig(**ccproxy_data["mitm"])
 

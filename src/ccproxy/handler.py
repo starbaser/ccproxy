@@ -1,5 +1,6 @@
 """ccproxy handler - Main LiteLLM CustomLogger implementation."""
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import Any, TypedDict
@@ -11,6 +12,9 @@ from ccproxy.classifier import RequestClassifier
 from ccproxy.config import get_config
 from ccproxy.router import get_router
 from ccproxy.utils import calculate_duration_ms
+
+# Check interval for TTL-based refresh (30 minutes)
+_OAUTH_REFRESH_CHECK_INTERVAL = 1800
 
 # Set up structured logging
 logger = logging.getLogger(__name__)
@@ -29,6 +33,7 @@ class CCProxyHandler(CustomLogger):
     """Main module of ccproxy, an instance of CCProxyHandler is instantiated in the LiteLLM callback python script"""
 
     _last_status: dict[str, Any] | None = None  # Class-level state
+    _oauth_refresh_task: asyncio.Task | None = None  # Background refresh task
 
     def __init__(self) -> None:
         super().__init__()
@@ -90,12 +95,77 @@ class CCProxyHandler(CustomLogger):
         """Get the last routing status for statusline widget."""
         return cls._last_status
 
+    def _is_auth_error(self, response_obj: Any) -> bool:
+        """Check if response indicates authentication failure (401).
+
+        Args:
+            response_obj: LiteLLM response/error object
+
+        Returns:
+            True if response indicates a 401 authentication error
+        """
+        if hasattr(response_obj, "status_code") and response_obj.status_code == 401:
+            return True
+        if hasattr(response_obj, "message"):
+            msg = str(response_obj.message).lower()
+            return "401" in msg or "unauthorized" in msg or "authentication" in msg
+        return False
+
+    def _extract_provider_from_metadata(self, kwargs: dict) -> str | None:
+        """Extract provider name from request metadata.
+
+        Args:
+            kwargs: Request kwargs containing metadata
+
+        Returns:
+            Provider name (e.g., "anthropic", "openai") or None if not determinable
+        """
+        metadata = kwargs.get("metadata", {})
+        model = metadata.get("ccproxy_litellm_model", "") or kwargs.get("model", "")
+        model_lower = model.lower()
+        if "claude" in model_lower or "anthropic" in model_lower:
+            return "anthropic"
+        if "gpt" in model_lower or "openai" in model_lower:
+            return "openai"
+        if "gemini" in model_lower or "google" in model_lower:
+            return "gemini"
+        return None
+
+    async def _start_oauth_refresh_task(self) -> None:
+        """Start background task for TTL-based token refresh if not already running."""
+        if CCProxyHandler._oauth_refresh_task is not None and not CCProxyHandler._oauth_refresh_task.done():
+            return
+        CCProxyHandler._oauth_refresh_task = asyncio.create_task(self._oauth_refresh_loop())
+        logger.debug("Started OAuth background refresh task")
+
+    async def _oauth_refresh_loop(self) -> None:
+        """Background loop to refresh OAuth tokens before expiration."""
+        while True:
+            try:
+                await asyncio.sleep(_OAUTH_REFRESH_CHECK_INTERVAL)
+                config = get_config()
+                for provider in config.oat_sources:
+                    if config.is_token_expired(provider):
+                        new_token = config.refresh_oauth_token(provider)
+                        if new_token:
+                            logger.info(f"TTL refresh: renewed OAuth token for {provider}")
+                        else:
+                            logger.warning(f"TTL refresh: failed to renew OAuth token for {provider}")
+            except asyncio.CancelledError:
+                logger.debug("OAuth refresh loop cancelled")
+                break
+            except Exception as e:
+                logger.warning(f"Error in OAuth refresh loop: {e}")
+
     async def async_pre_call_hook(
         self,
         data: dict[str, Any],
         user_api_key_dict: dict[str, Any],
         **kwargs: Any,
     ) -> dict[str, Any]:
+        # Start background OAuth refresh task if not already running
+        await self._start_oauth_refresh_task()
+
         # Skip custom routing for LiteLLM internal health checks
         # Health checks need to validate actual configured models, not routed ones
         metadata = data.get("metadata", {})
@@ -332,6 +402,18 @@ class CCProxyHandler(CustomLogger):
             log_data["error_message"] = error_message[:500]  # Truncate long messages
 
         logger.error("ccproxy request failed", extra=log_data)
+
+        # Trigger OAuth token refresh on 401 authentication errors
+        if self._is_auth_error(response_obj):
+            provider = self._extract_provider_from_metadata(kwargs)
+            if provider:
+                config = get_config()
+                if provider in config.oat_sources:
+                    new_token = config.refresh_oauth_token(provider)
+                    if new_token:
+                        logger.info(f"401 refresh: renewed OAuth token for {provider}")
+                    else:
+                        logger.warning(f"401 refresh: failed to renew OAuth token for {provider}")
 
     async def async_log_stream_event(
         self,

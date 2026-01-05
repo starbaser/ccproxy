@@ -368,6 +368,23 @@ The `credentials` field is used by the `forward_oauth` hook as a fallback when:
 
 This provides seamless OAuth token forwarding for Claude Code subscription accounts.
 
+### OAuth Token Refresh
+
+ccproxy automatically refreshes OAuth tokens to prevent expiration:
+
+**Configuration options:**
+```yaml
+ccproxy:
+  oauth_ttl: 28800           # Token lifetime in seconds (default: 8 hours)
+  oauth_refresh_buffer: 0.1  # Buffer ratio (default: 10% - refresh at 90% of TTL)
+```
+
+**Refresh triggers:**
+1. **TTL-based**: Background task checks every 30 minutes, refreshes tokens approaching expiration
+2. **401-triggered**: Immediately refreshes token when API returns authentication error
+
+With default settings (8-hour TTL, 10% buffer), tokens refresh automatically at ~7.2 hours.
+
 ## Custom Rules
 
 Create custom routing rules by implementing the `ClassificationRule` interface:
