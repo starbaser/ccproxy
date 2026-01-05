@@ -1,7 +1,5 @@
 """Test anthropic-beta header injection for Claude Code impersonation."""
 
-from unittest.mock import MagicMock, patch
-
 import pytest
 
 from ccproxy.config import clear_config_instance
@@ -83,9 +81,7 @@ class TestAddBetaHeaders:
     def test_merges_with_existing_beta_headers(self, anthropic_model_data, cleanup):
         """Verify existing beta headers are preserved and merged."""
         existing_beta = "some-custom-beta-2025"
-        anthropic_model_data["provider_specific_header"]["extra_headers"]["anthropic-beta"] = (
-            existing_beta
-        )
+        anthropic_model_data["provider_specific_header"]["extra_headers"]["anthropic-beta"] = existing_beta
 
         result = add_beta_headers(anthropic_model_data, {})
 
@@ -102,9 +98,7 @@ class TestAddBetaHeaders:
     def test_deduplicates_beta_headers(self, anthropic_model_data, cleanup):
         """Verify duplicate beta headers are removed."""
         # Pre-populate with a header that will be added by the hook
-        anthropic_model_data["provider_specific_header"]["extra_headers"]["anthropic-beta"] = (
-            "oauth-2025-04-20"
-        )
+        anthropic_model_data["provider_specific_header"]["extra_headers"]["anthropic-beta"] = "oauth-2025-04-20"
 
         result = add_beta_headers(anthropic_model_data, {})
 

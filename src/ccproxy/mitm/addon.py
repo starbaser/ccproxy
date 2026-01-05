@@ -136,7 +136,7 @@ class CCProxyMitmAddon:
 
         # Log request body for debugging
         if request.content:
-            body_preview = request.content[:3000].decode('utf-8', errors='replace')
+            body_preview = request.content[:3000].decode("utf-8", errors="replace")
             logger.info("Request body: %s", body_preview)
 
     async def request(self, flow: http.HTTPFlow) -> None:
@@ -171,7 +171,11 @@ class CCProxyMitmAddon:
 
             # Add body fields if capture_bodies is enabled
             if self.config.capture_bodies:
-                logger.info("max_body_size=%d, content_len=%d", self.config.max_body_size, len(request.content) if request.content else 0)
+                logger.info(
+                    "max_body_size=%d, content_len=%d",
+                    self.config.max_body_size,
+                    len(request.content) if request.content else 0,
+                )
                 trace_data["request_body"] = self._truncate_body(request.content)
                 trace_data["request_body_size"] = len(request.content) if request.content else 0
                 trace_data["request_content_type"] = request.headers.get("content-type", "")

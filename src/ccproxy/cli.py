@@ -540,7 +540,8 @@ def stop_litellm(config_dir: Path) -> bool:
     """
     # Also stop MITM if either proxy is running
     from ccproxy.mitm import stop_mitm
-    from ccproxy.mitm.process import ProxyMode, is_running as mitm_is_running
+    from ccproxy.mitm.process import ProxyMode
+    from ccproxy.mitm.process import is_running as mitm_is_running
     from ccproxy.process import read_pid
 
     reverse_running, _ = mitm_is_running(config_dir, ProxyMode.REVERSE)
