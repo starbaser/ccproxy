@@ -178,10 +178,12 @@ ccproxy:
 
 1. **rule_evaluator**: Evaluates rules against the request to determine routing
 2. **model_router**: Maps rule names to model configurations
-3. **forward_oauth**: Forwards OAuth tokens to Anthropic API (for subscription accounts with credentials fallback)
-4. **forward_apikey**: Forwards x-api-key headers from incoming requests (for API key authentication)
-5. **add_beta_headers**: Adds required `anthropic-beta` headers for Claude Code OAuth tokens
-6. **inject_claude_code_identity**: Injects required system message prefix for Anthropic OAuth authentication
+3. **extract_session_id**: Extracts session_id from Claude Code's user_id for LangFuse session tracking
+4. **capture_headers**: Captures HTTP headers with sensitive value redaction (supports `headers` param)
+5. **forward_oauth**: Forwards OAuth tokens to Anthropic API (for subscription accounts with credentials fallback)
+6. **forward_apikey**: Forwards x-api-key headers from incoming requests (for API key authentication)
+7. **add_beta_headers**: Adds required `anthropic-beta` headers for Claude Code OAuth tokens
+8. **inject_claude_code_identity**: Injects required system message prefix for Anthropic OAuth authentication
 
 **Note**: Use either `forward_oauth` (subscription account) OR `forward_apikey` (API key), depending on your Claude Code authentication method.
 

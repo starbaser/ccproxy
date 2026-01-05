@@ -49,7 +49,7 @@ ccproxy:
     enabled: true              # Enable traffic capture
     port: 8081                 # Mitmproxy listen port
     upstream_proxy: "http://localhost:4000"  # LiteLLM proxy URL
-    max_body_size: 65536       # Max body bytes to capture (64KB)
+    max_body_size: 0              # Max body bytes to capture (0 = unlimited)
     capture_bodies: true       # Store request/response bodies
     excluded_hosts: []         # Hosts to skip (optional)
     cert_dir: null             # Custom SSL cert directory (optional)
@@ -224,26 +224,24 @@ Traffic is automatically classified based on host and path patterns:
 ### Basic Workflow
 
 ```bash
-# 1. Start LiteLLM proxy
-ccproxy start --detach
+# 1. Start proxy with MITM enabled
+ccproxy start --mitm --detach
 
-# 2. Start MITM capture
-ccproxy mitm start --detach
-
-# 3. Run commands through proxy
+# 2. Run commands through proxy
 ccproxy run claude -p "hello world"
 
-# 4. Check status
-ccproxy mitm status
+# 3. Check status
+ccproxy status
 
-# 5. View logs
-tail -f ~/.ccproxy/mitm.log
+# 4. View logs
+tail -f ~/.ccproxy/mitm-reverse.log
+tail -f ~/.ccproxy/mitm-forward.log
 
-# 6. Query database
+# 5. Query database
 psql $DATABASE_URL -c "SELECT * FROM \"CCProxy_HttpTraces\" ORDER BY start_time DESC LIMIT 10;"
 
-# 7. Stop MITM
-ccproxy mitm stop
+# 6. Stop all proxies
+ccproxy stop
 ```
 
 ### Integration with `ccproxy run`
