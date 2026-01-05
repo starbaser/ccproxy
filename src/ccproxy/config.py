@@ -94,8 +94,8 @@ class MitmConfig(BaseModel):
     upstream_proxy: str = "http://localhost:4000"
     """Upstream proxy server URL (typically LiteLLM)"""
 
-    max_body_size: int = 65536
-    """Maximum request/response body size to capture (bytes)"""
+    max_body_size: int = 0
+    """Maximum request/response body size to capture (bytes). 0 = unlimited."""
 
     capture_bodies: bool = True
     """Whether to capture request/response bodies"""

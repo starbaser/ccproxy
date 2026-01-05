@@ -50,14 +50,14 @@ class CCProxyScript:
         self.config = MitmConfig(
             port=mitm_port,
             upstream_proxy=f"http://localhost:{litellm_port}",
-            max_body_size=int(os.environ.get("CCPROXY_MITM_MAX_BODY_SIZE", "65536")),
+            max_body_size=int(os.environ.get("CCPROXY_MITM_MAX_BODY_SIZE", "0")),
         )
 
         logger.info("MITM listening on port %d, forwarding to LiteLLM on port %d", mitm_port, litellm_port)
 
-        database_url = os.environ.get("DATABASE_URL")
+        database_url = os.environ.get("CCPROXY_DATABASE_URL") or os.environ.get("DATABASE_URL")
         if not database_url:
-            logger.warning("DATABASE_URL not set - traces will not be persisted")
+            logger.warning("CCPROXY_DATABASE_URL not set - traces will not be persisted")
             return
 
         try:

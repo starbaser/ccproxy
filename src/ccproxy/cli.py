@@ -449,17 +449,36 @@ def start_litellm(config_dir: Path, args: list[str] | None = None, detach: bool 
     if args:
         cmd.extend(args)
 
-    # Start both MITM proxies if enabled
+    # Start both MITM proxies if enabled (treated as a single unit)
     if mitm:
-        from ccproxy.mitm import ProxyMode, start_mitm
+        import time
+
+        from ccproxy.mitm import ProxyMode, start_mitm, stop_mitm
+        from ccproxy.mitm.process import is_running as mitm_is_running
 
         print("Starting MITM reverse proxy...")
         # MITM₁ (reverse) listens on main_port (4000) and forwards to LiteLLM's random port
         start_mitm(config_dir, port=main_port, litellm_port=litellm_port, mode=ProxyMode.REVERSE, detach=True)
 
+        # Verify reverse proxy started
+        time.sleep(0.5)
+        reverse_running, _ = mitm_is_running(config_dir, ProxyMode.REVERSE)
+        if not reverse_running:
+            print("Error: MITM reverse proxy failed to start", file=sys.stderr)
+            sys.exit(1)
+
         print("Starting MITM forward proxy...")
         # MITM₂ (forward) listens on forward_port (8081) for LiteLLM's outbound calls
         start_mitm(config_dir, port=forward_port, mode=ProxyMode.FORWARD, detach=True)
+
+        # Verify forward proxy started
+        time.sleep(0.5)
+        forward_running, _ = mitm_is_running(config_dir, ProxyMode.FORWARD)
+        if not forward_running:
+            print("Error: MITM forward proxy failed to start", file=sys.stderr)
+            print("Stopping reverse proxy...")
+            stop_mitm(config_dir, ProxyMode.REVERSE)
+            sys.exit(1)
 
     if detach:
         # Run in background mode
@@ -519,15 +538,16 @@ def stop_litellm(config_dir: Path) -> bool:
     Returns:
         True if server was stopped successfully, False otherwise
     """
-    # Also stop MITM if it's running
+    # Also stop MITM if either proxy is running
     from ccproxy.mitm import stop_mitm
-    from ccproxy.mitm.process import is_running as mitm_is_running
+    from ccproxy.mitm.process import ProxyMode, is_running as mitm_is_running
     from ccproxy.process import read_pid
 
-    mitm_running, _ = mitm_is_running(config_dir)
-    if mitm_running:
-        print("Stopping MITM proxy...")
-        stop_mitm(config_dir)
+    reverse_running, _ = mitm_is_running(config_dir, ProxyMode.REVERSE)
+    forward_running, _ = mitm_is_running(config_dir, ProxyMode.FORWARD)
+    if reverse_running or forward_running:
+        print("Stopping MITM proxies...")
+        stop_mitm(config_dir)  # Stops all modes
 
     pid_file = config_dir / "litellm.lock"
 

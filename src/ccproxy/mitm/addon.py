@@ -78,7 +78,7 @@ class CCProxyMitmAddon:
         if not body:
             return None
 
-        if len(body) > self.config.max_body_size:
+        if self.config.max_body_size > 0 and len(body) > self.config.max_body_size:
             return body[: self.config.max_body_size]
 
         return body
@@ -124,6 +124,21 @@ class CCProxyMitmAddon:
                 host,
             )
 
+        # Ensure required beta headers are present for OAuth
+        required_betas = ["oauth-2025-04-20", "claude-code-20250219", "interleaved-thinking-2025-05-14"]
+        existing_beta = request.headers.get("anthropic-beta", "")
+        existing_list = [b.strip() for b in existing_beta.split(",") if b.strip()]
+
+        # Add missing required betas
+        merged = list(dict.fromkeys(required_betas + existing_list))
+        request.headers["anthropic-beta"] = ",".join(merged)
+        logger.info("Set anthropic-beta: %s", request.headers["anthropic-beta"])
+
+        # Log request body for debugging
+        if request.content:
+            body_preview = request.content[:3000].decode('utf-8', errors='replace')
+            logger.info("Request body: %s", body_preview)
+
     async def request(self, flow: http.HTTPFlow) -> None:
         """Process request: fix OAuth headers and capture trace.
 
@@ -156,6 +171,7 @@ class CCProxyMitmAddon:
 
             # Add body fields if capture_bodies is enabled
             if self.config.capture_bodies:
+                logger.info("max_body_size=%d, content_len=%d", self.config.max_body_size, len(request.content) if request.content else 0)
                 trace_data["request_body"] = self._truncate_body(request.content)
                 trace_data["request_body_size"] = len(request.content) if request.content else 0
                 trace_data["request_content_type"] = request.headers.get("content-type", "")

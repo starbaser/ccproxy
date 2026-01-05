@@ -289,7 +289,6 @@ def forward_oauth(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwa
     """
     request = data.get("proxy_server_request")
     if request is None:
-        # No proxy server request, skip OAuth forwarding
         return data
 
     headers = request.get("headers", {})
@@ -316,23 +315,30 @@ def forward_oauth(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwa
     # If no routed model, skip OAuth forwarding
     # We only forward OAuth when we know the target model/provider from routing
     if not routed_model:
+        logger.warning(f"forward_oauth: No routed_model in metadata, skipping. metadata={metadata}")
         return data
 
-    # Use LiteLLM's official provider detection
-    # Returns: (model, custom_llm_provider, dynamic_api_key, api_base)
+    # Detect provider - try LiteLLM first, then fallback to simple name matching
+    provider_name = None
     try:
         _, provider_name, _, _ = get_llm_provider(
             model=routed_model,
             custom_llm_provider=custom_provider,
             api_base=api_base,
         )
-    except Exception as e:
-        # If provider detection fails, skip OAuth forwarding
-        logger.debug(f"Could not determine provider for model {routed_model}: {e}")
-        return data
+    except Exception:
+        # Fallback: simple name-based detection
+        if "claude" in routed_model.lower():
+            provider_name = "anthropic"
+        elif "gemini" in routed_model.lower() or "palm" in routed_model.lower():
+            provider_name = "gemini"
+        elif "gpt" in routed_model.lower():
+            provider_name = "openai"
 
+    logger.debug(f"forward_oauth: Detected provider '{provider_name}' for model '{routed_model}'")
     if not provider_name:
         # Cannot determine provider, skip OAuth forwarding
+        logger.warning(f"forward_oauth: No provider_name detected for model {routed_model}")
         return data
 
     # If no auth header found in request, try to use cached OAuth token as fallback
@@ -354,13 +360,29 @@ def forward_oauth(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwa
     # Only forward if we have an auth header
     if auth_header:
         # Ensure the provider_specific_header structure exists
+        # LiteLLM requires custom_llm_provider when this dict is present
         if "provider_specific_header" not in data:
-            data["provider_specific_header"] = {}
+            data["provider_specific_header"] = {"custom_llm_provider": provider_name}
+        elif "custom_llm_provider" not in data["provider_specific_header"]:
+            data["provider_specific_header"]["custom_llm_provider"] = provider_name
         if "extra_headers" not in data["provider_specific_header"]:
             data["provider_specific_header"]["extra_headers"] = {}
 
         # Set the authorization header
         data["provider_specific_header"]["extra_headers"]["authorization"] = auth_header
+        # Clear x-api-key when using OAuth Bearer (Anthropic requires empty x-api-key with OAuth)
+        data["provider_specific_header"]["extra_headers"]["x-api-key"] = ""
+
+        # Also set api_key for LiteLLM's internal handling
+        if auth_header.startswith("Bearer "):
+            oauth_token = auth_header[7:]  # Strip "Bearer " prefix
+            data["api_key"] = oauth_token
+            # LiteLLM's clientside credential handler requires model_group in metadata
+            # when api_key is set dynamically (used for deployment ID generation)
+            if "metadata" not in data:
+                data["metadata"] = {}
+            if "model_group" not in data["metadata"]:
+                data["metadata"]["model_group"] = data.get("model", "default")
 
         # Set custom User-Agent if configured for this provider
         config = get_config()
@@ -457,6 +479,8 @@ def add_beta_headers(data: dict[str, Any], user_api_key_dict: dict[str, Any], **
     api_base = litellm_params.get("api_base")
     custom_provider = litellm_params.get("custom_llm_provider")
 
+    # Detect provider - try LiteLLM first, then fallback to simple name matching
+    provider_name = None
     try:
         _, provider_name, _, _ = get_llm_provider(
             model=routed_model,
@@ -464,26 +488,105 @@ def add_beta_headers(data: dict[str, Any], user_api_key_dict: dict[str, Any], **
             api_base=api_base,
         )
     except Exception:
-        return data
+        # Fallback: simple name-based detection
+        if "claude" in routed_model.lower():
+            provider_name = "anthropic"
 
     if provider_name != "anthropic":
         return data
 
-    # Ensure header structure exists
-    if "provider_specific_header" not in data:
-        data["provider_specific_header"] = {}
-    if "extra_headers" not in data["provider_specific_header"]:
-        data["provider_specific_header"]["extra_headers"] = {}
-
-    # Merge beta headers (preserve existing, add ours, dedupe)
-    existing = data["provider_specific_header"]["extra_headers"].get("anthropic-beta", "")
+    # Build the merged beta headers
+    existing = ""
+    if "provider_specific_header" in data and "extra_headers" in data["provider_specific_header"]:
+        existing = data["provider_specific_header"]["extra_headers"].get("anthropic-beta", "")
+    elif "extra_headers" in data:
+        existing = data["extra_headers"].get("anthropic-beta", "")
     existing_list = [b.strip() for b in existing.split(",") if b.strip()]
     merged = list(dict.fromkeys(ANTHROPIC_BETA_HEADERS + existing_list))
-    data["provider_specific_header"]["extra_headers"]["anthropic-beta"] = ",".join(merged)
+    merged_str = ",".join(merged)
+
+    # Method 1: provider_specific_header (for proxy router)
+    # LiteLLM requires custom_llm_provider when this dict is present
+    if "provider_specific_header" not in data:
+        data["provider_specific_header"] = {"custom_llm_provider": "anthropic"}
+    elif "custom_llm_provider" not in data["provider_specific_header"]:
+        data["provider_specific_header"]["custom_llm_provider"] = "anthropic"
+    if "extra_headers" not in data["provider_specific_header"]:
+        data["provider_specific_header"]["extra_headers"] = {}
+    data["provider_specific_header"]["extra_headers"]["anthropic-beta"] = merged_str
+    data["provider_specific_header"]["extra_headers"]["anthropic-version"] = "2023-06-01"
+
+    # Method 2: extra_headers (direct to completion call)
+    if "extra_headers" not in data:
+        data["extra_headers"] = {}
+    data["extra_headers"]["anthropic-beta"] = merged_str
+    data["extra_headers"]["anthropic-version"] = "2023-06-01"
 
     logger.info(
         "Added anthropic-beta headers for Claude Code impersonation",
         extra={"event": "beta_headers_added", "model": routed_model},
+    )
+
+    return data
+
+
+# Required system message prefix for Claude Code OAuth tokens
+CLAUDE_CODE_SYSTEM_PREFIX = "You are Claude Code, Anthropic's official CLI for Claude."
+
+
+def inject_claude_code_identity(
+    data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwargs: Any
+) -> dict[str, Any]:
+    """Inject Claude Code identity into system message for OAuth authentication.
+
+    Anthropic's OAuth tokens are restricted to Claude Code. To use them, the API
+    request must include a system message that starts with "You are Claude Code".
+    This hook prepends that required prefix to the system message when OAuth is detected.
+    """
+    # Check if this is an OAuth request by looking at the authorization header
+    secret_fields = data.get("secret_fields") or {}
+    raw_headers = secret_fields.get("raw_headers") or {}
+    auth_header = raw_headers.get("authorization", "")
+
+    # Only inject for OAuth Bearer tokens (sk-ant-oat prefix)
+    if not auth_header.lower().startswith("bearer sk-ant-oat"):
+        return data
+
+    # Detect provider - only inject for Anthropic
+    metadata = data.get("metadata", {})
+    routed_model = metadata.get("ccproxy_litellm_model", "")
+
+    if not routed_model or "claude" not in routed_model.lower():
+        return data
+
+    # Check if system message already contains the required prefix
+    messages = data.get("messages", [])
+
+    # Handle system message - can be string or in messages array
+    system_msg = data.get("system")
+    if system_msg is not None:
+        # System is a separate field (Anthropic native format)
+        if isinstance(system_msg, str):
+            if CLAUDE_CODE_SYSTEM_PREFIX not in system_msg:
+                data["system"] = f"{CLAUDE_CODE_SYSTEM_PREFIX}\n\n{system_msg}"
+        elif isinstance(system_msg, list):
+            # System is array of content blocks
+            has_prefix = any(
+                isinstance(block, dict) and
+                block.get("type") == "text" and
+                CLAUDE_CODE_SYSTEM_PREFIX in block.get("text", "")
+                for block in system_msg
+            )
+            if not has_prefix:
+                prefix_block = {"type": "text", "text": CLAUDE_CODE_SYSTEM_PREFIX}
+                data["system"] = [prefix_block] + system_msg
+    else:
+        # No system message - add one
+        data["system"] = CLAUDE_CODE_SYSTEM_PREFIX
+
+    logger.info(
+        "Injected Claude Code identity for OAuth authentication",
+        extra={"event": "claude_code_identity_injected", "model": routed_model},
     )
 
     return data
