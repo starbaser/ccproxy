@@ -2,6 +2,10 @@ ccproxy:
   debug: true
   handler: "ccproxy.handler:CCProxyHandler"
 
+  # OAuth token refresh settings
+  oauth_ttl: 28800  # Token lifetime in seconds (default: 8 hours)
+  oauth_refresh_buffer: 0.1  # Refresh at 90% of TTL (10% buffer)
+
   # OAuth token sources - shell commands to retrieve tokens for each provider
   oat_sources:
     # Simple string form
@@ -21,6 +25,8 @@ ccproxy:
     #   params:
     #     headers: [user-agent, x-request-id, content-type]
     - ccproxy.hooks.forward_oauth # forwards oauth token to provider (place after routing logic)
+    - ccproxy.hooks.add_beta_headers # adds anthropic-beta headers for Claude Code OAuth
+    - ccproxy.hooks.inject_claude_code_identity # injects required system message for OAuth
     # - ccproxy.hooks.forward_apikey # forwards x-api-key header from request (enable if needed)
 
   # uses the original model that Claude Code requested when no routing rule matches.
