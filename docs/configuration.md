@@ -370,7 +370,15 @@ This provides seamless OAuth token forwarding for Claude Code subscription accou
 
 ### OAuth Token Refresh
 
-ccproxy automatically refreshes OAuth tokens to prevent expiration:
+ccproxy automatically refreshes OAuth tokens to prevent expiration.
+
+**Requirements:**
+- `oat_sources` must be configured with commands that retrieve fresh tokens
+
+**How it works:**
+- Background task starts on first request and checks every 30 minutes
+- Tokens refresh when they reach 90% of their TTL (configurable via `oauth_refresh_buffer`)
+- 401 responses trigger immediate token refresh and request retry
 
 **Configuration options:**
 ```yaml
@@ -384,6 +392,13 @@ ccproxy:
 2. **401-triggered**: Immediately refreshes token when API returns authentication error
 
 With default settings (8-hour TTL, 10% buffer), tokens refresh automatically at ~7.2 hours.
+
+**Custom configuration example:**
+```yaml
+ccproxy:
+  oauth_ttl: 14400           # 4 hours (for shorter-lived tokens)
+  oauth_refresh_buffer: 0.2  # 20% buffer - refresh at 80% of TTL
+```
 
 ## Custom Rules
 

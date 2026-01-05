@@ -169,6 +169,10 @@ The test suite uses pytest with comprehensive fixtures (18 test files, 90% cover
 - **Singleton patterns**: `CCProxyConfig` and `ModelRouter` use thread-safe singletons. Use `clear_config_instance()` and `clear_router()` to reset state in tests.
 - **Token counting**: Uses tiktoken with fallback to character-based estimation for non-OpenAI models.
 - **OAuth token forwarding**: Handled specially for Claude CLI requests. Supports custom User-Agent per provider.
+- **OAuth token refresh**: Automatic refresh with two triggers:
+  - TTL-based: Background task checks every 30 minutes, refreshes at 90% of `oauth_ttl` (default 8h)
+  - 401-triggered: Immediate refresh when API returns authentication error
+  - Config: `oauth_ttl` (seconds), `oauth_refresh_buffer` (ratio, default 0.1)
 - **Request metadata**: Stored by `litellm_call_id` with 60-second TTL auto-cleanup (LiteLLM doesn't preserve custom metadata).
 - **Hook error isolation**: Errors in one hook don't block others from executing.
 - **Lazy model loading**: Models loaded from LiteLLM proxy on first request, not at startup.
