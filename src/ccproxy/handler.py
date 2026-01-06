@@ -261,8 +261,10 @@ class CCProxyHandler(CustomLogger):
                 routing_type = "ROUTED"
 
             # Helper function to truncate and wrap long model names
-            def format_model_name(name: str, max_width: int = 60) -> str:
+            def format_model_name(name: str | None, max_width: int = 60) -> str:
                 """Format model name to fit within max width."""
+                if name is None:
+                    return "<none>"
                 if len(name) <= max_width:
                     return name
                 # Truncate with ellipsis

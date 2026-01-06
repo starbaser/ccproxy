@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **CRITICAL**: The project name is `ccproxy` (lowercase). Do NOT refer to the project as "CCProxy". The PascalCase form is used exclusively for class names (e.g., `CCProxyHandler`, `CCProxyConfig`).
 
-`ccproxy` is a command-line tool that intercepts and routes Claude Code's requests to different LLM providers via a LiteLLM proxy server. It enables intelligent request routing based on token count, model type, tool usage, or custom rules.
+`ccproxy` is a command-line tool that intercepts and routes Claude Code's requests to different LLM providers via a LiteLLM proxy server. It enables intelligent request routing based on token count, model type, tool usage, or custom rules. It also functions as a development platform for new and unexplored features or unofficial mods of Claude Code.
 
 ## Development Commands
 
@@ -150,6 +150,7 @@ Custom rules can be created by implementing the ClassificationRule interface and
 - `~/.ccproxy/ccproxy.py` - Auto-generated handler file (created on `ccproxy start` based on `handler` config)
 
 **Config Discovery Precedence:**
+
 1. `CCPROXY_CONFIG_DIR` environment variable
 2. LiteLLM proxy runtime directory (auto-detected)
 3. `~/.ccproxy/` (default fallback)

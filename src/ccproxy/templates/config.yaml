@@ -35,3 +35,6 @@ litellm_settings:
 
 general_settings:
   forward_client_headers_to_llm_api: true
+  # Set high limits - proxy-level rate limiting not needed for local use
+  max_parallel_requests: 1000000
+  global_max_parallel_requests: 1000000

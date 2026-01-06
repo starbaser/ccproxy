@@ -73,6 +73,12 @@ Without `uv run`, you may encounter import errors like "Could not import handler
 - Test edge cases and error conditions
 - Run the full test suite before submitting: `uv run pytest tests/ -v --cov=ccproxy --cov-report=term-missing`
 
+**E2E Tests**: The test suite includes end-to-end tests that run the real Claude CLI. These tests require:
+- Claude Code CLI installed and available in PATH
+- A logged-in Claude subscription with valid OAuth credentials (`~/.claude/.credentials.json`)
+
+To skip E2E tests: `uv run pytest -m "not e2e"`
+
 ### Pull Request Guidelines
 
 - **One feature per PR**: Keep PRs focused on a single change

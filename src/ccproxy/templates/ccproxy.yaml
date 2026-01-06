@@ -32,6 +32,7 @@ ccproxy:
   # uses the original model that Claude Code requested when no routing rule matches.
   # NOTE: model deployments in config.yaml are still required
   default_model_passthrough: true
+
   rules: []
 
 litellm:

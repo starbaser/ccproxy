@@ -76,6 +76,9 @@ addopts = [
   # Ignore shell integration tests - feature is TBD (generate_shell_integration function is commented out)
   "--ignore=tests/test_shell_integration.py",
 ]
+markers = [
+  "e2e: end-to-end integration tests that run real Claude CLI (may be slow)",
+]
 
 [tool.coverage.run]
 source = ["src/ccproxy"]
@@ -136,7 +139,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101"]
+"tests/*" = ["S101", "S607"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["ccproxy"]
