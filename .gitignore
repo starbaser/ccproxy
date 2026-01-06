@@ -49,6 +49,7 @@ coverage.xml
 .env
 .env.local
 .env.*.local
+.claude/
 
 # Logs
 *.log

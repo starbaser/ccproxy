@@ -104,6 +104,9 @@ class MitmConfig(BaseModel):
     excluded_hosts: list[str] = Field(default_factory=list)
     """List of hosts to exclude from capture"""
 
+    debug: bool = False
+    """Enable debug logging (includes request body logging)"""
+
     cert_dir: Path | None = None
     """Optional directory for SSL certificates"""
 
@@ -507,7 +510,11 @@ class CCProxyConfig(BaseSettings):
                 if "oauth_refresh_buffer" in ccproxy_data:
                     instance.oauth_refresh_buffer = ccproxy_data["oauth_refresh_buffer"]
                 if "mitm" in ccproxy_data:
-                    instance.mitm = MitmConfig(**ccproxy_data["mitm"])
+                    mitm_data = ccproxy_data["mitm"]
+                    # Propagate top-level debug flag if not explicitly set in mitm config
+                    if "debug" not in mitm_data and instance.debug:
+                        mitm_data = {**mitm_data, "debug": instance.debug}
+                    instance.mitm = MitmConfig(**mitm_data)
 
                 # Load statusline configuration
                 if "statusline" in ccproxy_data:

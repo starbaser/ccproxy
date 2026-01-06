@@ -51,6 +51,7 @@ class CCProxyScript:
             port=mitm_port,
             upstream_proxy=f"http://localhost:{litellm_port}",
             max_body_size=int(os.environ.get("CCPROXY_MITM_MAX_BODY_SIZE", "0")),
+            debug=os.environ.get("CCPROXY_DEBUG", "false").lower() in ("true", "1", "yes"),
         )
 
         logger.info("MITM listening on port %d, forwarding to LiteLLM on port %d", mitm_port, litellm_port)

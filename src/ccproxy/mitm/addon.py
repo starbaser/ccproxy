@@ -134,8 +134,8 @@ class CCProxyMitmAddon:
         request.headers["anthropic-beta"] = ",".join(merged)
         logger.info("Set anthropic-beta: %s", request.headers["anthropic-beta"])
 
-        # Log request body for debugging
-        if request.content:
+        # Log request body for debugging (only in debug mode to avoid token exposure)
+        if request.content and self.config.debug:
             body_preview = request.content[:3000].decode("utf-8", errors="replace")
             logger.info("Request body: %s", body_preview)
 
