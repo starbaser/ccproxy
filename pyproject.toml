@@ -36,6 +36,7 @@ dependencies = [
   "tiktoken>=0.5.0",
   "langfuse>=2.0.0,<3.0.0",
   "mitmproxy>=10.0.0",
+  "asyncpg>=0.31.0",
 ]
 
 [project.scripts]
@@ -147,6 +148,7 @@ known-first-party = ["ccproxy"]
 [dependency-groups]
 dev = [
   "beautysh>=6.2.1",
+  "claude-agent-sdk>=0.1.20",
   "coverage>=7.10.1",
   "mypy>=1.17.0",
   "pre-commit>=4.2.0",
