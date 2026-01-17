@@ -86,6 +86,13 @@ ANTHROPIC_BETA_HEADERS = [
     "fine-grained-tool-streaming-2025-05-14",
 ]
 
+# Sentinel API key prefix that triggers OAuth token substitution from ccproxy config.
+# Format: sk-ant-oat-ccproxy-{provider} where {provider} matches a key in oat_sources.
+# Example: sk-ant-oat-ccproxy-anthropic uses the token from oat_sources.anthropic
+# SDK clients can use this value to route through ccproxy with OAuth authentication
+# without needing a real API key.
+OAUTH_SENTINEL_PREFIX = "sk-ant-oat-ccproxy-"
+
 # Regex patterns for detecting sensitive header values to redact.
 # Pattern captures the prefix to preserve (e.g., "Bearer sk-ant-") while redacting middle.
 # None value means fully redact the entire value.
@@ -449,6 +456,26 @@ def forward_oauth(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwa
         # Cannot determine provider, skip OAuth forwarding
         logger.warning(f"forward_oauth: No provider_name detected for model {routed_model}")
         return data
+
+    # Check for sentinel API key that triggers OAuth token substitution
+    # Format: Bearer sk-ant-oat-ccproxy-{provider} or just sk-ant-oat-ccproxy-{provider}
+    sentinel_token = auth_header.removeprefix("Bearer ").strip()
+    if sentinel_token.startswith(OAUTH_SENTINEL_PREFIX):
+        sentinel_provider = sentinel_token[len(OAUTH_SENTINEL_PREFIX):]
+        config = get_config()
+        oauth_token = config.get_oauth_token(sentinel_provider)
+        if oauth_token:
+            logger.info(
+                f"Sentinel key detected, substituting OAuth token for provider '{sentinel_provider}'",
+                extra={"event": "oauth_sentinel_substitution", "provider": sentinel_provider},
+            )
+            auth_header = f"Bearer {oauth_token}"
+        else:
+            logger.warning(
+                f"Sentinel key for provider '{sentinel_provider}' but no OAuth token configured in oat_sources"
+            )
+            # Clear auth_header to trigger fallback logic below
+            auth_header = ""
 
     # If no auth header found in request, try to use cached OAuth token as fallback
     if not auth_header:

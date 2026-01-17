@@ -6,6 +6,37 @@ This directory contains examples demonstrating how to use various Python SDKs wi
 
 These examples show how to route SDK requests through ccproxy to leverage intelligent model routing, request classification, and observability features. All examples assume ccproxy is running locally on the default port (4000).
 
+## OAuth Sentinel Key
+
+ccproxy supports a **sentinel API key** that triggers automatic OAuth token substitution. This allows SDK clients to use ccproxy's cached OAuth credentials without needing a real API key.
+
+**Format:** `sk-ant-oat-ccproxy-{provider}`
+
+**Example for Anthropic:**
+```python
+import anthropic
+
+client = anthropic.Anthropic(
+    api_key="sk-ant-oat-ccproxy-anthropic",  # Sentinel key
+    base_url="http://localhost:4000",
+)
+```
+
+When ccproxy sees this sentinel key, it:
+1. Looks up the OAuth token for the specified provider from `oat_sources` config
+2. Substitutes the sentinel with the real OAuth token
+3. Adds required headers (`anthropic-beta`, etc.)
+4. Injects the "You are Claude Code" system message prefix (for OAuth compliance)
+
+**Requirements:**
+- **MITM mode must be enabled** for native Anthropic SDK usage (system message injection happens at HTTP layer)
+- OAuth credentials configured in `~/.ccproxy/ccproxy.yaml` under `oat_sources`
+
+```bash
+# Start ccproxy with MITM enabled
+ccproxy start --detach --mitm
+```
+
 ## Examples
 
 ### agent_sdk_caching_example.py
@@ -22,42 +53,39 @@ Demonstrates Claude Agent SDK integration with ccproxy for prompt caching monito
 # Install claude-agent-sdk
 uv add claude-agent-sdk
 
-# Start ccproxy with debug logging
-ccproxy start --detach
+# Start ccproxy with MITM for OAuth support
+ccproxy start --detach --mitm
 ccproxy logs -f
 ```
 
 **Usage:**
 ```bash
 # Run the example
-uv run python docs/SDK/agent_sdk_caching_example.py
+uv run python docs/sdk/agent_sdk_caching_example.py
 
 # Run multiple times to observe cache behavior
-uv run python docs/SDK/agent_sdk_caching_example.py
-uv run python docs/SDK/agent_sdk_caching_example.py
+uv run python docs/sdk/agent_sdk_caching_example.py
 ```
 
 **Expected Cache Behavior:**
 - **First run**: Creates cache with substantial context (>1024 tokens)
   - Look for `cache_creation_input_tokens` in usage stats
-  - Subsequent requests can reuse this cached content
 - **Subsequent runs**: Hit existing cache, reducing input token costs
   - Look for `cache_read_input_tokens` > 0 in usage stats
-  - Monitor ccproxy logs for cache metrics
 
 **Environment Variables:**
 - `ANTHROPIC_BASE_URL`: Points to ccproxy (default: `http://localhost:4000`)
-- `ANTHROPIC_API_KEY`: Your Anthropic API key (required for authentication)
+- `ANTHROPIC_API_KEY`: Use sentinel key `sk-ant-oat-ccproxy-anthropic` for OAuth
 
 ---
 
 ### anthropic_sdk.py
 
-Direct usage of the Anthropic SDK with ccproxy using credential forwarding.
+Direct usage of the Anthropic SDK with ccproxy using OAuth credential forwarding.
 
 **Purpose:**
 - Demonstrate non-streaming and streaming requests via Anthropic SDK
-- Show proxy-based authentication (no API key needed in script)
+- Show proxy-based OAuth authentication using sentinel key
 - Simple request/response pattern
 
 **Prerequisites:**
@@ -65,21 +93,22 @@ Direct usage of the Anthropic SDK with ccproxy using credential forwarding.
 # Install anthropic SDK
 uv add anthropic
 
-# Configure credentials in ~/.ccproxy/ccproxy.yaml
-# Start ccproxy
-ccproxy start --detach
+# Configure OAuth credentials in ~/.ccproxy/ccproxy.yaml
+# Start ccproxy with MITM
+ccproxy start --detach --mitm
 ```
 
 **Usage:**
 ```bash
 # Run both simple and streaming examples
-uv run python docs/SDK/anthropic_sdk.py
+uv run python docs/sdk/anthropic_sdk.py
 ```
 
 **Features:**
-- Uses dummy API key (`sk-proxy-dummy`) - proxy handles real authentication
-- Base URL: `http://127.0.0.1:4000`
+- Uses sentinel API key (`sk-ant-oat-ccproxy-anthropic`) - proxy substitutes real OAuth token
+- Base URL: `http://localhost:4000`
 - Demonstrates both `messages.create()` and `messages.stream()` patterns
+- MITM mode injects required headers and system message for OAuth compliance
 
 ---
 
@@ -105,13 +134,13 @@ ccproxy start --detach
 **Usage:**
 ```bash
 # Run both simple and streaming examples
-uv run python docs/SDK/litellm_sdk.py
+uv run python docs/sdk/litellm_sdk.py
 ```
 
 **Features:**
 - Uses `litellm.acompletion()` interface (works with proxies)
 - Async/await patterns for concurrent requests
-- Dummy API key with proxy authentication
+- Sentinel key with proxy authentication
 
 **Note:** The `litellm.anthropic.messages` interface bypasses proxies, so this example uses the standard completion interface instead.
 
@@ -120,7 +149,10 @@ uv run python docs/SDK/litellm_sdk.py
 All examples require ccproxy to be running:
 
 ```bash
-# Start ccproxy in detached mode
+# Start ccproxy with MITM (recommended for Anthropic SDK)
+ccproxy start --detach --mitm
+
+# Or without MITM (for OpenAI-compatible endpoints only)
 ccproxy start --detach
 
 # Monitor logs (optional)
@@ -137,17 +169,40 @@ ccproxy stop
 
 Examples expect ccproxy running with:
 - **Proxy port**: 4000 (default)
-- **Credentials**: Configured in `~/.ccproxy/ccproxy.yaml` or via environment variables
+- **OAuth credentials**: Configured in `~/.ccproxy/ccproxy.yaml` under `oat_sources`
 - **Models**: Defined in `~/.ccproxy/config.yaml` for LiteLLM proxy
+- **MITM mode**: Enabled for native Anthropic SDK usage (`--mitm` flag)
+
+### Example ccproxy.yaml OAuth Configuration
+
+```yaml
+ccproxy:
+  oat_sources:
+    anthropic:
+      command: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+      user_agent: "anthropic"
+
+  mitm:
+    enabled: true
+    port: 8081
+```
 
 ## Troubleshooting
 
 If examples fail:
 
 1. **Verify ccproxy is running**: `ccproxy status`
-2. **Check credentials**: Ensure API key is set in ccproxy configuration
-3. **Review logs**: `ccproxy logs -f` for detailed error messages
-4. **Verify port**: Default is 4000, ensure it's not blocked or in use
+2. **Check MITM is enabled**: Status should show `mitm: reverse on 4000`
+3. **Check OAuth credentials**: Verify `oat_sources` in `~/.ccproxy/ccproxy.yaml`
+4. **Review logs**: `ccproxy logs -f` for detailed error messages
+5. **Check MITM logs**: `tail -f ~/.ccproxy/mitm-forward.log`
+6. **Verify port**: Default is 4000, ensure it's not blocked or in use
+
+### Common Errors
+
+- **"This credential is only authorized for use with Claude Code"**: MITM not enabled or system message not injected. Start with `--mitm` flag.
+- **"invalid x-api-key"**: OAuth headers not being set correctly. Check MITM forward proxy logs.
+- **Connection refused**: ccproxy not running. Check `ccproxy status`.
 
 ## Additional Resources
 
