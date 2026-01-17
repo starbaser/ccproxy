@@ -1,21 +1,22 @@
-"""Agent SDK caching example with ccproxy.
+"""Agent SDK caching example with ccproxy OAuth sentinel key.
 
-This example demonstrates using Claude Agent SDK with ccproxy to monitor
-prompt caching metrics. It creates a substantial prompt with context to
-trigger caching and prints detailed usage statistics including cache hits.
+This example demonstrates using Claude Agent SDK with ccproxy's OAuth
+sentinel key feature to monitor prompt caching metrics. It creates a
+substantial prompt with context to trigger caching and prints detailed
+usage statistics including cache hits.
 
 Purpose:
-    - Demonstrate Agent SDK query() with ccproxy integration
+    - Demonstrate Agent SDK query() with ccproxy OAuth integration
     - Monitor prompt caching effectiveness via usage stats
     - Show how to handle message types and extract metrics
 
 Usage:
-    1. Start ccproxy in development mode with debug logging:
-       ccproxy start --detach
+    1. Start ccproxy with MITM enabled:
+       ccproxy start --detach --mitm
        ccproxy logs -f
 
     2. In another terminal, run this example:
-       uv run python examples/agent_sdk_caching_example.py
+       uv run python docs/sdk/agent_sdk_caching_example.py
 
     3. Run multiple times to observe cache hit metrics in logs
 
@@ -29,8 +30,8 @@ Cache Monitoring:
     - ResultMessage.usage will show cache metrics if available
 
 Environment Variables:
-    ANTHROPIC_BASE_URL: Set to http://localhost:8000 to route through ccproxy
-    ANTHROPIC_API_KEY: Your Anthropic API key (still required for authentication)
+    ANTHROPIC_BASE_URL: Points to ccproxy (http://localhost:4000)
+    ANTHROPIC_API_KEY: OAuth sentinel key (sk-ant-oat-ccproxy-anthropic)
 """
 
 import asyncio
@@ -39,8 +40,9 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 
-# Set base URL to route through ccproxy
+# Configure ccproxy with OAuth sentinel key
 os.environ["ANTHROPIC_BASE_URL"] = "http://localhost:4000"
+os.environ["ANTHROPIC_API_KEY"] = "sk-ant-oat-ccproxy-anthropic"
 
 # Note: claude_agent_sdk must be installed in the same environment
 # Install with: uv add claude-agent-sdk

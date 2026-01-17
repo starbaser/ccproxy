@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
-"""Example using Anthropic SDK with LiteLLM proxy (credentials config).
+"""Example using Anthropic SDK with ccproxy OAuth sentinel key.
 
-This example demonstrates using the Anthropic SDK pointed at the LiteLLM proxy
-WITHOUT requiring an API key variable. The proxy handles authentication via
-its credentials configuration.
+This example demonstrates using the Anthropic SDK with ccproxy's OAuth
+sentinel key feature. The sentinel key `sk-ant-oat-ccproxy-{provider}`
+triggers automatic OAuth token substitution from ccproxy's cached credentials.
 
-This is the recommended approach when the proxy has credentials forwarding
-enabled, as it eliminates the need to manage API keys in your scripts.
-
-Note: We use a dummy API key because the SDK requires it for validation,
-but the actual authentication is handled by the proxy's credentials config.
+Requirements:
+- ccproxy running with MITM enabled: `ccproxy start --detach --mitm`
+- OAuth credentials configured in ~/.ccproxy/ccproxy.yaml under oat_sources
 """
 
 import anthropic
@@ -19,15 +17,18 @@ from rich.panel import Panel
 console = Console()
 err_console = Console(stderr=True)
 
+# OAuth sentinel key - ccproxy substitutes this with real OAuth token
+SENTINEL_KEY = "sk-ant-oat-ccproxy-anthropic"
+
 
 def create_client() -> anthropic.Anthropic:
-    """Create Anthropic client configured for ccproxy.
+    """Create Anthropic client configured for ccproxy with OAuth sentinel key.
 
-    The dummy API key satisfies SDK validation, but the proxy
-    handles actual authentication via credentials configuration.
+    The sentinel key triggers OAuth token substitution in ccproxy's MITM layer,
+    which also injects required headers and system message prefix.
     """
     return anthropic.Anthropic(
-        api_key="sk-proxy-dummy",  # Dummy key - proxy handles real auth
+        api_key=SENTINEL_KEY,
         base_url="http://127.0.0.1:4000",
     )
 
@@ -82,7 +83,7 @@ def main() -> None:
     """Run examples."""
     try:
         # Check if running
-        console.print("[yellow]Note:[/yellow] This script requires ccproxy running with credentials configuration.\n")
+        console.print("[yellow]Note:[/yellow] This script requires ccproxy running with MITM: [cyan]ccproxy start --mitm[/cyan]\n")
 
         # Simple request
         simple_request()
@@ -94,9 +95,9 @@ def main() -> None:
     except Exception:
         console.print(
             "\n[yellow]Troubleshooting:[/yellow]",
-            "1. Start ccproxy: [cyan]ccproxy start[/cyan]",
-            "2. Verify credentials in ~/.ccproxy/ccproxy.yaml",
-            "3. Check proxy logs: [cyan]ccproxy logs[/cyan]",
+            "1. Start ccproxy with MITM: [cyan]ccproxy start --mitm[/cyan]",
+            "2. Verify oat_sources in ~/.ccproxy/ccproxy.yaml",
+            "3. Check MITM logs: [cyan]tail -f ~/.ccproxy/mitm-forward.log[/cyan]",
             sep="\n",
         )
         raise

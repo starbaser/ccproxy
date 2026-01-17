@@ -667,6 +667,99 @@ class TestForwardOAuthWithCredentialsFallback:
             assert "authorization" not in result["provider_specific_header"].get("extra_headers", {})
 
 
+class TestForwardOAuthSentinelKey:
+    """Test forward_oauth hook with sentinel key substitution."""
+
+    def test_sentinel_key_substituted_with_oauth_token(self, user_api_key_dict):
+        """Test that sentinel key sk-ant-oat-ccproxy-{provider} is replaced with real OAuth token."""
+        from ccproxy.config import CCProxyConfig, set_config_instance
+        from ccproxy.hooks import OAUTH_SENTINEL_PREFIX, forward_oauth
+
+        # Set up config with oat_sources for anthropic
+        config = CCProxyConfig(oat_sources={"anthropic": "echo real-oauth-token-123"})
+        config._load_credentials()
+        set_config_instance(config)
+
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {"headers": {"user-agent": "test-sdk/1.0"}},
+            "metadata": {
+                "ccproxy_litellm_model": "claude-sonnet-4-5-20250929",
+                "ccproxy_model_config": {
+                    "litellm_params": {"model": "claude-sonnet-4-5-20250929", "api_base": "https://api.anthropic.com"}
+                },
+            },
+            "secret_fields": {
+                "raw_headers": {"authorization": f"Bearer {OAUTH_SENTINEL_PREFIX}anthropic"}
+            },
+        }
+
+        result = forward_oauth(data, user_api_key_dict)
+
+        # Should substitute sentinel with real OAuth token
+        assert result["provider_specific_header"]["extra_headers"]["authorization"] == "Bearer real-oauth-token-123"
+
+    def test_sentinel_key_without_bearer_prefix(self, user_api_key_dict):
+        """Test sentinel key without Bearer prefix is still recognized."""
+        from ccproxy.config import CCProxyConfig, set_config_instance
+        from ccproxy.hooks import OAUTH_SENTINEL_PREFIX, forward_oauth
+
+        config = CCProxyConfig(oat_sources={"anthropic": "echo oauth-token-456"})
+        config._load_credentials()
+        set_config_instance(config)
+
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {"headers": {"user-agent": "test-sdk/1.0"}},
+            "metadata": {
+                "ccproxy_litellm_model": "claude-sonnet-4-5-20250929",
+                "ccproxy_model_config": {
+                    "litellm_params": {"model": "claude-sonnet-4-5-20250929", "api_base": "https://api.anthropic.com"}
+                },
+            },
+            "secret_fields": {
+                "raw_headers": {"authorization": f"{OAUTH_SENTINEL_PREFIX}anthropic"}  # No Bearer prefix
+            },
+        }
+
+        result = forward_oauth(data, user_api_key_dict)
+
+        # Should still substitute and add Bearer prefix
+        assert result["provider_specific_header"]["extra_headers"]["authorization"] == "Bearer oauth-token-456"
+
+    def test_sentinel_key_provider_not_configured(self, user_api_key_dict):
+        """Test sentinel key for unconfigured provider falls back to default behavior."""
+        from ccproxy.config import CCProxyConfig, set_config_instance
+        from ccproxy.hooks import OAUTH_SENTINEL_PREFIX, forward_oauth
+
+        # Only configure openai, not anthropic
+        config = CCProxyConfig(oat_sources={"openai": "echo openai-token"})
+        config._load_credentials()
+        set_config_instance(config)
+
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {"headers": {"user-agent": "test-sdk/1.0"}},
+            "metadata": {
+                "ccproxy_litellm_model": "claude-sonnet-4-5-20250929",
+                "ccproxy_model_config": {
+                    "litellm_params": {"model": "claude-sonnet-4-5-20250929", "api_base": "https://api.anthropic.com"}
+                },
+            },
+            "secret_fields": {
+                "raw_headers": {"authorization": f"Bearer {OAUTH_SENTINEL_PREFIX}anthropic"}
+            },
+        }
+
+        result = forward_oauth(data, user_api_key_dict)
+
+        # No anthropic token configured, should not have authorization (sentinel was cleared)
+        if "provider_specific_header" in result:
+            auth = result["provider_specific_header"].get("extra_headers", {}).get("authorization", "")
+            # Should either be empty or fall back to some default, but NOT the sentinel key
+            assert OAUTH_SENTINEL_PREFIX not in auth
+
+
 class TestForwardApiKey:
     """Test the forward_apikey hook function."""
 
