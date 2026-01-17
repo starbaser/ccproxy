@@ -144,6 +144,36 @@ uv run python docs/sdk/litellm_sdk.py
 
 **Note:** The `litellm.anthropic.messages` interface bypasses proxies, so this example uses the standard completion interface instead.
 
+---
+
+### zai_anthropic_sdk.py
+
+Using Anthropic SDK to access Z.AI GLM models via ccproxy.
+
+**Purpose:**
+- Demonstrate Anthropic SDK with GLM-4.7 routed through ccproxy
+- Show non-streaming and streaming patterns with messages API
+- Proxy handles authentication via `os.environ/ZAI_API_KEY` in config.yaml
+
+**Prerequisites:**
+```bash
+# Ensure ZAI_API_KEY is in environment (for config.yaml)
+export ZAI_API_KEY="your-api-key"
+
+# Start ccproxy
+ccproxy start --detach
+```
+
+**Usage:**
+```bash
+uv run python docs/sdk/zai_anthropic_sdk.py
+```
+
+**Features:**
+- Routes through ccproxy at `http://127.0.0.1:4000`
+- Model: `glm-4.7` (defined in ~/.ccproxy/config.yaml)
+- Dummy API key - ccproxy handles real authentication
+
 ## Common Setup
 
 All examples require ccproxy to be running:
