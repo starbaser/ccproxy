@@ -64,9 +64,9 @@ uv run python -m ccproxy
 ccproxy install [--force]
 
 # Start/stop proxy server
-ccproxy start [--detach]
+ccproxy start [--detach] [--mitm]
 ccproxy stop
-ccproxy restart [--detach]
+ccproxy restart [--detach] [--mitm]
 
 # View logs and status
 ccproxy logs [-f] [-n LINES]
@@ -75,6 +75,8 @@ ccproxy status [--json]
 # Run command with proxy environment
 ccproxy run <command> [args...]
 ```
+
+**MITM Mode**: The `--mitm` flag enables the MITM proxy layer which intercepts HTTP traffic for header/body modification. Required for OAuth sentinel key with native Anthropic SDK.
 
 ## Architecture
 
@@ -109,12 +111,16 @@ Request → CCProxyHandler → Hook Pipeline → Response
 - **hooks.py**: Built-in hooks that process requests. Hooks support optional params via `hook:` + `params:` YAML format (see `HookConfig` class in config.py):
   - `rule_evaluator` - Evaluates rules and stores routing decision
   - `model_router` - Routes to appropriate model
-  - `forward_oauth` - Forwards OAuth tokens to provider APIs
+  - `forward_oauth` - Forwards OAuth tokens to provider APIs; supports sentinel key substitution
   - `extract_session_id` - Extracts session identifiers
   - `capture_headers` - Captures HTTP headers with sensitive redaction (supports `headers` param)
   - `forward_apikey` - Forwards x-api-key header
   - `add_beta_headers` - Adds anthropic-beta headers for Claude Code OAuth
   - `inject_claude_code_identity` - Injects required system message for OAuth
+- **mitm/addon.py**: MITM proxy addon for HTTP-layer modifications:
+  - Removes `x-api-key` for OAuth requests
+  - Adds `anthropic-beta` headers for Claude Code compliance
+  - Injects "You are Claude Code" system message prefix for OAuth tokens
 - **cli.py**: Tyro-based CLI interface (~900 lines) for managing the proxy server.
 - **utils.py**: Template discovery and debug utilities (`dt()`, `dv()`, `d()`, `p()`).
 
@@ -170,6 +176,7 @@ The test suite uses pytest with comprehensive fixtures (18 test files, 90% cover
 - **Singleton patterns**: `CCProxyConfig` and `ModelRouter` use thread-safe singletons. Use `clear_config_instance()` and `clear_router()` to reset state in tests.
 - **Token counting**: Uses tiktoken with fallback to character-based estimation for non-OpenAI models.
 - **OAuth token forwarding**: Handled specially for Claude CLI requests. Supports custom User-Agent per provider.
+- **OAuth sentinel key**: SDK clients can use `sk-ant-oat-ccproxy-{provider}` as API key to trigger OAuth token substitution from `oat_sources` config. Requires MITM mode for native Anthropic SDK (system message injection happens at HTTP layer).
 - **OAuth token refresh**: Automatic refresh with two triggers:
   - TTL-based: Background task checks every 30 minutes, refreshes at 90% of `oauth_ttl` (default 8h)
   - 401-triggered: Immediate refresh when API returns authentication error
@@ -177,6 +184,7 @@ The test suite uses pytest with comprehensive fixtures (18 test files, 90% cover
 - **Request metadata**: Stored by `litellm_call_id` with 60-second TTL auto-cleanup (LiteLLM doesn't preserve custom metadata).
 - **Hook error isolation**: Errors in one hook don't block others from executing.
 - **Lazy model loading**: Models loaded from LiteLLM proxy on first request, not at startup.
+- **MITM proxy**: Two-layer architecture - reverse proxy on port 4000 (user-facing), forward proxy on port 8081 (outbound to providers). MITM layer injects headers and modifies request bodies for OAuth compliance.
 
 ## Dependencies
 
