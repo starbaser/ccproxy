@@ -9,11 +9,19 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, datetime
+from enum import IntEnum
 from typing import TYPE_CHECKING, Any
 
 from mitmproxy import http
 
 from ccproxy.config import MitmConfig
+
+
+class ProxyDirection(IntEnum):
+    """Proxy direction for traffic classification."""
+
+    REVERSE = 0  # Client -> LiteLLM (inbound)
+    FORWARD = 1  # LiteLLM -> Provider (outbound)
 
 # Required system message prefix for Claude Code OAuth tokens
 CLAUDE_CODE_SYSTEM_PREFIX = "You are Claude Code, Anthropic's official CLI for Claude."
@@ -31,15 +39,18 @@ class CCProxyMitmAddon:
         self,
         storage: TraceStorage | None,
         config: MitmConfig,
+        proxy_direction: ProxyDirection = ProxyDirection.REVERSE,
     ) -> None:
         """Initialize the addon.
 
         Args:
             storage: Storage backend for traces (None if no persistence)
             config: Mitmproxy configuration
+            proxy_direction: Traffic direction (REVERSE for client->LiteLLM, FORWARD for LiteLLM->provider)
         """
         self.storage = storage
         self.config = config
+        self.proxy_direction = proxy_direction
 
     def _classify_traffic(self, host: str, path: str) -> str:
         """Classify traffic type based on host and path patterns.
@@ -97,6 +108,41 @@ class CCProxyMitmAddon:
             Dict of header name -> value
         """
         return {str(k): str(v) for k, v in headers.items()}
+
+    def _extract_session_id(self, request: http.Request) -> str | None:
+        """Extract session_id from Claude Code's metadata.user_id field.
+
+        Claude Code embeds session info in the metadata.user_id field with format:
+        user_{hash}_account_{uuid}_session_{uuid}
+
+        Args:
+            request: HTTP request object
+
+        Returns:
+            Session ID string or None if not found/parseable
+        """
+        if not request.content:
+            return None
+
+        try:
+            body = json.loads(request.content)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return None
+
+        # Navigate to metadata.user_id
+        metadata = body.get("metadata", {})
+        if not isinstance(metadata, dict):
+            return None
+
+        user_id = metadata.get("user_id", "")
+        if not user_id or "_session_" not in user_id:
+            return None
+
+        # Parse: user_{hash}_account_{uuid}_session_{uuid}
+        parts = user_id.split("_session_")
+        if len(parts) == 2:
+            return parts[1]
+        return None
 
     def _inject_claude_code_identity(self, request: http.Request) -> None:
         """Inject Claude Code identity into system message for OAuth authentication.
@@ -219,8 +265,13 @@ class CCProxyMitmAddon:
             path = request.path
             traffic_type = self._classify_traffic(host, path)
 
+            # Extract session_id from request body metadata
+            session_id = self._extract_session_id(request)
+
             trace_data = {
                 "trace_id": flow.id,
+                "proxy_direction": self.proxy_direction.value,
+                "session_id": session_id,
                 "traffic_type": traffic_type,
                 "method": request.method,
                 "url": request.pretty_url,
@@ -242,7 +293,15 @@ class CCProxyMitmAddon:
                 trace_data["request_content_type"] = request.headers.get("content-type", "")
 
             await self.storage.create_trace(trace_data)
-            logger.debug("Captured request: %s %s (trace_id: %s)", request.method, request.pretty_url, flow.id)
+            direction_str = "reverse" if self.proxy_direction == ProxyDirection.REVERSE else "forward"
+            logger.debug(
+                "Captured request: %s %s (trace_id: %s, direction: %s, session: %s)",
+                request.method,
+                request.pretty_url,
+                flow.id,
+                direction_str,
+                session_id or "none",
+            )
 
         except Exception as e:
             logger.error("Error capturing request: %s", e, exc_info=True)
