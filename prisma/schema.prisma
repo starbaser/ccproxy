@@ -53,15 +53,11 @@ model CCProxy_HttpTraces {
   error_message String?
   error_type    String?
 
-  // Traffic classification
-  traffic_type String @default("unknown")
-
   // Audit
   created_at DateTime @default(now())
 
   @@index([start_time])
   @@index([host])
-  @@index([traffic_type])
   @@index([created_at])
   @@index([status_code])
   @@index([proxy_direction])
