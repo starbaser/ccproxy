@@ -74,6 +74,12 @@ ccproxy status [--json]
 
 # Run command with proxy environment
 ccproxy run <command> [args...]
+
+# Query MITM traces database
+ccproxy db sql "SELECT COUNT(*) FROM \"CCProxy_HttpTraces\""
+ccproxy db sql --file query.sql
+ccproxy db sql "SELECT * FROM ..." --json
+ccproxy db sql "SELECT * FROM ..." --csv
 ```
 
 **MITM Mode**: The `--mitm` flag enables the MITM proxy layer which intercepts HTTP traffic for header/body modification. Required for OAuth sentinel key with native Anthropic SDK.
@@ -185,7 +191,7 @@ The test suite uses pytest with comprehensive fixtures (18 test files, 90% cover
 - **Hook error isolation**: Errors in one hook don't block others from executing.
 - **Lazy model loading**: Models loaded from LiteLLM proxy on first request, not at startup.
 - **MITM proxy**: Two-layer architecture - reverse proxy on port 4000 (user-facing), forward proxy on port 8081 (outbound to providers). MITM layer injects headers and modifies request bodies for OAuth compliance.
-- **MITM database**: Dedicated PostgreSQL container (`ccproxy-db`) for HTTP trace storage. LiteLLM database (`litellm-db`) is commented out by default in `compose.yaml`.
+- **MITM database**: PostgreSQL for HTTP trace storage. Database URL set via `CCPROXY_DATABASE_URL` env var or in `ccproxy.yaml` under `litellm.environment`. Current setup uses `litellm-db` container with database `ccproxy_mitm` (not the `ccproxy-db` in compose.yaml).
 - **Proxy direction tracking**: MITM traces include `proxy_direction` field (0=reverse, 1=forward) to distinguish client→LiteLLM vs LiteLLM→provider traffic.
 - **Session tracking**: MITM addon extracts `session_id` from Claude Code's `metadata.user_id` field to link related requests across proxy layers.
 
@@ -240,3 +246,21 @@ LiteLLM imports `ccproxy.handler:CCProxyHandler` at runtime from the auto-genera
 Solution: Install together so they share the same environment.
 
 The handler file is automatically regenerated on every `ccproxy start` based on the `handler` configuration in `ccproxy.yaml`.
+
+### Prisma Schema Changes
+
+When modifying `prisma/schema.prisma` (e.g., adding fields to `CCProxy_HttpTraces`), you must:
+
+```bash
+# 1. Push schema changes to database
+DATABASE_URL="postgresql://ccproxy:test@localhost:5432/ccproxy_mitm" uv run prisma db push
+
+# 2. Regenerate Prisma client for the TOOL installation (not just .venv)
+DATABASE_URL="postgresql://ccproxy:test@localhost:5432/ccproxy_mitm" \
+  uv tool run --from claude-ccproxy prisma generate --schema prisma/schema.prisma
+
+# 3. Restart proxy
+ccproxy stop && ccproxy start --detach --mitm
+```
+
+**Why both steps?** The `uv run prisma generate` only updates `.venv/`, but ccproxy runs from the tool installation at `~/.local/share/uv/tools/claude-ccproxy/`. The tool's Prisma client must be regenerated separately.
