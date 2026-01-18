@@ -13,6 +13,10 @@ from ccproxy.config import get_config
 from ccproxy.router import get_router
 from ccproxy.utils import calculate_duration_ms
 
+# Pipeline imports (new architecture)
+from ccproxy.pipeline import PipelineExecutor
+from ccproxy.pipeline.hook import get_registry, HookSpec
+
 # Check interval for TTL-based refresh (30 minutes)
 _OAUTH_REFRESH_CHECK_INTERVAL = 1800
 
@@ -40,21 +44,66 @@ class CCProxyHandler(CustomLogger):
         self.classifier = RequestClassifier()
         self.router = get_router()
         self._langfuse_client = None
+        self._pipeline: PipelineExecutor | None = None
 
         config = get_config()
         if config.debug:
             logger.setLevel(logging.DEBUG)
 
-        # Load hooks from configuration (list of (hook_func, params) tuples)
-        self.hooks = config.load_hooks()
-        if config.debug and self.hooks:
-            hook_names = [f"{h.__module__}.{h.__name__}" for h, _ in self.hooks]
-            logger.debug(f"Loaded {len(self.hooks)} hooks: {', '.join(hook_names)}")
+        # Initialize pipeline executor with DAG-based hook ordering
+        self._init_pipeline()
 
         # Register custom routes with LiteLLM proxy (for statusline integration)
         self._register_routes()
 
     _routes_registered: bool = False  # Class-level flag to prevent duplicate registration
+
+    def _init_pipeline(self) -> None:
+        """Initialize the pipeline executor with registered hooks.
+
+        Imports and registers all pipeline hooks, then creates the executor
+        with DAG-based dependency ordering.
+        """
+        # Import pipeline hooks to register them with the global registry
+        # These imports have side effects (hook registration)
+        from ccproxy.pipeline.hooks import (  # noqa: F401
+            rule_evaluator,
+            model_router,
+            extract_session_id,
+            capture_headers,
+            forward_oauth,
+            add_beta_headers,
+            inject_claude_code_identity,
+        )
+
+        # Get registered hooks from registry
+        registry = get_registry()
+        all_specs = registry.get_all_specs()
+
+        if not all_specs:
+            logger.warning("No hooks registered in pipeline registry")
+            return
+
+        # Build list of HookSpec in registration order
+        # (DAG will reorder based on dependencies)
+        hook_specs = list(all_specs.values())
+
+        # Create executor with classifier and router as extra params
+        self._pipeline = PipelineExecutor(
+            hooks=hook_specs,
+            extra_params={
+                "classifier": self.classifier,
+                "router": self.router,
+            },
+        )
+
+        config = get_config()
+        if config.debug:
+            logger.debug(
+                "Pipeline initialized with %d hooks: %s",
+                len(hook_specs),
+                " → ".join(self._pipeline.get_execution_order()),
+            )
 
     def _register_routes(self) -> None:
         """Register custom routes with LiteLLM proxy for statusline integration."""
@@ -205,22 +254,11 @@ class CCProxyHandler(CustomLogger):
                         if "cache_control" in block:
                             print(f"[CACHE DEBUG]   cache_control: {block['cache_control']}")
 
-        # Run all processors in sequence with error handling
-        for hook, params in self.hooks:
-            try:
-                data = hook(data, user_api_key_dict, classifier=self.classifier, router=self.router, **params)
-            except Exception as e:
-                logger.error(
-                    f"Hook {hook.__name__} failed with error: {e}",
-                    extra={
-                        "hook_name": hook.__name__,
-                        "error_type": type(e).__name__,
-                        "error_message": str(e),
-                    },
-                    exc_info=True,
-                )
-                # Continue with other hooks even if one fails
-                # The request will proceed with partial processing
+        # Run hooks through pipeline with DAG-ordered execution
+        if self._pipeline is not None:
+            data = self._pipeline.execute(data, user_api_key_dict)
+        else:
+            logger.error("Pipeline not initialized - hooks will not be executed")
 
         # Log routing decision with structured logging
         metadata = data.get("metadata", {})
