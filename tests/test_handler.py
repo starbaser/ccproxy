@@ -651,16 +651,12 @@ class TestCCProxyHandler:
             clear_router()
 
     @pytest.mark.asyncio
-    async def test_hooks_loaded_from_config(self) -> None:
-        """Test that hooks are loaded from configuration file."""
-        # Create config with hooks
+    async def test_pipeline_initialized(self) -> None:
+        """Test that pipeline is initialized with hooks from the registry."""
+        # Create minimal config
         ccproxy_data = {
             "ccproxy": {
                 "debug": False,
-                "hooks": [
-                    "ccproxy.hooks.rule_evaluator",
-                    "ccproxy.hooks.model_router",
-                ],
                 "rules": [],
             }
         }
@@ -691,10 +687,14 @@ class TestCCProxyHandler:
             with patch.dict("sys.modules", {"litellm.proxy": mock_module}):
                 handler = CCProxyHandler()
 
-                # Verify hooks were loaded
-                assert len(handler.hooks) == 2
-                assert any("rule_evaluator" in str(h) for h in handler.hooks)
-                assert any("model_router" in str(h) for h in handler.hooks)
+                # Verify pipeline was initialized
+                assert handler._pipeline is not None
+                # Verify hooks are in execution order
+                execution_order = handler._pipeline.get_execution_order()
+                assert "rule_evaluator" in execution_order
+                assert "model_router" in execution_order
+                # Verify rule_evaluator comes before model_router
+                assert execution_order.index("rule_evaluator") < execution_order.index("model_router")
 
         finally:
             ccproxy_path.unlink()
