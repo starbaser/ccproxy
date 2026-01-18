@@ -135,6 +135,23 @@ class StatuslineStatus:
     """Show ccstatusline installation status."""
 
 
+@attrs.define
+class DbSql:
+    """Execute SQL queries against the MITM traces database."""
+
+    query: Annotated[str | None, tyro.conf.Positional] = None
+    """SQL query to execute (inline)."""
+
+    file: Annotated[Path | None, tyro.conf.arg(aliases=["-f"])] = None
+    """Read SQL from file."""
+
+    json: Annotated[bool, tyro.conf.arg(aliases=["-j"])] = False
+    """Output results as JSON."""
+
+    csv: Annotated[bool, tyro.conf.arg(aliases=["-c"])] = False
+    """Output results as CSV."""
+
+
 # @attrs.define
 # class ShellIntegration:
 #     """Generate shell integration for automatic claude aliasing."""
@@ -159,6 +176,7 @@ Command = (
     | Annotated[StatuslineInstall, tyro.conf.subcommand(name="statusline-install")]
     | Annotated[StatuslineUninstall, tyro.conf.subcommand(name="statusline-uninstall")]
     | Annotated[StatuslineStatus, tyro.conf.subcommand(name="statusline-status")]
+    | Annotated[DbSql, tyro.conf.subcommand(name="db-sql")]
 )
 
 
@@ -1041,6 +1059,186 @@ def show_status(config_dir: Path, json_output: bool = False) -> None:
             console.print(Panel(models_table, title="[bold]Model Deployments[/bold]", border_style="magenta"))
 
 
+# === Database SQL Command Handlers ===
+
+
+def get_database_url(config_dir: Path) -> str | None:
+    """Get database URL from config or environment.
+
+    Checks in order:
+    1. CCPROXY_DATABASE_URL environment variable
+    2. DATABASE_URL environment variable
+    3. ccproxy.yaml mitm.database_url config
+
+    Args:
+        config_dir: Configuration directory containing ccproxy.yaml
+
+    Returns:
+        Database URL string or None if not configured
+    """
+    if url := os.environ.get("CCPROXY_DATABASE_URL") or os.environ.get("DATABASE_URL"):
+        return url
+
+    ccproxy_yaml = config_dir / "ccproxy.yaml"
+    if ccproxy_yaml.exists():
+        with ccproxy_yaml.open() as f:
+            data = yaml.safe_load(f)
+        if data and "ccproxy" in data:
+            mitm = data["ccproxy"].get("mitm", {})
+            if url := mitm.get("database_url"):
+                return _expand_env_vars(url) if "${" in url else url
+    return None
+
+
+async def execute_sql(database_url: str, query: str) -> tuple[list[dict], list[str]]:
+    """Execute SQL query and return results.
+
+    Args:
+        database_url: PostgreSQL connection string
+        query: SQL query to execute
+
+    Returns:
+        Tuple of (rows as list of dicts, column names)
+    """
+    import asyncpg
+
+    conn = await asyncpg.connect(database_url)
+    try:
+        result = await conn.fetch(query)
+        if not result:
+            return [], []
+        columns = list(result[0].keys())
+        rows = [dict(row) for row in result]
+        return rows, columns
+    finally:
+        await conn.close()
+
+
+def resolve_sql_input(cmd: DbSql) -> str | None:
+    """Resolve SQL query from inline argument, file, or stdin.
+
+    Args:
+        cmd: DbSql command with query sources
+
+    Returns:
+        SQL query string or None if no input provided
+    """
+    if cmd.query:
+        return cmd.query
+    if cmd.file:
+        return cmd.file.read_text()
+    if not sys.stdin.isatty():
+        return sys.stdin.read().strip()
+    return None
+
+
+def format_table(rows: list[dict], columns: list[str], console: Console) -> None:
+    """Format query results as Rich table with styling.
+
+    Args:
+        rows: List of row dictionaries
+        columns: Column names in order
+        console: Rich console for output
+    """
+    from rich.box import ROUNDED
+
+    table = Table(
+        box=ROUNDED,
+        show_header=True,
+        header_style="bold cyan",
+        row_styles=["", "dim"],
+        expand=False,
+        caption=f"[dim]{len(rows)} row(s)[/dim]",
+    )
+    for col in columns:
+        table.add_column(col, overflow="fold")
+    for row in rows:
+        table.add_row(*[str(row.get(c, "")) for c in columns])
+    console.print(table)
+
+
+def format_json_output(rows: list[dict], console: Console) -> None:
+    """Format query results as syntax-highlighted JSON.
+
+    Args:
+        rows: List of row dictionaries
+        console: Rich console for output
+    """
+    import json as json_module
+
+    from rich.json import JSON
+
+    json_str = json_module.dumps(rows, indent=2, default=str)
+    console.print(JSON(json_str, indent=2, highlight=True))
+
+
+def format_csv_output(rows: list[dict], columns: list[str]) -> None:
+    """Format query results as CSV to stdout.
+
+    Args:
+        rows: List of row dictionaries
+        columns: Column names in order
+    """
+    import csv
+    import io
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=columns)
+    writer.writeheader()
+    writer.writerows(rows)
+    builtin_print(output.getvalue(), end="")
+
+
+def handle_db_sql(config_dir: Path, cmd: DbSql) -> None:
+    """Handle the db sql command.
+
+    Args:
+        config_dir: Configuration directory
+        cmd: DbSql command instance
+    """
+    import asyncio
+
+    console = Console(stderr=True)
+
+    if cmd.json and cmd.csv:
+        console.print("[red]Error:[/red] --json and --csv are mutually exclusive")
+        sys.exit(1)
+
+    sql = resolve_sql_input(cmd)
+    if not sql:
+        console.print("[red]Error:[/red] No SQL query provided")
+        console.print('Usage: ccproxy db sql "SELECT ..." or --file query.sql or pipe via stdin')
+        sys.exit(1)
+
+    database_url = get_database_url(config_dir)
+    if not database_url:
+        console.print("[red]Error:[/red] No database_url configured")
+        console.print("Set in ccproxy.yaml under ccproxy.mitm.database_url")
+        console.print("Or set CCPROXY_DATABASE_URL or DATABASE_URL environment variable")
+        sys.exit(1)
+
+    try:
+        rows, columns = asyncio.run(execute_sql(database_url, sql))
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+
+    if not rows:
+        if not cmd.json and not cmd.csv:
+            console.print("[dim]No results[/dim]")
+        elif cmd.json:
+            builtin_print("[]")
+        return
+
+    out = Console()
+    if cmd.json:
+        format_json_output(rows, out)
+    elif cmd.csv:
+        format_csv_output(rows, columns)
+    else:
+        format_table(rows, columns, out)
+
+
 def main(
     cmd: Annotated[Command, tyro.conf.arg(name="")],
     *,
@@ -1131,6 +1329,9 @@ def main(
         elif isinstance(cmd, StatuslineStatus):
             show_statusline_status(claude_config_dir=claude_config_dir)
 
+    elif isinstance(cmd, DbSql):
+        handle_db_sql(config_dir, cmd)
+
 
 def entry_point() -> None:
     """Entry point for the ccproxy command."""
@@ -1140,15 +1341,24 @@ def entry_point() -> None:
     # - 'statusline <subcommand>': rewrite to statusline-<subcommand> for tyro
     args = sys.argv[1:]
 
-    # Check for 'statusline' with subcommand
-    subcommands = {"start", "stop", "restart", "install", "logs", "status", "run", "statusline"}
+    # Check for 'statusline' and 'db' with subcommands
+    subcommands = {"start", "stop", "restart", "install", "logs", "status", "run", "statusline", "db"}
     statusline_subcommands = {"install", "uninstall", "status"}
+    db_subcommands = {"sql"}
 
     statusline_idx = None
     run_idx = None
 
     for i, arg in enumerate(args):
-        if arg == "statusline":
+        if arg == "db":
+            # Check if next arg is a db subcommand
+            if i + 1 < len(args) and args[i + 1] in db_subcommands:
+                # Rewrite "db sql" -> "db-sql"
+                subcommand = args[i + 1]
+                new_args = args[:i] + [f"db-{subcommand}"] + args[i + 2 :]
+                sys.argv = [sys.argv[0]] + new_args
+            break
+        elif arg == "statusline":
             # Check if next arg is a statusline subcommand
             if i + 1 < len(args) and args[i + 1] in statusline_subcommands:
                 # Rewrite "statusline install" -> "statusline-install"
