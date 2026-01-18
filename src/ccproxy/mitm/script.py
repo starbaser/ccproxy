@@ -17,7 +17,7 @@ import os
 from typing import TYPE_CHECKING, Any
 
 from ccproxy.config import MitmConfig
-from ccproxy.mitm.addon import CCProxyMitmAddon
+from ccproxy.mitm.addon import CCProxyMitmAddon, ProxyDirection
 
 if TYPE_CHECKING:
     from ccproxy.mitm.storage import TraceStorage
@@ -37,6 +37,7 @@ class CCProxyScript:
         self.config: MitmConfig | None = None
         self.storage: TraceStorage | None = None
         self.addon: CCProxyMitmAddon | None = None
+        self.proxy_direction: ProxyDirection = ProxyDirection.REVERSE
         self._initialized = False
 
     def load(self, loader: Any) -> None:  # noqa: ANN401
@@ -47,6 +48,10 @@ class CCProxyScript:
         mitm_port = int(os.environ.get("CCPROXY_MITM_PORT", "4000"))
         litellm_port = int(os.environ.get("CCPROXY_LITELLM_PORT", "4001"))
 
+        # Determine proxy direction from environment
+        mode_str = os.environ.get("CCPROXY_MITM_MODE", "reverse").lower()
+        self.proxy_direction = ProxyDirection.FORWARD if mode_str == "forward" else ProxyDirection.REVERSE
+
         self.config = MitmConfig(
             port=mitm_port,
             upstream_proxy=f"http://localhost:{litellm_port}",
@@ -54,7 +59,13 @@ class CCProxyScript:
             debug=os.environ.get("CCPROXY_DEBUG", "false").lower() in ("true", "1", "yes"),
         )
 
-        logger.info("MITM listening on port %d, forwarding to LiteLLM on port %d", mitm_port, litellm_port)
+        direction_str = "forward" if self.proxy_direction == ProxyDirection.FORWARD else "reverse"
+        logger.info(
+            "MITM mode: %s, listening on port %d, forwarding to LiteLLM on port %d",
+            direction_str,
+            mitm_port,
+            litellm_port,
+        )
 
         database_url = os.environ.get("CCPROXY_DATABASE_URL") or os.environ.get("DATABASE_URL")
         if not database_url:
@@ -76,23 +87,37 @@ class CCProxyScript:
 
         assert self.config is not None
 
+        direction_str = "forward" if self.proxy_direction == ProxyDirection.FORWARD else "reverse"
+
         if self.storage:
             try:
                 await self.storage.connect()
-                self.addon = CCProxyMitmAddon(self.storage, self.config)
+                self.addon = CCProxyMitmAddon(
+                    self.storage,
+                    self.config,
+                    proxy_direction=self.proxy_direction,
+                )
                 self._initialized = True
-                logger.info("CCProxy addon initialized with storage")
+                logger.info("CCProxy addon initialized with storage (direction: %s)", direction_str)
             except Exception as e:
                 logger.error("Failed to connect storage: %s", e)
                 # Still create addon without storage for logging
-                self.addon = CCProxyMitmAddon(storage=None, config=self.config)
+                self.addon = CCProxyMitmAddon(
+                    storage=None,
+                    config=self.config,
+                    proxy_direction=self.proxy_direction,
+                )
                 self._initialized = True
-                logger.info("CCProxy addon initialized without storage")
+                logger.info("CCProxy addon initialized without storage (direction: %s)", direction_str)
         else:
             # No storage configured
-            self.addon = CCProxyMitmAddon(storage=None, config=self.config)
+            self.addon = CCProxyMitmAddon(
+                storage=None,
+                config=self.config,
+                proxy_direction=self.proxy_direction,
+            )
             self._initialized = True
-            logger.info("CCProxy addon initialized (no storage)")
+            logger.info("CCProxy addon initialized, no storage (direction: %s)", direction_str)
 
     async def done(self) -> None:
         """Called when mitmproxy shuts down."""

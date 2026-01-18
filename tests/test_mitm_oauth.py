@@ -21,6 +21,7 @@ def mock_flow() -> MagicMock:
     flow = MagicMock()
     flow.request = MagicMock()
     flow.request.headers = {}
+    flow.request.content = None  # No body by default
     return flow
 
 

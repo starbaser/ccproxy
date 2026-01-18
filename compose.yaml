@@ -1,16 +1,33 @@
 services:
-  db:
-    image: postgres:16
+  # LiteLLM database - disabled by default
+  # Uncomment to enable LiteLLM database features (STORE_MODEL_IN_DB, etc.)
+  # litellm-db:
+  #   image: postgis/postgis:16-3.5
+  #   restart: always
+  #   container_name: litellm-db
+  #   environment:
+  #     POSTGRES_DB: litellm
+  #     POSTGRES_USER: ccproxy
+  #     POSTGRES_PASSWORD: test
+  #   ports:
+  #     - "127.0.0.1:5433:5432"
+  #   volumes:
+  #     - ccproxy-litellm-db:/var/lib/postgresql/data
+
+  # MITM traces database
+  ccproxy-db:
+    image: postgres:16-alpine
     restart: always
-    container_name: litellm-db
+    container_name: ccproxy-db
     environment:
-      POSTGRES_DB: litellm
+      POSTGRES_DB: ccproxy
       POSTGRES_USER: ccproxy
       POSTGRES_PASSWORD: test
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
-      - ccproxy-litellm-db:/var/lib/postgresql/data # Persists Postgres data across container restarts
+      - ccproxy-db:/var/lib/postgresql/data
 
 volumes:
-  ccproxy-litellm-db:
+  # ccproxy-litellm-db:  # Uncomment if using LiteLLM database
+  ccproxy-db:

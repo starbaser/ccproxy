@@ -179,6 +179,32 @@ class CCProxyHandler(CustomLogger):
         if thinking_params is not None:
             print(f"🧠 Thinking parameters: {thinking_params}")
 
+        # Debug: Log cache_control in system messages
+        config = get_config()
+        if config.debug:
+            import json
+            print(f"[CACHE DEBUG] REQUEST DATA KEYS: {list(data.keys())}")
+            # Check messages
+            messages = data.get("messages", [])
+            print(f"[CACHE DEBUG] Messages count: {len(messages)}")
+            for i, msg in enumerate(messages[:2]):  # First 2 messages
+                if isinstance(msg, dict):
+                    print(f"[CACHE DEBUG] Message {i}: role={msg.get('role')}, content_type={type(msg.get('content'))}")
+                    content = msg.get("content", [])
+                    if isinstance(content, list):
+                        for j, block in enumerate(content[:2]):
+                            if isinstance(block, dict):
+                                print(f"[CACHE DEBUG]   Block {j} keys: {list(block.keys())}")
+            # Check top-level system field
+            top_system = data.get("system", [])
+            if top_system:
+                print(f"[CACHE DEBUG] Top-level system present: {len(top_system)} blocks")
+                for i, block in enumerate(top_system[:2]):
+                    if isinstance(block, dict):
+                        print(f"[CACHE DEBUG]   System block {i} keys: {list(block.keys())}")
+                        if "cache_control" in block:
+                            print(f"[CACHE DEBUG]   cache_control: {block['cache_control']}")
+
         # Run all processors in sequence with error handling
         for hook, params in self.hooks:
             try:

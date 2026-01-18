@@ -119,6 +119,9 @@ class MitmConfig(BaseModel):
     )
     """List of hosts considered LLM providers for traffic classification"""
 
+    database_url: str | None = None
+    """PostgreSQL connection URL for MITM traces. Falls back to CCPROXY_DATABASE_URL or DATABASE_URL env vars."""
+
 
 # Import proxy_server to access runtime configuration
 try:

@@ -185,6 +185,9 @@ The test suite uses pytest with comprehensive fixtures (18 test files, 90% cover
 - **Hook error isolation**: Errors in one hook don't block others from executing.
 - **Lazy model loading**: Models loaded from LiteLLM proxy on first request, not at startup.
 - **MITM proxy**: Two-layer architecture - reverse proxy on port 4000 (user-facing), forward proxy on port 8081 (outbound to providers). MITM layer injects headers and modifies request bodies for OAuth compliance.
+- **MITM database**: Dedicated PostgreSQL container (`ccproxy-db`) for HTTP trace storage. LiteLLM database (`litellm-db`) is commented out by default in `compose.yaml`.
+- **Proxy direction tracking**: MITM traces include `proxy_direction` field (0=reverse, 1=forward) to distinguish client→LiteLLM vs LiteLLM→provider traffic.
+- **Session tracking**: MITM addon extracts `session_id` from Claude Code's `metadata.user_id` field to link related requests across proxy layers.
 
 ## Dependencies
 

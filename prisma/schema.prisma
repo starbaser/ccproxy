@@ -15,6 +15,12 @@ datasource db {
 model CCProxy_HttpTraces {
   trace_id String @id @default(uuid())
 
+  // Proxy direction: 0 = reverse proxy (client→LiteLLM), 1 = forward proxy (LiteLLM→provider)
+  proxy_direction Int @default(0)
+
+  // Claude Code session ID (extracted from metadata.user_id)
+  session_id String?
+
   // Request data
   method             String
   url                String
@@ -58,4 +64,7 @@ model CCProxy_HttpTraces {
   @@index([traffic_type])
   @@index([created_at])
   @@index([status_code])
+  @@index([proxy_direction])
+  @@index([session_id])
+  @@index([session_id, start_time])
 }
