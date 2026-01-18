@@ -25,13 +25,17 @@ class TestGetDatabaseUrl:
 
     def test_env_var_ccproxy_database_url(self, tmp_path: Path) -> None:
         """Test database URL from CCPROXY_DATABASE_URL env var."""
-        with patch.dict("os.environ", {"CCPROXY_DATABASE_URL": "postgresql://test:123@host/db"}):
+        with patch.dict(
+            "os.environ", {"CCPROXY_DATABASE_URL": "postgresql://test:123@host/db"}
+        ):
             result = get_database_url(tmp_path)
         assert result == "postgresql://test:123@host/db"
 
     def test_env_var_database_url(self, tmp_path: Path) -> None:
         """Test database URL from DATABASE_URL env var."""
-        with patch.dict("os.environ", {"DATABASE_URL": "postgresql://test:456@host/db"}, clear=True):
+        with patch.dict(
+            "os.environ", {"DATABASE_URL": "postgresql://test:456@host/db"}, clear=True
+        ):
             result = get_database_url(tmp_path)
         assert result == "postgresql://test:456@host/db"
 
@@ -50,11 +54,13 @@ class TestGetDatabaseUrl:
     def test_from_config_file(self, tmp_path: Path) -> None:
         """Test database URL from ccproxy.yaml config."""
         config_file = tmp_path / "ccproxy.yaml"
-        config_file.write_text("""
+        config_file.write_text(
+            """
 ccproxy:
   mitm:
     database_url: postgresql://config:789@host/db
-""")
+"""
+        )
 
         with patch.dict("os.environ", {}, clear=True):
             result = get_database_url(tmp_path)
@@ -63,24 +69,30 @@ ccproxy:
     def test_from_config_with_env_expansion(self, tmp_path: Path) -> None:
         """Test database URL with environment variable expansion."""
         config_file = tmp_path / "ccproxy.yaml"
-        config_file.write_text("""
+        config_file.write_text(
+            """
 ccproxy:
   mitm:
     database_url: postgresql://${DB_USER}:${DB_PASS}@host/db
-""")
+"""
+        )
 
-        with patch.dict("os.environ", {"DB_USER": "myuser", "DB_PASS": "mypass"}, clear=True):
+        with patch.dict(
+            "os.environ", {"DB_USER": "myuser", "DB_PASS": "mypass"}, clear=True
+        ):
             result = get_database_url(tmp_path)
         assert result == "postgresql://myuser:mypass@host/db"
 
     def test_from_config_with_env_default(self, tmp_path: Path) -> None:
         """Test database URL with environment variable default value."""
         config_file = tmp_path / "ccproxy.yaml"
-        config_file.write_text("""
+        config_file.write_text(
+            """
 ccproxy:
   mitm:
     database_url: postgresql://${DB_USER:-defaultuser}@host/db
-""")
+"""
+        )
 
         with patch.dict("os.environ", {}, clear=True):
             result = get_database_url(tmp_path)
@@ -95,10 +107,12 @@ ccproxy:
     def test_config_without_mitm_section(self, tmp_path: Path) -> None:
         """Test returns None when ccproxy.yaml has no mitm section."""
         config_file = tmp_path / "ccproxy.yaml"
-        config_file.write_text("""
+        config_file.write_text(
+            """
 ccproxy:
   debug: true
-""")
+"""
+        )
 
         with patch.dict("os.environ", {}, clear=True):
             result = get_database_url(tmp_path)
@@ -107,11 +121,13 @@ ccproxy:
     def test_config_without_database_url(self, tmp_path: Path) -> None:
         """Test returns None when mitm section has no database_url."""
         config_file = tmp_path / "ccproxy.yaml"
-        config_file.write_text("""
+        config_file.write_text(
+            """
 ccproxy:
   mitm:
     port: 8081
-""")
+"""
+        )
 
         with patch.dict("os.environ", {}, clear=True):
             result = get_database_url(tmp_path)
@@ -138,7 +154,9 @@ class TestExecuteSql:
         mock_conn.fetch.return_value = [mock_record1, mock_record2]
 
         with patch("asyncpg.connect", return_value=mock_conn):
-            rows, columns = await execute_sql("postgresql://test@host/db", "SELECT * FROM test")
+            rows, columns = await execute_sql(
+                "postgresql://test@host/db", "SELECT * FROM test"
+            )
 
         assert set(columns) == {"id", "name"}
         assert len(rows) == 2
@@ -153,7 +171,9 @@ class TestExecuteSql:
         mock_conn.fetch.return_value = []
 
         with patch("asyncpg.connect", return_value=mock_conn):
-            rows, columns = await execute_sql("postgresql://test@host/db", "SELECT * FROM empty")
+            rows, columns = await execute_sql(
+                "postgresql://test@host/db", "SELECT * FROM empty"
+            )
 
         assert rows == []
         assert columns == []
@@ -257,20 +277,51 @@ class TestFormatTable:
 class TestFormatJsonOutput:
     """Test suite for format_json_output function."""
 
-    def test_format_json_output(self) -> None:
+    def test_format_json_output(self, capsys) -> None:
         """Test JSON output formatting."""
         from rich.console import Console
 
         rows = [{"id": 1, "name": "test"}]
 
-        output = io.StringIO()
-        console = Console(file=output, force_terminal=True)
-
+        console = Console()
         format_json_output(rows, console)
 
-        result = output.getvalue()
+        captured = capsys.readouterr()
+        result = captured.out
         assert '"id"' in result
         assert '"name"' in result
+
+    def test_format_json_output_with_bytes(self, capsys) -> None:
+        """Test JSON output with bytes fields (bytea columns)."""
+        import json
+
+        from rich.console import Console
+
+        # Simulate bytea field containing JSON with newlines
+        json_data = '{"messages": [{"role": "user", "content": "line1\\nline2"}]}'
+        rows = [{"id": 1, "body": json_data.encode("utf-8")}]
+
+        console = Console()
+        format_json_output(rows, console)
+
+        captured = capsys.readouterr()
+        result = captured.out
+
+        # Verify it's valid JSON
+        parsed = json.loads(result)
+        assert len(parsed) == 1
+        assert parsed[0]["id"] == 1
+
+        # Verify the body field is properly decoded and contains escaped newlines
+        assert isinstance(parsed[0]["body"], str)
+        body_content = parsed[0]["body"]
+
+        # The body should be a JSON string (nested JSON)
+        # It should contain escaped newlines (\\n) not literal newlines
+        assert "\\n" in body_content
+        # Parse the nested JSON to verify it's valid
+        nested_json = json.loads(body_content)
+        assert nested_json["messages"][0]["content"] == "line1\nline2"
 
 
 class TestFormatCsvOutput:
@@ -304,7 +355,9 @@ class TestFormatCsvOutput:
 class TestHandleDbSql:
     """Test suite for handle_db_sql function."""
 
-    def test_handle_db_sql_mutually_exclusive_flags(self, tmp_path: Path, capsys) -> None:
+    def test_handle_db_sql_mutually_exclusive_flags(
+        self, tmp_path: Path, capsys
+    ) -> None:
         """Test error when both --json and --csv are specified."""
         cmd = DbSql(query="SELECT 1", json=True, csv=True)
 
@@ -344,7 +397,9 @@ class TestHandleDbSql:
         cmd = DbSql(query="SELECT 1")
 
         with patch.dict("os.environ", {"DATABASE_URL": "postgresql://test@host/db"}):
-            with patch("ccproxy.cli.execute_sql", side_effect=Exception("Connection refused")):
+            with patch(
+                "ccproxy.cli.execute_sql", side_effect=Exception("Connection refused")
+            ):
                 with pytest.raises(SystemExit) as exc_info:
                     handle_db_sql(tmp_path, cmd)
 

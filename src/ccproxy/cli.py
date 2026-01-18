@@ -254,7 +254,9 @@ def run_with_proxy(config_dir: Path, command: list[str]) -> None:
     # Load config to get proxy settings
     ccproxy_config_path = config_dir / "ccproxy.yaml"
     if not ccproxy_config_path.exists():
-        print(f"Error: Configuration not found at {ccproxy_config_path}", file=sys.stderr)
+        print(
+            f"Error: Configuration not found at {ccproxy_config_path}", file=sys.stderr
+        )
         print("Run 'ccproxy install' first to set up configuration.", file=sys.stderr)
         sys.exit(1)
 
@@ -364,7 +366,12 @@ handler = {class_name}()
     handler_file.write_text(content)
 
 
-def start_litellm(config_dir: Path, args: list[str] | None = None, detach: bool = False, mitm: bool = False) -> None:
+def start_litellm(
+    config_dir: Path,
+    args: list[str] | None = None,
+    detach: bool = False,
+    mitm: bool = False,
+) -> None:
     """Start the LiteLLM proxy server with ccproxy configuration.
 
     Args:
@@ -400,8 +407,12 @@ def start_litellm(config_dir: Path, args: list[str] | None = None, detach: bool 
             ccproxy_config = yaml.safe_load(f)
             if ccproxy_config:
                 litellm_section = ccproxy_config.get("litellm", {})
-                litellm_host = os.environ.get("HOST", litellm_section.get("host", "127.0.0.1"))
-                main_port = int(os.environ.get("PORT", litellm_section.get("port", 4000)))
+                litellm_host = os.environ.get(
+                    "HOST", litellm_section.get("host", "127.0.0.1")
+                )
+                main_port = int(
+                    os.environ.get("PORT", litellm_section.get("port", 4000))
+                )
                 # Get forward proxy port from mitm config
                 mitm_section = ccproxy_config.get("ccproxy", {}).get("mitm", {})
                 forward_port = mitm_section.get("port", 8081)
@@ -446,7 +457,10 @@ def start_litellm(config_dir: Path, args: list[str] | None = None, detach: bool 
     litellm_path = venv_bin / "litellm"
 
     if not litellm_path.exists():
-        print(f"Error: litellm not found in virtual environment at {litellm_path}", file=sys.stderr)
+        print(
+            f"Error: litellm not found in virtual environment at {litellm_path}",
+            file=sys.stderr,
+        )
         print(
             "Make sure ccproxy is installed with: uv tool install claude-ccproxy --with 'litellm[proxy]'",
             file=sys.stderr,
@@ -476,7 +490,13 @@ def start_litellm(config_dir: Path, args: list[str] | None = None, detach: bool 
 
         print("Starting MITM reverse proxy...")
         # MITM₁ (reverse) listens on main_port (4000) and forwards to LiteLLM's random port
-        start_mitm(config_dir, port=main_port, litellm_port=litellm_port, mode=ProxyMode.REVERSE, detach=True)
+        start_mitm(
+            config_dir,
+            port=main_port,
+            litellm_port=litellm_port,
+            mode=ProxyMode.REVERSE,
+            detach=True,
+        )
 
         # Verify reverse proxy started
         time.sleep(0.5)
@@ -531,7 +551,10 @@ def start_litellm(config_dir: Path, args: list[str] | None = None, detach: bool 
 
         except FileNotFoundError:
             print("Error: litellm command not found.", file=sys.stderr)
-            print("Please ensure LiteLLM is installed: pip install litellm", file=sys.stderr)
+            print(
+                "Please ensure LiteLLM is installed: pip install litellm",
+                file=sys.stderr,
+            )
             sys.exit(1)
     else:
         # Execute litellm command in foreground
@@ -541,7 +564,10 @@ def start_litellm(config_dir: Path, args: list[str] | None = None, detach: bool 
             sys.exit(result.returncode)
         except FileNotFoundError:
             print("Error: litellm command not found.", file=sys.stderr)
-            print("Please ensure LiteLLM is installed: pip install litellm", file=sys.stderr)
+            print(
+                "Please ensure LiteLLM is installed: pip install litellm",
+                file=sys.stderr,
+            )
             sys.exit(1)
         except KeyboardInterrupt:
             sys.exit(130)
@@ -781,7 +807,9 @@ def view_logs(config_dir: Path, follow: bool = False, lines: int = 100) -> None:
                 if len(tail_lines) > 20 or pager == "cat":
                     # For cat or when there are many lines, use pager
                     # S603: pager comes from PAGER env var, standard practice for CLI tools
-                    process = subprocess.Popen([pager], stdin=subprocess.PIPE)  # noqa: S603
+                    process = subprocess.Popen(
+                        [pager], stdin=subprocess.PIPE
+                    )  # noqa: S603
                     process.communicate(content.encode())
                     sys.exit(process.returncode)
                 else:
@@ -811,7 +839,9 @@ def handle_statusline_output(config_dir: Path) -> None:
             with ccproxy_config_path.open() as f:
                 config = yaml.safe_load(f)
                 if config and "litellm" in config:
-                    port = int(os.environ.get("PORT", config["litellm"].get("port", 4000)))
+                    port = int(
+                        os.environ.get("PORT", config["litellm"].get("port", 4000))
+                    )
         except Exception:
             pass  # Use default port
 
@@ -941,7 +971,9 @@ def show_status(config_dir: Path, json_output: bool = False) -> None:
         table.add_column("Value", style="yellow")
 
         # Proxy status
-        proxy_status = "[green]true[/green]" if status_data["proxy"] else "[red]false[/red]"
+        proxy_status = (
+            "[green]true[/green]" if status_data["proxy"] else "[red]false[/red]"
+        )
         table.add_row("proxy", proxy_status)
 
         # MITM status - show both proxies
@@ -955,9 +987,7 @@ def show_status(config_dir: Path, json_output: bool = False) -> None:
         # Reverse proxy status
         if reverse_info["running"]:
             reverse_port = reverse_info["port"]
-            reverse_status = (
-                f"[green]reverse[/green] on [cyan]{reverse_port}[/cyan] → litellm on [cyan]{litellm_port}[/cyan]"
-            )
+            reverse_status = f"[green]reverse[/green] on [cyan]{reverse_port}[/cyan] → litellm on [cyan]{litellm_port}[/cyan]"
             if reverse_info["pid"]:
                 reverse_status += f" [dim](pid: {reverse_info['pid']})[/dim]"
             mitm_parts.append(reverse_status)
@@ -967,7 +997,9 @@ def show_status(config_dir: Path, json_output: bool = False) -> None:
         # Forward proxy status
         if forward_info["running"]:
             forward_port = forward_info["port"]
-            forward_status = f"[green]forward[/green] on [cyan]{forward_port}[/cyan] → providers"
+            forward_status = (
+                f"[green]forward[/green] on [cyan]{forward_port}[/cyan] → providers"
+            )
             if forward_info["pid"]:
                 forward_status += f" [dim](pid: {forward_info['pid']})[/dim]"
             mitm_parts.append(forward_status)
@@ -979,23 +1011,32 @@ def show_status(config_dir: Path, json_output: bool = False) -> None:
 
         # Config files
         if status_data["config"]:
-            config_display = "\n".join(f"[cyan]{key}[/cyan]: {value}" for key, value in status_data["config"].items())
+            config_display = "\n".join(
+                f"[cyan]{key}[/cyan]: {value}"
+                for key, value in status_data["config"].items()
+            )
         else:
             config_display = "[red]No config files found[/red]"
         table.add_row("config", config_display)
 
         # Callbacks
         if status_data["callbacks"]:
-            callbacks_display = "\n".join(f"[green]• {cb}[/green]" for cb in status_data["callbacks"])
+            callbacks_display = "\n".join(
+                f"[green]• {cb}[/green]" for cb in status_data["callbacks"]
+            )
         else:
             callbacks_display = "[dim]No callbacks configured[/dim]"
         table.add_row("callbacks", callbacks_display)
 
         # Log file
-        log_display = status_data["log"] if status_data["log"] else "[yellow]No log file[/yellow]"
+        log_display = (
+            status_data["log"] if status_data["log"] else "[yellow]No log file[/yellow]"
+        )
         table.add_row("log", log_display)
 
-        console.print(Panel(table, title="[bold]ccproxy Status[/bold]", border_style="blue"))
+        console.print(
+            Panel(table, title="[bold]ccproxy Status[/bold]", border_style="blue")
+        )
 
         # Hooks table
         if status_data["hooks"]:
@@ -1016,13 +1057,21 @@ def show_status(config_dir: Path, json_output: bool = False) -> None:
                     hook_name = hook_path.split(".")[-1] if hook_path else ""
                     params = hook.get("params", {})
                     if params:
-                        params_display = ", ".join(f"{k}={v}" for k, v in params.items())
+                        params_display = ", ".join(
+                            f"{k}={v}" for k, v in params.items()
+                        )
                     else:
                         params_display = "[dim]none[/dim]"
 
-                hooks_table.add_row(str(i), f"[bold]{hook_name}[/bold]\n[dim]{hook_path}[/dim]", params_display)
+                hooks_table.add_row(
+                    str(i),
+                    f"[bold]{hook_name}[/bold]\n[dim]{hook_path}[/dim]",
+                    params_display,
+                )
 
-            console.print(Panel(hooks_table, title="[bold]Hooks[/bold]", border_style="green"))
+            console.print(
+                Panel(hooks_table, title="[bold]Hooks[/bold]", border_style="green")
+            )
 
         # Model deployments table
         if status_data["model_list"]:
@@ -1032,7 +1081,9 @@ def show_status(config_dir: Path, json_output: bool = False) -> None:
             models_table.add_column("API Base", style="dim", no_wrap=True)
 
             # Build lookup for resolving model aliases
-            model_lookup = {m.get("model_name", ""): m for m in status_data["model_list"]}
+            model_lookup = {
+                m.get("model_name", ""): m for m in status_data["model_list"]
+            }
 
             for model in status_data["model_list"]:
                 model_name = model.get("model_name", "")
@@ -1056,7 +1107,13 @@ def show_status(config_dir: Path, json_output: bool = False) -> None:
 
                 models_table.add_row(model_name, provider_model, api_base_display)
 
-            console.print(Panel(models_table, title="[bold]Model Deployments[/bold]", border_style="magenta"))
+            console.print(
+                Panel(
+                    models_table,
+                    title="[bold]Model Deployments[/bold]",
+                    border_style="magenta",
+                )
+            )
 
 
 # === Database SQL Command Handlers ===
@@ -1158,7 +1215,7 @@ def format_table(rows: list[dict], columns: list[str], console: Console) -> None
 
 
 def format_json_output(rows: list[dict], console: Console) -> None:
-    """Format query results as syntax-highlighted JSON.
+    """Format query results as JSON output.
 
     Args:
         rows: List of row dictionaries
@@ -1166,10 +1223,18 @@ def format_json_output(rows: list[dict], console: Console) -> None:
     """
     import json as json_module
 
-    from rich.json import JSON
+    def serialize_value(obj):
+        """Custom serializer for database values.
 
-    json_str = json_module.dumps(rows, indent=2, default=str)
-    console.print(JSON(json_str, indent=2, highlight=True))
+        Handles bytes objects (bytea fields) by decoding them as UTF-8 strings.
+        This ensures proper JSON escaping of special characters including newlines.
+        """
+        if isinstance(obj, bytes):
+            return obj.decode("utf-8", errors="replace")
+        return str(obj)
+
+    json_str = json_module.dumps(rows, indent=2, default=serialize_value)
+    builtin_print(json_str)
 
 
 def format_csv_output(rows: list[dict], columns: list[str]) -> None:
@@ -1207,14 +1272,18 @@ def handle_db_sql(config_dir: Path, cmd: DbSql) -> None:
     sql = resolve_sql_input(cmd)
     if not sql:
         console.print("[red]Error:[/red] No SQL query provided")
-        console.print('Usage: ccproxy db sql "SELECT ..." or --file query.sql or pipe via stdin')
+        console.print(
+            'Usage: ccproxy db sql "SELECT ..." or --file query.sql or pipe via stdin'
+        )
         sys.exit(1)
 
     database_url = get_database_url(config_dir)
     if not database_url:
         console.print("[red]Error:[/red] No database_url configured")
         console.print("Set in ccproxy.yaml under ccproxy.mitm.database_url")
-        console.print("Or set CCPROXY_DATABASE_URL or DATABASE_URL environment variable")
+        console.print(
+            "Or set CCPROXY_DATABASE_URL or DATABASE_URL environment variable"
+        )
         sys.exit(1)
 
     try:
@@ -1242,7 +1311,9 @@ def handle_db_sql(config_dir: Path, cmd: DbSql) -> None:
 def main(
     cmd: Annotated[Command, tyro.conf.arg(name="")],
     *,
-    config_dir: Annotated[Path | None, tyro.conf.arg(help="Configuration directory")] = None,
+    config_dir: Annotated[
+        Path | None, tyro.conf.arg(help="Configuration directory")
+    ] = None,
 ) -> None:
     """ccproxy - LiteLLM Transformation Hook System.
 
@@ -1293,7 +1364,9 @@ def main(
 
         # Start the server with same MITM state
         print("Starting LiteLLM server...")
-        start_litellm(config_dir, args=cmd.args, detach=cmd.detach, mitm=mitm_was_running)
+        start_litellm(
+            config_dir, args=cmd.args, detach=cmd.detach, mitm=mitm_was_running
+        )
 
     elif isinstance(cmd, Logs):
         view_logs(config_dir, follow=cmd.follow, lines=cmd.lines)
@@ -1342,7 +1415,17 @@ def entry_point() -> None:
     args = sys.argv[1:]
 
     # Check for 'statusline' and 'db' with subcommands
-    subcommands = {"start", "stop", "restart", "install", "logs", "status", "run", "statusline", "db"}
+    subcommands = {
+        "start",
+        "stop",
+        "restart",
+        "install",
+        "logs",
+        "status",
+        "run",
+        "statusline",
+        "db",
+    }
     statusline_subcommands = {"install", "uninstall", "status"}
     db_subcommands = {"sql"}
 

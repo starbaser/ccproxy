@@ -52,35 +52,6 @@ class CCProxyMitmAddon:
         self.config = config
         self.proxy_direction = proxy_direction
 
-    def _classify_traffic(self, host: str, path: str) -> str:
-        """Classify traffic type based on host and path patterns.
-
-        Args:
-            host: Request host
-            path: Request path
-
-        Returns:
-            Traffic type: llm, mcp, web, or other
-        """
-        host_lower = host.lower()
-        path_lower = path.lower()
-
-        # Check LLM patterns from config
-        for pattern in self.config.llm_hosts:
-            if pattern in host_lower:
-                return "llm"
-
-        # MCP patterns (Model Context Protocol)
-        if "mcp" in host_lower or "mcp" in path_lower:
-            return "mcp"
-
-        # Check if localhost/127.0.0.1 (likely proxy traffic)
-        if host_lower in ("localhost", "127.0.0.1", "::1"):
-            return "other"
-
-        # Everything else is web traffic
-        return "web"
-
     def _truncate_body(self, body: bytes | None) -> bytes | None:
         """Truncate body to configured max size.
 
@@ -198,33 +169,55 @@ class CCProxyMitmAddon:
             logger.info("Injected Claude Code identity into system message")
 
     def _fix_oauth_headers(self, flow: http.HTTPFlow) -> None:
-        """Fix OAuth headers for Anthropic API requests.
+        """Fix OAuth headers for Anthropic-type API requests from Claude Code clients.
 
-        When using OAuth Bearer tokens with Anthropic, the x-api-key header
-        must be removed so Anthropic uses the Authorization header instead.
-        LiteLLM always sends x-api-key, so we remove it here at the HTTP layer.
+        When using OAuth Bearer tokens, the x-api-key header must be removed so
+        the provider uses the Authorization header instead. LiteLLM always sends
+        x-api-key, so we remove it here at the HTTP layer.
+
+        Detection: Claude CLI user-agent + /v1/messages endpoint = Anthropic-type
+        This works for api.anthropic.com, api.z.ai, and other Claude Code providers.
 
         Args:
             flow: HTTP flow object
         """
         request = flow.request
-        host = request.pretty_host.lower()
+        path = request.path.lower()
 
-        # Only process Anthropic API requests
-        if "api.anthropic.com" not in host:
+        # Detect Anthropic-type API by endpoint pattern
+        is_messages_endpoint = "/v1/messages" in path
+
+        if not is_messages_endpoint:
             return
 
         auth_header = request.headers.get("authorization", "")
+        api_key = request.headers.get("x-api-key", "")
+        host = request.pretty_host
 
-        # Only remove x-api-key if Bearer token is present
-        if not auth_header.lower().startswith("bearer "):
+        # Detect OAuth token: either Bearer header present, or x-api-key without sk-ant prefix
+        # LiteLLM converts Authorization: Bearer → x-api-key, so we need to detect and reverse this
+        has_bearer = auth_header.lower().startswith("bearer ")
+        has_oauth_in_apikey = api_key and not api_key.startswith("sk-ant")
+
+        if not has_bearer and not has_oauth_in_apikey:
             return
 
-        if "x-api-key" in request.headers:
+        # If OAuth token is in x-api-key (LiteLLM converted it), move back to Authorization
+        if has_oauth_in_apikey and not has_bearer:
+            request.headers["authorization"] = f"Bearer {api_key}"
             del request.headers["x-api-key"]
             logger.info(
-                "Removed x-api-key for OAuth request to %s",
+                "Restored OAuth token to Authorization header for %s%s",
                 host,
+                path,
+            )
+        elif has_bearer and "x-api-key" in request.headers:
+            # Bearer present but also x-api-key - remove the duplicate
+            del request.headers["x-api-key"]
+            logger.info(
+                "Removed x-api-key for OAuth request to %s%s",
+                host,
+                path,
             )
 
         # Ensure required beta headers are present for OAuth
@@ -262,8 +255,18 @@ class CCProxyMitmAddon:
         try:
             request = flow.request
             host = request.pretty_host
+
+            # Filter based on proxy direction
+            if self.proxy_direction == ProxyDirection.REVERSE:
+                # Reverse: only trace client→LiteLLM traffic (localhost)
+                if host.lower() not in ("localhost", "127.0.0.1", "::1"):
+                    return
+            else:
+                # Forward: only trace LiteLLM→provider traffic (external APIs)
+                if host.lower() in ("localhost", "127.0.0.1", "::1"):
+                    return
+
             path = request.path
-            traffic_type = self._classify_traffic(host, path)
 
             # Extract session_id from request body metadata
             session_id = self._extract_session_id(request)
@@ -272,7 +275,6 @@ class CCProxyMitmAddon:
                 "trace_id": flow.id,
                 "proxy_direction": self.proxy_direction.value,
                 "session_id": session_id,
-                "traffic_type": traffic_type,
                 "method": request.method,
                 "url": request.pretty_url,
                 "host": host,

@@ -110,15 +110,6 @@ class MitmConfig(BaseModel):
     cert_dir: Path | None = None
     """Optional directory for SSL certificates"""
 
-    llm_hosts: list[str] = Field(
-        default_factory=lambda: [
-            "api.anthropic.com",
-            "api.openai.com",
-            "generativelanguage.googleapis.com",
-        ]
-    )
-    """List of hosts considered LLM providers for traffic classification"""
-
     database_url: str | None = None
     """PostgreSQL connection URL for MITM traces. Falls back to CCPROXY_DATABASE_URL or DATABASE_URL env vars."""
 
