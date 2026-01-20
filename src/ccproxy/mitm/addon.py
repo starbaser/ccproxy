@@ -245,8 +245,8 @@ class CCProxyMitmAddon:
         Args:
             flow: HTTP flow object
         """
-        # Fix OAuth headers (always, regardless of storage)
-        self._fix_oauth_headers(flow)
+        # OAuth header fixing now handled by pipeline's forward_oauth hook
+        # self._fix_oauth_headers(flow)
 
         # Skip trace capture if no storage configured
         if self.storage is None:

@@ -82,6 +82,9 @@ class OAuthSource(BaseModel):
     user_agent: str | None = None
     """Optional custom User-Agent header to send with requests using this token"""
 
+    destinations: list[str] = Field(default_factory=list)
+    """URL patterns that should use this token (e.g., ['api.z.ai', 'anthropic.com'])"""
+
 
 class MitmConfig(BaseModel):
     """Configuration for mitmproxy traffic capture."""
@@ -365,6 +368,43 @@ class CCProxyConfig(BaseSettings):
             Custom User-Agent string or None if not configured for this provider
         """
         return self._oat_user_agents.get(provider)
+
+    def get_provider_for_destination(self, api_base: str | None) -> str | None:
+        """Find which provider should handle requests to a given api_base.
+
+        Checks configured oat_sources destinations to find a matching provider.
+
+        Args:
+            api_base: The API base URL (e.g., "https://api.z.ai/api/anthropic")
+
+        Returns:
+            Provider name if a destination pattern matches, None otherwise
+        """
+        if not api_base:
+            return None
+
+        api_base_lower = api_base.lower()
+
+        for provider, source in self.oat_sources.items():
+            # Normalize to OAuthSource
+            if isinstance(source, str):
+                continue  # Simple string form has no destinations
+            elif isinstance(source, OAuthSource):
+                oauth_source = source
+            elif isinstance(source, dict):
+                oauth_source = OAuthSource(**source)
+            else:
+                continue
+
+            # Check if api_base matches any destination pattern
+            for dest in oauth_source.destinations:
+                if dest.lower() in api_base_lower:
+                    logger.debug(
+                        f"Matched api_base '{api_base}' to provider '{provider}' via destination '{dest}'"
+                    )
+                    return provider
+
+        return None
 
     def _load_credentials(self) -> None:
         """Execute shell commands to load OAuth tokens for all configured providers at startup.

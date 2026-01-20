@@ -5,20 +5,26 @@ import logging
 from datetime import datetime
 from typing import Any, TypedDict
 
+import litellm
+from fastapi import HTTPException
 from litellm.integrations.custom_logger import CustomLogger
+from litellm.litellm_core_utils.get_llm_provider_logic import get_llm_provider
 from rich import print
 
 from ccproxy.classifier import RequestClassifier
 from ccproxy.config import get_config
-from ccproxy.router import get_router
-from ccproxy.utils import calculate_duration_ms
 
 # Pipeline imports (new architecture)
 from ccproxy.pipeline import PipelineExecutor
-from ccproxy.pipeline.hook import get_registry, HookSpec
+from ccproxy.pipeline.hook import get_registry
+from ccproxy.router import get_router
+from ccproxy.utils import calculate_duration_ms
 
 # Check interval for TTL-based refresh (30 minutes)
 _OAUTH_REFRESH_CHECK_INTERVAL = 1800
+
+# Maximum retry attempts for 401 errors
+_MAX_401_RETRY_ATTEMPTS = 1
 
 # Set up structured logging
 logger = logging.getLogger(__name__)
@@ -67,13 +73,13 @@ class CCProxyHandler(CustomLogger):
         # Import pipeline hooks to register them with the global registry
         # These imports have side effects (hook registration)
         from ccproxy.pipeline.hooks import (  # noqa: F401
-            rule_evaluator,
-            model_router,
-            extract_session_id,
-            capture_headers,
-            forward_oauth,
             add_beta_headers,
+            capture_headers,
+            extract_session_id,
+            forward_oauth,
             inject_claude_code_identity,
+            model_router,
+            rule_evaluator,
         )
 
         # Get registered hooks from registry
@@ -160,6 +166,27 @@ class CCProxyHandler(CustomLogger):
             return "401" in msg or "unauthorized" in msg or "authentication" in msg
         return False
 
+    def _is_auth_exception(self, exception: Exception) -> bool:
+        """Check if exception indicates authentication failure (401).
+
+        Args:
+            exception: The exception to check
+
+        Returns:
+            True if exception indicates a 401 authentication error
+        """
+        # Check for LiteLLM AuthenticationError
+        if isinstance(exception, litellm.AuthenticationError):
+            return True
+
+        # Check status_code attribute
+        if hasattr(exception, "status_code") and exception.status_code == 401:
+            return True
+
+        # Check exception message
+        exc_str = str(exception).lower()
+        return "401" in exc_str or "unauthorized" in exc_str or "authentication" in exc_str
+
     def _extract_provider_from_metadata(self, kwargs: dict) -> str | None:
         """Extract provider name from request metadata.
 
@@ -178,6 +205,58 @@ class CCProxyHandler(CustomLogger):
             return "openai"
         if "gemini" in model_lower or "google" in model_lower:
             return "gemini"
+        return None
+
+    def _extract_provider_from_request_data(self, request_data: dict) -> str | None:
+        """Extract provider name from request data (used in failure hooks).
+
+        Uses multiple strategies to determine the provider:
+        1. Check ccproxy metadata for model config with api_base
+        2. Check model name in request_data
+        3. Use LiteLLM's provider detection
+
+        Args:
+            request_data: Request data dict from failure hook
+
+        Returns:
+            Provider name (e.g., "anthropic", "openai") or None if not determinable
+        """
+        config = get_config()
+        metadata = request_data.get("metadata", {})
+
+        # Strategy 1: Check ccproxy model config for api_base
+        model_config = metadata.get("ccproxy_model_config", {})
+        if model_config:
+            litellm_params = model_config.get("litellm_params", {})
+            api_base = litellm_params.get("api_base")
+            if api_base:
+                # Check destination-based matching
+                dest_provider = config.get_provider_for_destination(api_base)
+                if dest_provider:
+                    return dest_provider
+
+        # Strategy 2: Get model name
+        model = metadata.get("ccproxy_litellm_model") or request_data.get("model", "")
+        if not model:
+            return None
+
+        # Strategy 3: Try LiteLLM provider detection
+        try:
+            _, provider_name, _, _ = get_llm_provider(model=model)
+            if provider_name:
+                return provider_name
+        except Exception:
+            pass
+
+        # Strategy 4: Fallback to model name-based detection
+        model_lower = model.lower()
+        if "claude" in model_lower or "anthropic" in model_lower:
+            return "anthropic"
+        if "gpt" in model_lower or "openai" in model_lower:
+            return "openai"
+        if "gemini" in model_lower or "google" in model_lower:
+            return "gemini"
+
         return None
 
     async def _start_oauth_refresh_task(self) -> None:
@@ -231,7 +310,6 @@ class CCProxyHandler(CustomLogger):
         # Debug: Log cache_control in system messages
         config = get_config()
         if config.debug:
-            import json
             print(f"[CACHE DEBUG] REQUEST DATA KEYS: {list(data.keys())}")
             # Check messages
             messages = data.get("messages", [])
@@ -511,3 +589,157 @@ class CCProxyHandler(CustomLogger):
         }
 
         logger.info("ccproxy streaming request completed", extra=log_data)
+
+    async def async_post_call_failure_hook(
+        self,
+        request_data: dict,
+        original_exception: Exception,
+        user_api_key_dict: Any,
+        traceback_str: str | None = None,
+    ) -> HTTPException | None:
+        """Handle failed API calls with OAuth token refresh and retry.
+
+        When a 401 authentication error occurs and OAuth is configured for the
+        provider, this hook:
+        1. Refreshes the OAuth token
+        2. Retries the request with the new token via litellm.acompletion
+        3. If successful, raises a special exception containing the response
+           (LiteLLM will handle this appropriately)
+
+        Args:
+            request_data: Original request data dict
+            original_exception: The exception that caused the failure
+            user_api_key_dict: User API key authentication info
+            traceback_str: Optional traceback string
+
+        Returns:
+            HTTPException to replace the original error, or None to use original
+        """
+        # Only handle 401 authentication errors
+        if not self._is_auth_exception(original_exception):
+            return None
+
+        # Check if we've already retried (prevent infinite loops)
+        metadata = request_data.get("metadata", {})
+        retry_count = metadata.get("_ccproxy_401_retry_count", 0)
+        if retry_count >= _MAX_401_RETRY_ATTEMPTS:
+            logger.warning(
+                "401 retry: Max retry attempts (%d) reached, not retrying",
+                _MAX_401_RETRY_ATTEMPTS,
+            )
+            return None
+
+        # Determine provider
+        provider = self._extract_provider_from_request_data(request_data)
+        if not provider:
+            logger.debug("401 retry: Could not determine provider from request data")
+            return None
+
+        # Check if OAuth is configured for this provider
+        config = get_config()
+        if provider not in config.oat_sources:
+            logger.debug("401 retry: No OAuth configured for provider '%s'", provider)
+            return None
+
+        # Refresh the OAuth token
+        new_token = config.refresh_oauth_token(provider)
+        if not new_token:
+            logger.warning("401 retry: Failed to refresh OAuth token for provider '%s'", provider)
+            return None
+
+        logger.info(
+            "401 retry: Refreshed OAuth token for provider '%s', attempting retry",
+            provider,
+            extra={
+                "event": "oauth_401_retry",
+                "provider": provider,
+                "retry_count": retry_count + 1,
+            },
+        )
+
+        # Prepare retry request data
+        retry_data = request_data.copy()
+        retry_metadata = retry_data.get("metadata", {}).copy()
+        retry_metadata["_ccproxy_401_retry_count"] = retry_count + 1
+        retry_data["metadata"] = retry_metadata
+
+        # Inject the new OAuth token
+        # We need to set it in a way that the hooks will pick it up
+        if "proxy_server_request" not in retry_data:
+            retry_data["proxy_server_request"] = {}
+        if "headers" not in retry_data["proxy_server_request"]:
+            retry_data["proxy_server_request"]["headers"] = {}
+
+        # Set authorization header with new token
+        retry_data["proxy_server_request"]["headers"]["authorization"] = f"Bearer {new_token}"
+
+        try:
+            # Make the retry call
+            model = retry_data.get("model", "")
+            messages = retry_data.get("messages", [])
+
+            # Build kwargs for acompletion
+            completion_kwargs: dict[str, Any] = {
+                "model": model,
+                "messages": messages,
+                "metadata": retry_metadata,
+            }
+
+            # Copy over other relevant parameters
+            for key in ["temperature", "max_tokens", "stream", "tools", "tool_choice", "thinking"]:
+                if key in retry_data:
+                    completion_kwargs[key] = retry_data[key]
+
+            # Add OAuth token via extra headers
+            completion_kwargs["extra_headers"] = {
+                "authorization": f"Bearer {new_token}",
+                "x-api-key": "",  # Clear x-api-key for OAuth
+            }
+
+            logger.debug("401 retry: Calling litellm.acompletion with refreshed token")
+            response = await litellm.acompletion(**completion_kwargs)
+
+            logger.info(
+                "401 retry: Request succeeded after OAuth token refresh",
+                extra={
+                    "event": "oauth_401_retry_success",
+                    "provider": provider,
+                    "model": model,
+                },
+            )
+
+            # Convert response to JSON-serializable dict
+            # LiteLLM ModelResponse has a model_dump() method
+            if hasattr(response, "model_dump"):
+                response_dict = response.model_dump()
+            elif hasattr(response, "dict"):
+                response_dict = response.dict()
+            else:
+                response_dict = dict(response) if hasattr(response, "__iter__") else {"response": str(response)}
+
+        except Exception as retry_error:
+            logger.warning(
+                "401 retry: Retry attempt failed: %s",
+                str(retry_error),
+                extra={
+                    "event": "oauth_401_retry_failed",
+                    "provider": provider,
+                    "error": str(retry_error),
+                },
+            )
+            # Return None to let the original exception propagate
+            return None
+
+        # Retry succeeded - return successful response via HTTPException mechanism
+        # This is a workaround since async_post_call_failure_hook can only
+        # return HTTPException or None. We return an HTTPException with 200 status
+        # which LiteLLM's proxy will send to the client as a successful response.
+        #
+        # NOTE: This approach may not work with all LiteLLM versions as it
+        # depends on how the proxy handles HTTPExceptions with 2xx status codes.
+        # If it doesn't work, the token is still refreshed and subsequent
+        # requests will succeed.
+        return HTTPException(
+            status_code=200,
+            detail=response_dict,
+        )

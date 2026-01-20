@@ -153,6 +153,26 @@ class DbSql:
 
 
 @attrs.define
+class DbPrompt:
+    """Convert a MITM trace to formatted markdown showing the conversation."""
+
+    trace_id: Annotated[str, tyro.conf.Positional]
+    """Trace ID to convert."""
+
+    output: Annotated[Path | None, tyro.conf.arg(aliases=["-o"])] = None
+    """Output file path. Defaults to stdout."""
+
+    direction: Annotated[str, tyro.conf.arg(aliases=["-d"])] = "forward"
+    """Proxy direction filter: 'forward' (default), 'reverse', or 'both'."""
+
+    include_headers: Annotated[bool, tyro.conf.arg(aliases=["-H"])] = False
+    """Include HTTP headers in output."""
+
+    raw: Annotated[bool, tyro.conf.arg(aliases=["-r"])] = False
+    """Output raw JSON bodies instead of formatted markdown."""
+
+
+@attrs.define
 class DagViz:
     """Visualize the hook pipeline DAG (Directed Acyclic Graph).
 
@@ -191,6 +211,7 @@ Command = (
     | Annotated[StatuslineUninstall, tyro.conf.subcommand(name="statusline-uninstall")]
     | Annotated[StatuslineStatus, tyro.conf.subcommand(name="statusline-status")]
     | Annotated[DbSql, tyro.conf.subcommand(name="db-sql")]
+    | Annotated[DbPrompt, tyro.conf.subcommand(name="db-prompt")]
     | Annotated[DagViz, tyro.conf.subcommand(name="dag-viz")]
 )
 
@@ -1323,6 +1344,487 @@ def handle_db_sql(config_dir: Path, cmd: DbSql) -> None:
         format_table(rows, columns, out)
 
 
+# === Database Prompt Command Handlers ===
+
+
+async def fetch_trace(database_url: str, trace_id: str) -> dict | None:
+    """Fetch a single trace by ID.
+
+    Args:
+        database_url: PostgreSQL connection string
+        trace_id: UUID of the trace
+
+    Returns:
+        Trace record as dict or None if not found
+    """
+    import asyncpg
+
+    conn = await asyncpg.connect(database_url)
+    try:
+        result = await conn.fetchrow(
+            'SELECT * FROM "CCProxy_HttpTraces" WHERE trace_id = $1',
+            trace_id,
+        )
+        return dict(result) if result else None
+    finally:
+        await conn.close()
+
+
+def parse_anthropic_request(body: bytes | None) -> dict:
+    """Parse Anthropic Messages API request body.
+
+    Args:
+        body: Raw request body bytes
+
+    Returns:
+        Parsed request with: model, system, messages, settings
+    """
+    if not body:
+        return {"error": "Empty request body"}
+
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        return {"error": f"Failed to parse JSON: {e}"}
+
+    return {
+        "model": data.get("model", "unknown"),
+        "system": data.get("system"),
+        "messages": data.get("messages", []),
+        "max_tokens": data.get("max_tokens"),
+        "temperature": data.get("temperature"),
+        "thinking": data.get("thinking"),
+        "tools": data.get("tools"),
+        "metadata": data.get("metadata"),
+        "stream": data.get("stream", False),
+    }
+
+
+def parse_streaming_response(text: str) -> dict:
+    """Parse SSE streaming response into consolidated content.
+
+    Args:
+        text: Raw SSE text with "event: X\\ndata: {...}" lines
+
+    Returns:
+        Consolidated response content
+    """
+    content_blocks: list[dict] = []
+    usage: dict | None = None
+    stop_reason: str | None = None
+    model: str | None = None
+
+    for line in text.split("\n"):
+        if not line.startswith("data: "):
+            continue
+
+        try:
+            event = json.loads(line[6:])
+        except json.JSONDecodeError:
+            continue
+
+        event_type = event.get("type")
+
+        if event_type == "message_start":
+            msg = event.get("message", {})
+            model = msg.get("model")
+            usage = msg.get("usage")
+        elif event_type == "content_block_start":
+            block = event.get("content_block", {})
+            content_blocks.append(block)
+        elif event_type == "content_block_delta":
+            delta = event.get("delta", {})
+            idx = event.get("index", 0)
+            if idx < len(content_blocks):
+                if delta.get("type") == "text_delta":
+                    content_blocks[idx]["text"] = (
+                        content_blocks[idx].get("text", "") + delta.get("text", "")
+                    )
+                elif delta.get("type") == "thinking_delta":
+                    content_blocks[idx]["thinking"] = (
+                        content_blocks[idx].get("thinking", "")
+                        + delta.get("thinking", "")
+                    )
+        elif event_type == "message_delta":
+            delta = event.get("delta", {})
+            stop_reason = delta.get("stop_reason")
+            if event.get("usage"):
+                usage = {**(usage or {}), **event["usage"]}
+
+    return {
+        "content": content_blocks,
+        "stop_reason": stop_reason,
+        "usage": usage,
+        "model": model,
+        "streaming": True,
+    }
+
+
+def parse_anthropic_response(body: bytes | None, content_type: str | None) -> dict:
+    """Parse Anthropic Messages API response body.
+
+    Handles both streaming (text/event-stream) and non-streaming responses.
+
+    Args:
+        body: Raw response body bytes
+        content_type: Response content-type header
+
+    Returns:
+        Parsed response with: content, usage, stop_reason
+    """
+    if not body:
+        return {"error": "Empty response body"}
+
+    is_streaming = content_type and "event-stream" in content_type
+
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError as e:
+        return {"error": f"Failed to decode response: {e}"}
+
+    if is_streaming:
+        return parse_streaming_response(text)
+
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        return {"error": f"Failed to parse JSON: {e}"}
+
+    return {
+        "content": data.get("content", []),
+        "stop_reason": data.get("stop_reason"),
+        "usage": data.get("usage"),
+        "model": data.get("model"),
+    }
+
+
+def format_content_block(block: dict) -> list[str]:
+    """Format a single content block.
+
+    Args:
+        block: Content block dict with type field
+
+    Returns:
+        List of markdown lines
+    """
+    lines: list[str] = []
+    block_type = block.get("type", "unknown")
+
+    if block_type == "text":
+        text = block.get("text", "")
+        lines.append(text)
+
+    elif block_type == "thinking":
+        thinking = block.get("thinking", "")
+        lines.append("<details>")
+        lines.append("<summary>Thinking</summary>")
+        lines.append("")
+        lines.append(thinking)
+        lines.append("")
+        lines.append("</details>")
+
+    elif block_type == "tool_use":
+        name = block.get("name", "unknown")
+        tool_id = block.get("id", "")
+        tool_input = block.get("input", {})
+        lines.append(f"**Tool Use: {name}** (id: `{tool_id}`)")
+        lines.append("")
+        lines.append("```json")
+        lines.append(json.dumps(tool_input, indent=2))
+        lines.append("```")
+
+    elif block_type == "tool_result":
+        tool_id = block.get("tool_use_id", "")
+        content = block.get("content")
+        is_error = block.get("is_error", False)
+
+        error_marker = " [ERROR]" if is_error else ""
+        lines.append(f"**Tool Result{error_marker}** (id: `{tool_id}`)")
+        lines.append("")
+
+        if isinstance(content, str):
+            lines.append("```")
+            truncated = content[:2000] + ("..." if len(content) > 2000 else "")
+            lines.append(truncated)
+            lines.append("```")
+        elif isinstance(content, list):
+            for sub_block in content:
+                lines.extend(format_content_block(sub_block))
+
+    elif block_type == "image":
+        source = block.get("source", {})
+        media_type = source.get("media_type", "image/*")
+        lines.append(f"*[Image: {media_type}]*")
+
+    else:
+        lines.append(f"*[{block_type}]*")
+        lines.append("```json")
+        lines.append(json.dumps(block, indent=2)[:500])
+        lines.append("```")
+
+    return lines
+
+
+def format_trace_markdown(
+    trace: dict,
+    request: dict,
+    response: dict,
+    include_headers: bool = False,
+) -> str:
+    """Format trace data as markdown document.
+
+    Args:
+        trace: Raw trace record from database
+        request: Parsed request data
+        response: Parsed response data
+        include_headers: Whether to include HTTP headers
+
+    Returns:
+        Formatted markdown string
+    """
+    lines: list[str] = []
+
+    # Title and metadata table
+    lines.append(f"# MITM Trace: {trace['trace_id']}")
+    lines.append("")
+
+    # Metadata table
+    lines.append("## Metadata")
+    lines.append("")
+    lines.append("| Field | Value |")
+    lines.append("|-------|-------|")
+    lines.append(f"| Trace ID | `{trace['trace_id']}` |")
+    direction_label = (
+        "Forward (LiteLLM→Provider)"
+        if trace.get("proxy_direction") == 1
+        else "Reverse (Client→LiteLLM)"
+    )
+    lines.append(f"| Direction | {direction_label} |")
+    lines.append(f"| Session ID | `{trace.get('session_id') or 'N/A'}` |")
+    lines.append(f"| Model | `{request.get('model', 'unknown')}` |")
+    lines.append(f"| URL | `{trace.get('url', 'N/A')}` |")
+    lines.append(f"| Status | {trace.get('status_code', 'N/A')} |")
+
+    duration = trace.get("duration_ms")
+    if duration is not None:
+        lines.append(f"| Duration | {duration:.2f}ms |")
+    else:
+        lines.append("| Duration | N/A |")
+
+    lines.append(f"| Start Time | {trace.get('start_time', 'N/A')} |")
+
+    # Request settings
+    if (
+        request.get("max_tokens")
+        or request.get("temperature") is not None
+        or request.get("thinking")
+    ):
+        lines.append("")
+        lines.append("### Request Settings")
+        lines.append("")
+        if request.get("max_tokens"):
+            lines.append(f"- **max_tokens:** {request['max_tokens']}")
+        if request.get("temperature") is not None:
+            lines.append(f"- **temperature:** {request['temperature']}")
+        if request.get("thinking"):
+            budget = request["thinking"].get("budget_tokens", "N/A")
+            lines.append(f"- **thinking:** enabled (budget: {budget})")
+        if request.get("stream"):
+            lines.append("- **streaming:** enabled")
+
+    # Usage stats from response
+    if response.get("usage"):
+        lines.append("")
+        lines.append("### Token Usage")
+        lines.append("")
+        usage = response["usage"]
+        lines.append(f"- **Input tokens:** {usage.get('input_tokens', 'N/A')}")
+        lines.append(f"- **Output tokens:** {usage.get('output_tokens', 'N/A')}")
+        if usage.get("cache_read_input_tokens"):
+            lines.append(f"- **Cache read:** {usage['cache_read_input_tokens']}")
+        if usage.get("cache_creation_input_tokens"):
+            lines.append(f"- **Cache creation:** {usage['cache_creation_input_tokens']}")
+
+    # HTTP Headers (optional)
+    if include_headers:
+        lines.append("")
+        lines.append("## HTTP Headers")
+        lines.append("")
+        lines.append("### Request Headers")
+        lines.append("```")
+        for k, v in (trace.get("request_headers") or {}).items():
+            if k.lower() in ("authorization", "x-api-key"):
+                v = v[:20] + "..." if len(str(v)) > 20 else "[REDACTED]"
+            lines.append(f"{k}: {v}")
+        lines.append("```")
+
+        lines.append("")
+        lines.append("### Response Headers")
+        lines.append("```")
+        for k, v in (trace.get("response_headers") or {}).items():
+            lines.append(f"{k}: {v}")
+        lines.append("```")
+
+    # System message
+    lines.append("")
+    lines.append("## System Message")
+    lines.append("")
+    system = request.get("system")
+    if system:
+        if isinstance(system, str):
+            lines.append(system)
+        elif isinstance(system, list):
+            for block in system:
+                if isinstance(block, dict):
+                    if block.get("type") == "text":
+                        lines.append(block.get("text", ""))
+                    if block.get("cache_control"):
+                        lines.append(f"*[cache_control: {block['cache_control']}]*")
+    else:
+        lines.append("*No system message*")
+
+    # Tools (if any)
+    if request.get("tools"):
+        lines.append("")
+        lines.append("## Tools")
+        lines.append("")
+        lines.append(f"*{len(request['tools'])} tools defined*")
+        lines.append("")
+        for tool in request["tools"]:
+            name = tool.get("name", "unknown")
+            desc = tool.get("description", "")[:100]
+            lines.append(f"- **{name}**: {desc}...")
+
+    # Conversation
+    lines.append("")
+    lines.append("## Conversation")
+    lines.append("")
+
+    for msg in request.get("messages", []):
+        role = msg.get("role", "unknown")
+        content = msg.get("content")
+
+        lines.append(f"### {role.title()}")
+        lines.append("")
+
+        if isinstance(content, str):
+            lines.append(content)
+        elif isinstance(content, list):
+            for block in content:
+                lines.extend(format_content_block(block))
+
+        lines.append("")
+
+    # Assistant response
+    if response.get("content"):
+        lines.append("### Assistant (Response)")
+        lines.append("")
+        for block in response["content"]:
+            lines.extend(format_content_block(block))
+        lines.append("")
+
+        if response.get("stop_reason"):
+            lines.append(f"*Stop reason: {response['stop_reason']}*")
+
+    # Errors
+    if response.get("error"):
+        lines.append("")
+        lines.append("## Error")
+        lines.append("")
+        lines.append(f"**{response['error']}**")
+
+    return "\n".join(lines)
+
+
+def handle_db_prompt(config_dir: Path, cmd: DbPrompt) -> None:
+    """Handle the db prompt command.
+
+    Args:
+        config_dir: Configuration directory
+        cmd: DbPrompt command instance
+    """
+    import asyncio
+    from datetime import datetime
+
+    console = Console(stderr=True)
+
+    # Validate direction
+    valid_directions = {"forward", "reverse", "both"}
+    if cmd.direction not in valid_directions:
+        console.print(
+            f"[red]Error:[/red] Invalid direction '{cmd.direction}'. "
+            f"Use: {', '.join(valid_directions)}"
+        )
+        sys.exit(1)
+
+    # Get database URL
+    database_url = get_database_url(config_dir)
+    if not database_url:
+        console.print("[red]Error:[/red] No database_url configured")
+        console.print("Set in ccproxy.yaml under ccproxy.mitm.database_url")
+        console.print(
+            "Or set CCPROXY_DATABASE_URL or DATABASE_URL environment variable"
+        )
+        sys.exit(1)
+
+    # Fetch trace
+    try:
+        trace = asyncio.run(fetch_trace(database_url, cmd.trace_id))
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+
+    if not trace:
+        console.print(f"[red]Error:[/red] Trace not found: {cmd.trace_id}")
+        sys.exit(1)
+
+    # Filter by direction
+    trace_direction = "forward" if trace.get("proxy_direction") == 1 else "reverse"
+    if cmd.direction != "both" and trace_direction != cmd.direction:
+        console.print(
+            f"[yellow]Warning:[/yellow] Trace direction is '{trace_direction}' "
+            f"but filter is '{cmd.direction}'"
+        )
+
+    # Parse request and response
+    request = parse_anthropic_request(trace.get("request_body"))
+    response = parse_anthropic_response(
+        trace.get("response_body"),
+        trace.get("response_content_type"),
+    )
+
+    # Format output
+    if cmd.raw:
+        # Convert non-serializable types for JSON output
+        trace_serializable = {}
+        for k, v in trace.items():
+            if isinstance(v, bytes):
+                trace_serializable[k] = v.decode("utf-8", errors="replace")
+            elif isinstance(v, datetime):
+                trace_serializable[k] = v.isoformat()
+            else:
+                trace_serializable[k] = v
+
+        output = json.dumps(
+            {
+                "trace": trace_serializable,
+                "parsed_request": request,
+                "parsed_response": response,
+            },
+            indent=2,
+            default=str,
+        )
+    else:
+        output = format_trace_markdown(trace, request, response, cmd.include_headers)
+
+    # Write output
+    if cmd.output:
+        cmd.output.write_text(output)
+        console.print(f"[green]Written to:[/green] {cmd.output}")
+    else:
+        builtin_print(output)
+
+
 def main(
     cmd: Annotated[Command, tyro.conf.arg(name="")],
     *,
@@ -1419,6 +1921,9 @@ def main(
 
     elif isinstance(cmd, DbSql):
         handle_db_sql(config_dir, cmd)
+
+    elif isinstance(cmd, DbPrompt):
+        handle_db_prompt(config_dir, cmd)
 
     elif isinstance(cmd, DagViz):
         handle_dag_viz(cmd)
@@ -1555,7 +2060,7 @@ def entry_point() -> None:
         "db",
     }
     statusline_subcommands = {"install", "uninstall", "status"}
-    db_subcommands = {"sql"}
+    db_subcommands = {"sql", "prompt"}
 
     statusline_idx = None
     run_idx = None

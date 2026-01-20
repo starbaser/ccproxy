@@ -254,7 +254,7 @@ class TestModelRouter:
 
     @patch("ccproxy.hooks.get_config")
     def test_model_router_default_passthrough_enabled(self, mock_get_config, mock_router, user_api_key_dict):
-        """Test model_router with default_model_passthrough=True uses original model."""
+        """Test model_router with default_model_passthrough=True uses original model but looks up config."""
         # Configure passthrough mode
         mock_config = MagicMock()
         mock_config.default_model_passthrough = True
@@ -267,11 +267,12 @@ class TestModelRouter:
 
         result = model_router(data, user_api_key_dict, router=mock_router)
 
-        # Should keep original model and not call router
+        # Should keep original model but still look up config for api_base (needed for OAuth destination detection)
         assert result["model"] == "original_model"
         assert result["metadata"]["ccproxy_litellm_model"] == "claude-sonnet-4-5-20250929"
-        assert result["metadata"]["ccproxy_model_config"] is None
-        mock_router.get_model_for_label.assert_not_called()
+        # Now we DO look up config even in passthrough mode
+        mock_router.get_model_for_label.assert_called_once_with("claude-sonnet-4-5-20250929")
+        assert result["metadata"]["ccproxy_model_config"] is not None
 
     @patch("ccproxy.hooks.get_config")
     def test_model_router_default_passthrough_disabled(self, mock_get_config, mock_router, user_api_key_dict):

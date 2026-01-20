@@ -213,9 +213,11 @@ def model_router(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwar
         if original_model:
             # Keep the original model - no routing needed
             data["metadata"]["ccproxy_litellm_model"] = original_model
-            data["metadata"]["ccproxy_model_config"] = None  # No specific config since we're not routing
             data["metadata"]["ccproxy_is_passthrough"] = True  # Mark as passthrough decision
-            logger.debug(f"Using passthrough mode for default routing: keeping original model {original_model}")
+            # Still look up model config for api_base (needed for OAuth destination detection)
+            passthrough_config = router.get_model_for_label(original_model)
+            data["metadata"]["ccproxy_model_config"] = passthrough_config or {}
+            logger.debug(f"Using passthrough mode for default routing: keeping original model {original_model}, config={passthrough_config}")
             # Skip the routing logic and go directly to request ID generation
         else:
             logger.warning("No original model found for passthrough mode, falling back to routing")
@@ -434,24 +436,50 @@ def forward_oauth(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwa
         logger.warning(f"forward_oauth: No routed_model in metadata, skipping. metadata={metadata}")
         return data
 
-    # Detect provider - try LiteLLM first, then fallback to simple name matching
-    provider_name = None
-    try:
-        _, provider_name, _, _ = get_llm_provider(
-            model=routed_model,
-            custom_llm_provider=custom_provider,
-            api_base=api_base,
+    # Check if the model config has its own api_key configured
+    # If so, don't override with OAuth - let LiteLLM use the configured key
+    configured_api_key = litellm_params.get("api_key")
+    if configured_api_key:
+        logger.debug(
+            f"forward_oauth: Model '{routed_model}' has configured api_key, skipping OAuth forwarding"
         )
-    except Exception:
-        # Fallback: simple name-based detection
-        if "claude" in routed_model.lower():
-            provider_name = "anthropic"
-        elif "gemini" in routed_model.lower() or "palm" in routed_model.lower():
-            provider_name = "gemini"
-        elif "gpt" in routed_model.lower():
-            provider_name = "openai"
+        return data
 
-    logger.debug(f"forward_oauth: Detected provider '{provider_name}' for model '{routed_model}'")
+    # Detect provider using priority order:
+    # 1. Explicit custom_llm_provider (if set)
+    # 2. Destination-based matching from oat_sources config
+    # 3. LiteLLM's provider detection
+    # 4. Model name-based fallback
+    provider_name = None
+
+    # 1. Explicit custom_llm_provider wins
+    if custom_provider:
+        provider_name = custom_provider
+    else:
+        # 2. Check destination-based matching from oat_sources
+        config = get_config()
+        dest_provider = config.get_provider_for_destination(api_base)
+        if dest_provider:
+            logger.debug(f"forward_oauth: Detected provider '{dest_provider}' for api_base '{api_base}' via destination config")
+            provider_name = dest_provider
+        else:
+            # 3. Try LiteLLM's provider detection
+            try:
+                _, provider_name, _, _ = get_llm_provider(
+                    model=routed_model,
+                    custom_llm_provider=custom_provider,
+                    api_base=api_base,
+                )
+            except Exception:
+                # 4. Fallback: simple name-based detection
+                if "claude" in routed_model.lower():
+                    provider_name = "anthropic"
+                elif "gemini" in routed_model.lower() or "palm" in routed_model.lower():
+                    provider_name = "gemini"
+                elif "gpt" in routed_model.lower():
+                    provider_name = "openai"
+
+    logger.debug(f"forward_oauth: Detected provider '{provider_name}' for model '{routed_model}' (api_base={api_base})")
     if not provider_name:
         # Cannot determine provider, skip OAuth forwarding
         logger.warning(f"forward_oauth: No provider_name detected for model {routed_model}")
@@ -626,20 +654,42 @@ def add_beta_headers(data: dict[str, Any], user_api_key_dict: dict[str, Any], **
     api_base = litellm_params.get("api_base")
     custom_provider = litellm_params.get("custom_llm_provider")
 
-    # Detect provider - try LiteLLM first, then fallback to simple name matching
+    # Detect provider using priority order (same as forward_oauth):
+    # 1. Explicit custom_llm_provider
+    # 2. Destination-based matching from oat_sources config
+    # 3. LiteLLM's provider detection
+    # 4. Model name-based fallback
     provider_name = None
-    try:
-        _, provider_name, _, _ = get_llm_provider(
-            model=routed_model,
-            custom_llm_provider=custom_provider,
-            api_base=api_base,
-        )
-    except Exception:
-        # Fallback: simple name-based detection
-        if "claude" in routed_model.lower():
-            provider_name = "anthropic"
+    if custom_provider:
+        provider_name = custom_provider
+    else:
+        # Check destination-based matching from oat_sources
+        config = get_config()
+        dest_provider = config.get_provider_for_destination(api_base)
+        if dest_provider:
+            provider_name = dest_provider
+        else:
+            try:
+                _, provider_name, _, _ = get_llm_provider(
+                    model=routed_model,
+                    custom_llm_provider=custom_provider,
+                    api_base=api_base,
+                )
+            except Exception:
+                # Fallback: simple name-based detection
+                if "claude" in routed_model.lower():
+                    provider_name = "anthropic"
 
     if provider_name != "anthropic":
+        return data
+
+    # Skip beta headers if model has its own api_key configured
+    # Beta headers are for Claude Code OAuth impersonation, not for models using their own keys
+    configured_api_key = litellm_params.get("api_key")
+    if configured_api_key:
+        logger.debug(
+            f"add_beta_headers: Model '{routed_model}' has configured api_key, skipping beta headers"
+        )
         return data
 
     # Build the merged beta headers
@@ -714,11 +764,26 @@ def inject_claude_code_identity(
     if not auth_header.lower().startswith("bearer sk-ant-oat"):
         return data
 
-    # Detect provider - only inject for Anthropic
+    # Detect provider - only inject for Anthropic (api.anthropic.com)
+    # For ZAI and other providers, they don't require the Claude Code identity
     metadata = data.get("metadata", {})
     routed_model = metadata.get("ccproxy_litellm_model", "")
+    model_config = metadata.get("ccproxy_model_config") or {}
 
-    if not routed_model or "claude" not in routed_model.lower():
+    if not routed_model:
+        return data
+
+    # Check if this is going to api.anthropic.com vs other Anthropic-compatible APIs
+    litellm_params = model_config.get("litellm_params", {})
+    api_base = litellm_params.get("api_base", "")
+
+    # Only inject for actual Anthropic API (api.anthropic.com), not for compatible APIs like ZAI
+    if api_base and "anthropic.com" not in api_base.lower():
+        logger.debug(f"inject_claude_code_identity: Skipping for api_base '{api_base}' (not api.anthropic.com)")
+        return data
+
+    # Also check if model name suggests it's not actually Claude
+    if "claude" not in routed_model.lower():
         return data
 
     # Check if system message already contains the required prefix
