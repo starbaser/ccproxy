@@ -60,6 +60,16 @@ def add_beta_headers(ctx: Context, params: dict[str, Any]) -> Context:
     if provider_name != "anthropic":
         return ctx
 
+    # Skip beta headers if model has its own api_key configured
+    # Beta headers are for Claude Code OAuth impersonation, not for models using their own keys
+    configured_api_key = litellm_params.get("api_key")
+    if configured_api_key:
+        logger.debug(
+            "add_beta_headers: Model '%s' has configured api_key, skipping beta headers",
+            routed_model,
+        )
+        return ctx
+
     # Build merged beta headers
     existing = ""
     if "extra_headers" in ctx.provider_headers:

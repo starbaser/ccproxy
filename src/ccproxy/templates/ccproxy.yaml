@@ -8,10 +8,18 @@ ccproxy:
 
   # OAuth token sources - shell commands to retrieve tokens for each provider
   oat_sources:
-    # Simple string form
+    # Simple string form (provider name used for detection)
     anthropic: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
 
-    # Extended form with custom User-Agent
+    # Extended form with destinations (auto-inject token for matching api_base URLs)
+    # zai:
+    #   command: "jq -r '.accessToken' ~/.zai/credentials.json"
+    #   user_agent: "MyApp/1.0.0"
+    #   destinations:
+    #     - "api.z.ai"           # Matches https://api.z.ai/api/anthropic
+    #     - "z.ai"               # Matches any z.ai subdomain
+
+    # Extended form with custom User-Agent only
     # gemini:
     #   command: "jq -r '.access_token' ~/.gemini/oauth_creds.json"
     #   user_agent: "MyApp/1.0.0"

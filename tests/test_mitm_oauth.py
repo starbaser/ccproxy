@@ -150,11 +150,15 @@ class TestFixOAuthHeaders:
 
 
 class TestRequestMethod:
-    """Tests for the request method integration."""
+    """Tests for the request method integration.
+
+    Note: OAuth header fixing is now handled by the pipeline's forward_oauth hook,
+    not the MITM addon. The addon's request() method only handles trace capture.
+    """
 
     @pytest.mark.asyncio
-    async def test_request_calls_fix_oauth_headers(self, addon: CCProxyMitmAddon, mock_flow: MagicMock) -> None:
-        """request() should call _fix_oauth_headers."""
+    async def test_request_preserves_headers(self, addon: CCProxyMitmAddon, mock_flow: MagicMock) -> None:
+        """request() should not modify headers (OAuth handled by pipeline)."""
         mock_flow.request.pretty_host = "api.anthropic.com"
         mock_flow.request.headers = {
             "authorization": "Bearer token",
@@ -163,11 +167,13 @@ class TestRequestMethod:
 
         await addon.request(mock_flow)
 
-        assert "x-api-key" not in mock_flow.request.headers
+        # Headers preserved - OAuth fixing done by pipeline, not MITM
+        assert mock_flow.request.headers["authorization"] == "Bearer token"
+        assert mock_flow.request.headers["x-api-key"] == "dummy"
 
     @pytest.mark.asyncio
-    async def test_request_fixes_headers_without_storage(self, mock_flow: MagicMock) -> None:
-        """OAuth header fix should work even without storage configured."""
+    async def test_request_works_without_storage(self, mock_flow: MagicMock) -> None:
+        """request() should work even without storage configured."""
         config = MitmConfig()
         addon = CCProxyMitmAddon(storage=None, config=config)
 
@@ -177,9 +183,8 @@ class TestRequestMethod:
             "x-api-key": "dummy",
         }
 
+        # Should not raise
         await addon.request(mock_flow)
-
-        assert "x-api-key" not in mock_flow.request.headers
 
 
 class TestProxyDirectionFiltering:

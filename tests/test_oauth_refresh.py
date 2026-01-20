@@ -388,3 +388,369 @@ class TestBackgroundRefreshTask:
             task1.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task1
+
+
+@pytest.mark.asyncio
+class TestPostCallFailureHook:
+    """Test async_post_call_failure_hook for 401 retry logic."""
+
+    async def test_non_auth_error_returns_none(self):
+        """Test that non-401 errors return None (use original exception)."""
+        config = CCProxyConfig(oat_sources={"anthropic": "echo 'test-token'"})
+        config._oat_values["anthropic"] = ("test-token", time.time())
+        set_config_instance(config)
+
+        mock_proxy_server = MagicMock()
+        mock_proxy_server.llm_router = MagicMock()
+        mock_proxy_server.llm_router.model_list = []
+        mock_module = MagicMock()
+        mock_module.proxy_server = mock_proxy_server
+
+        with patch.dict("sys.modules", {"litellm.proxy": mock_module}):
+            clear_router()
+            handler = CCProxyHandler()
+
+            # Create a non-401 error
+            error = ValueError("Some other error")
+            request_data = {
+                "model": "claude-sonnet-4-5-20250929",
+                "messages": [{"role": "user", "content": "test"}],
+                "metadata": {},
+            }
+
+            result = await handler.async_post_call_failure_hook(
+                request_data=request_data,
+                original_exception=error,
+                user_api_key_dict={},
+            )
+
+            assert result is None
+
+    async def test_auth_error_without_oauth_returns_none(self):
+        """Test that 401 without OAuth configured returns None."""
+        config = CCProxyConfig(oat_sources={})  # No OAuth configured
+        set_config_instance(config)
+
+        mock_proxy_server = MagicMock()
+        mock_proxy_server.llm_router = MagicMock()
+        mock_proxy_server.llm_router.model_list = []
+        mock_module = MagicMock()
+        mock_module.proxy_server = mock_proxy_server
+
+        with patch.dict("sys.modules", {"litellm.proxy": mock_module}):
+            clear_router()
+            handler = CCProxyHandler()
+
+            # Create a 401 error
+            import litellm
+            error = litellm.AuthenticationError(
+                message="Unauthorized",
+                llm_provider="anthropic",
+                model="claude-sonnet-4-5-20250929",
+            )
+            request_data = {
+                "model": "claude-sonnet-4-5-20250929",
+                "messages": [{"role": "user", "content": "test"}],
+                "metadata": {},
+            }
+
+            result = await handler.async_post_call_failure_hook(
+                request_data=request_data,
+                original_exception=error,
+                user_api_key_dict={},
+            )
+
+            assert result is None
+
+    async def test_auth_error_max_retries_returns_none(self):
+        """Test that exceeding max retries returns None."""
+        config = CCProxyConfig(oat_sources={"anthropic": "echo 'test-token'"})
+        config._oat_values["anthropic"] = ("test-token", time.time())
+        set_config_instance(config)
+
+        mock_proxy_server = MagicMock()
+        mock_proxy_server.llm_router = MagicMock()
+        mock_proxy_server.llm_router.model_list = []
+        mock_module = MagicMock()
+        mock_module.proxy_server = mock_proxy_server
+
+        with patch.dict("sys.modules", {"litellm.proxy": mock_module}):
+            clear_router()
+            handler = CCProxyHandler()
+
+            # Create a 401 error
+            import litellm
+            error = litellm.AuthenticationError(
+                message="Unauthorized",
+                llm_provider="anthropic",
+                model="claude-sonnet-4-5-20250929",
+            )
+            # Metadata indicates we've already retried
+            request_data = {
+                "model": "claude-sonnet-4-5-20250929",
+                "messages": [{"role": "user", "content": "test"}],
+                "metadata": {"_ccproxy_401_retry_count": 1},
+            }
+
+            result = await handler.async_post_call_failure_hook(
+                request_data=request_data,
+                original_exception=error,
+                user_api_key_dict={},
+            )
+
+            assert result is None
+
+    async def test_auth_error_refreshes_token_and_retries(self):
+        """Test that 401 refreshes token and attempts retry."""
+        config = CCProxyConfig(oat_sources={"anthropic": "echo 'refreshed-token'"})
+        config._oat_values["anthropic"] = ("old-token", time.time())
+        set_config_instance(config)
+
+        mock_proxy_server = MagicMock()
+        mock_proxy_server.llm_router = MagicMock()
+        mock_proxy_server.llm_router.model_list = []
+        mock_module = MagicMock()
+        mock_module.proxy_server = mock_proxy_server
+
+        with patch.dict("sys.modules", {"litellm.proxy": mock_module}):
+            clear_router()
+            handler = CCProxyHandler()
+
+            # Create a 401 error
+            import litellm
+            error = litellm.AuthenticationError(
+                message="Unauthorized",
+                llm_provider="anthropic",
+                model="claude-sonnet-4-5-20250929",
+            )
+            request_data = {
+                "model": "claude-sonnet-4-5-20250929",
+                "messages": [{"role": "user", "content": "test"}],
+                "metadata": {},
+            }
+
+            # Mock litellm.acompletion to return a successful response
+            mock_response = MagicMock()
+            mock_response.model_dump.return_value = {
+                "id": "test-id",
+                "choices": [{"message": {"content": "test response"}}],
+            }
+
+            with patch("litellm.acompletion", return_value=mock_response) as mock_acompletion:
+                result = await handler.async_post_call_failure_hook(
+                    request_data=request_data,
+                    original_exception=error,
+                    user_api_key_dict={},
+                )
+
+                # Token should be refreshed
+                assert config.get_oauth_token("anthropic") == "refreshed-token"
+
+                # acompletion should have been called with the new token
+                mock_acompletion.assert_called_once()
+                call_kwargs = mock_acompletion.call_args[1]
+                assert "extra_headers" in call_kwargs
+                assert call_kwargs["extra_headers"]["authorization"] == "Bearer refreshed-token"
+
+                # Result should be an HTTPException with 200 status (success response)
+                from fastapi import HTTPException
+                assert isinstance(result, HTTPException)
+                assert result.status_code == 200
+
+    async def test_auth_error_retry_failure_returns_none(self):
+        """Test that retry failure returns None."""
+        config = CCProxyConfig(oat_sources={"anthropic": "echo 'refreshed-token'"})
+        config._oat_values["anthropic"] = ("old-token", time.time())
+        set_config_instance(config)
+
+        mock_proxy_server = MagicMock()
+        mock_proxy_server.llm_router = MagicMock()
+        mock_proxy_server.llm_router.model_list = []
+        mock_module = MagicMock()
+        mock_module.proxy_server = mock_proxy_server
+
+        with patch.dict("sys.modules", {"litellm.proxy": mock_module}):
+            clear_router()
+            handler = CCProxyHandler()
+
+            # Create a 401 error
+            import litellm
+            error = litellm.AuthenticationError(
+                message="Unauthorized",
+                llm_provider="anthropic",
+                model="claude-sonnet-4-5-20250929",
+            )
+            request_data = {
+                "model": "claude-sonnet-4-5-20250929",
+                "messages": [{"role": "user", "content": "test"}],
+                "metadata": {},
+            }
+
+            # Mock litellm.acompletion to raise an exception
+            with patch("litellm.acompletion", side_effect=Exception("Retry failed")):
+                result = await handler.async_post_call_failure_hook(
+                    request_data=request_data,
+                    original_exception=error,
+                    user_api_key_dict={},
+                )
+
+                # Token should still be refreshed
+                assert config.get_oauth_token("anthropic") == "refreshed-token"
+
+                # Result should be None (let original exception propagate)
+                assert result is None
+
+
+@pytest.mark.asyncio
+class TestIsAuthException:
+    """Test _is_auth_exception method."""
+
+    async def test_is_auth_exception_with_authentication_error(self):
+        """Test detection of LiteLLM AuthenticationError."""
+        mock_proxy_server = MagicMock()
+        mock_proxy_server.llm_router = MagicMock()
+        mock_proxy_server.llm_router.model_list = []
+        mock_module = MagicMock()
+        mock_module.proxy_server = mock_proxy_server
+
+        config = CCProxyConfig()
+        set_config_instance(config)
+
+        with patch.dict("sys.modules", {"litellm.proxy": mock_module}):
+            clear_router()
+            handler = CCProxyHandler()
+
+            import litellm
+            error = litellm.AuthenticationError(
+                message="Unauthorized",
+                llm_provider="anthropic",
+                model="test",
+            )
+            assert handler._is_auth_exception(error) is True
+
+    async def test_is_auth_exception_with_status_code(self):
+        """Test detection via status_code attribute."""
+        mock_proxy_server = MagicMock()
+        mock_proxy_server.llm_router = MagicMock()
+        mock_proxy_server.llm_router.model_list = []
+        mock_module = MagicMock()
+        mock_module.proxy_server = mock_proxy_server
+
+        config = CCProxyConfig()
+        set_config_instance(config)
+
+        with patch.dict("sys.modules", {"litellm.proxy": mock_module}):
+            clear_router()
+            handler = CCProxyHandler()
+
+            error = MagicMock()
+            error.status_code = 401
+            assert handler._is_auth_exception(error) is True
+
+            error.status_code = 500
+            assert handler._is_auth_exception(error) is False
+
+    async def test_is_auth_exception_with_message(self):
+        """Test detection via exception message."""
+        mock_proxy_server = MagicMock()
+        mock_proxy_server.llm_router = MagicMock()
+        mock_proxy_server.llm_router.model_list = []
+        mock_module = MagicMock()
+        mock_module.proxy_server = mock_proxy_server
+
+        config = CCProxyConfig()
+        set_config_instance(config)
+
+        with patch.dict("sys.modules", {"litellm.proxy": mock_module}):
+            clear_router()
+            handler = CCProxyHandler()
+
+            error = ValueError("Error 401: Unauthorized")
+            assert handler._is_auth_exception(error) is True
+
+            error = ValueError("Some other error")
+            assert handler._is_auth_exception(error) is False
+
+
+@pytest.mark.asyncio
+class TestExtractProviderFromRequestData:
+    """Test _extract_provider_from_request_data method."""
+
+    async def test_extract_provider_from_api_base(self):
+        """Test provider extraction from api_base via destinations."""
+        from ccproxy.config import OAuthSource
+
+        config = CCProxyConfig(
+            oat_sources={
+                "zai": OAuthSource(
+                    command="echo 'token'",
+                    destinations=["api.z.ai"],
+                ),
+            }
+        )
+        set_config_instance(config)
+
+        mock_proxy_server = MagicMock()
+        mock_proxy_server.llm_router = MagicMock()
+        mock_proxy_server.llm_router.model_list = []
+        mock_module = MagicMock()
+        mock_module.proxy_server = mock_proxy_server
+
+        with patch.dict("sys.modules", {"litellm.proxy": mock_module}):
+            clear_router()
+            handler = CCProxyHandler()
+
+            request_data = {
+                "model": "some-model",
+                "metadata": {
+                    "ccproxy_model_config": {
+                        "litellm_params": {
+                            "api_base": "https://api.z.ai/v1",
+                        }
+                    }
+                },
+            }
+
+            provider = handler._extract_provider_from_request_data(request_data)
+            assert provider == "zai"
+
+    async def test_extract_provider_from_model_name(self):
+        """Test provider extraction from model name."""
+        config = CCProxyConfig()
+        set_config_instance(config)
+
+        mock_proxy_server = MagicMock()
+        mock_proxy_server.llm_router = MagicMock()
+        mock_proxy_server.llm_router.model_list = []
+        mock_module = MagicMock()
+        mock_module.proxy_server = mock_proxy_server
+
+        with patch.dict("sys.modules", {"litellm.proxy": mock_module}):
+            clear_router()
+            handler = CCProxyHandler()
+
+            # Test Anthropic
+            request_data = {
+                "model": "claude-sonnet-4-5-20250929",
+                "metadata": {},
+            }
+            provider = handler._extract_provider_from_request_data(request_data)
+            assert provider == "anthropic"
+
+            # Test OpenAI
+            request_data = {
+                "model": "gpt-4",
+                "metadata": {},
+            }
+            provider = handler._extract_provider_from_request_data(request_data)
+            assert provider == "openai"
+
+            # Test Gemini (via model name fallback, not LiteLLM provider detection)
+            # Note: LiteLLM maps gemini-pro to vertex_ai, so we use a model name
+            # that triggers our fallback detection
+            request_data = {
+                "model": "my-custom-gemini-model",
+                "metadata": {},
+            }
+            provider = handler._extract_provider_from_request_data(request_data)
+            assert provider == "gemini"

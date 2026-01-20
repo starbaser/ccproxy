@@ -63,6 +63,16 @@ def forward_oauth(ctx: Context, params: dict[str, Any]) -> Context:
     api_base = litellm_params.get("api_base")
     custom_provider = litellm_params.get("custom_llm_provider")
 
+    # Check if the model config has its own api_key configured
+    # If so, don't override with OAuth - let LiteLLM use the configured key
+    configured_api_key = litellm_params.get("api_key")
+    if configured_api_key:
+        logger.debug(
+            "forward_oauth: Model '%s' has configured api_key, skipping OAuth forwarding",
+            routed_model,
+        )
+        return ctx
+
     # Get auth header from raw headers
     auth_header = ctx.authorization
 
@@ -122,7 +132,30 @@ def _detect_provider(
     custom_provider: str | None,
     api_base: str | None,
 ) -> str | None:
-    """Detect provider from model/api_base."""
+    """Detect provider from model/api_base.
+
+    Detection precedence:
+    1. Explicit custom_llm_provider (if set)
+    2. Destination-based matching from oat_sources config
+    3. LiteLLM's provider detection
+    4. Model name-based fallback
+    """
+    # 1. Explicit custom_llm_provider wins
+    if custom_provider:
+        return custom_provider
+
+    # 2. Check destination-based matching from oat_sources
+    config = get_config()
+    dest_provider = config.get_provider_for_destination(api_base)
+    if dest_provider:
+        logger.debug(
+            "Detected provider '%s' for api_base '%s' via destination config",
+            dest_provider,
+            api_base,
+        )
+        return dest_provider
+
+    # 3. Try LiteLLM's provider detection
     try:
         _, provider_name, _, _ = get_llm_provider(
             model=routed_model,
@@ -131,15 +164,18 @@ def _detect_provider(
         )
         return provider_name
     except Exception:
-        # Fallback to name-based detection
-        model_lower = routed_model.lower()
-        if "claude" in model_lower:
-            return "anthropic"
-        elif "gemini" in model_lower or "palm" in model_lower:
-            return "gemini"
-        elif "gpt" in model_lower:
-            return "openai"
-        return None
+        pass
+
+    # 4. Fallback to model name-based detection
+    model_lower = routed_model.lower()
+    if "claude" in model_lower:
+        return "anthropic"
+    elif "gemini" in model_lower or "palm" in model_lower:
+        return "gemini"
+    elif "gpt" in model_lower:
+        return "openai"
+
+    return None
 
 
 def _handle_sentinel_key(auth_header: str, provider_name: str) -> str:

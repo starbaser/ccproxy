@@ -66,11 +66,14 @@ def model_router(ctx: Context, params: dict[str, Any]) -> Context:
         if original_model:
             # Keep the original model - no routing needed
             ctx.ccproxy_litellm_model = original_model
-            ctx.ccproxy_model_config = {}
             ctx.ccproxy_is_passthrough = True
+            # Still look up model config for api_base (needed for OAuth destination detection)
+            passthrough_config = router.get_model_for_label(original_model)
+            ctx.ccproxy_model_config = passthrough_config or {}
             logger.debug(
-                "Using passthrough mode for default routing: keeping original model %s",
+                "Using passthrough mode for default routing: keeping original model %s, config=%s",
                 original_model,
+                passthrough_config,
             )
             return ctx
         else:

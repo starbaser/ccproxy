@@ -43,9 +43,8 @@ def inject_claude_code_identity(ctx: Context, params: dict[str, Any]) -> Context
     request must include a system message that starts with "You are Claude Code".
     This hook prepends that required prefix to the system message.
 
-    This implementation uses universal OAuth detection (Bearer token presence)
-    rather than checking for specific token format (sk-ant-oat), allowing it
-    to work with any Anthropic-compatible OAuth provider (Anthropic, ZAI, etc.).
+    Only injects for requests going to api.anthropic.com - other Anthropic-compatible
+    APIs like ZAI don't require this identity prefix.
 
     Args:
         ctx: Pipeline context
@@ -54,6 +53,25 @@ def inject_claude_code_identity(ctx: Context, params: dict[str, Any]) -> Context
     Returns:
         Modified context with system message containing required prefix
     """
+    # Check if model has its own api_key - if so, don't inject identity
+    model_config = ctx.ccproxy_model_config or {}
+    litellm_params = model_config.get("litellm_params", {})
+    configured_api_key = litellm_params.get("api_key")
+    if configured_api_key:
+        logger.debug(
+            "inject_claude_code_identity: Model has configured api_key, skipping identity injection"
+        )
+        return ctx
+
+    # Check if this is going to api.anthropic.com vs other Anthropic-compatible APIs
+    api_base = litellm_params.get("api_base", "")
+    if api_base and "anthropic.com" not in api_base.lower():
+        logger.debug(
+            "inject_claude_code_identity: Skipping for api_base '%s' (not api.anthropic.com)",
+            api_base,
+        )
+        return ctx
+
     system_msg = ctx.system
 
     if system_msg is not None:
