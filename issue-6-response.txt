@@ -1,0 +1,8 @@
+
+Yes, don't break ToS and I have no liability for anyone's accounts! I am shifting the focus away towards being an educational tool or for personal tweaks here and there now that a firm stance by the IP holder has been made. It's too much effort to maintain a feature that will get the repo taken down.
+
+To answer your question directly though - no, sharing credentials with others isn't something I'd support or help with, regardless of IP. That's squarely in ToS violation territory and not what this project is for.
+
+If you're interested in understanding how LLM proxies work or want to customize your own workflow, cool. But I'm not going to be providing help for anything that looks like credential sharing.
+
+Anyway, I've got a day job that keeps me pretty busy so this is very much a side project I poke at when I have time. Eventually I'll get around to better documentation and making the intended use cases clearer, but for now it is what it is.
