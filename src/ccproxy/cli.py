@@ -5,6 +5,7 @@ import json
 import logging
 import logging.config
 import os
+import select
 import shutil
 import signal
 import subprocess
@@ -12,7 +13,7 @@ import sys
 import time
 from builtins import print as builtin_print
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 import attrs
 import tyro
@@ -90,9 +91,15 @@ class Restart:
     """Run in background and save PID to litellm.lock."""
 
 
+LogSource = Literal["litellm", "mitm", "forward", "all"]
+
+
 @attrs.define
 class Logs:
     """View the LiteLLM log file."""
+
+    source: Annotated[LogSource, tyro.conf.Positional] = "litellm"
+    """Log source to view: litellm, mitm, forward, or all."""
 
     follow: Annotated[bool, tyro.conf.arg(aliases=["-f"])] = False
     """Follow log output (like tail -f)."""
@@ -103,10 +110,32 @@ class Logs:
 
 @attrs.define
 class Status:
-    """Show the status of LiteLLM proxy and ccproxy configuration."""
+    """Show the status of LiteLLM proxy and ccproxy configuration.
+
+    When service flags (--proxy, --reverse, --forward) are specified,
+    runs in health check mode with bitmask exit codes:
+
+      0 = all healthy    4 = forward down
+      1 = proxy down     5 = proxy + forward
+      2 = reverse down   6 = reverse + forward
+      3 = proxy+reverse  7 = all down
+
+    Examples:
+        ccproxy status --proxy --reverse --forward  # All must be running
+        ccproxy status --proxy                      # Just check LiteLLM
+    """
 
     json: bool = False
     """Output status as JSON with boolean values."""
+
+    proxy: bool = False
+    """Check if LiteLLM proxy is running."""
+
+    reverse: bool = False
+    """Check if MITM reverse proxy is running."""
+
+    forward: bool = False
+    """Check if MITM forward proxy is running."""
 
 
 @attrs.define
@@ -290,9 +319,7 @@ def run_with_proxy(config_dir: Path, command: list[str]) -> None:
     # Load config to get proxy settings
     ccproxy_config_path = config_dir / "ccproxy.yaml"
     if not ccproxy_config_path.exists():
-        print(
-            f"Error: Configuration not found at {ccproxy_config_path}", file=sys.stderr
-        )
+        print(f"Error: Configuration not found at {ccproxy_config_path}", file=sys.stderr)
         print("Run 'ccproxy install' first to set up configuration.", file=sys.stderr)
         sys.exit(1)
 
@@ -443,12 +470,8 @@ def start_litellm(
             ccproxy_config = yaml.safe_load(f)
             if ccproxy_config:
                 litellm_section = ccproxy_config.get("litellm", {})
-                litellm_host = os.environ.get(
-                    "HOST", litellm_section.get("host", "127.0.0.1")
-                )
-                main_port = int(
-                    os.environ.get("PORT", litellm_section.get("port", 4000))
-                )
+                litellm_host = os.environ.get("HOST", litellm_section.get("host", "127.0.0.1"))
+                main_port = int(os.environ.get("PORT", litellm_section.get("port", 4000)))
                 # Get forward proxy port from mitm config
                 mitm_section = ccproxy_config.get("ccproxy", {}).get("mitm", {})
                 forward_port = mitm_section.get("port", 8081)
@@ -562,9 +585,10 @@ def start_litellm(
         # Check if already running
         running, pid = is_process_running(pid_file)
         if running:
-            print(f"LiteLLM is already running with PID {pid}", file=sys.stderr)
-            print("To stop it, run: `ccproxy stop`", file=sys.stderr)
-            sys.exit(1)
+            console = Console()
+            console.print(f"[dim]Proxy already running (PID {pid}), attaching to logs...[/dim]")
+            view_logs(config_dir, source="all", follow=True)
+            sys.exit(0)
 
         # Start process in background
         try:
@@ -796,66 +820,168 @@ def stop_litellm(config_dir: Path) -> bool:
 #         print(f"  ccproxy shell-integration --shell={shell} --install")
 
 
-def view_logs(config_dir: Path, follow: bool = False, lines: int = 100) -> None:
-    """View the LiteLLM log file using system pager.
+def get_log_paths(config_dir: Path, source: LogSource) -> list[tuple[str, Path]]:
+    """Get (tag, path) tuples for the specified source.
 
     Args:
-        config_dir: Configuration directory containing the log file
+        config_dir: Configuration directory containing log files
+        source: Log source to retrieve
+
+    Returns:
+        List of (tag, path) tuples for the log files
+    """
+    paths = []
+    if source in ("litellm", "all"):
+        paths.append(("litellm", config_dir / "litellm.log"))
+    if source in ("mitm", "all"):
+        paths.append(("mitm", config_dir / "mitm.log"))
+    if source in ("forward", "all"):
+        paths.append(("forward", config_dir / "mitm-forward.log"))
+    return paths
+
+
+def view_logs(config_dir: Path, source: LogSource = "litellm", follow: bool = False, lines: int = 100) -> None:
+    """View log files using system pager.
+
+    Args:
+        config_dir: Configuration directory containing the log files
+        source: Log source to view (litellm, mitm, forward, or all)
         follow: Follow log output (like tail -f)
         lines: Number of lines to show
     """
-    log_file = config_dir / "litellm.log"
+    log_paths = get_log_paths(config_dir, source)
 
-    # Check if log file exists
-    if not log_file.exists():
-        print("[red]No log file found[/red]", file=sys.stderr)
-        print(f"[dim]Expected at: {log_file}[/dim]", file=sys.stderr)
+    # Check if log files exist
+    existing_logs = [(tag, path) for tag, path in log_paths if path.exists()]
+
+    if not existing_logs:
+        print("[red]No log files found[/red]", file=sys.stderr)
+        print("[dim]Expected log files:[/dim]", file=sys.stderr)
+        for tag, path in log_paths:
+            print(f"  {tag}: {path}", file=sys.stderr)
         sys.exit(1)
 
     if follow:
-        # Use tail -f for following logs
+        # Single file: use plain tail -f
+        if len(existing_logs) == 1:
+            _, log_file = existing_logs[0]
+            try:
+                # S603, S607: tail is a standard system command, file path is validated
+                result = subprocess.run(["tail", "-f", str(log_file)])  # noqa: S603, S607
+                sys.exit(result.returncode)
+            except KeyboardInterrupt:
+                sys.exit(0)
+            except FileNotFoundError:
+                print("[red]Error: 'tail' command not found[/red]", file=sys.stderr)
+                sys.exit(1)
+
+        # Multiple files: multiplex with colored tags
+        colors = {
+            "litellm": "\033[36m",  # cyan
+            "mitm": "\033[32m",  # green
+            "forward": "\033[33m",  # yellow
+        }
+        reset = "\033[0m"
+
+        # Start tail processes for each file
+        processes = []
+        for tag, log_file in existing_logs:
+            try:
+                # S603, S607: tail is a standard system command, file path is validated
+                proc = subprocess.Popen(  # noqa: S603
+                    ["tail", "-f", str(log_file)],  # noqa: S607
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    bufsize=1,
+                    universal_newlines=True,
+                )
+                processes.append((tag, proc))
+            except FileNotFoundError:
+                print("[red]Error: 'tail' command not found[/red]", file=sys.stderr)
+                sys.exit(1)
+
         try:
-            # S603, S607: tail is a standard system command, file path is validated
-            result = subprocess.run(["tail", "-f", str(log_file)])  # noqa: S603, S607
-            sys.exit(result.returncode)
+            # Multiplex output from all processes
+            while True:
+                for tag, proc in processes:
+                    # Use select to check if data is available (non-blocking)
+                    if proc.stdout and select.select([proc.stdout], [], [], 0.1)[0]:
+                        line = proc.stdout.readline()
+                        if line:
+                            color = colors.get(tag, "")
+                            # Print with colored tag prefix
+                            print(f"{color}[{tag}]{reset} {line}", end="")
+
         except KeyboardInterrupt:
+            # Clean up processes
+            for _, proc in processes:
+                proc.terminate()
             sys.exit(0)
-        except FileNotFoundError:
-            print("[red]Error: 'tail' command not found[/red]", file=sys.stderr)
-            sys.exit(1)
+
     else:
-        # Get the pager from environment or use default
-        pager = os.environ.get("PAGER", "less")
+        # Non-follow mode: read last N lines
+        if len(existing_logs) == 1:
+            # Single file: use existing pager logic
+            _, log_file = existing_logs[0]
+            pager = os.environ.get("PAGER", "less")
 
-        # Read the last N lines
-        try:
-            with log_file.open("r") as f:
-                # Read all lines and get the last N
-                all_lines = f.readlines()
-                tail_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
-                content = "".join(tail_lines)
+            try:
+                with log_file.open("r") as f:
+                    all_lines = f.readlines()
+                    tail_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
+                    content = "".join(tail_lines)
 
-                if not content.strip():
-                    print("[yellow]Log file is empty[/yellow]")
-                    sys.exit(0)
+                    if not content.strip():
+                        print("[yellow]Log file is empty[/yellow]")
+                        sys.exit(0)
 
-                # Use the pager if output is substantial
-                if len(tail_lines) > 20 or pager == "cat":
-                    # For cat or when there are many lines, use pager
-                    # S603: pager comes from PAGER env var, standard practice for CLI tools
-                    process = subprocess.Popen(
-                        [pager], stdin=subprocess.PIPE
-                    )  # noqa: S603
-                    process.communicate(content.encode())
-                    sys.exit(process.returncode)
-                else:
-                    # For short output, just print directly
-                    print(content, end="")
-                    sys.exit(0)
+                    if len(tail_lines) > 20 or pager == "cat":
+                        # S603: pager comes from PAGER env var, standard practice for CLI tools
+                        process = subprocess.Popen([pager], stdin=subprocess.PIPE)  # noqa: S603
+                        process.communicate(content.encode())
+                        sys.exit(process.returncode)
+                    else:
+                        print(content, end="")
+                        sys.exit(0)
 
-        except OSError as e:
-            print(f"[red]Error reading log file: {e}[/red]", file=sys.stderr)
-            sys.exit(1)
+            except OSError as e:
+                print(f"[red]Error reading log file: {e}[/red]", file=sys.stderr)
+                sys.exit(1)
+
+        else:
+            # Multiple files: show last N lines from each with headers
+            pager = os.environ.get("PAGER", "less")
+            all_content = []
+
+            for tag, log_file in existing_logs:
+                try:
+                    with log_file.open("r") as f:
+                        file_lines = f.readlines()
+                        tail_lines = file_lines[-lines:] if len(file_lines) > lines else file_lines
+
+                        if tail_lines:
+                            # Add header for this log file
+                            all_content.append(f"==> {tag} <==\n")
+                            all_content.extend(tail_lines)
+                            all_content.append("\n")
+
+                except OSError as e:
+                    print(f"[yellow]Warning: Could not read {tag}: {e}[/yellow]", file=sys.stderr)
+
+            if not all_content:
+                print("[yellow]All log files are empty[/yellow]")
+                sys.exit(0)
+
+            content = "".join(all_content)
+
+            if len(all_content) > 20 or pager == "cat":
+                # S603: pager comes from PAGER env var, standard practice for CLI tools
+                process = subprocess.Popen([pager], stdin=subprocess.PIPE)  # noqa: S603
+                process.communicate(content.encode())
+                sys.exit(process.returncode)
+            else:
+                print(content, end="")
+                sys.exit(0)
 
 
 def handle_statusline_output(config_dir: Path) -> None:
@@ -875,9 +1001,7 @@ def handle_statusline_output(config_dir: Path) -> None:
             with ccproxy_config_path.open() as f:
                 config = yaml.safe_load(f)
                 if config and "litellm" in config:
-                    port = int(
-                        os.environ.get("PORT", config["litellm"].get("port", 4000))
-                    )
+                    port = int(os.environ.get("PORT", config["litellm"].get("port", 4000)))
         except Exception:
             pass  # Use default port
 
@@ -890,12 +1014,24 @@ def handle_statusline_output(config_dir: Path) -> None:
     builtin_print(output)
 
 
-def show_status(config_dir: Path, json_output: bool = False) -> None:
+def show_status(
+    config_dir: Path,
+    json_output: bool = False,
+    check_proxy: bool = False,
+    check_reverse: bool = False,
+    check_forward: bool = False,
+) -> None:
     """Show the status of LiteLLM proxy and ccproxy configuration.
 
     Args:
         config_dir: Configuration directory to check
         json_output: Output status as JSON with boolean values
+        check_proxy: Health check - require LiteLLM proxy running
+        check_reverse: Health check - require MITM reverse proxy running
+        check_forward: Health check - require MITM forward proxy running
+
+    When any check_* flag is True, exits 0 only if ALL specified services
+    are healthy, otherwise exits 1. No output is produced in check mode.
     """
     from ccproxy.mitm import ProxyMode
     from ccproxy.mitm.process import is_running as mitm_is_running
@@ -996,6 +1132,18 @@ def show_status(config_dir: Path, json_output: bool = False) -> None:
         },
     }
 
+    # Health check mode: exit with bitmask code indicating failed services
+    # Bit 0 (1): proxy, Bit 1 (2): reverse, Bit 2 (4): forward
+    if check_proxy or check_reverse or check_forward:
+        exit_code = 0
+        if check_proxy and not proxy_running:
+            exit_code |= 1
+        if check_reverse and not reverse_running:
+            exit_code |= 2
+        if check_forward and not forward_running:
+            exit_code |= 4
+        sys.exit(exit_code)
+
     if json_output:
         builtin_print(json.dumps(status_data, indent=2))
     else:
@@ -1006,10 +1154,12 @@ def show_status(config_dir: Path, json_output: bool = False) -> None:
         table.add_column("Key", style="white", width=15)
         table.add_column("Value", style="yellow")
 
-        # Proxy status
-        proxy_status = (
-            "[green]true[/green]" if status_data["proxy"] else "[red]false[/red]"
-        )
+        # Proxy status with URL
+        url = status_data.get("url") or "http://127.0.0.1:4000"
+        if status_data["proxy"]:
+            proxy_status = f"[cyan]{url}[/cyan] [green]true[/green]"
+        else:
+            proxy_status = f"[dim]{url}[/dim] [red]false[/red]"
         table.add_row("proxy", proxy_status)
 
         # MITM status - show both proxies
@@ -1023,7 +1173,9 @@ def show_status(config_dir: Path, json_output: bool = False) -> None:
         # Reverse proxy status
         if reverse_info["running"]:
             reverse_port = reverse_info["port"]
-            reverse_status = f"[green]reverse[/green] on [cyan]{reverse_port}[/cyan] → litellm on [cyan]{litellm_port}[/cyan]"
+            reverse_status = (
+                f"[green]reverse[/green] on [cyan]{reverse_port}[/cyan] → litellm on [cyan]{litellm_port}[/cyan]"
+            )
             if reverse_info["pid"]:
                 reverse_status += f" [dim](pid: {reverse_info['pid']})[/dim]"
             mitm_parts.append(reverse_status)
@@ -1033,9 +1185,7 @@ def show_status(config_dir: Path, json_output: bool = False) -> None:
         # Forward proxy status
         if forward_info["running"]:
             forward_port = forward_info["port"]
-            forward_status = (
-                f"[green]forward[/green] on [cyan]{forward_port}[/cyan] → providers"
-            )
+            forward_status = f"[green]forward[/green] on [cyan]{forward_port}[/cyan] → providers"
             if forward_info["pid"]:
                 forward_status += f" [dim](pid: {forward_info['pid']})[/dim]"
             mitm_parts.append(forward_status)
@@ -1047,32 +1197,23 @@ def show_status(config_dir: Path, json_output: bool = False) -> None:
 
         # Config files
         if status_data["config"]:
-            config_display = "\n".join(
-                f"[cyan]{key}[/cyan]: {value}"
-                for key, value in status_data["config"].items()
-            )
+            config_display = "\n".join(f"[cyan]{key}[/cyan]: {value}" for key, value in status_data["config"].items())
         else:
             config_display = "[red]No config files found[/red]"
         table.add_row("config", config_display)
 
         # Callbacks
         if status_data["callbacks"]:
-            callbacks_display = "\n".join(
-                f"[green]• {cb}[/green]" for cb in status_data["callbacks"]
-            )
+            callbacks_display = "\n".join(f"[green]• {cb}[/green]" for cb in status_data["callbacks"])
         else:
             callbacks_display = "[dim]No callbacks configured[/dim]"
         table.add_row("callbacks", callbacks_display)
 
         # Log file
-        log_display = (
-            status_data["log"] if status_data["log"] else "[yellow]No log file[/yellow]"
-        )
+        log_display = status_data["log"] if status_data["log"] else "[yellow]No log file[/yellow]"
         table.add_row("log", log_display)
 
-        console.print(
-            Panel(table, title="[bold]ccproxy Status[/bold]", border_style="blue")
-        )
+        console.print(Panel(table, title="[bold]ccproxy Status[/bold]", border_style="blue"))
 
         # Hooks table
         if status_data["hooks"]:
@@ -1093,9 +1234,7 @@ def show_status(config_dir: Path, json_output: bool = False) -> None:
                     hook_name = hook_path.split(".")[-1] if hook_path else ""
                     params = hook.get("params", {})
                     if params:
-                        params_display = ", ".join(
-                            f"{k}={v}" for k, v in params.items()
-                        )
+                        params_display = ", ".join(f"{k}={v}" for k, v in params.items())
                     else:
                         params_display = "[dim]none[/dim]"
 
@@ -1105,9 +1244,7 @@ def show_status(config_dir: Path, json_output: bool = False) -> None:
                     params_display,
                 )
 
-            console.print(
-                Panel(hooks_table, title="[bold]Hooks[/bold]", border_style="green")
-            )
+            console.print(Panel(hooks_table, title="[bold]Hooks[/bold]", border_style="green"))
 
         # Model deployments table
         if status_data["model_list"]:
@@ -1117,9 +1254,7 @@ def show_status(config_dir: Path, json_output: bool = False) -> None:
             models_table.add_column("API Base", style="dim", no_wrap=True)
 
             # Build lookup for resolving model aliases
-            model_lookup = {
-                m.get("model_name", ""): m for m in status_data["model_list"]
-            }
+            model_lookup = {m.get("model_name", ""): m for m in status_data["model_list"]}
 
             for model in status_data["model_list"]:
                 model_name = model.get("model_name", "")
@@ -1308,18 +1443,14 @@ def handle_db_sql(config_dir: Path, cmd: DbSql) -> None:
     sql = resolve_sql_input(cmd)
     if not sql:
         console.print("[red]Error:[/red] No SQL query provided")
-        console.print(
-            'Usage: ccproxy db sql "SELECT ..." or --file query.sql or pipe via stdin'
-        )
+        console.print('Usage: ccproxy db sql "SELECT ..." or --file query.sql or pipe via stdin')
         sys.exit(1)
 
     database_url = get_database_url(config_dir)
     if not database_url:
         console.print("[red]Error:[/red] No database_url configured")
         console.print("Set in ccproxy.yaml under ccproxy.mitm.database_url")
-        console.print(
-            "Or set CCPROXY_DATABASE_URL or DATABASE_URL environment variable"
-        )
+        console.print("Or set CCPROXY_DATABASE_URL or DATABASE_URL environment variable")
         sys.exit(1)
 
     try:
@@ -1437,13 +1568,10 @@ def parse_streaming_response(text: str) -> dict:
             idx = event.get("index", 0)
             if idx < len(content_blocks):
                 if delta.get("type") == "text_delta":
-                    content_blocks[idx]["text"] = (
-                        content_blocks[idx].get("text", "") + delta.get("text", "")
-                    )
+                    content_blocks[idx]["text"] = content_blocks[idx].get("text", "") + delta.get("text", "")
                 elif delta.get("type") == "thinking_delta":
-                    content_blocks[idx]["thinking"] = (
-                        content_blocks[idx].get("thinking", "")
-                        + delta.get("thinking", "")
+                    content_blocks[idx]["thinking"] = content_blocks[idx].get("thinking", "") + delta.get(
+                        "thinking", ""
                     )
         elif event_type == "message_delta":
             delta = event.get("delta", {})
@@ -1594,11 +1722,7 @@ def format_trace_markdown(
     lines.append("| Field | Value |")
     lines.append("|-------|-------|")
     lines.append(f"| Trace ID | `{trace['trace_id']}` |")
-    direction_label = (
-        "Forward (LiteLLM→Provider)"
-        if trace.get("proxy_direction") == 1
-        else "Reverse (Client→LiteLLM)"
-    )
+    direction_label = "Forward (LiteLLM→Provider)" if trace.get("proxy_direction") == 1 else "Reverse (Client→LiteLLM)"
     lines.append(f"| Direction | {direction_label} |")
     lines.append(f"| Session ID | `{trace.get('session_id') or 'N/A'}` |")
     lines.append(f"| Model | `{request.get('model', 'unknown')}` |")
@@ -1614,11 +1738,7 @@ def format_trace_markdown(
     lines.append(f"| Start Time | {trace.get('start_time', 'N/A')} |")
 
     # Request settings
-    if (
-        request.get("max_tokens")
-        or request.get("temperature") is not None
-        or request.get("thinking")
-    ):
+    if request.get("max_tokens") or request.get("temperature") is not None or request.get("thinking"):
         lines.append("")
         lines.append("### Request Settings")
         lines.append("")
@@ -1751,10 +1871,7 @@ def handle_db_prompt(config_dir: Path, cmd: DbPrompt) -> None:
     # Validate direction
     valid_directions = {"forward", "reverse", "both"}
     if cmd.direction not in valid_directions:
-        console.print(
-            f"[red]Error:[/red] Invalid direction '{cmd.direction}'. "
-            f"Use: {', '.join(valid_directions)}"
-        )
+        console.print(f"[red]Error:[/red] Invalid direction '{cmd.direction}'. Use: {', '.join(valid_directions)}")
         sys.exit(1)
 
     # Get database URL
@@ -1762,9 +1879,7 @@ def handle_db_prompt(config_dir: Path, cmd: DbPrompt) -> None:
     if not database_url:
         console.print("[red]Error:[/red] No database_url configured")
         console.print("Set in ccproxy.yaml under ccproxy.mitm.database_url")
-        console.print(
-            "Or set CCPROXY_DATABASE_URL or DATABASE_URL environment variable"
-        )
+        console.print("Or set CCPROXY_DATABASE_URL or DATABASE_URL environment variable")
         sys.exit(1)
 
     # Fetch trace
@@ -1782,8 +1897,7 @@ def handle_db_prompt(config_dir: Path, cmd: DbPrompt) -> None:
     trace_direction = "forward" if trace.get("proxy_direction") == 1 else "reverse"
     if cmd.direction != "both" and trace_direction != cmd.direction:
         console.print(
-            f"[yellow]Warning:[/yellow] Trace direction is '{trace_direction}' "
-            f"but filter is '{cmd.direction}'"
+            f"[yellow]Warning:[/yellow] Trace direction is '{trace_direction}' but filter is '{cmd.direction}'"
         )
 
     # Parse request and response
@@ -1828,9 +1942,7 @@ def handle_db_prompt(config_dir: Path, cmd: DbPrompt) -> None:
 def main(
     cmd: Annotated[Command, tyro.conf.arg(name="")],
     *,
-    config_dir: Annotated[
-        Path | None, tyro.conf.arg(help="Configuration directory")
-    ] = None,
+    config_dir: Annotated[Path | None, tyro.conf.arg(help="Configuration directory")] = None,
 ) -> None:
     """ccproxy - LiteLLM Transformation Hook System.
 
@@ -1881,15 +1993,19 @@ def main(
 
         # Start the server with same MITM state
         print("Starting LiteLLM server...")
-        start_litellm(
-            config_dir, args=cmd.args, detach=cmd.detach, mitm=mitm_was_running
-        )
+        start_litellm(config_dir, args=cmd.args, detach=cmd.detach, mitm=mitm_was_running)
 
     elif isinstance(cmd, Logs):
-        view_logs(config_dir, follow=cmd.follow, lines=cmd.lines)
+        view_logs(config_dir, source=cmd.source, follow=cmd.follow, lines=cmd.lines)
 
     elif isinstance(cmd, Status):
-        show_status(config_dir, json_output=cmd.json)
+        show_status(
+            config_dir,
+            json_output=cmd.json,
+            check_proxy=cmd.proxy,
+            check_reverse=cmd.reverse,
+            check_forward=cmd.forward,
+        )
 
     elif isinstance(cmd, StatuslineOutput):
         handle_statusline_output(config_dir)
@@ -1936,13 +2052,13 @@ def handle_dag_viz(cmd: DagViz) -> None:
 
     # Import all hooks to register them
     from ccproxy.pipeline.hooks import (  # noqa: F401
-        rule_evaluator,
-        model_router,
-        extract_session_id,
-        capture_headers,
-        forward_oauth,
         add_beta_headers,
+        capture_headers,
+        extract_session_id,
+        forward_oauth,
         inject_claude_code_identity,
+        model_router,
+        rule_evaluator,
     )
 
     # Get registered hooks

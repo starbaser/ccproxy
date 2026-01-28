@@ -137,9 +137,12 @@ class TestStartProxy:
         output_flat = captured.out.replace("\n", "")
         assert "litellm.log" in output_flat
 
+    @patch("ccproxy.cli.view_logs")
     @patch("os.kill")
-    def test_litellm_detach_already_running(self, mock_kill: Mock, tmp_path: Path, capsys) -> None:
-        """Test litellm detach when already running."""
+    def test_litellm_detach_already_running(
+        self, mock_kill: Mock, mock_view_logs: Mock, tmp_path: Path, capsys
+    ) -> None:
+        """Test litellm detach when already running - should attach to logs."""
         config_file = tmp_path / "config.yaml"
         config_file.write_text("litellm: config")
 
@@ -150,12 +153,19 @@ class TestStartProxy:
         # Mock process is still running
         mock_kill.return_value = None
 
+        # Mock view_logs to exit cleanly
+        mock_view_logs.side_effect = SystemExit(0)
+
         with pytest.raises(SystemExit) as exc_info:
             start_litellm(tmp_path, detach=True)
 
-        assert exc_info.value.code == 1
+        # Should exit with 0 (successful attachment to logs)
+        assert exc_info.value.code == 0
         captured = capsys.readouterr()
-        assert "LiteLLM is already running with PID 67890" in captured.err
+        assert "Proxy already running (PID 67890), attaching to logs..." in captured.out
+
+        # Should call view_logs with source="all" and follow=True
+        mock_view_logs.assert_called_once_with(tmp_path, source="all", follow=True)
 
     @patch("subprocess.Popen")
     @patch("os.kill")
@@ -883,7 +893,7 @@ class TestViewLogs:
 
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
-        assert "No log file found" in captured.err
+        assert "No log files found" in captured.err
         assert str(tmp_path / "litellm.log") in captured.err
 
     @patch("subprocess.run")
@@ -1210,7 +1220,7 @@ class TestMainFunction:
         cmd = Logs(follow=True, lines=50)
         main(cmd, config_dir=tmp_path)
 
-        mock_logs.assert_called_once_with(tmp_path, follow=True, lines=50)
+        mock_logs.assert_called_once_with(tmp_path, source="litellm", follow=True, lines=50)
 
     @patch("ccproxy.cli.show_status")
     def test_main_status_command(self, mock_status: Mock, tmp_path: Path) -> None:
