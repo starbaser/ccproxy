@@ -6,20 +6,6 @@
 
 It works by intercepting Claude Code's requests through a [LiteLLM Proxy Server](https://docs.litellm.ai/docs/simple_proxy), allowing you to route different types of requests to the most suitable model - keep your unlimited Claude for standard coding, send large contexts to Gemini's 2M token window, route web searches to Perplexity, all while Claude Code thinks it's talking to the standard API.
 
-**New ✨**: Use your subscription without Claude Code! The Anthropic SDK and LiteLLM SDK examples in [`examples/`](examples/) allow you to use your logged in claude.ai account for arbitrary API requests:
-
-```py
- # Streaming with litellm.acompletion()
-response = await litellm.acompletion(
-    messages=[{"role": "user", "content": "Count from 1 to 5."}],
-    model="claude-haiku-4-5-20251001",
-    max_tokens=200,
-    stream=True,
-    api_base="http://127.0.0.1:4000",
-    api_key="sk-proxy-dummy",  # key is not real, `ccproxy` handles real auth
-)
-```
-
 > ⚠️ **Note**: While core functionality is complete, real-world testing and community input are welcomed. Please [open an issue](https://github.com/starbased-co/ccproxy/issues) to share your experience, report bugs, or suggest improvements, or even better, submit a PR!
 
 ## Installation
