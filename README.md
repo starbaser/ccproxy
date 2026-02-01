@@ -2,7 +2,7 @@
 
 > [Join starbased HQ](https://discord.gg/HDuYQAFsbw) for questions, sharing setups, and contributing to development.
 
-`ccproxy` unlocks the full potential of your Claude MAX subscription by enabling Claude Code to seamlessly use unlimited Claude models alongside other LLM providers like OpenAI, Gemini, and Perplexity.
+`ccproxy` unlocks the full potential of your Claude Code by enabling Claude use alongside other LLM providers like OpenAI, Gemini, and Perplexity
 
 It works by intercepting Claude Code's requests through a [LiteLLM Proxy Server](https://docs.litellm.ai/docs/simple_proxy), allowing you to route different types of requests to the most suitable model - keep your unlimited Claude for standard coding, send large contexts to Gemini's 2M token window, route web searches to Perplexity, all while Claude Code thinks it's talking to the standard API.
 
