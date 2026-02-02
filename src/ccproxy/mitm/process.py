@@ -14,6 +14,69 @@ from ccproxy.process import write_pid
 logger = logging.getLogger(__name__)
 
 
+def ensure_prisma_client(database_url: str) -> bool:
+    """Ensure Prisma client is generated for the current environment.
+
+    Prisma requires a generated client (build-time step). When ccproxy is installed
+    via `uv tool install`, the client may not exist. This function auto-generates
+    it if needed.
+
+    Args:
+        database_url: PostgreSQL connection URL (used for schema introspection)
+
+    Returns:
+        True if client is ready, False if generation failed
+    """
+    # Try importing and instantiating Prisma - if it works, client is ready
+    try:
+        from prisma import Prisma
+
+        Prisma()
+        return True
+    except Exception:
+        pass
+
+    # Client not generated - find schema and run prisma generate
+    import ccproxy
+
+    # Try multiple schema locations (dev vs installed)
+    pkg_dir = Path(ccproxy.__file__).parent
+    candidates = [
+        pkg_dir.parent.parent / "prisma" / "schema.prisma",  # Dev: src/../prisma/
+        pkg_dir / "prisma" / "schema.prisma",  # Installed: bundled with package
+    ]
+
+    schema_path = None
+    for candidate in candidates:
+        if candidate.exists():
+            schema_path = candidate
+            break
+
+    if not schema_path:
+        logger.warning("Prisma schema not found, cannot auto-generate client")
+        return False
+
+    logger.info("Auto-generating Prisma client for MITM storage...")
+    env = os.environ.copy()
+    env["DATABASE_URL"] = database_url
+
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "prisma", "generate", "--schema", str(schema_path)],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            logger.info("Prisma client generated successfully")
+            return True
+        logger.error(f"Prisma generate failed: {result.stderr}")
+        return False
+    except Exception as e:
+        logger.error(f"Failed to run prisma generate: {e}")
+        return False
+
+
 class ProxyMode(Enum):
     """Mitmproxy operating mode."""
 
@@ -89,6 +152,12 @@ def start_mitm(
     if running:
         logger.error(f"Mitmproxy ({mode.value}) is already running with PID {pid}")
         sys.exit(1)
+
+    # Auto-generate Prisma client if database is configured
+    database_url = os.environ.get("CCPROXY_DATABASE_URL") or os.environ.get("DATABASE_URL")
+    if database_url:
+        if not ensure_prisma_client(database_url):
+            logger.warning("Prisma client generation failed - traces will not be persisted")
 
     # Get paths
     pid_file = get_pid_file(config_dir, mode)
