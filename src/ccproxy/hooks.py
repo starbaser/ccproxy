@@ -692,14 +692,26 @@ def add_beta_headers(data: dict[str, Any], user_api_key_dict: dict[str, Any], **
         )
         return data
 
-    # Build the merged beta headers
-    existing = ""
+    # Build the merged beta headers - preserve original request headers
+    existing_parts: list[str] = []
+
+    # 1. Get original anthropic-beta from incoming request (most important to preserve)
+    request = data.get("proxy_server_request", {})
+    original_headers = request.get("headers", {})
+    original_beta = original_headers.get("anthropic-beta", "")
+    if original_beta:
+        existing_parts.extend([b.strip() for b in original_beta.split(",") if b.strip()])
+
+    # 2. Also check extra_headers (may have been set by other hooks)
     if "provider_specific_header" in data and "extra_headers" in data["provider_specific_header"]:
-        existing = data["provider_specific_header"]["extra_headers"].get("anthropic-beta", "")
+        extra = data["provider_specific_header"]["extra_headers"].get("anthropic-beta", "")
+        existing_parts.extend([b.strip() for b in extra.split(",") if b.strip()])
     elif "extra_headers" in data:
-        existing = data["extra_headers"].get("anthropic-beta", "")
-    existing_list = [b.strip() for b in existing.split(",") if b.strip()]
-    merged = list(dict.fromkeys(ANTHROPIC_BETA_HEADERS + existing_list))
+        extra = data["extra_headers"].get("anthropic-beta", "")
+        existing_parts.extend([b.strip() for b in extra.split(",") if b.strip()])
+
+    # Merge: required betas first, then existing (deduplicated, order preserved)
+    merged = list(dict.fromkeys(ANTHROPIC_BETA_HEADERS + existing_parts))
     merged_str = ",".join(merged)
 
     # Method 1: provider_specific_header (for proxy router)

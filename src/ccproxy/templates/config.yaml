@@ -27,6 +27,7 @@ model_list:
       api_base: https://api.anthropic.com
 
 litellm_settings:
+  force_stream: true
   callbacks:
     - ccproxy.handler
     - langfuse
