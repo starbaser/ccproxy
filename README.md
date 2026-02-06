@@ -7,6 +7,7 @@
 It works by intercepting Claude Code's requests through a [LiteLLM Proxy Server](https://docs.litellm.ai/docs/simple_proxy), allowing you to route different types of requests to the most suitable model - keep your unlimited Claude for standard coding, send large contexts to Gemini's 2M token window, route web searches to Perplexity, all while Claude Code thinks it's talking to the standard API.
 
 > ⚠️⚠️ **`main` Branch Status**: As of 2026-02-05, the current release may not be stable for ALL Claude Code versions. Progress towards the next release candidate is ongoing, please consider the Discord before filing an issue.
+
 > ⚠️ **Note**: While core functionality is complete, real-world testing and community input are welcomed. Please [open an issue](https://github.com/starbased-co/ccproxy/issues) to share your experience, report bugs, or suggest improvements, or even better, submit a PR!
 
 ## Installation
