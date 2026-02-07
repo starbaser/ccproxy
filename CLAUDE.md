@@ -192,6 +192,10 @@ The test suite uses pytest with comprehensive fixtures (18 test files, 90% cover
 - **Lazy model loading**: Models loaded from LiteLLM proxy on first request, not at startup.
 - **MITM proxy**: Two-layer architecture - reverse proxy on port 4000 (user-facing), forward proxy on port 8081 (outbound to providers). MITM layer injects headers and modifies request bodies for OAuth compliance.
 - **MITM database**: PostgreSQL for HTTP trace storage. Database URL set via `CCPROXY_DATABASE_URL` env var or in `ccproxy.yaml` under `litellm.environment`. Current setup uses `litellm-db` container with database `ccproxy_mitm` (not the `ccproxy-db` in compose.yaml).
+- **Docker containers**: Two PostgreSQL containers managed via `compose.yaml`:
+  - `ccproxy-db` (port 5432) - LiteLLM's internal database
+  - `litellm-db` (port 5434) - MITM trace storage (`ccproxy_mitm` database)
+  - When "too many database connections" errors occur, restart **both** containers: `docker restart ccproxy-db litellm-db`
 - **Proxy direction tracking**: MITM traces include `proxy_direction` field (0=reverse, 1=forward) to distinguish client→LiteLLM vs LiteLLM→provider traffic.
 - **Session tracking**: MITM addon extracts `session_id` from Claude Code's `metadata.user_id` field to link related requests across proxy layers.
 
