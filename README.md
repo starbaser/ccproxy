@@ -1,6 +1,6 @@
 # `ccproxy` - Claude Code Proxy [![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/starbased-co/ccproxy)
 
-> [Join starbased HQ](https://discord.gg/HDuYQAFsbw) for questions, sharing setups, and contributing to development.
+> [Join starbased HQ](https://starbased.net/discord) for questions, sharing setups, and contributing to development.
 
 `ccproxy` is a development platform for extending and customizing Claude Code. It intercepts requests through a [LiteLLM Proxy Server](https://docs.litellm.ai/docs/simple_proxy), enabling intelligent routing to different LLM providers based on request characteristics—token count, model type, tool usage, or custom rules.
 
@@ -95,10 +95,10 @@ ccproxy:
     #   user_agent: "MyApp/1.0"
 
   hooks:
-    - ccproxy.hooks.rule_evaluator    # evaluates rules against request (needed for routing)
-    - ccproxy.hooks.model_router      # routes to appropriate model
-    - ccproxy.hooks.forward_oauth     # forwards OAuth token to provider
-    - ccproxy.hooks.extract_session_id  # extracts session ID for LangFuse tracking
+    - ccproxy.hooks.rule_evaluator # evaluates rules against request (needed for routing)
+    - ccproxy.hooks.model_router # routes to appropriate model
+    - ccproxy.hooks.forward_oauth # forwards OAuth token to provider
+    - ccproxy.hooks.extract_session_id # extracts session ID for LangFuse tracking
     # - ccproxy.hooks.capture_headers  # logs HTTP headers (with redaction)
     # - ccproxy.hooks.forward_apikey   # forwards x-api-key header
   rules:
@@ -248,14 +248,14 @@ Custom rules (and hooks) are loaded with the same mechanism that LiteLLM uses to
 
 Hooks are functions that process requests at different stages. Configure them in `ccproxy.yaml`:
 
-| Hook | Description |
-|------|-------------|
-| `rule_evaluator` | Evaluates rules and labels requests for routing |
-| `model_router` | Routes requests to appropriate model based on labels |
-| `forward_oauth` | Forwards OAuth tokens to providers (supports multi-provider with custom User-Agent) |
-| `forward_apikey` | Forwards `x-api-key` header to proxied requests |
-| `extract_session_id` | Extracts session ID from Claude Code's `user_id` for LangFuse tracking |
-| `capture_headers` | Logs HTTP headers as LangFuse trace metadata (with sensitive value redaction) |
+| Hook                 | Description                                                                         |
+| -------------------- | ----------------------------------------------------------------------------------- |
+| `rule_evaluator`     | Evaluates rules and labels requests for routing                                     |
+| `model_router`       | Routes requests to appropriate model based on labels                                |
+| `forward_oauth`      | Forwards OAuth tokens to providers (supports multi-provider with custom User-Agent) |
+| `forward_apikey`     | Forwards `x-api-key` header to proxied requests                                     |
+| `extract_session_id` | Extracts session ID from Claude Code's `user_id` for LangFuse tracking              |
+| `capture_headers`    | Logs HTTP headers as LangFuse trace metadata (with sensitive value redaction)       |
 
 Hooks can accept parameters via configuration:
 
@@ -263,7 +263,7 @@ Hooks can accept parameters via configuration:
 hooks:
   - hook: ccproxy.hooks.capture_headers
     params:
-      - headers: ["user-agent", "x-request-id"]  # Optional: filter specific headers
+      - headers: ["user-agent", "x-request-id"] # Optional: filter specific headers
 ```
 
 See [`hooks.py`](src/ccproxy/hooks.py) for implementing custom hooks.
