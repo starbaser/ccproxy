@@ -326,6 +326,16 @@ def start_litellm(config_dir: Path, args: list[str] | None = None, detach: bool 
 
     cmd = [str(litellm_path), "--config", str(config_path)]
 
+    # Pass num_workers from ccproxy.yaml litellm section if configured
+    ccproxy_config_path = config_dir / "ccproxy.yaml"
+    if ccproxy_config_path.exists():
+        with ccproxy_config_path.open() as f:
+            ccproxy_config = yaml.safe_load(f)
+            if ccproxy_config:
+                num_workers = ccproxy_config.get("litellm", {}).get("num_workers")
+                if num_workers is not None:
+                    cmd.extend(["--num_workers", str(num_workers)])
+
     # Add any additional arguments
     if args:
         cmd.extend(args)
