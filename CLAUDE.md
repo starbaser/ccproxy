@@ -182,7 +182,7 @@ The test suite uses pytest with comprehensive fixtures (18 test files, 90% cover
 - **Singleton patterns**: `CCProxyConfig` and `ModelRouter` use thread-safe singletons. Use `clear_config_instance()` and `clear_router()` to reset state in tests.
 - **Token counting**: Uses tiktoken with fallback to character-based estimation for non-OpenAI models.
 - **OAuth token forwarding**: Handled specially for Claude CLI requests. Supports custom User-Agent per provider.
-- **OAuth sentinel key**: SDK clients can use `sk-ant-oat-ccproxy-{provider}` as API key to trigger OAuth token substitution from `oat_sources` config. Requires MITM mode for native Anthropic SDK (system message injection happens at HTTP layer).
+- **OAuth sentinel key**: SDK clients can use `sk-ant-oat-ccproxy-{provider}` as API key to trigger OAuth token substitution from `oat_sources` config. OAuth works without MITM via pipeline hooks; MITM provides a redundant header safety net.
 - **OAuth token refresh**: Automatic refresh with two triggers:
   - TTL-based: Background task checks every 30 minutes, refreshes at 90% of `oauth_ttl` (default 8h)
   - 401-triggered: Immediate refresh when API returns authentication error
@@ -190,11 +190,11 @@ The test suite uses pytest with comprehensive fixtures (18 test files, 90% cover
 - **Request metadata**: Stored by `litellm_call_id` with 60-second TTL auto-cleanup (LiteLLM doesn't preserve custom metadata).
 - **Hook error isolation**: Errors in one hook don't block others from executing.
 - **Lazy model loading**: Models loaded from LiteLLM proxy on first request, not at startup.
-- **MITM proxy**: Two-layer architecture - reverse proxy on port 4000 (user-facing), forward proxy on port 8081 (outbound to providers). MITM layer injects headers and modifies request bodies for OAuth compliance.
+- **MITM proxy**: Two-layer architecture - reverse proxy on port 4000 (user-facing), forward proxy on port 8081 (outbound to providers). Enables HTTP traffic capture and tracing. OAuth works without MITM via pipeline hooks; MITM provides a redundant header safety net.
 - **MITM database**: PostgreSQL for HTTP trace storage. Database URL set via `CCPROXY_DATABASE_URL` env var or in `ccproxy.yaml` under `litellm.environment`. Current setup uses `litellm-db` container with database `ccproxy_mitm` (not the `ccproxy-db` in compose.yaml).
 - **Docker containers**: Two PostgreSQL containers managed via `compose.yaml`:
-  - `ccproxy-db` (port 5432) - LiteLLM's internal database
-  - `litellm-db` (port 5434) - MITM trace storage (`ccproxy_mitm` database)
+  - `ccproxy-db` (port 5432) - MITM trace storage (`ccproxy_mitm` database)
+  - `litellm-db` (port 5434) - LiteLLM's internal database (`litellm` database)
   - When "too many database connections" errors occur, restart **both** containers: `docker restart ccproxy-db litellm-db`
 - **Proxy direction tracking**: MITM traces include `proxy_direction` field (0=reverse, 1=forward) to distinguish client→LiteLLM vs LiteLLM→provider traffic.
 - **Session tracking**: MITM addon extracts `session_id` from Claude Code's `metadata.user_id` field to link related requests across proxy layers.

@@ -48,7 +48,7 @@ ccproxy:
     enabled: false
     port: 8081
     # PostgreSQL database for MITM traces
-    database_url: "postgresql://ccproxy:test@localhost:5432/ccproxy"
+    database_url: "postgresql://ccproxy:test@localhost:5432/ccproxy_mitm"
     capture_bodies: true
     max_body_size: 0  # 0 = unlimited
     debug: false

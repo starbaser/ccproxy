@@ -29,12 +29,13 @@ When ccproxy sees this sentinel key, it:
 4. Injects the "You are Claude Code" system message prefix (for OAuth compliance)
 
 **Requirements:**
-- **MITM mode must be enabled** for native Anthropic SDK usage (system message injection happens at HTTP layer)
 - OAuth credentials configured in `~/.ccproxy/ccproxy.yaml` under `oat_sources`
+- Pipeline hooks enabled: `inject_claude_code_identity`, `add_beta_headers`, `forward_oauth`
+- (Optional) MITM mode provides redundant safety net for header injection at HTTP layer
 
 ```bash
-# Start ccproxy with MITM enabled
-ccproxy start --detach --mitm
+# Start ccproxy
+ccproxy start --detach
 ```
 
 ## Examples
@@ -53,8 +54,8 @@ Demonstrates Claude Agent SDK integration with ccproxy for prompt caching monito
 # Install claude-agent-sdk
 uv add claude-agent-sdk
 
-# Start ccproxy with MITM for OAuth support
-ccproxy start --detach --mitm
+# Start ccproxy
+ccproxy start --detach
 ccproxy logs -f
 ```
 
@@ -94,8 +95,8 @@ Direct usage of the Anthropic SDK with ccproxy using OAuth credential forwarding
 uv add anthropic
 
 # Configure OAuth credentials in ~/.ccproxy/ccproxy.yaml
-# Start ccproxy with MITM
-ccproxy start --detach --mitm
+# Start ccproxy
+ccproxy start --detach
 ```
 
 **Usage:**
@@ -108,7 +109,7 @@ uv run python docs/sdk/anthropic_sdk.py
 - Uses sentinel API key (`sk-ant-oat-ccproxy-anthropic`) - proxy substitutes real OAuth token
 - Base URL: `http://localhost:4000`
 - Demonstrates both `messages.create()` and `messages.stream()` patterns
-- MITM mode injects required headers and system message for OAuth compliance
+- Pipeline hooks inject required headers and system message for OAuth compliance
 
 ---
 
@@ -179,11 +180,11 @@ uv run python docs/sdk/zai_anthropic_sdk.py
 All examples require ccproxy to be running:
 
 ```bash
-# Start ccproxy with MITM (recommended for Anthropic SDK)
-ccproxy start --detach --mitm
-
-# Or without MITM (for OpenAI-compatible endpoints only)
+# Start ccproxy
 ccproxy start --detach
+
+# Optional: Enable MITM for redundant HTTP-layer safety net
+ccproxy start --detach --mitm
 
 # Monitor logs (optional)
 ccproxy logs -f
@@ -201,7 +202,7 @@ Examples expect ccproxy running with:
 - **Proxy port**: 4000 (default)
 - **OAuth credentials**: Configured in `~/.ccproxy/ccproxy.yaml` under `oat_sources`
 - **Models**: Defined in `~/.ccproxy/config.yaml` for LiteLLM proxy
-- **MITM mode**: Enabled for native Anthropic SDK usage (`--mitm` flag)
+- **MITM mode**: Optional (provides HTTP-layer redundancy for header injection)
 
 ### Example ccproxy.yaml OAuth Configuration
 
@@ -222,16 +223,16 @@ ccproxy:
 If examples fail:
 
 1. **Verify ccproxy is running**: `ccproxy status`
-2. **Check MITM is enabled**: Status should show `mitm: reverse on 4000`
-3. **Check OAuth credentials**: Verify `oat_sources` in `~/.ccproxy/ccproxy.yaml`
-4. **Review logs**: `ccproxy logs -f` for detailed error messages
-5. **Check MITM logs**: `tail -f ~/.ccproxy/mitm-forward.log`
+2. **Check OAuth credentials**: Verify `oat_sources` in `~/.ccproxy/ccproxy.yaml`
+3. **Review logs**: `ccproxy logs -f` for detailed error messages
+4. **Check pipeline hooks**: Ensure `inject_claude_code_identity`, `add_beta_headers`, and `forward_oauth` are enabled in hooks configuration
+5. **Optional MITM verification**: If using `--mitm`, status should show `mitm: reverse on 4000`
 6. **Verify port**: Default is 4000, ensure it's not blocked or in use
 
 ### Common Errors
 
-- **"This credential is only authorized for use with Claude Code"**: MITM not enabled or system message not injected. Start with `--mitm` flag.
-- **"invalid x-api-key"**: OAuth headers not being set correctly. Check MITM forward proxy logs.
+- **"This credential is only authorized for use with Claude Code"**: OAuth pipeline hooks not configured. Verify `inject_claude_code_identity` and `add_beta_headers` hooks are enabled in `ccproxy.yaml`. Optionally enable MITM mode for redundant safety.
+- **"invalid x-api-key"**: OAuth headers not being set correctly. Check `forward_oauth` hook configuration and logs.
 - **Connection refused**: ccproxy not running. Check `ccproxy status`.
 
 ## Additional Resources
