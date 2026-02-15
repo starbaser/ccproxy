@@ -54,7 +54,14 @@ class CCProxyHandler(CustomLogger):
 
         config = get_config()
         if config.debug:
-            logger.setLevel(logging.DEBUG)
+            # Set DEBUG level for all ccproxy loggers (handler, pipeline, hooks)
+            ccproxy_logger = logging.getLogger("ccproxy")
+            ccproxy_logger.setLevel(logging.DEBUG)
+            # Ensure ccproxy loggers have a handler so messages appear in the log file
+            if not ccproxy_logger.handlers:
+                handler = logging.StreamHandler()
+                handler.setFormatter(logging.Formatter("%(name)s:%(levelname)s: %(message)s"))
+                ccproxy_logger.addHandler(handler)
 
         # Initialize pipeline executor with DAG-based hook ordering
         self._init_pipeline()
@@ -62,7 +69,78 @@ class CCProxyHandler(CustomLogger):
         # Register custom routes with LiteLLM proxy (for statusline integration)
         self._register_routes()
 
+        # Patch health checks to mock responses for OAuth models (no static API key)
+        self._patch_health_check()
+
+        # Patch Anthropic header construction for OAuth compatibility
+        self._patch_anthropic_oauth_headers()
+
     _routes_registered: bool = False  # Class-level flag to prevent duplicate registration
+    _health_check_patched: bool = False
+
+    @staticmethod
+    def _patch_health_check() -> None:
+        """Patch LiteLLM health check to mock responses for models with health_check_model set.
+
+        OAuth-forwarded models have no static API key, so health checks fail with
+        AuthenticationError before any callback can intercept. This injects mock_response
+        into litellm_params during health check preparation, bypassing the API call entirely.
+        """
+        if CCProxyHandler._health_check_patched:
+            return
+
+        try:
+            from litellm.proxy import health_check as hc_module
+
+            _original = hc_module._update_litellm_params_for_health_check
+
+            def _patched(model_info: dict, litellm_params: dict) -> dict:
+                result = _original(model_info, litellm_params)
+                if model_info.get("health_check_model"):
+                    result["mock_response"] = "ccproxy health check ok"
+                return result
+
+            hc_module._update_litellm_params_for_health_check = _patched
+            CCProxyHandler._health_check_patched = True
+            logger.debug("Patched health check to mock OAuth models")
+        except Exception as e:
+            logger.warning(f"Failed to patch health check: {e}")
+
+    _anthropic_oauth_patched: bool = False
+
+    @staticmethod
+    def _patch_anthropic_oauth_headers() -> None:
+        """Patch LiteLLM's Anthropic header construction for OAuth Bearer auth.
+
+        LiteLLM's validate_environment() merges headers as {**user, **anthropic},
+        so anthropic's hardcoded x-api-key always overwrites user-provided values.
+        This patch reverses the precedence: when extra_headers explicitly sets
+        x-api-key to empty string (OAuth mode), that value is preserved instead
+        of being overwritten with the api_key parameter.
+        """
+        if CCProxyHandler._anthropic_oauth_patched:
+            return
+
+        try:
+            from litellm.llms.anthropic.common_utils import AnthropicModelInfo
+
+            _original_validate = AnthropicModelInfo.validate_environment
+
+            def _patched_validate(self, headers, model, messages, optional_params, litellm_params, api_key=None, api_base=None):
+                # Check if caller explicitly set x-api-key to empty (OAuth mode)
+                oauth_mode = "x-api-key" in headers and headers["x-api-key"] == ""
+                result = _original_validate(self, headers, model, messages, optional_params, litellm_params, api_key=api_key, api_base=api_base)
+                if oauth_mode:
+                    # Remove x-api-key so Anthropic uses Authorization header
+                    result.pop("x-api-key", None)
+                    logger.debug("Removed x-api-key from Anthropic headers (OAuth mode)")
+                return result
+
+            AnthropicModelInfo.validate_environment = _patched_validate
+            CCProxyHandler._anthropic_oauth_patched = True
+            logger.debug("Patched Anthropic validate_environment for OAuth header support")
+        except Exception as e:
+            logger.warning(f"Failed to patch Anthropic OAuth headers: {e}")
 
     def _init_pipeline(self) -> None:
         """Initialize the pipeline executor with registered hooks.

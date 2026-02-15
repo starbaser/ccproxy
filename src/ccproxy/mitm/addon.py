@@ -194,10 +194,11 @@ class CCProxyMitmAddon:
         api_key = request.headers.get("x-api-key", "")
         host = request.pretty_host
 
-        # Detect OAuth token: either Bearer header present, or x-api-key without sk-ant prefix
-        # LiteLLM converts Authorization: Bearer → x-api-key, so we need to detect and reverse this
+        # Detect OAuth token: either Bearer header present, or OAuth token in x-api-key.
+        # LiteLLM's Anthropic handler hardcodes x-api-key from api_key param,
+        # so OAuth tokens (sk-ant-oat*) end up in x-api-key instead of Authorization.
         has_bearer = auth_header.lower().startswith("bearer ")
-        has_oauth_in_apikey = api_key and not api_key.startswith("sk-ant")
+        has_oauth_in_apikey = api_key and api_key.startswith("sk-ant-oat")
 
         if not has_bearer and not has_oauth_in_apikey:
             return
@@ -245,8 +246,12 @@ class CCProxyMitmAddon:
         Args:
             flow: HTTP flow object
         """
-        # OAuth header fixing now handled by pipeline's forward_oauth hook
-        # self._fix_oauth_headers(flow)
+        # Fix OAuth headers at the HTTP layer AFTER LiteLLM constructs them.
+        # LiteLLM's Anthropic handler hardcodes x-api-key from api_key in
+        # get_anthropic_headers(), overriding extra_headers["x-api-key"]="".
+        # The pipeline hook sets the token correctly, but only the MITM layer
+        # can strip x-api-key after LiteLLM's final header construction.
+        self._fix_oauth_headers(flow)
 
         # Skip trace capture if no storage configured
         if self.storage is None:

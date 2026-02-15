@@ -131,6 +131,10 @@ fi
             ccproxy_dir = config_dir / ".ccproxy"
             ccproxy_dir.mkdir()
 
+            # Create minimal settings.json for claude wrapper
+            import json
+            (claude_dir / "settings.json").write_text(json.dumps({"custom": {}}))
+
             # Copy credentials from real home if they exist
             real_creds = real_home / ".claude" / ".credentials.json"
             if real_creds.exists():
@@ -242,6 +246,7 @@ fi
         env = os.environ.copy()
         env["CCPROXY_TEST_MODE"] = "1"  # Signal we're in test mode
         env["HOME"] = config_dir_str  # Redirect HOME so Claude uses isolated .claude dir
+        env.pop("CLAUDECODE", None)  # Allow nested launch in test context
 
         # Start ccproxy in background with explicit config dir
         start_result = subprocess.run(

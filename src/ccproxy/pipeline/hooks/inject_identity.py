@@ -24,16 +24,18 @@ logger = logging.getLogger(__name__)
 def inject_claude_code_identity_guard(ctx: Context) -> bool:
     """Guard: Run if OAuth request to Anthropic-type provider.
 
-    Uses universal detection (header presence, not token format)
-    to support all OAuth providers (Anthropic, ZAI, etc.).
+    Detects OAuth via:
+    1. Original Authorization: Bearer header (client-provided OAuth)
+    2. Metadata flag set by forward_oauth (cached OAuth token injection)
     """
-    if not is_oauth_request(ctx):
+    has_oauth = is_oauth_request(ctx) or bool(ctx.metadata.get("ccproxy_oauth_provider"))
+    if not has_oauth:
         return False
     return routes_to_anthropic_provider(ctx)
 
 
 @hook(
-    reads=["authorization", "ccproxy_litellm_model", "ccproxy_model_config", "system"],
+    reads=["authorization", "ccproxy_litellm_model", "ccproxy_model_config", "ccproxy_oauth_provider", "system"],
     writes=["system"],
 )
 def inject_claude_code_identity(ctx: Context, params: dict[str, Any]) -> Context:
