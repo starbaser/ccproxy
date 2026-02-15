@@ -37,7 +37,7 @@ def forward_oauth_guard(ctx: Context) -> bool:
 
 @hook(
     reads=["ccproxy_litellm_model", "ccproxy_model_config", "authorization", "secret_fields"],
-    writes=["authorization", "x-api-key", "api_key", "provider_specific_header"],
+    writes=["authorization", "x-api-key", "provider_specific_header", "ccproxy_oauth_provider"],
 )
 def forward_oauth(ctx: Context, params: dict[str, Any]) -> Context:
     """Forward OAuth token to provider if configured.
@@ -92,13 +92,21 @@ def forward_oauth(ctx: Context, params: dict[str, Any]) -> Context:
         config = get_config()
         oauth_token = config.get_oauth_token(provider_name)
         if oauth_token:
-            logger.debug("No authorization header, using cached OAuth token for '%s'", provider_name)
+            logger.info("No authorization header, using cached OAuth token for '%s'", provider_name)
             auth_header = f"Bearer {oauth_token}" if not oauth_token.startswith("Bearer ") else oauth_token
         else:
+            logger.warning(
+                "forward_oauth: No authorization header and no cached OAuth token for provider '%s'. "
+                "Check oat_sources configuration and that the token command succeeds.",
+                provider_name,
+            )
             return ctx
 
     # Set up provider headers
     _setup_provider_headers(ctx, provider_name, auth_header)
+
+    # Signal to downstream hooks (inject_claude_code_identity) that OAuth is active
+    ctx.metadata["ccproxy_oauth_provider"] = provider_name
 
     # Log OAuth forwarding
     user_agent = ctx.headers.get("user-agent", "")
@@ -216,16 +224,10 @@ def _setup_provider_headers(ctx: Context, provider_name: str, auth_header: str) 
     # Set authorization header
     extra["authorization"] = auth_header
 
-    # Clear x-api-key when using OAuth Bearer (Anthropic requires empty x-api-key with OAuth)
+    # Signal OAuth mode: empty x-api-key tells the patched validate_environment
+    # to remove x-api-key entirely so Anthropic uses Authorization: Bearer instead.
+    # Without the patch, LiteLLM's Anthropic handler overwrites this with api_key.
     extra["x-api-key"] = ""
-
-    # Set api_key for LiteLLM internal handling
-    if auth_header.startswith("Bearer "):
-        oauth_token = auth_header[7:]  # Strip "Bearer " prefix
-        ctx.api_key = oauth_token
-        # LiteLLM requires model_group in metadata for api_key handling
-        if "model_group" not in ctx.metadata:
-            ctx.metadata["model_group"] = ctx.model or "default"
 
     # Set custom User-Agent if configured
     config = get_config()

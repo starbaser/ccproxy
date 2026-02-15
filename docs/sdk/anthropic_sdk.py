@@ -6,7 +6,7 @@ sentinel key feature. The sentinel key `sk-ant-oat-ccproxy-{provider}`
 triggers automatic OAuth token substitution from ccproxy's cached credentials.
 
 Requirements:
-- ccproxy running with MITM enabled: `ccproxy start --detach --mitm`
+- ccproxy running: `ccproxy start --detach`
 - OAuth credentials configured in ~/.ccproxy/ccproxy.yaml under oat_sources
 """
 
@@ -24,8 +24,8 @@ SENTINEL_KEY = "sk-ant-oat-ccproxy-anthropic"
 def create_client() -> anthropic.Anthropic:
     """Create Anthropic client configured for ccproxy with OAuth sentinel key.
 
-    The sentinel key triggers OAuth token substitution in ccproxy's MITM layer,
-    which also injects required headers and system message prefix.
+    The sentinel key triggers OAuth token substitution in ccproxy's pipeline hooks,
+    which also inject required headers and system message prefix.
     """
     return anthropic.Anthropic(
         api_key=SENTINEL_KEY,
@@ -83,7 +83,7 @@ def main() -> None:
     """Run examples."""
     try:
         # Check if running
-        console.print("[yellow]Note:[/yellow] This script requires ccproxy running with MITM: [cyan]ccproxy start --mitm[/cyan]\n")
+        console.print("[yellow]Note:[/yellow] This script requires ccproxy running: [cyan]ccproxy start --detach[/cyan]\n")
 
         # Simple request
         simple_request()
@@ -95,9 +95,9 @@ def main() -> None:
     except Exception:
         console.print(
             "\n[yellow]Troubleshooting:[/yellow]",
-            "1. Start ccproxy with MITM: [cyan]ccproxy start --mitm[/cyan]",
+            "1. Start ccproxy: [cyan]ccproxy start --detach[/cyan]",
             "2. Verify oat_sources in ~/.ccproxy/ccproxy.yaml",
-            "3. Check MITM logs: [cyan]tail -f ~/.ccproxy/mitm-forward.log[/cyan]",
+            "3. Check logs: [cyan]ccproxy logs -f[/cyan]",
             sep="\n",
         )
         raise

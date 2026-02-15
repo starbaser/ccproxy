@@ -452,15 +452,9 @@ def start_litellm(
         print("Run 'ccproxy install' first to set up configuration.", file=sys.stderr)
         sys.exit(1)
 
-    # Generate the handler file before starting LiteLLM
-    try:
-        generate_handler_file(config_dir)
-    except Exception as e:
-        print(f"Error generating handler file: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    # Load litellm settings from ccproxy.yaml
+    # Load litellm settings from ccproxy.yaml (needed for pre-flight port checks)
     ccproxy_config_path = config_dir / "ccproxy.yaml"
+    ccproxy_config = None
     litellm_host = "127.0.0.1"
     main_port = 4000  # The port users connect to (reverse proxy)
     forward_port = 8081  # Forward proxy port for provider API calls
@@ -475,6 +469,19 @@ def start_litellm(
                 # Get forward proxy port from mitm config
                 mitm_section = ccproxy_config.get("ccproxy", {}).get("mitm", {})
                 forward_port = mitm_section.get("port", 8081)
+
+    # Pre-flight: kill orphans, verify ports are free
+    from ccproxy.preflight import run_preflight_checks
+
+    ports_to_check = [main_port, forward_port] if mitm else [main_port]
+    run_preflight_checks(config_dir, ports=ports_to_check)
+
+    # Generate the handler file before starting LiteLLM
+    try:
+        generate_handler_file(config_dir)
+    except Exception as e:
+        print(f"Error generating handler file: {e}", file=sys.stderr)
+        sys.exit(1)
 
     # Determine LiteLLM's actual port
     # When MITM enabled: MITM takes main_port, LiteLLM gets random port
