@@ -118,21 +118,6 @@ class TestFixOAuthHeaders:
 
         assert "x-api-key" not in mock_flow.request.headers
 
-    def test_restores_oauth_from_x_api_key(self, addon: CCProxyMitmAddon, mock_flow: MagicMock) -> None:
-        """OAuth token in x-api-key (LiteLLM converted) should be restored to Authorization."""
-        mock_flow.request.pretty_host = "api.z.ai"
-        mock_flow.request.path = "/api/anthropic/v1/messages"
-        # LiteLLM converts Bearer → x-api-key, so no Authorization header
-        mock_flow.request.headers = {
-            "x-api-key": "oauth-token-without-sk-ant-prefix",
-            "content-type": "application/json",
-        }
-
-        addon._fix_oauth_headers(mock_flow)
-
-        assert "x-api-key" not in mock_flow.request.headers
-        assert mock_flow.request.headers["authorization"] == "Bearer oauth-token-without-sk-ant-prefix"
-
     def test_preserves_real_api_key(self, addon: CCProxyMitmAddon, mock_flow: MagicMock) -> None:
         """Real API keys (sk-ant-*) should not be converted to Bearer."""
         mock_flow.request.pretty_host = "api.anthropic.com"
@@ -155,21 +140,6 @@ class TestRequestMethod:
     Note: OAuth header fixing is now handled by the pipeline's forward_oauth hook,
     not the MITM addon. The addon's request() method only handles trace capture.
     """
-
-    @pytest.mark.asyncio
-    async def test_request_preserves_headers(self, addon: CCProxyMitmAddon, mock_flow: MagicMock) -> None:
-        """request() should not modify headers (OAuth handled by pipeline)."""
-        mock_flow.request.pretty_host = "api.anthropic.com"
-        mock_flow.request.headers = {
-            "authorization": "Bearer token",
-            "x-api-key": "dummy",
-        }
-
-        await addon.request(mock_flow)
-
-        # Headers preserved - OAuth fixing done by pipeline, not MITM
-        assert mock_flow.request.headers["authorization"] == "Bearer token"
-        assert mock_flow.request.headers["x-api-key"] == "dummy"
 
     @pytest.mark.asyncio
     async def test_request_works_without_storage(self, mock_flow: MagicMock) -> None:

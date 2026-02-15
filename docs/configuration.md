@@ -125,8 +125,9 @@ ccproxy:
   # Format: "module.path:ClassName" or just "module.path" (defaults to CCProxyHandler)
   handler: "ccproxy.handler:CCProxyHandler"
 
-  # Optional: Shell command to load oauth token on startup (for standalone mode)
-  credentials: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+  # OAuth token sources - map provider names to shell commands
+  oat_sources:
+    anthropic: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
 
   # Processing hooks (executed in order)
   hooks:
@@ -136,6 +137,10 @@ ccproxy:
     # Choose ONE:
     - ccproxy.hooks.forward_oauth # subscription account
     # - ccproxy.hooks.forward_apikey # api key
+
+    # Required for OAuth with Claude Code
+    - ccproxy.hooks.add_beta_headers # OAuth support
+    - ccproxy.hooks.inject_claude_code_identity # OAuth validation
 
   # Routing rules (evaluated in order)
   rules:
@@ -163,7 +168,7 @@ ccproxy:
 ```
 
 - **`litellm`**: LiteLLM proxy server process (See `litellm --help`)
-- **`ccproxy.credentials`**: Optional shell command to load credentials at startup for use as a standalone LiteLLM server
+- **`ccproxy.oat_sources`**: Map of provider names to OAuth token retrieval commands
 - **`ccproxy.hooks`**: A list of hooks that are executed in series during the `async_pre_call_hook`
 - **`ccproxy.rules`**: Request routing rules (evaluated in order)
 
@@ -322,58 +327,85 @@ Then run `ccproxy start` to regenerate the handler file with your custom handler
 3. **Model Selection**: Request routed to appropriate model
 4. **Response**: Response returned through LiteLLM proxy
 
-## Credentials Management (OAuth Only)
+## OAuth Token Management
 
-The `credentials` field in `ccproxy.yaml` allows you to load OAuth tokens via shell command at startup. This is **only used with `forward_oauth` hook** for Claude Code subscription accounts.
+The `oat_sources` field in `ccproxy.yaml` configures OAuth token retrieval for multiple providers. This is used with the `forward_oauth` hook for Claude Code subscription accounts or custom LLM providers requiring OAuth authentication.
 
-**Note**: If using Claude Code with an Anthropic API key, use `forward_apikey` hook instead (no credentials field needed).
+**Note**: If using Claude Code with an Anthropic API key, use `forward_apikey` hook instead (no `oat_sources` needed).
 
 ### Configuration
 
+**Simple form (shell command):**
+
 ```yaml
 ccproxy:
-  credentials: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+  oat_sources:
+    anthropic: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+    gemini: "~/bin/get-gemini-token.sh"
 ```
+
+**Extended form (with user agent and destinations):**
+
+```yaml
+ccproxy:
+  oat_sources:
+    anthropic:
+      command: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+      user_agent: "ClaudeCode/1.0"
+      destinations: ["api.anthropic.com"]
+
+    custom_provider:
+      command: "~/bin/get-custom-token.sh"
+      user_agent: "MyApp/2.0"
+      destinations: ["api.z.ai", "custom.llm.com"]
+```
+
+**Field reference:**
+- **`command`** (required): Shell command to retrieve OAuth token
+- **`user_agent`** (optional): Custom User-Agent header for requests using this token
+- **`destinations`** (optional): List of URL patterns that should use this token (e.g., `["api.z.ai", "anthropic.com"]`)
+
+### Sentinel Key Mechanism
+
+SDK clients (e.g., native Anthropic SDK) can use a sentinel key pattern to trigger OAuth token substitution:
+
+```python
+# Sentinel key format: sk-ant-oat-ccproxy-{provider}
+client = Anthropic(api_key="sk-ant-oat-ccproxy-anthropic")
+```
+
+When ccproxy detects this sentinel key, it:
+1. Substitutes it with the actual OAuth token from `oat_sources[provider]`
+2. Applies the configured `user_agent` and `destinations` for that provider
+3. **Requires MITM mode** for native SDK usage (system message injection happens at HTTP layer)
+
+### Deprecation Notice
+
+The `credentials` field is deprecated and will be removed in a future version. It has been automatically migrated to `oat_sources['anthropic']`:
+
+```yaml
+# Old (deprecated):
+ccproxy:
+  credentials: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+
+# New (recommended):
+ccproxy:
+  oat_sources:
+    anthropic: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+```
+
+If both `credentials` and `oat_sources['anthropic']` are present, `oat_sources` takes precedence and a warning is logged.
 
 ### Behavior
 
-- **Execution**: Shell command runs once during config initialization
-- **Caching**: Result is cached for the lifetime of the proxy process
-- **Validation**: Raises `RuntimeError` if command fails (fail-fast)
-- **Usage**: OAuth token is used as fallback by `forward_oauth` hook
-
-### Common Use Cases
-
-**Claude Code with subscription account (OAuth):**
-
-```yaml
-credentials: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
-hooks:
-  - ccproxy.hooks.forward_oauth # Use forward_oauth for OAuth tokens
-```
-
-**Loading from custom script:**
-
-```yaml
-credentials: "~/bin/get-auth-token.sh"
-```
-
-### Hook Integration
-
-The `credentials` field is used by the `forward_oauth` hook as a fallback when:
-
-1. No authorization header exists in the incoming request
-2. The request is targeting an Anthropic API endpoint
-3. Credentials were successfully loaded at startup
-
-This provides seamless OAuth token forwarding for Claude Code subscription accounts.
+- **Execution**: Shell commands execute once during config initialization
+- **Caching**: Results cached with timestamp for TTL-based refresh
+- **Validation**: Logs error if command fails (non-blocking for multi-provider setups)
+- **Refresh**: Automatic refresh via TTL monitoring and 401-triggered re-execution
 
 ### OAuth Token Refresh
 
 ccproxy automatically refreshes OAuth tokens to prevent expiration.
-
-**Requirements:**
-- `oat_sources` must be configured with commands that retrieve fresh tokens
 
 **How it works:**
 - Background task starts on first request and checks every 30 minutes
@@ -439,22 +471,43 @@ ccproxy:
 
 #### forward_oauth
 
-Forwards OAuth tokens to Anthropic API requests
+Forwards OAuth tokens to LLM provider API requests
 
-**Use when:** Claude Code is configured with a subscription account
+**Use when:** Claude Code is configured with a subscription account, or using custom providers requiring OAuth
 
 **Features:**
 
-- Forwards existing authorization headers
-- Falls back to `credentials` field if no header present
-- Only activates for Anthropic API endpoints
+- Forwards existing authorization headers from incoming requests
+- Falls back to cached token from `oat_sources` if no header present
+- Multi-provider support via `destinations` field in `oat_sources`
+- Sentinel key substitution: `sk-ant-oat-ccproxy-{provider}` → actual OAuth token
 - Automatically adds "Bearer" prefix if needed
+- Custom User-Agent per provider via `user_agent` field
 
 **Configuration:**
 
 ```yaml
 ccproxy:
-  credentials: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+  oat_sources:
+    anthropic: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+  hooks:
+    - ccproxy.hooks.forward_oauth
+```
+
+**Multi-provider example:**
+
+```yaml
+ccproxy:
+  oat_sources:
+    anthropic:
+      command: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+      destinations: ["api.anthropic.com"]
+
+    custom_provider:
+      command: "~/bin/get-token.sh"
+      user_agent: "MyApp/1.0"
+      destinations: ["api.z.ai"]
+
   hooks:
     - ccproxy.hooks.forward_oauth
 ```

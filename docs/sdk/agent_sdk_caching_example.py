@@ -12,7 +12,7 @@ Purpose:
 
 Usage:
     1. Start ccproxy with MITM enabled:
-       ccproxy start --detach --mitm
+       ccproxy start --detach
        ccproxy logs -f
 
     2. In another terminal, run this example:
@@ -79,7 +79,7 @@ async def main() -> None:
       * TokenCountRule - Evaluates based on token count threshold
     - router.py: Model configuration management from LiteLLM proxy
     - config.py: Pydantic-based configuration with multi-level discovery
-    - hooks.py: Built-in hooks for request processing:
+    - pipeline/hooks/: Built-in hooks for request processing:
       * rule_evaluator - Evaluates rules and stores routing decision
       * model_router - Routes to appropriate model
       * forward_oauth - Forwards OAuth tokens to provider APIs

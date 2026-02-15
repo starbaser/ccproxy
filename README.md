@@ -98,6 +98,8 @@ ccproxy:
     - ccproxy.hooks.rule_evaluator    # evaluates rules against request (needed for routing)
     - ccproxy.hooks.model_router      # routes to appropriate model
     - ccproxy.hooks.forward_oauth     # forwards OAuth token to provider
+    - ccproxy.hooks.add_beta_headers           # required for OAuth
+    - ccproxy.hooks.inject_claude_code_identity # required for OAuth
     - ccproxy.hooks.extract_session_id  # extracts session ID for LangFuse tracking
     # - ccproxy.hooks.capture_headers  # logs HTTP headers (with redaction)
     # - ccproxy.hooks.forward_apikey   # forwards x-api-key header
@@ -256,6 +258,8 @@ Hooks are functions that process requests at different stages. Configure them in
 | `forward_apikey` | Forwards `x-api-key` header to proxied requests |
 | `extract_session_id` | Extracts session ID from Claude Code's `user_id` for LangFuse tracking |
 | `capture_headers` | Logs HTTP headers as LangFuse trace metadata (with sensitive value redaction) |
+| `add_beta_headers` | Adds required `anthropic-beta` headers for Claude Code OAuth |
+| `inject_claude_code_identity` | Injects required system message prefix for OAuth authentication |
 
 Hooks can accept parameters via configuration:
 
@@ -266,7 +270,9 @@ hooks:
       - headers: ["user-agent", "x-request-id"]  # Optional: filter specific headers
 ```
 
-See [`hooks.py`](src/ccproxy/hooks.py) for implementing custom hooks.
+See [`hooks.py`](src/ccproxy/hooks.py) and [`pipeline/hooks/`](src/ccproxy/pipeline/hooks/) for implementing custom hooks.
+
+See [`docs/sdk/`](docs/sdk/) for SDK integration examples (Anthropic, LiteLLM, Agent SDK).
 
 ## CLI Commands
 
