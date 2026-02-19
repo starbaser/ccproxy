@@ -24,6 +24,12 @@ ccproxy:
     #   command: "jq -r '.access_token' ~/.gemini/oauth_creds.json"
     #   user_agent: "MyApp/1.0.0"
 
+    # File-based token (reads file contents directly, mutually exclusive with command)
+    # openrouter:
+    #   file: "~/.config/openrouter/api_key"
+    #   destinations:
+    #     - "openrouter.ai"
+
   hooks:
     - ccproxy.hooks.rule_evaluator # evaluates rules against request
     - ccproxy.hooks.model_router # routes to appropriate model (coupled with rule_evaluator)

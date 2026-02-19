@@ -44,7 +44,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import BaseModel, Field, PrivateAttr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -73,17 +73,30 @@ class OAuthSource(BaseModel):
     """OAuth token source configuration.
 
     Can be specified as either a simple string (shell command) or
-    an object with command and optional user_agent.
+    an object with command/file and optional user_agent.
+
+    Exactly one of ``command`` or ``file`` must be provided.
     """
 
-    command: str
+    command: str | None = None
     """Shell command to retrieve the OAuth token"""
+
+    file: str | None = None
+    """File path to read the OAuth token from (contents stripped of whitespace)"""
 
     user_agent: str | None = None
     """Optional custom User-Agent header to send with requests using this token"""
 
     destinations: list[str] = Field(default_factory=list)
     """URL patterns that should use this token (e.g., ['api.z.ai', 'anthropic.com'])"""
+
+    @model_validator(mode="after")
+    def validate_source(self) -> "OAuthSource":
+        if self.command and self.file:
+            raise ValueError("'command' and 'file' are mutually exclusive — specify one, not both")
+        if not self.command and not self.file:
+            raise ValueError("Either 'command' or 'file' must be specified")
+        return self
 
 
 class MitmConfig(BaseModel):
@@ -280,8 +293,8 @@ class CCProxyConfig(BaseSettings):
         refresh_threshold = self.oauth_ttl * (1 - self.oauth_refresh_buffer)
         return time.time() - loaded_at >= refresh_threshold
 
-    def _execute_oauth_command(self, provider: str) -> tuple[str, str | None] | None:
-        """Execute OAuth command for a provider and return (token, user_agent) or None on failure.
+    def _resolve_oauth_token(self, provider: str) -> tuple[str, str | None] | None:
+        """Resolve OAuth token for a provider via command or file.
 
         Args:
             provider: Provider name to fetch token for
@@ -305,9 +318,35 @@ class CCProxyConfig(BaseSettings):
             logger.error(f"Invalid OAuth source type for provider '{provider}': {type(source)}")
             return None
 
+        if oauth_source.file:
+            return self._read_oauth_file(oauth_source, provider)
+        return self._run_oauth_command(oauth_source, provider)
+
+    def _read_oauth_file(
+        self, source: OAuthSource, provider: str
+    ) -> tuple[str, str | None] | None:
+        """Read OAuth token from a file path."""
+        try:
+            path = Path(source.file).expanduser().resolve()  # type: ignore[arg-type]
+            if not path.is_file():
+                logger.error(f"OAuth file for provider '{provider}' not found: {path}")
+                return None
+            token = path.read_text().strip()
+            if not token:
+                logger.error(f"OAuth file for provider '{provider}' is empty: {path}")
+                return None
+            return (token, source.user_agent)
+        except Exception as e:
+            logger.error(f"Failed to read OAuth file for provider '{provider}': {e}")
+            return None
+
+    def _run_oauth_command(
+        self, source: OAuthSource, provider: str
+    ) -> tuple[str, str | None] | None:
+        """Execute a shell command to retrieve an OAuth token."""
         try:
             result = subprocess.run(  # noqa: S602
-                oauth_source.command,
+                source.command,
                 shell=True,
                 capture_output=True,
                 text=True,
@@ -326,7 +365,7 @@ class CCProxyConfig(BaseSettings):
                 logger.error(f"OAuth command for provider '{provider}' returned empty output")
                 return None
 
-            return (token, oauth_source.user_agent)
+            return (token, source.user_agent)
 
         except subprocess.TimeoutExpired:
             logger.error(f"OAuth command for provider '{provider}' timed out after 5 seconds")
@@ -336,7 +375,7 @@ class CCProxyConfig(BaseSettings):
             return None
 
     def refresh_oauth_token(self, provider: str) -> str | None:
-        """Refresh OAuth token for a specific provider by re-executing its command.
+        """Refresh OAuth token for a specific provider by re-resolving its source.
 
         Thread-safe method that updates the cached token with new value and timestamp.
 
@@ -347,7 +386,7 @@ class CCProxyConfig(BaseSettings):
             New token string on success, None on failure
         """
         with _config_lock:
-            result = self._execute_oauth_command(provider)
+            result = self._resolve_oauth_token(provider)
             if result is None:
                 return None
 
@@ -423,7 +462,7 @@ class CCProxyConfig(BaseSettings):
         current_time = time.time()
 
         for provider in self.oat_sources:
-            result = self._execute_oauth_command(provider)
+            result = self._resolve_oauth_token(provider)
             if result is None:
                 errors.append(f"Failed to load OAuth token for provider '{provider}'")
                 continue

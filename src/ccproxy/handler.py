@@ -69,7 +69,7 @@ class CCProxyHandler(CustomLogger):
         # Register custom routes with LiteLLM proxy (for statusline integration)
         self._register_routes()
 
-        # Patch health checks to mock responses for OAuth models (no static API key)
+        # Patch health checks to inject OAuth credentials for real provider validation
         self._patch_health_check()
 
         # Patch Anthropic header construction for OAuth compatibility
@@ -80,11 +80,11 @@ class CCProxyHandler(CustomLogger):
 
     @staticmethod
     def _patch_health_check() -> None:
-        """Patch LiteLLM health check to mock responses for models with health_check_model set.
+        """Patch LiteLLM health check to inject OAuth credentials for real provider validation.
 
         OAuth-forwarded models have no static API key, so health checks fail with
-        AuthenticationError before any callback can intercept. This injects mock_response
-        into litellm_params during health check preparation, bypassing the API call entirely.
+        AuthenticationError. This injects real OAuth tokens and required headers into
+        litellm_params so health checks make actual API calls to validate provider status.
         """
         if CCProxyHandler._health_check_patched:
             return
@@ -96,13 +96,12 @@ class CCProxyHandler(CustomLogger):
 
             def _patched(model_info: dict, litellm_params: dict) -> dict:
                 result = _original(model_info, litellm_params)
-                if model_info.get("health_check_model"):
-                    result["mock_response"] = "ccproxy health check ok"
+                _inject_health_check_auth(result, litellm_params)
                 return result
 
             hc_module._update_litellm_params_for_health_check = _patched
             CCProxyHandler._health_check_patched = True
-            logger.debug("Patched health check to mock OAuth models")
+            logger.debug("Patched health check for OAuth credential injection")
         except Exception as e:
             logger.warning(f"Failed to patch health check: {e}")
 
@@ -129,6 +128,14 @@ class CCProxyHandler(CustomLogger):
             def _patched_validate(self, headers, model, messages, optional_params, litellm_params, api_key=None, api_base=None):
                 # Check if caller explicitly set x-api-key to empty (OAuth mode)
                 oauth_mode = "x-api-key" in headers and headers["x-api-key"] == ""
+                if oauth_mode and not api_key:
+                    # Extract OAuth token from Authorization header to prevent
+                    # "Missing Anthropic API Key" error. The token is already set
+                    # by the forward_oauth hook; we just need to pass it as api_key
+                    # so validate_environment doesn't reject the request.
+                    auth = headers.get("authorization", "")
+                    if auth.lower().startswith("bearer "):
+                        api_key = auth[7:]  # len("bearer ") == 7
                 result = _original_validate(self, headers, model, messages, optional_params, litellm_params, api_key=api_key, api_base=api_base)
                 if oauth_mode:
                     # Remove x-api-key so Anthropic uses Authorization header
@@ -377,13 +384,19 @@ class CCProxyHandler(CustomLogger):
         metadata = data.get("metadata", {})
         tags = metadata.get("tags", [])
         if "litellm-internal-health-check" in tags:
-            logger.debug("Skipping hooks for health check request")
-            return data
+            metadata["ccproxy_is_health_check"] = True
+            data["metadata"] = metadata
+            logger.debug("Health check request: pipeline will run with forced passthrough")
 
         # Debug: Print thinking parameters if present
         thinking_params = data.get("thinking")
         if thinking_params is not None:
             print(f"🧠 Thinking parameters: {thinking_params}")
+
+        # Extract proxy_server_request from kwargs and add to data for pipeline hooks
+        litellm_params = kwargs.get("litellm_params", {})
+        if "proxy_server_request" in litellm_params:
+            data["proxy_server_request"] = litellm_params["proxy_server_request"]
 
         # Debug: Log cache_control in system messages
         config = get_config()
@@ -821,3 +834,81 @@ class CCProxyHandler(CustomLogger):
             status_code=200,
             detail=response_dict,
         )
+
+
+def _inject_health_check_auth(result: dict, litellm_params: dict) -> None:
+    """Inject OAuth credentials into health check params for real provider validation.
+
+    Sets api_key and extra_headers BEFORE litellm.acompletion() is called, since
+    LiteLLM validates API keys before async_pre_call_hook runs. Pipeline hooks
+    (forward_oauth, add_beta_headers, inject_claude_code_identity) further enhance
+    headers during async_pre_call_hook for full ccproxy feature activation.
+
+    Args:
+        result: The litellm_params dict being built for the health check call.
+               Mutated in-place with auth credentials.
+        litellm_params: Original model litellm_params from config (contains api_base, model).
+    """
+    # Deferred imports to avoid circular dependencies
+    from ccproxy.hooks import ANTHROPIC_BETA_HEADERS, CLAUDE_CODE_SYSTEM_PREFIX
+
+    # Minimize cost/latency for health probes
+    result["max_tokens"] = 1
+
+    config = get_config()
+    if not config.oat_sources:
+        return
+
+    api_base = litellm_params.get("api_base")
+    model = litellm_params.get("model", "")
+
+    # Detect provider: try destination matching first, then model prefix
+    provider = config.get_provider_for_destination(api_base)
+    if not provider:
+        prefix = model.split("/")[0] if "/" in model else ""
+        if prefix in config.oat_sources:
+            provider = prefix
+
+    if not provider:
+        return
+
+    token = config.get_oauth_token(provider)
+    if not token:
+        logger.debug("Health check: no OAuth token for provider '%s'", provider)
+        return
+
+    # Set api_key — required before acompletion() validates the environment
+    result["api_key"] = token
+
+    # Check if this is an Anthropic-format destination
+    is_anthropic_format = api_base and ("anthropic" in api_base.lower() or "z.ai" in api_base.lower())
+
+    if is_anthropic_format:
+        result["extra_headers"] = {
+            "authorization": f"Bearer {token}",
+            "x-api-key": "",
+            "anthropic-beta": ",".join(ANTHROPIC_BETA_HEADERS),
+            "anthropic-version": "2023-06-01",
+        }
+
+        # Inject required Claude Code system message prefix for Anthropic OAuth
+        messages = result.get("messages", [])
+        if messages:
+            first_msg = messages[0]
+            if first_msg.get("role") == "system":
+                content = first_msg.get("content", "")
+                if not content.startswith(CLAUDE_CODE_SYSTEM_PREFIX):
+                    first_msg["content"] = CLAUDE_CODE_SYSTEM_PREFIX + "\n" + content
+            else:
+                messages.insert(0, {"role": "system", "content": CLAUDE_CODE_SYSTEM_PREFIX})
+        else:
+            result["messages"] = [
+                {"role": "system", "content": CLAUDE_CODE_SYSTEM_PREFIX},
+                {"role": "user", "content": "hi"},
+            ]
+
+    logger.debug(
+        "Health check: injected OAuth credentials for provider '%s' (anthropic_format=%s)",
+        provider,
+        is_anthropic_format,
+    )

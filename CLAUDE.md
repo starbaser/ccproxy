@@ -105,7 +105,7 @@ Request → CCProxyHandler → Hook Pipeline → Response
 
 ### Key Components
 
-- **handler.py**: Main entry point as a LiteLLM CustomLogger. Orchestrates the classification and routing process via `async_pre_call_hook()`.
+- **handler.py**: Main entry point as a LiteLLM CustomLogger. Orchestrates the classification and routing process via `async_pre_call_hook()`. Also patches LiteLLM's health check to inject OAuth credentials via `_inject_health_check_auth()` (module-level function).
 - **classifier.py**: Rule-based classification system that evaluates rules in order to determine routing.
 - **rules.py**: Defines `ClassificationRule` abstract base class and built-in rules:
   - `ThinkingRule` - Matches requests with "thinking" field
@@ -115,8 +115,8 @@ Request → CCProxyHandler → Hook Pipeline → Response
 - **router.py**: Manages model configurations from LiteLLM proxy server. Lazy-loads models on first request.
 - **config.py**: Configuration management using Pydantic with multi-level discovery (env var → LiteLLM runtime → ~/.ccproxy/).
 - **hooks.py**: Built-in hooks that process requests. Hooks support optional params via `hook:` + `params:` YAML format (see `HookConfig` class in config.py):
-  - `rule_evaluator` - Evaluates rules and stores routing decision
-  - `model_router` - Routes to appropriate model
+  - `rule_evaluator` - Evaluates rules and stores routing decision (skips classification for health checks)
+  - `model_router` - Routes to appropriate model (forces passthrough for health checks)
   - `forward_oauth` - Forwards OAuth tokens to provider APIs; supports sentinel key substitution
   - `extract_session_id` - Extracts session identifiers
   - `capture_headers` - Captures HTTP headers with sensitive redaction (supports `headers` param)
@@ -188,6 +188,7 @@ The test suite uses pytest with comprehensive fixtures (18 test files, 90% cover
   - 401-triggered: Immediate refresh when API returns authentication error
   - Config: `oauth_ttl` (seconds), `oauth_refresh_buffer` (ratio, default 0.1)
 - **Request metadata**: Stored by `litellm_call_id` with 60-second TTL auto-cleanup (LiteLLM doesn't preserve custom metadata).
+- **Health checks**: LiteLLM's `/health` endpoint performs real API calls to each provider. `_inject_health_check_auth()` patches `_update_litellm_params_for_health_check` to inject OAuth credentials (api_key, extra_headers) before `acompletion()` — required because LiteLLM validates API keys before `async_pre_call_hook` runs. The pipeline then runs with forced passthrough (rule_evaluator skips classification, model_router forces passthrough via `ccproxy_is_health_check` metadata flag) so hooks like `forward_oauth`, `add_beta_headers`, and `inject_claude_code_identity` enhance the request. Health probes use `max_tokens=1` to minimize cost.
 - **Hook error isolation**: Errors in one hook don't block others from executing.
 - **Lazy model loading**: Models loaded from LiteLLM proxy on first request, not at startup.
 - **MITM proxy**: Two-layer architecture - reverse proxy on port 4000 (user-facing), forward proxy on port 8081 (outbound to providers). Enables HTTP traffic capture and tracing. OAuth works without MITM via pipeline hooks; MITM provides a redundant header safety net.
