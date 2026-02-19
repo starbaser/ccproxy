@@ -26,6 +26,59 @@ class TestOAuthSource:
         assert source.command == "echo 'test-token'"
         assert source.user_agent == "MyApp/1.0.0"
 
+    def test_oauth_source_with_file_only(self) -> None:
+        """Test OAuthSource with file parameter."""
+        source = OAuthSource(file="~/.config/provider/api_key")
+        assert source.file == "~/.config/provider/api_key"
+        assert source.command is None
+        assert source.user_agent is None
+
+    def test_oauth_source_file_with_user_agent(self) -> None:
+        """Test OAuthSource with file and user_agent."""
+        source = OAuthSource(file="/tmp/token", user_agent="MyApp/1.0.0")
+        assert source.file == "/tmp/token"
+        assert source.user_agent == "MyApp/1.0.0"
+
+    def test_oauth_source_mutual_exclusivity(self) -> None:
+        """Test that command and file cannot both be specified."""
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            OAuthSource(command="echo 'token'", file="/tmp/token")
+
+    def test_oauth_source_neither_raises(self) -> None:
+        """Test that at least one of command or file must be specified."""
+        with pytest.raises(ValueError, match="Either 'command' or 'file'"):
+            OAuthSource()
+
+    def test_oauth_source_file_reads_token(self, tmp_path: Path) -> None:
+        """Test that file-based OAuthSource reads token correctly via config."""
+        token_file = tmp_path / "api_key"
+        token_file.write_text("my-secret-token-12345\n")
+
+        config = CCProxyConfig(
+            oat_sources={"provider": OAuthSource(file=str(token_file))},
+        )
+        config._load_credentials()
+        assert config.get_oauth_token("provider") == "my-secret-token-12345"
+
+    def test_oauth_source_file_not_found(self, tmp_path: Path) -> None:
+        """Test that missing file returns None and raises on all-fail."""
+        config = CCProxyConfig(
+            oat_sources={"provider": OAuthSource(file=str(tmp_path / "nonexistent"))},
+        )
+        with pytest.raises(RuntimeError, match="Failed to load OAuth tokens"):
+            config._load_credentials()
+
+    def test_oauth_source_file_empty(self, tmp_path: Path) -> None:
+        """Test that empty file returns None and raises on all-fail."""
+        token_file = tmp_path / "empty_key"
+        token_file.write_text("  \n")
+
+        config = CCProxyConfig(
+            oat_sources={"provider": OAuthSource(file=str(token_file))},
+        )
+        with pytest.raises(RuntimeError, match="Failed to load OAuth tokens"):
+            config._load_credentials()
+
 
 class TestOAuthSourceConfigLoading:
     """Tests for loading OAuth sources with user-agent from YAML."""
@@ -127,6 +180,52 @@ ccproxy:
             # No user-agent
             assert config.get_oauth_user_agent("vertex_ai") is None
 
+        finally:
+            yaml_path.unlink()
+
+    def test_file_format_in_yaml(self, tmp_path: Path) -> None:
+        """Test loading OAuth source with file parameter from YAML."""
+        token_file = tmp_path / "api_key"
+        token_file.write_text("file-based-token-789\n")
+
+        yaml_content = f"""
+ccproxy:
+  oat_sources:
+    openrouter:
+      file: "{token_file}"
+      destinations:
+        - "openrouter.ai"
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(yaml_content)
+            yaml_path = Path(f.name)
+
+        try:
+            config = CCProxyConfig.from_yaml(yaml_path)
+            assert config.get_oauth_token("openrouter") == "file-based-token-789"
+        finally:
+            yaml_path.unlink()
+
+    def test_mixed_command_and_file_sources(self, tmp_path: Path) -> None:
+        """Test mixing command and file sources in same config."""
+        token_file = tmp_path / "api_key"
+        token_file.write_text("file-token-456")
+
+        yaml_content = f"""
+ccproxy:
+  oat_sources:
+    anthropic: echo 'command-token-123'
+    openrouter:
+      file: "{token_file}"
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(yaml_content)
+            yaml_path = Path(f.name)
+
+        try:
+            config = CCProxyConfig.from_yaml(yaml_path)
+            assert config.get_oauth_token("anthropic") == "command-token-123"
+            assert config.get_oauth_token("openrouter") == "file-token-456"
         finally:
             yaml_path.unlink()
 

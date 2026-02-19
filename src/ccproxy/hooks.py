@@ -287,13 +287,13 @@ def extract_session_id(data: dict[str, Any], user_api_key_dict: dict[str, Any], 
         body_metadata = body.get("metadata", {})
         user_id = body_metadata.get("user_id", "")
 
+        # Primary: Claude Code user_id format (user_{hash}_account_{uuid}_session_{uuid})
         if user_id and "_session_" in user_id:
-            # Parse: user_{hash}_account_{uuid}_session_{uuid}
             parts = user_id.split("_session_")
             if len(parts) == 2:
                 session_id = parts[1]
                 data["metadata"]["session_id"] = session_id
-                logger.debug(f"Extracted session_id: {session_id}")
+                logger.debug(f"Extracted session_id from user_id: {session_id}")
 
                 # Also extract user and account for trace_metadata
                 prefix = parts[0]
@@ -306,6 +306,25 @@ def extract_session_id(data: dict[str, Any], user_api_key_dict: dict[str, Any], 
                             data["metadata"]["trace_metadata"] = {}
                         data["metadata"]["trace_metadata"]["claude_user_hash"] = user_hash
                         data["metadata"]["trace_metadata"]["claude_account_id"] = account_id
+
+                return data
+
+        # Fallback: explicit metadata.session_id (e.g. talkstream)
+        explicit_session_id = body_metadata.get("session_id")
+        if explicit_session_id:
+            data["metadata"]["session_id"] = str(explicit_session_id)
+            logger.debug(f"Extracted session_id from metadata: {explicit_session_id}")
+
+            # Preserve trace_user_id and tags if provided
+            trace_user_id = body_metadata.get("trace_user_id")
+            tags = body_metadata.get("tags")
+            if trace_user_id or tags:
+                if "trace_metadata" not in data["metadata"]:
+                    data["metadata"]["trace_metadata"] = {}
+                if trace_user_id:
+                    data["metadata"]["trace_metadata"]["trace_user_id"] = trace_user_id
+                if tags:
+                    data["metadata"]["trace_metadata"]["tags"] = tags
 
     return data
 

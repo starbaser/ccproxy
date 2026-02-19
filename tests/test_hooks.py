@@ -1352,3 +1352,78 @@ class TestExtractSessionId:
         assert trace_meta["existing_trace_key"] == "existing_trace_value"
         assert trace_meta["claude_user_hash"] == "hash123"
         assert trace_meta["claude_account_id"] == "acct456"
+
+    def test_extract_session_id_metadata_fallback(self, user_api_key_dict):
+        """Test fallback to metadata.session_id when user_id has no session."""
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {
+                "body": {
+                    "metadata": {
+                        "session_id": "28cfcf90",
+                        "trace_user_id": "talkstream",
+                        "tags": ["talkstream", "turboflux"],
+                    }
+                }
+            },
+        }
+
+        result = extract_session_id(data, user_api_key_dict)
+
+        assert result["metadata"]["session_id"] == "28cfcf90"
+        trace_meta = result["metadata"]["trace_metadata"]
+        assert trace_meta["trace_user_id"] == "talkstream"
+        assert trace_meta["tags"] == ["talkstream", "turboflux"]
+
+    def test_extract_session_id_metadata_fallback_session_only(self, user_api_key_dict):
+        """Test fallback with session_id but no trace_user_id or tags."""
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {
+                "body": {
+                    "metadata": {
+                        "session_id": "abc123",
+                    }
+                }
+            },
+        }
+
+        result = extract_session_id(data, user_api_key_dict)
+
+        assert result["metadata"]["session_id"] == "abc123"
+        assert "trace_metadata" not in result["metadata"]
+
+    def test_extract_session_id_claude_code_takes_priority(self, user_api_key_dict):
+        """Test that Claude Code user_id format takes priority over metadata.session_id."""
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {
+                "body": {
+                    "metadata": {
+                        "user_id": "user_hash_account_acct_session_claude-uuid",
+                        "session_id": "should-be-ignored",
+                    }
+                }
+            },
+        }
+
+        result = extract_session_id(data, user_api_key_dict)
+
+        assert result["metadata"]["session_id"] == "claude-uuid"
+
+    def test_extract_session_id_metadata_fallback_coerces_to_string(self, user_api_key_dict):
+        """Test that numeric session_id is coerced to string."""
+        data = {
+            "model": "claude-sonnet-4-5-20250929",
+            "proxy_server_request": {
+                "body": {
+                    "metadata": {
+                        "session_id": 12345,
+                    }
+                }
+            },
+        }
+
+        result = extract_session_id(data, user_api_key_dict)
+
+        assert result["metadata"]["session_id"] == "12345"

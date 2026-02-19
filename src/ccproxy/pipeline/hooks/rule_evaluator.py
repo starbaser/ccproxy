@@ -47,6 +47,11 @@ def rule_evaluator(ctx: Context, params: dict[str, Any]) -> Context:
     # Store original model
     ctx.ccproxy_alias_model = ctx.model
 
+    # Skip classification for health checks — no rules should match
+    if ctx.metadata.get("ccproxy_is_health_check"):
+        logger.debug("Rule evaluation: skipped for health check")
+        return ctx
+
     # Classify the request using raw data for compatibility
     data = ctx.to_litellm_data()
     ctx.ccproxy_model_name = classifier.classify(data)

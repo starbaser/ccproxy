@@ -61,7 +61,8 @@ def model_router(ctx: Context, params: dict[str, Any]) -> Context:
 
     # Check if we should pass through the original model for "default" routing
     config = get_config()
-    if model_name == "default" and config.default_model_passthrough:
+    is_health_check = ctx.metadata.get("ccproxy_is_health_check", False)
+    if model_name == "default" and (config.default_model_passthrough or is_health_check):
         original_model = ctx.ccproxy_alias_model
         if original_model:
             # Keep the original model - no routing needed
