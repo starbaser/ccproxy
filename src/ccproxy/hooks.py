@@ -326,6 +326,12 @@ def extract_session_id(data: dict[str, Any], user_api_key_dict: dict[str, Any], 
                 if tags:
                     data["metadata"]["trace_metadata"]["tags"] = tags
 
+            # Forward remaining metadata for downstream callbacks (e.g. Langfuse generation metadata)
+            _HANDLED_KEYS = {"session_id", "trace_user_id", "tags"}
+            for key, value in body_metadata.items():
+                if key not in _HANDLED_KEYS:
+                    data["metadata"][key] = value
+
     return data
 
 
