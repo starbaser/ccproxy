@@ -10,6 +10,7 @@ from ccproxy.pipeline.hooks.extract_session import extract_session_id
 from ccproxy.pipeline.hooks.forward_apikey import forward_apikey
 from ccproxy.pipeline.hooks.forward_oauth import forward_oauth
 from ccproxy.pipeline.hooks.inject_identity import inject_claude_code_identity
+from ccproxy.pipeline.hooks.inject_mcp_notifications import inject_mcp_notifications
 from ccproxy.pipeline.hooks.model_router import model_router
 from ccproxy.pipeline.hooks.rule_evaluator import rule_evaluator
 
@@ -22,4 +23,5 @@ __all__ = [
     "forward_apikey",
     "add_beta_headers",
     "inject_claude_code_identity",
+    "inject_mcp_notifications",
 ]

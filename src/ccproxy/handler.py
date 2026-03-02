@@ -77,6 +77,7 @@ class CCProxyHandler(CustomLogger):
 
     _routes_registered: bool = False  # Class-level flag to prevent duplicate registration
     _health_check_patched: bool = False
+    _mcp_cleanup_task: asyncio.Task | None = None
 
     @staticmethod
     def _patch_health_check() -> None:
@@ -163,6 +164,7 @@ class CCProxyHandler(CustomLogger):
             extract_session_id,
             forward_oauth,
             inject_claude_code_identity,
+            inject_mcp_notifications,
             model_router,
             rule_evaluator,
         )
@@ -211,6 +213,17 @@ class CCProxyHandler(CustomLogger):
             if "/ccproxy/status" not in existing_routes:
                 app.include_router(ccproxy_router)
                 logger.debug("Registered ccproxy custom routes")
+
+            from ccproxy.mcp.routes import router as mcp_router
+
+            if "/mcp/notify" not in existing_routes:
+                # Insert before LiteLLM's app.mount("/mcp") catch-all so our
+                # explicit /mcp/notify route takes priority over the mount.
+                mcp_routes = list(mcp_router.routes)
+                for route in reversed(mcp_routes):
+                    route.path = mcp_router.prefix + route.path
+                    app.routes.insert(0, route)
+                logger.debug("Registered MCP notification routes (prepended)")
 
             CCProxyHandler._routes_registered = True
         except ImportError:
@@ -370,14 +383,38 @@ class CCProxyHandler(CustomLogger):
             except Exception as e:
                 logger.warning(f"Error in OAuth refresh loop: {e}")
 
+    async def _start_mcp_cleanup_task(self) -> None:
+        """Start background task for MCP buffer TTL cleanup if not already running."""
+        if CCProxyHandler._mcp_cleanup_task is not None and not CCProxyHandler._mcp_cleanup_task.done():
+            return
+        CCProxyHandler._mcp_cleanup_task = asyncio.create_task(self._mcp_cleanup_loop())
+        logger.debug("Started MCP buffer cleanup task")
+
+    async def _mcp_cleanup_loop(self) -> None:
+        """Background loop to expire stale MCP notification buffers."""
+        from ccproxy.mcp.buffer import DEFAULT_TTL_SECONDS, get_buffer
+
+        while True:
+            try:
+                await asyncio.sleep(60)
+                removed = get_buffer().expire(DEFAULT_TTL_SECONDS)
+                if removed:
+                    logger.debug("MCP buffer cleanup: removed %d stale tasks", removed)
+            except asyncio.CancelledError:
+                logger.debug("MCP buffer cleanup loop cancelled")
+                break
+            except Exception as e:
+                logger.warning("Error in MCP buffer cleanup loop: %s", e)
+
     async def async_pre_call_hook(
         self,
         data: dict[str, Any],
         user_api_key_dict: dict[str, Any],
         **kwargs: Any,
     ) -> dict[str, Any]:
-        # Start background OAuth refresh task if not already running
+        # Start background tasks if not already running
         await self._start_oauth_refresh_task()
+        await self._start_mcp_cleanup_task()
 
         # Skip custom routing for LiteLLM internal health checks
         # Health checks need to validate actual configured models, not routed ones
