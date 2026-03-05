@@ -36,6 +36,8 @@ def _read_proxy_settings(config_dir: Path) -> tuple[str, int]:
     """
     host = "127.0.0.1"
     port = 4000
+    host_set = False
+    port_set = False
 
     # Primary: config.yaml general_settings (per-project and modern configs)
     config_yaml = config_dir / "config.yaml"
@@ -46,21 +48,23 @@ def _read_proxy_settings(config_dir: Path) -> tuple[str, int]:
             general = data.get("general_settings", {})
             if "host" in general:
                 host = general["host"]
+                host_set = True
             if "port" in general:
                 port = int(general["port"])
+                port_set = True
         except (yaml.YAMLError, OSError, ValueError):
             pass
 
-    # Fallback: ccproxy.yaml litellm section (legacy global config at ~/.ccproxy)
+    # Fallback: ccproxy.yaml litellm section
     ccproxy_yaml = config_dir / "ccproxy.yaml"
     if ccproxy_yaml.exists():
         try:
             with ccproxy_yaml.open() as f:
                 data = yaml.safe_load(f) or {}
             litellm = data.get("litellm", {})
-            # Only use litellm section values if config.yaml didn't set them
-            if not config_yaml.exists():
+            if not host_set:
                 host = litellm.get("host", host)
+            if not port_set:
                 port = int(litellm.get("port", port))
         except (yaml.YAMLError, OSError, ValueError):
             pass
@@ -1972,7 +1976,11 @@ def main(
     to different models based on configurable rules.
     """
     if config_dir is None:
-        config_dir = Path.home() / ".ccproxy"
+        env_config_dir = os.environ.get("CCPROXY_CONFIG_DIR")
+        if env_config_dir:
+            config_dir = Path(env_config_dir)
+        else:
+            config_dir = Path.home() / ".ccproxy"
 
     # Setup logging with 100-character text width
     setup_logging()
