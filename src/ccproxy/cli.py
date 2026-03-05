@@ -27,6 +27,49 @@ from ccproxy.process import is_process_running, write_pid
 from ccproxy.utils import get_templates_dir
 
 
+def _read_proxy_settings(config_dir: Path) -> tuple[str, int]:
+    """Read host and port from the config directory.
+
+    Checks config.yaml general_settings first (LiteLLM's canonical location),
+    then falls back to ccproxy.yaml litellm section (legacy global config).
+    Env vars HOST/PORT override both.
+    """
+    host = "127.0.0.1"
+    port = 4000
+
+    # Primary: config.yaml general_settings (per-project and modern configs)
+    config_yaml = config_dir / "config.yaml"
+    if config_yaml.exists():
+        try:
+            with config_yaml.open() as f:
+                data = yaml.safe_load(f) or {}
+            general = data.get("general_settings", {})
+            if "host" in general:
+                host = general["host"]
+            if "port" in general:
+                port = int(general["port"])
+        except (yaml.YAMLError, OSError, ValueError):
+            pass
+
+    # Fallback: ccproxy.yaml litellm section (legacy global config at ~/.ccproxy)
+    ccproxy_yaml = config_dir / "ccproxy.yaml"
+    if ccproxy_yaml.exists():
+        try:
+            with ccproxy_yaml.open() as f:
+                data = yaml.safe_load(f) or {}
+            litellm = data.get("litellm", {})
+            # Only use litellm section values if config.yaml didn't set them
+            if not config_yaml.exists():
+                host = litellm.get("host", host)
+                port = int(litellm.get("port", port))
+        except (yaml.YAMLError, OSError, ValueError):
+            pass
+
+    host = os.environ.get("HOST", host)
+    port = int(os.environ.get("PORT", str(port)))
+    return host, port
+
+
 def _expand_env_vars(value: str) -> str:
     """Expand environment variables in a string.
 
@@ -323,19 +366,11 @@ def run_with_proxy(config_dir: Path, command: list[str]) -> None:
         print("Run 'ccproxy install' first to set up configuration.", file=sys.stderr)
         sys.exit(1)
 
-    with ccproxy_config_path.open() as f:
-        config = yaml.safe_load(f)
-
-    litellm_config = config.get("litellm", {}) if config else {}
-
-    # Get proxy settings - port 4000 is always the entry point
-    host = os.environ.get("HOST", litellm_config.get("host", "127.0.0.1"))
-    port = int(os.environ.get("PORT", litellm_config.get("port", 4000)))
+    host, port = _read_proxy_settings(config_dir)
 
     # Set up environment for the subprocess
     env = os.environ.copy()
 
-    # Always point to the main port (4000) - either LiteLLM or MITM in front
     proxy_url = f"http://{host}:{port}"
     env["OPENAI_API_BASE"] = proxy_url
     env["OPENAI_BASE_URL"] = proxy_url
@@ -452,21 +487,17 @@ def start_litellm(
         print("Run 'ccproxy install' first to set up configuration.", file=sys.stderr)
         sys.exit(1)
 
-    # Load litellm settings from ccproxy.yaml (needed for pre-flight port checks)
-    ccproxy_config_path = config_dir / "ccproxy.yaml"
-    ccproxy_config = None
-    litellm_host = "127.0.0.1"
-    main_port = 4000  # The port users connect to (reverse proxy)
+    # Read proxy host/port from config.yaml general_settings
+    litellm_host, main_port = _read_proxy_settings(config_dir)
     forward_port = 8081  # Forward proxy port for provider API calls
 
+    # Load ccproxy.yaml for MITM forward port
+    ccproxy_config_path = config_dir / "ccproxy.yaml"
+    ccproxy_config = None
     if ccproxy_config_path.exists():
         with ccproxy_config_path.open() as f:
             ccproxy_config = yaml.safe_load(f)
             if ccproxy_config:
-                litellm_section = ccproxy_config.get("litellm", {})
-                litellm_host = os.environ.get("HOST", litellm_section.get("host", "127.0.0.1"))
-                main_port = int(os.environ.get("PORT", litellm_section.get("port", 4000)))
-                # Get forward proxy port from mitm config
                 mitm_section = ccproxy_config.get("ccproxy", {}).get("mitm", {})
                 forward_port = mitm_section.get("port", 8081)
 
@@ -502,10 +533,10 @@ def start_litellm(
     env = os.environ.copy()
     env["CCPROXY_CONFIG_DIR"] = str(config_dir.absolute())
 
-    # Apply environment variables from litellm.environment config
+    # Apply environment variables from ccproxy.yaml litellm.environment
     # Set in both os.environ (for MITM inheritance) and env dict (for LiteLLM subprocess)
     if ccproxy_config_path.exists() and ccproxy_config:
-        litellm_env = litellm_section.get("environment", {})
+        litellm_env = ccproxy_config.get("litellm", {}).get("environment", {})
         for key, value in litellm_env.items():
             # Expand ${VAR} and ${VAR:-default} patterns
             expanded = _expand_env_vars(str(value))
@@ -999,18 +1030,7 @@ def handle_statusline_output(config_dir: Path) -> None:
     """
     from ccproxy.statusline import format_status_output, query_status
 
-    # Load config to get port
-    ccproxy_config_path = config_dir / "ccproxy.yaml"
-    port = 4000  # default
-
-    if ccproxy_config_path.exists():
-        try:
-            with ccproxy_config_path.open() as f:
-                config = yaml.safe_load(f)
-                if config and "litellm" in config:
-                    port = int(os.environ.get("PORT", config["litellm"].get("port", 4000)))
-        except Exception:
-            pass  # Use default port
+    _, port = _read_proxy_settings(config_dir)
 
     # Query proxy and format output
     status = query_status(port=port, timeout=0.1)
@@ -1077,9 +1097,8 @@ def show_status(
         except (yaml.YAMLError, OSError):
             pass
 
-    # Extract hooks, proxy URL, and MITM config from ccproxy.yaml
+    # Extract hooks and MITM config from ccproxy.yaml
     hooks = []
-    proxy_url = None
     mitm_config = {}
     forward_port = 8081
     if ccproxy_config.exists():
@@ -1091,21 +1110,17 @@ def show_status(
                 hooks = ccproxy_section.get("hooks", [])
                 mitm_config = ccproxy_section.get("mitm", {})
                 forward_port = mitm_config.get("port", 8081)
-                # Get proxy URL from litellm config section
-                litellm_section = ccproxy_data.get("litellm", {})
-                host = os.environ.get("HOST", litellm_section.get("host", "127.0.0.1"))
-                port = int(os.environ.get("PORT", litellm_section.get("port", 4000)))
-                proxy_url = f"http://{host}:{port}"
         except (yaml.YAMLError, OSError):
             pass
+
+    # Read proxy host/port from config.yaml general_settings
+    host, main_port = _read_proxy_settings(config_dir)
+    proxy_url = f"http://{host}:{main_port}"
 
     # Check MITM status for both modes
     reverse_running, reverse_pid = mitm_is_running(config_dir, ProxyMode.REVERSE)
     forward_running, forward_pid = mitm_is_running(config_dir, ProxyMode.FORWARD)
     mitm_enabled = mitm_config.get("enabled", False)
-
-    # Get ports - main port is always the entry point (4000 by default)
-    main_port = 4000
     litellm_actual_port = main_port  # Default: LiteLLM on main port
 
     # Read actual LiteLLM port from state file (when MITM is running)
