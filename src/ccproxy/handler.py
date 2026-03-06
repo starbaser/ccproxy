@@ -615,6 +615,10 @@ class CCProxyHandler(CustomLogger):
                     except Exception as e:
                         logger.debug(f"Failed to update Langfuse trace: {e}")
 
+        # Supplement Langfuse generation with cache token usage_details
+        # (LiteLLM's Langfuse callback only forwards prompt_tokens/completion_tokens)
+        self._update_langfuse_usage_details(kwargs, response_obj, start_time)
+
         metadata = kwargs.get("metadata", {})
         model_name = metadata.get("ccproxy_model_name", "unknown")
 
@@ -638,6 +642,85 @@ class CCProxyHandler(CustomLogger):
             }
 
         logger.info("ccproxy request completed", extra=log_data)
+
+    def _update_langfuse_usage_details(
+        self,
+        kwargs: dict[str, Any],
+        response_obj: Any,
+        start_time: Any,
+    ) -> None:
+        """Update Langfuse generation with detailed usage breakdown (cache tokens).
+
+        LiteLLM's Langfuse callback only forwards prompt_tokens and completion_tokens.
+        This supplements the generation with usage_details including Anthropic cache
+        token breakdowns (cache_creation_input_tokens, cache_read_input_tokens).
+        """
+        if not self.langfuse:
+            return
+
+        if not hasattr(response_obj, "usage") or not response_obj.usage:
+            return
+
+        usage = response_obj.usage
+        cache_creation = getattr(usage, "cache_creation_input_tokens", 0) or 0
+        cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
+
+        if not cache_creation and not cache_read:
+            return
+
+        # Build usage_details dict with Langfuse-standard keys
+        usage_details: dict[str, int] = {
+            "input": getattr(usage, "prompt_tokens", 0) or 0,
+            "output": getattr(usage, "completion_tokens", 0) or 0,
+        }
+        if cache_creation:
+            usage_details["input_cache_creation"] = cache_creation
+        if cache_read:
+            usage_details["input_cached"] = cache_read
+
+        # Get trace_id from standard logging object
+        standard_logging_obj = kwargs.get("standard_logging_object")
+        if not standard_logging_obj:
+            return
+
+        trace_id = standard_logging_obj.get("trace_id")
+        if not trace_id:
+            return
+
+        # Reconstruct generation_id using same logic as LiteLLM's Langfuse callback
+        try:
+            generation_id = litellm.utils.get_logging_id(start_time, response_obj)
+        except Exception:
+            return
+
+        if not generation_id:
+            return
+
+        # Check for generation_id override in request metadata
+        litellm_params = kwargs.get("litellm_params", {})
+        req_metadata = litellm_params.get("metadata", {})
+        generation_id = req_metadata.get("generation_id", generation_id)
+
+        try:
+            from langfuse.client import StatefulGenerationClient, StateType
+
+            gen = StatefulGenerationClient(
+                client=self.langfuse.client,
+                id=generation_id,
+                state_type=StateType.OBSERVATION,
+                trace_id=trace_id,
+                task_manager=self.langfuse.task_manager,
+            )
+            gen.update(usage_details=usage_details)
+            self.langfuse.flush()
+
+            logger.debug(
+                "Updated Langfuse generation %s with cache token details: %s",
+                generation_id,
+                usage_details,
+            )
+        except Exception as e:
+            logger.debug("Failed to update Langfuse usage_details: %s", e)
 
     async def async_log_failure_event(
         self,
