@@ -35,6 +35,7 @@ class HookSpec:
         reads: Keys this hook reads from context
         writes: Keys this hook writes to context
         params: Static parameters passed to handler
+        priority: Tie-breaking order among independent hooks (lower = earlier)
     """
 
     name: str
@@ -43,6 +44,7 @@ class HookSpec:
     reads: frozenset[str] = field(default_factory=frozenset)
     writes: frozenset[str] = field(default_factory=frozenset)
     params: dict[str, Any] = field(default_factory=dict)
+    priority: int = 0
 
     def __hash__(self) -> int:
         return hash(self.name)

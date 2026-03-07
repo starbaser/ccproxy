@@ -64,6 +64,7 @@ class TestHandlerLoggingHookMethods:
             mock_config = Mock()
             mock_config.debug = False
             mock_config.default_model_passthrough = False
+            mock_config.hooks = []
             mock_get_config.return_value = mock_config
 
             handler = CCProxyHandler()
@@ -89,6 +90,7 @@ class TestHandlerLoggingHookMethods:
             mock_config = Mock()
             mock_config.debug = True
             mock_config.default_model_passthrough = False
+            mock_config.hooks = []
             mock_get_config.return_value = mock_config
 
             mock_router = Mock()
@@ -121,6 +123,7 @@ class TestHandlerLoggingHookMethods:
             mock_config = Mock()
             mock_config.debug = False
             mock_config.default_model_passthrough = False
+            mock_config.hooks = []
             mock_get_config.return_value = mock_config
 
             handler = CCProxyHandler()

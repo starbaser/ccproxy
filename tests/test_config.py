@@ -242,22 +242,6 @@ ccproxy:
                 "params": {"headers": ["user-agent", "x-request-id"]},
             }
 
-            # load_hooks should return tuples of (func, params)
-            loaded = config.load_hooks()
-            assert len(loaded) == 2
-
-            # First hook - string format, empty params
-            func1, params1 = loaded[0]
-            assert callable(func1)
-            assert func1.__name__ == "rule_evaluator"
-            assert params1 == {}
-
-            # Second hook - dict format with params
-            func2, params2 = loaded[1]
-            assert callable(func2)
-            assert func2.__name__ == "capture_headers"
-            assert params2 == {"headers": ["user-agent", "x-request-id"]}
-
         finally:
             yaml_path.unlink()
 

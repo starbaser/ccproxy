@@ -157,32 +157,70 @@ class CCProxyHandler(CustomLogger):
     def _init_pipeline(self) -> None:
         """Initialize the pipeline executor with registered hooks.
 
-        Imports and registers all pipeline hooks, then creates the executor
-        with DAG-based dependency ordering.
+        Imports hook modules from config to trigger @hook registration,
+        applies per-hook params and priority from config list order,
+        then creates the executor with DAG-based dependency ordering.
         """
-        # Import pipeline hooks to register them with the global registry
-        # These imports have side effects (hook registration)
-        from ccproxy.pipeline.hooks import (  # noqa: F401
-            add_beta_headers,
-            capture_headers,
-            extract_session_id,
-            forward_oauth,
-            inject_claude_code_identity,
-            inject_mcp_notifications,
-            model_router,
-            rule_evaluator,
-        )
+        import importlib
 
-        # Get registered hooks from registry
+        config = get_config()
         registry = get_registry()
-        all_specs = registry.get_all_specs()
 
+        # Track params and priority from config hooks list
+        hook_params_map: dict[str, dict] = {}
+        hook_priority_map: dict[str, int] = {}
+
+        for idx, entry in enumerate(config.hooks):
+            if isinstance(entry, str):
+                module_path, params = entry, {}
+            elif isinstance(entry, dict):
+                module_path = entry.get("hook", "")
+                params = entry.get("params", {})
+                if not module_path:
+                    continue
+            else:
+                continue
+
+            try:
+                mod = importlib.import_module(module_path)
+            except ImportError:
+                logger.error("Failed to import hook module: %s", module_path)
+                continue
+
+            # Find hooks registered by this module (functions with _hook_spec)
+            for attr_name in dir(mod):
+                obj = getattr(mod, attr_name, None)
+                if callable(obj) and hasattr(obj, "_hook_spec"):
+                    hook_name = obj._hook_spec.name
+                    hook_priority_map[hook_name] = idx
+                    if params:
+                        hook_params_map[hook_name] = params
+
+        # If no config hooks, fall back to importing built-in hooks directly
+        if not config.hooks:
+            from ccproxy.pipeline.hooks import (  # noqa: F401
+                add_beta_headers,
+                capture_headers,
+                extract_session_id,
+                forward_oauth,
+                inject_claude_code_identity,
+                inject_mcp_notifications,
+                model_router,
+                rule_evaluator,
+            )
+
+        all_specs = registry.get_all_specs()
         if not all_specs:
             logger.warning("No hooks registered in pipeline registry")
             return
 
-        # Build list of HookSpec in registration order
-        # (DAG will reorder based on dependencies)
+        # Apply params and priority from config
+        max_priority = len(config.hooks)
+        for name, spec in all_specs.items():
+            if name in hook_params_map:
+                spec.params = hook_params_map[name]
+            spec.priority = hook_priority_map.get(name, max_priority)
+
         hook_specs = list(all_specs.values())
 
         # Create executor with classifier and router as extra params
@@ -194,7 +232,6 @@ class CCProxyHandler(CustomLogger):
             },
         )
 
-        config = get_config()
         if config.debug:
             logger.debug(
                 "Pipeline initialized with %d hooks: %s",
@@ -223,10 +260,14 @@ class CCProxyHandler(CustomLogger):
             if "/mcp/notify" not in existing_routes:
                 # Insert before LiteLLM's app.mount("/mcp") catch-all so our
                 # explicit /mcp/notify route takes priority over the mount.
-                mcp_routes = list(mcp_router.routes)
-                for route in reversed(mcp_routes):
-                    route.path = mcp_router.prefix + route.path
-                    app.routes.insert(0, route)
+                # Use copies to avoid mutating the shared router's route objects,
+                # which would corrupt subsequent include_router() calls in tests.
+                import copy
+
+                for route in reversed(list(mcp_router.routes)):
+                    route_copy = copy.copy(route)
+                    route_copy.path = mcp_router.prefix + route.path
+                    app.routes.insert(0, route_copy)
                 logger.debug("Registered MCP notification routes (prepended)")
 
             CCProxyHandler._routes_registered = True

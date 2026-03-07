@@ -1,14 +1,14 @@
 """DAG-based dependency management for hooks.
 
-Uses graphlib.TopologicalSorter to compute execution order
-from reads/writes declarations.
+Uses Kahn's algorithm with a min-heap to compute execution order
+from reads/writes declarations, with priority tie-breaking.
 """
 
 from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from graphlib import CycleError, TopologicalSorter
+from graphlib import CycleError
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -70,11 +70,16 @@ class HookDAG:
         return deps
 
     def _compute_order(self) -> None:
-        """Compute execution order via topological sort.
+        """Compute execution order via topological sort with priority tie-breaking.
+
+        Uses Kahn's algorithm with a min-heap to break ties among
+        independent hooks using their priority field (lower = first).
 
         Raises:
             CycleError: If dependencies form a cycle
         """
+        import heapq
+
         deps = self._build_dependencies()
 
         # Validate: warn about reads without writers
@@ -87,22 +92,49 @@ class HookDAG:
                         read_key,
                     )
 
-        # Compute order with TopologicalSorter
-        sorter = TopologicalSorter(deps)
+        # Kahn's algorithm with min-heap for priority tie-breaking
+        in_degree = {name: len(dep_set) for name, dep_set in deps.items()}
 
-        try:
-            self._execution_order = list(sorter.static_order())
-        except CycleError as e:
-            logger.error("Cycle detected in hook dependencies: %s", e.args[1])
-            raise
+        heap: list[tuple[int, str]] = [
+            (self._hooks[n].priority, n) for n in self._hooks if in_degree[n] == 0
+        ]
+        heapq.heapify(heap)
 
-        # Compute parallel groups
-        sorter = TopologicalSorter(deps)
-        sorter.prepare()
-        while sorter.is_active():
-            ready = set(sorter.get_ready())
+        order: list[str] = []
+        while heap:
+            _, node = heapq.heappop(heap)
+            order.append(node)
+            for dependent, dep_set in deps.items():
+                if node in dep_set:
+                    dep_set.discard(node)
+                    in_degree[dependent] -= 1
+                    if in_degree[dependent] == 0:
+                        heapq.heappush(heap, (self._hooks[dependent].priority, dependent))
+
+        if len(order) != len(self._hooks):
+            raise CycleError("Cycle detected in hook dependencies")
+
+        self._execution_order = order
+
+        # Compute parallel groups (priority-sorted within each group)
+        deps = self._build_dependencies()  # Rebuild since we mutated deps above
+        in_degree = {name: len(dep_set) for name, dep_set in deps.items()}
+        done: set[str] = set()
+        self._parallel_groups = []
+
+        while len(done) < len(self._hooks):
+            ready = {
+                n for n in self._hooks
+                if n not in done and in_degree[n] == 0
+            }
+            if not ready:
+                break
             self._parallel_groups.append(ready)
-            sorter.done(*ready)
+            done |= ready
+            for dependent, dep_set in deps.items():
+                if dependent not in done:
+                    dep_set -= ready
+                    in_degree[dependent] = len(dep_set)
 
     @property
     def execution_order(self) -> list[str]:
