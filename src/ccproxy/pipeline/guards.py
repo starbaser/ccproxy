@@ -77,7 +77,7 @@ def is_sentinel_key(ctx: Context) -> bool:
     Returns:
         True if using sentinel key
     """
-    from ccproxy.hooks import OAUTH_SENTINEL_PREFIX
+    from ccproxy.constants import OAUTH_SENTINEL_PREFIX
 
     auth_header = ctx.authorization
     if auth_header.lower().startswith("bearer "):

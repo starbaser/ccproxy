@@ -56,10 +56,10 @@ class TestClaudeCodeE2E:
                 "ccproxy": {
                     "debug": False,
                     "hooks": [
-                        "ccproxy.hooks.model_router",
-                        "ccproxy.hooks.forward_oauth",
-                        "ccproxy.hooks.add_beta_headers",
-                        "ccproxy.hooks.inject_claude_code_identity",
+                        "ccproxy.pipeline.hooks.model_router",
+                        "ccproxy.pipeline.hooks.forward_oauth",
+                        "ccproxy.pipeline.hooks.add_beta_headers",
+                        "ccproxy.pipeline.hooks.inject_identity",
                     ],
                     "oat_sources": {
                         "anthropic": "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json",
@@ -174,10 +174,10 @@ fi
                     "debug": True,
                     "default_model_passthrough": True,
                     "hooks": [
-                        "ccproxy.hooks.model_router",
-                        "ccproxy.hooks.forward_oauth",
-                        "ccproxy.hooks.add_beta_headers",
-                        "ccproxy.hooks.inject_claude_code_identity",
+                        "ccproxy.pipeline.hooks.model_router",
+                        "ccproxy.pipeline.hooks.forward_oauth",
+                        "ccproxy.pipeline.hooks.add_beta_headers",
+                        "ccproxy.pipeline.hooks.inject_identity",
                     ],
                     "oat_sources": {
                         "anthropic": "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json",

@@ -41,7 +41,7 @@ def mock_handler():
     config = CCProxyConfig(
         debug=False,
         default_model_passthrough=False,  # Disable passthrough to test actual routing
-        hooks=["ccproxy.hooks.rule_evaluator", "ccproxy.hooks.model_router", "ccproxy.hooks.forward_oauth"],
+        hooks=["ccproxy.pipeline.hooks.rule_evaluator", "ccproxy.pipeline.hooks.model_router", "ccproxy.pipeline.hooks.forward_oauth"],
         rules=[],
     )
     set_config_instance(config)
@@ -217,7 +217,7 @@ async def test_oauth_forwarding_for_anthropic_direct_api():
     config = CCProxyConfig(
         debug=False,
         default_model_passthrough=False,  # Disable passthrough to test actual routing
-        hooks=["ccproxy.hooks.rule_evaluator", "ccproxy.hooks.model_router", "ccproxy.hooks.forward_oauth"],
+        hooks=["ccproxy.pipeline.hooks.rule_evaluator", "ccproxy.pipeline.hooks.model_router", "ccproxy.pipeline.hooks.forward_oauth"],
         rules=[],
     )
     set_config_instance(config)

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from litellm.litellm_core_utils.get_llm_provider_logic import get_llm_provider
 
 from ccproxy.config import get_config
-from ccproxy.hooks import OAUTH_SENTINEL_PREFIX
+from ccproxy.constants import OAUTH_SENTINEL_PREFIX
 from ccproxy.pipeline.hook import hook
 
 if TYPE_CHECKING:

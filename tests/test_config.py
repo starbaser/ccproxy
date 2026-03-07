@@ -222,8 +222,8 @@ ccproxy:
 ccproxy:
   debug: false
   hooks:
-    - ccproxy.hooks.rule_evaluator
-    - hook: ccproxy.hooks.capture_headers
+    - ccproxy.pipeline.hooks.rule_evaluator
+    - hook: ccproxy.pipeline.hooks.capture_headers
       params:
         headers: [user-agent, x-request-id]
 """
@@ -236,9 +236,9 @@ ccproxy:
 
             # Both hook formats should be in hooks list
             assert len(config.hooks) == 2
-            assert config.hooks[0] == "ccproxy.hooks.rule_evaluator"
+            assert config.hooks[0] == "ccproxy.pipeline.hooks.rule_evaluator"
             assert config.hooks[1] == {
-                "hook": "ccproxy.hooks.capture_headers",
+                "hook": "ccproxy.pipeline.hooks.capture_headers",
                 "params": {"headers": ["user-agent", "x-request-id"]},
             }
 

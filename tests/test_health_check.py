@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ccproxy.handler import _inject_health_check_auth
-from ccproxy.hooks import ANTHROPIC_BETA_HEADERS, CLAUDE_CODE_SYSTEM_PREFIX
+from ccproxy.constants import ANTHROPIC_BETA_HEADERS, CLAUDE_CODE_SYSTEM_PREFIX
 
 
 def _patch_config(config):

@@ -101,6 +101,10 @@ class CCProxyHandler(CustomLogger):
                 return result
 
             hc_module._update_litellm_params_for_health_check = _patched
+
+            # Prevent OAuth tokens in extra_headers from leaking into /health response
+            if "extra_headers" not in hc_module.ILLEGAL_DISPLAY_PARAMS:
+                hc_module.ILLEGAL_DISPLAY_PARAMS.append("extra_headers")
             CCProxyHandler._health_check_patched = True
             logger.debug("Patched health check for OAuth credential injection")
         except Exception as e:
@@ -593,7 +597,7 @@ class CCProxyHandler(CustomLogger):
             end_time: Request completion timestamp
         """
         # Retrieve stored metadata and update Langfuse trace
-        from ccproxy.hooks import get_request_metadata
+        from ccproxy.metadata_store import get_request_metadata
 
         call_id = kwargs.get("litellm_call_id")
         litellm_params = kwargs.get("litellm_params", {})
@@ -970,7 +974,7 @@ def _inject_health_check_auth(result: dict, litellm_params: dict) -> None:
         litellm_params: Original model litellm_params from config (contains api_base, model).
     """
     # Deferred imports to avoid circular dependencies
-    from ccproxy.hooks import ANTHROPIC_BETA_HEADERS, CLAUDE_CODE_SYSTEM_PREFIX
+    from ccproxy.constants import ANTHROPIC_BETA_HEADERS, CLAUDE_CODE_SYSTEM_PREFIX
 
     # Minimize cost/latency for health probes
     result["max_tokens"] = 1

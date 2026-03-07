@@ -3,8 +3,17 @@
 import pytest
 
 from ccproxy.config import clear_config_instance
-from ccproxy.hooks import ANTHROPIC_BETA_HEADERS, add_beta_headers
+from ccproxy.constants import ANTHROPIC_BETA_HEADERS
+from ccproxy.pipeline.context import Context
+from ccproxy.pipeline.hooks.add_beta_headers import add_beta_headers
 from ccproxy.router import clear_router
+
+
+def _call_hook(data: dict, params: dict | None = None) -> dict:
+    """Wrap pipeline hook call: data → Context → hook → data."""
+    ctx = Context.from_litellm_data(data)
+    result_ctx = add_beta_headers(ctx, params or {})
+    return result_ctx.to_litellm_data()
 
 
 @pytest.fixture
@@ -60,7 +69,7 @@ class TestAddBetaHeaders:
 
     def test_adds_beta_headers_for_anthropic(self, anthropic_model_data, cleanup):
         """Verify all required beta headers are added for Anthropic provider."""
-        result = add_beta_headers(anthropic_model_data, {})
+        result = _call_hook(anthropic_model_data)
 
         assert "provider_specific_header" in result
         assert "extra_headers" in result["provider_specific_header"]
@@ -73,7 +82,7 @@ class TestAddBetaHeaders:
 
     def test_skips_non_anthropic_providers(self, openai_model_data, cleanup):
         """Verify no headers added for non-Anthropic providers."""
-        result = add_beta_headers(openai_model_data, {})
+        result = _call_hook(openai_model_data)
 
         extra_headers = result.get("provider_specific_header", {}).get("extra_headers", {})
         assert "anthropic-beta" not in extra_headers
@@ -83,29 +92,25 @@ class TestAddBetaHeaders:
         existing_beta = "some-custom-beta-2025"
         anthropic_model_data["provider_specific_header"]["extra_headers"]["anthropic-beta"] = existing_beta
 
-        result = add_beta_headers(anthropic_model_data, {})
+        result = _call_hook(anthropic_model_data)
 
         beta_header = result["provider_specific_header"]["extra_headers"]["anthropic-beta"]
         beta_values = [b.strip() for b in beta_header.split(",")]
 
-        # All required headers present
         for expected in ANTHROPIC_BETA_HEADERS:
             assert expected in beta_values
 
-        # Original custom header preserved
         assert existing_beta in beta_values
 
     def test_deduplicates_beta_headers(self, anthropic_model_data, cleanup):
         """Verify duplicate beta headers are removed."""
-        # Pre-populate with a header that will be added by the hook
         anthropic_model_data["provider_specific_header"]["extra_headers"]["anthropic-beta"] = "oauth-2025-04-20"
 
-        result = add_beta_headers(anthropic_model_data, {})
+        result = _call_hook(anthropic_model_data)
 
         beta_header = result["provider_specific_header"]["extra_headers"]["anthropic-beta"]
         beta_values = [b.strip() for b in beta_header.split(",")]
 
-        # Should only appear once
         assert beta_values.count("oauth-2025-04-20") == 1
 
     def test_skips_when_no_routed_model(self, cleanup):
@@ -117,7 +122,7 @@ class TestAddBetaHeaders:
             "provider_specific_header": {"extra_headers": {}},
         }
 
-        result = add_beta_headers(data, {})
+        result = _call_hook(data)
 
         extra_headers = result.get("provider_specific_header", {}).get("extra_headers", {})
         assert "anthropic-beta" not in extra_headers
@@ -135,7 +140,7 @@ class TestAddBetaHeaders:
             },
         }
 
-        result = add_beta_headers(data, {})
+        result = _call_hook(data)
 
         assert "provider_specific_header" in result
         assert "extra_headers" in result["provider_specific_header"]
@@ -153,8 +158,7 @@ class TestAddBetaHeaders:
             "provider_specific_header": {"extra_headers": {}},
         }
 
-        result = add_beta_headers(data, {})
+        result = _call_hook(data)
 
-        # Should still add headers since we have a routed model
         beta_header = result["provider_specific_header"]["extra_headers"]["anthropic-beta"]
         assert "oauth-2025-04-20" in beta_header

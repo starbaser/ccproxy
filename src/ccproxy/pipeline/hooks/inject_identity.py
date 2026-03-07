@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from ccproxy.hooks import CLAUDE_CODE_SYSTEM_PREFIX
+from ccproxy.constants import CLAUDE_CODE_SYSTEM_PREFIX
 from ccproxy.pipeline.guards import (
     is_oauth_request,
     routes_to_anthropic_provider,

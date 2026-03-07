@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from litellm.litellm_core_utils.get_llm_provider_logic import get_llm_provider
 
-from ccproxy.hooks import ANTHROPIC_BETA_HEADERS
+from ccproxy.constants import ANTHROPIC_BETA_HEADERS
 from ccproxy.pipeline.guards import routes_to_anthropic_provider
 from ccproxy.pipeline.hook import hook
 
