@@ -2081,7 +2081,7 @@ def handle_dag_viz(cmd: DagViz) -> None:
     from ccproxy.pipeline.hook import get_registry
 
     # Import all hooks to register them
-    from ccproxy.pipeline.hooks import (  # noqa: F401
+    from ccproxy.hooks import (  # noqa: F401
         add_beta_headers,
         capture_headers,
         extract_session_id,

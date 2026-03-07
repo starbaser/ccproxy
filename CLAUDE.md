@@ -114,7 +114,7 @@ Request → CCProxyHandler → Hook Pipeline → Response
   - `TokenCountRule` - Evaluates based on token count threshold
 - **router.py**: Manages model configurations from LiteLLM proxy server. Lazy-loads models on first request.
 - **config.py**: Configuration management using Pydantic with multi-level discovery (env var → LiteLLM runtime → ~/.ccproxy/).
-- **pipeline/hooks/**: Built-in pipeline hooks using `@hook` decorator with DAG-based ordering. Hooks support optional params via `hook:` + `params:` YAML format in `ccproxy.yaml`:
+- **hooks/**: Built-in pipeline hooks using `@hook` decorator with DAG-based ordering. Hooks support optional params via `hook:` + `params:` YAML format in `ccproxy.yaml`:
   - `rule_evaluator` - Evaluates rules and stores routing decision (skips classification for health checks)
   - `model_router` - Routes to appropriate model (forces passthrough for health checks)
   - `forward_oauth` - Forwards OAuth tokens to provider APIs; supports sentinel key substitution

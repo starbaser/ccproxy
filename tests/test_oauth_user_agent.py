@@ -293,9 +293,9 @@ ccproxy:
       user_agent: MyCustomApp/3.0.0
   default_model_passthrough: false
   hooks:
-    - ccproxy.pipeline.hooks.rule_evaluator
-    - ccproxy.pipeline.hooks.model_router
-    - ccproxy.pipeline.hooks.forward_oauth
+    - ccproxy.hooks.rule_evaluator
+    - ccproxy.hooks.model_router
+    - ccproxy.hooks.forward_oauth
 """
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write(yaml_content)
@@ -367,9 +367,9 @@ ccproxy:
     anthropic: echo 'anthropic-token-123'
   default_model_passthrough: false
   hooks:
-    - ccproxy.pipeline.hooks.rule_evaluator
-    - ccproxy.pipeline.hooks.model_router
-    - ccproxy.pipeline.hooks.forward_oauth
+    - ccproxy.hooks.rule_evaluator
+    - ccproxy.hooks.model_router
+    - ccproxy.hooks.forward_oauth
 """
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write(yaml_content)
@@ -443,9 +443,9 @@ ccproxy:
       user_agent: ProxyOverride/1.0
   default_model_passthrough: false
   hooks:
-    - ccproxy.pipeline.hooks.rule_evaluator
-    - ccproxy.pipeline.hooks.model_router
-    - ccproxy.pipeline.hooks.forward_oauth
+    - ccproxy.hooks.rule_evaluator
+    - ccproxy.hooks.model_router
+    - ccproxy.hooks.forward_oauth
 """
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write(yaml_content)
@@ -525,9 +525,9 @@ ccproxy:
       user_agent: VertexAIClient/2.0
   default_model_passthrough: true
   hooks:
-    - ccproxy.pipeline.hooks.rule_evaluator
-    - ccproxy.pipeline.hooks.model_router
-    - ccproxy.pipeline.hooks.forward_oauth
+    - ccproxy.hooks.rule_evaluator
+    - ccproxy.hooks.model_router
+    - ccproxy.hooks.forward_oauth
 """
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write(yaml_content)

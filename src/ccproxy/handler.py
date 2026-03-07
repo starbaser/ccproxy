@@ -198,7 +198,7 @@ class CCProxyHandler(CustomLogger):
 
         # If no config hooks, fall back to importing built-in hooks directly
         if not config.hooks:
-            from ccproxy.pipeline.hooks import (  # noqa: F401
+            from ccproxy.hooks import (  # noqa: F401
                 add_beta_headers,
                 capture_headers,
                 extract_session_id,

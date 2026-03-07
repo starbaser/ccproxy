@@ -76,9 +76,9 @@ class TestCCProxyRouting:
             "ccproxy": {
                 "debug": False,
                 "hooks": [
-                    "ccproxy.pipeline.hooks.rule_evaluator",
-                    "ccproxy.pipeline.hooks.model_router",
-                    "ccproxy.pipeline.hooks.forward_oauth",
+                    "ccproxy.hooks.rule_evaluator",
+                    "ccproxy.hooks.model_router",
+                    "ccproxy.hooks.forward_oauth",
                 ],
                 "rules": [
                     {
@@ -256,9 +256,9 @@ class TestHandlerHookMethods:
             "ccproxy": {
                 "debug": False,
                 "hooks": [
-                    "ccproxy.pipeline.hooks.rule_evaluator",
-                    "ccproxy.pipeline.hooks.model_router",
-                    "ccproxy.pipeline.hooks.forward_oauth",
+                    "ccproxy.hooks.rule_evaluator",
+                    "ccproxy.hooks.model_router",
+                    "ccproxy.hooks.forward_oauth",
                 ],
                 "rules": [
                     {
@@ -291,8 +291,8 @@ class TestHandlerHookMethods:
         config = CCProxyConfig(
             debug=False,
             hooks=[
-                "ccproxy.pipeline.hooks.rule_evaluator",
-                "ccproxy.pipeline.hooks.model_router",
+                "ccproxy.hooks.rule_evaluator",
+                "ccproxy.hooks.model_router",
             ],
             rules=[],
         )
@@ -490,9 +490,9 @@ class TestCCProxyHandler:
             "ccproxy": {
                 "debug": False,
                 "hooks": [
-                    "ccproxy.pipeline.hooks.rule_evaluator",
-                    "ccproxy.pipeline.hooks.model_router",
-                    "ccproxy.pipeline.hooks.forward_oauth",
+                    "ccproxy.hooks.rule_evaluator",
+                    "ccproxy.hooks.model_router",
+                    "ccproxy.hooks.forward_oauth",
                 ],
                 "rules": [
                     {
@@ -571,8 +571,8 @@ class TestCCProxyHandler:
             "ccproxy": {
                 "debug": False,
                 "hooks": [
-                    "ccproxy.pipeline.hooks.rule_evaluator",
-                    "ccproxy.pipeline.hooks.model_router",
+                    "ccproxy.hooks.rule_evaluator",
+                    "ccproxy.hooks.model_router",
                 ],
                 "rules": [
                     {

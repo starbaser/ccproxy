@@ -2,12 +2,12 @@
 
 import json
 
-from ccproxy.mcp.buffer import get_buffer
-from ccproxy.pipeline.context import Context
-from ccproxy.pipeline.hooks.inject_mcp_notifications import (
+from ccproxy.hooks.inject_mcp_notifications import (
     inject_mcp_notifications,
     inject_mcp_notifications_guard,
 )
+from ccproxy.mcp.buffer import get_buffer
+from ccproxy.pipeline.context import Context
 
 
 def make_ctx(messages=None, session_id=None):

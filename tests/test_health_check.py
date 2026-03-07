@@ -9,8 +9,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ccproxy.handler import _inject_health_check_auth
 from ccproxy.constants import ANTHROPIC_BETA_HEADERS, CLAUDE_CODE_SYSTEM_PREFIX
+from ccproxy.handler import _inject_health_check_auth
 
 
 def _patch_config(config):
@@ -165,7 +165,7 @@ def test_inject_system_message_no_duplicate(mock_config):
 
 def test_rule_evaluator_skips_health_check():
     """Rule evaluator sets alias model but skips classification for health checks."""
-    from ccproxy.pipeline.hooks.rule_evaluator import rule_evaluator
+    from ccproxy.hooks.rule_evaluator import rule_evaluator
 
     ctx = MagicMock()
     ctx.model = "anthropic/claude-sonnet-4-5-20250929"
@@ -183,7 +183,7 @@ def test_rule_evaluator_skips_health_check():
 
 def test_rule_evaluator_runs_normally_without_flag():
     """Rule evaluator classifies normally when not a health check."""
-    from ccproxy.pipeline.hooks.rule_evaluator import rule_evaluator
+    from ccproxy.hooks.rule_evaluator import rule_evaluator
 
     ctx = MagicMock()
     ctx.model = "claude-sonnet-4-5"
@@ -199,7 +199,7 @@ def test_rule_evaluator_runs_normally_without_flag():
 
 def test_model_router_forces_passthrough_for_health_check():
     """Model router forces passthrough for health checks even when config disables it."""
-    from ccproxy.pipeline.hooks.model_router import model_router
+    from ccproxy.hooks.model_router import model_router
 
     ctx = MagicMock()
     ctx.ccproxy_model_name = None
@@ -213,7 +213,7 @@ def test_model_router_forces_passthrough_for_health_check():
     mock_cfg = MagicMock()
     mock_cfg.default_model_passthrough = False
 
-    with patch("ccproxy.pipeline.hooks.model_router.get_config", return_value=mock_cfg):
+    with patch("ccproxy.hooks.model_router.get_config", return_value=mock_cfg):
         result = model_router(ctx, {"router": router})
 
     assert result.ccproxy_litellm_model == "anthropic/claude-sonnet-4-5-20250929"

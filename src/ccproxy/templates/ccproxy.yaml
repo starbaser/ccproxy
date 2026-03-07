@@ -32,18 +32,18 @@ ccproxy:
 
   # Pipeline hooks — executed in DAG order. List order breaks ties.
   hooks:
-    - ccproxy.pipeline.hooks.rule_evaluator         # evaluates rules against request
-    - ccproxy.pipeline.hooks.model_router            # routes to appropriate model
-    - ccproxy.pipeline.hooks.capture_headers          # captures HTTP headers with sensitive value redaction
+    - ccproxy.hooks.rule_evaluator         # evaluates rules against request
+    - ccproxy.hooks.model_router            # routes to appropriate model
+    - ccproxy.hooks.capture_headers          # captures HTTP headers with sensitive value redaction
     # Hook with params example - capture only specific headers:
-    # - hook: ccproxy.pipeline.hooks.capture_headers
+    # - hook: ccproxy.hooks.capture_headers
     #   params:
     #     headers: [user-agent, x-request-id, content-type]
-    - ccproxy.pipeline.hooks.forward_oauth            # forwards OAuth token to provider
-    - ccproxy.pipeline.hooks.add_beta_headers          # adds anthropic-beta headers for Claude Code OAuth
-    - ccproxy.pipeline.hooks.inject_identity            # injects required system message for OAuth
-    # - ccproxy.pipeline.hooks.forward_apikey           # forwards x-api-key header from request
-    # - ccproxy.pipeline.hooks.inject_mcp_notifications # auto-inject terminal events from mcptty
+    - ccproxy.hooks.forward_oauth            # forwards OAuth token to provider
+    - ccproxy.hooks.add_beta_headers          # adds anthropic-beta headers for Claude Code OAuth
+    - ccproxy.hooks.inject_claude_code_identity # injects required system message for OAuth
+    # - ccproxy.hooks.forward_apikey           # forwards x-api-key header from request
+    # - ccproxy.hooks.inject_mcp_notifications # auto-inject terminal events from mcptty
 
   # uses the original model that Claude Code requested when no routing rule matches.
   # NOTE: model deployments in config.yaml are still required

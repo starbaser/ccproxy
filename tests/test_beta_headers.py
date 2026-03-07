@@ -4,8 +4,8 @@ import pytest
 
 from ccproxy.config import clear_config_instance
 from ccproxy.constants import ANTHROPIC_BETA_HEADERS
+from ccproxy.hooks.add_beta_headers import add_beta_headers
 from ccproxy.pipeline.context import Context
-from ccproxy.pipeline.hooks.add_beta_headers import add_beta_headers
 from ccproxy.router import clear_router
 
 
