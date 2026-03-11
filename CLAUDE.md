@@ -192,9 +192,9 @@ The test suite uses pytest with comprehensive fixtures (18 test files, 90% cover
 - **Hook error isolation**: Errors in one hook don't block others from executing.
 - **Lazy model loading**: Models loaded from LiteLLM proxy on first request, not at startup.
 - **MITM proxy**: Two-layer architecture - reverse proxy on port 4000 (user-facing), forward proxy on port 8081 (outbound to providers). Enables HTTP traffic capture and tracing. OAuth works without MITM via pipeline hooks; MITM provides a redundant header safety net.
-- **MITM database**: PostgreSQL for HTTP trace storage. Database URL set via `CCPROXY_DATABASE_URL` env var or in `ccproxy.yaml` under `litellm.environment`. Current setup uses `litellm-db` container with database `ccproxy_mitm` (not the `ccproxy-db` in compose.yaml).
+- **MITM database**: PostgreSQL for HTTP trace storage. Database URL set via `CCPROXY_DATABASE_URL` env var or in `ccproxy.yaml` under `ccproxy.mitm.database_url`. Uses the `ccproxy-db` container.
 - **Docker containers**: Two PostgreSQL containers managed via `compose.yaml`:
-  - `ccproxy-db` (port 5432) - MITM trace storage (`ccproxy_mitm` database)
+  - `ccproxy-db` (port 5433) - MITM trace storage (`ccproxy_mitm` database)
   - `litellm-db` (port 5434) - LiteLLM's internal database (`litellm` database)
   - When "too many database connections" errors occur, restart **both** containers: `docker restart ccproxy-db litellm-db`
 - **Proxy direction tracking**: MITM traces include `proxy_direction` field (0=reverse, 1=forward) to distinguish client→LiteLLM vs LiteLLM→provider traffic.
@@ -258,10 +258,10 @@ When modifying `prisma/schema.prisma` (e.g., adding fields to `CCProxy_HttpTrace
 
 ```bash
 # 1. Push schema changes to database
-DATABASE_URL="postgresql://ccproxy:test@localhost:5432/ccproxy_mitm" uv run prisma db push
+DATABASE_URL="postgresql://ccproxy:test@localhost:5433/ccproxy_mitm" uv run prisma db push
 
 # 2. Regenerate Prisma client for the TOOL installation (not just .venv)
-DATABASE_URL="postgresql://ccproxy:test@localhost:5432/ccproxy_mitm" \
+DATABASE_URL="postgresql://ccproxy:test@localhost:5433/ccproxy_mitm" \
   uv tool run --from claude-ccproxy prisma generate --schema prisma/schema.prisma
 
 # 3. Restart proxy
