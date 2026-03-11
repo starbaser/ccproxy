@@ -547,6 +547,20 @@ def start_litellm(
             env[key] = expanded
             os.environ[key] = expanded
 
+    # Ensure SSL_CERT_FILE is set for the litellm subprocess.
+    # aiohttp creates a module-level SSL context at import time via ssl.create_default_context(),
+    # and litellm has fallback code paths that create bare ClientSession() without explicit SSL
+    # context. On NixOS (and other non-standard layouts), the compiled-in OpenSSL default path
+    # (/etc/ssl/cert.pem) doesn't exist. Setting SSL_CERT_FILE before subprocess launch ensures
+    # all code paths find valid CA certificates.
+    if "SSL_CERT_FILE" not in env:
+        try:
+            import certifi
+
+            env["SSL_CERT_FILE"] = certifi.where()
+        except ImportError:
+            pass
+
     # When MITM is enabled, route LiteLLM's outbound traffic through forward proxy
     if mitm:
         forward_proxy_url = f"http://localhost:{forward_port}"

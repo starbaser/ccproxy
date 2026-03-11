@@ -722,6 +722,7 @@ dependencies = [
     { name = "anthropic" },
     { name = "asyncpg" },
     { name = "attrs" },
+    { name = "certifi" },
     { name = "fasteners" },
     { name = "httpx" },
     { name = "langfuse" },
@@ -778,6 +779,7 @@ requires-dist = [
     { name = "anthropic", specifier = ">=0.39.0" },
     { name = "asyncpg", specifier = ">=0.31.0" },
     { name = "attrs", specifier = ">=23.0.0" },
+    { name = "certifi", specifier = ">=2024.0.0" },
     { name = "coverage", extras = ["toml"], marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "fasteners", specifier = ">=0.19.0" },
     { name = "httpx", specifier = ">=0.27.0" },
@@ -1659,6 +1661,9 @@ name = "litellm-proxy-extras"
 version = "0.2.14"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f7/6e/6e46bf6abaddc73973933334ec6761da556617c26e224fe06a1628f69f4a/litellm_proxy_extras-0.2.14.tar.gz", hash = "sha256:c05bacba2048130648e41287856c3ca5cdcf744708e19970679333b2fed96dfb", size = 15083, upload-time = "2025-07-30T23:05:00.051Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/11/d8/2b5b554e84291cd79074f81b27e92a12814b7b98c0a65df5b789dd8121ba/litellm_proxy_extras-0.2.14-py3-none-any.whl", hash = "sha256:f1b3286fbe6ac75a176b391e53a37f6f11b3edabab57bec2ea07a636cdc69c5d", size = 28844, upload-time = "2026-02-21T20:03:01.987Z" },
+]
 
 [[package]]
 name = "markdown-it-py"
