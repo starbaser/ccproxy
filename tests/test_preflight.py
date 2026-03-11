@@ -157,8 +157,7 @@ class TestRunPreflightChecks:
             s.bind(("127.0.0.1", 0))
             free_port = s.getsockname()[1]
 
-        with patch("ccproxy.preflight.find_ccproxy_processes", return_value=[]):
-            run_preflight_checks(tmp_path, ports=[free_port])
+        run_preflight_checks(tmp_path, ports=[free_port])
 
     def test_already_running_via_pidfile(self, tmp_path):
         """PID file with alive process → SystemExit."""
@@ -175,9 +174,8 @@ class TestRunPreflightChecks:
         pid_file = tmp_path / "litellm.lock"
         pid_file.write_text("999999999")  # Unlikely to be alive
 
-        with patch("ccproxy.preflight.find_ccproxy_processes", return_value=[]):
-            # Should NOT raise — stale PID file gets cleaned by is_process_running
-            run_preflight_checks(tmp_path, ports=[])
+        # Should NOT raise — stale PID file gets cleaned by is_process_running
+        run_preflight_checks(tmp_path, ports=[])
 
     def test_port_occupied_by_foreign_process(self, tmp_path):
         """Port held by non-ccproxy process → SystemExit."""
@@ -188,10 +186,7 @@ class TestRunPreflightChecks:
         port = srv.getsockname()[1]
 
         try:
-            with (
-                patch("ccproxy.preflight.find_ccproxy_processes", return_value=[]),
-                pytest.raises(SystemExit),
-            ):
+            with pytest.raises(SystemExit):
                 run_preflight_checks(tmp_path, ports=[port])
         finally:
             srv.close()
@@ -201,7 +196,6 @@ class TestRunPreflightChecks:
         fake_cmdline = "/usr/bin/litellm --config /home/user/.ccproxy/config.yaml"
 
         with (
-            patch("ccproxy.preflight.find_ccproxy_processes", return_value=[]),
             patch(
                 "ccproxy.preflight.get_port_pid",
                 side_effect=[(42, fake_cmdline[:80]), (None, None)],
@@ -213,22 +207,29 @@ class TestRunPreflightChecks:
 
     def test_mitm_checks_both_ports(self, tmp_path):
         """When mitm=True the caller passes both main_port and forward_port."""
-        with (
-            patch("ccproxy.preflight.find_ccproxy_processes", return_value=[]),
-            patch("ccproxy.preflight.get_port_pid", return_value=(None, None)) as mock_gpp,
-        ):
+        with patch("ccproxy.preflight.get_port_pid", return_value=(None, None)) as mock_gpp:
             run_preflight_checks(tmp_path, ports=[4000, 8081])
-            # Should check both ports
             assert mock_gpp.call_count == 2
             mock_gpp.assert_any_call(4000)
             mock_gpp.assert_any_call(8081)
 
     def test_no_mitm_checks_main_port_only(self, tmp_path):
         """When mitm=False the caller passes only main_port."""
-        with (
-            patch("ccproxy.preflight.find_ccproxy_processes", return_value=[]),
-            patch("ccproxy.preflight.get_port_pid", return_value=(None, None)) as mock_gpp,
-        ):
+        with patch("ccproxy.preflight.get_port_pid", return_value=(None, None)) as mock_gpp:
             run_preflight_checks(tmp_path, ports=[4000])
             assert mock_gpp.call_count == 1
             mock_gpp.assert_called_with(4000)
+
+    def test_does_not_kill_other_instance_processes(self, tmp_path):
+        """Processes on ports NOT in our config are left alone."""
+        other_cmdline = "/usr/bin/litellm --config /home/user/project/.ccproxy/config.yaml"
+
+        with (
+            patch("ccproxy.preflight.get_port_pid", return_value=(None, None)),
+            patch("ccproxy.preflight.find_ccproxy_processes", return_value=[(999, other_cmdline)]) as mock_find,
+            patch("ccproxy.preflight.kill_stale_processes") as mock_kill,
+        ):
+            run_preflight_checks(tmp_path, ports=[4000])
+            # find_ccproxy_processes should NOT be called during preflight
+            mock_find.assert_not_called()
+            mock_kill.assert_not_called()

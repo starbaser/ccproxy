@@ -194,8 +194,9 @@ def run_preflight_checks(config_dir: Path, ports: list[int]) -> None:
     """Run pre-flight checks before starting ccproxy.
 
     Phase 1: Reject if PID files indicate a running instance.
-    Phase 2: Find and kill orphaned ccproxy processes.
-    Phase 3: Verify all required ports are free.
+    Phase 2: Verify required ports are free; kill stale ccproxy processes
+             found on those ports. Only targets processes on the specific
+             configured ports — other ccproxy instances are left alone.
 
     Raises:
         SystemExit: On unrecoverable conflicts.
@@ -217,15 +218,7 @@ def run_preflight_checks(config_dir: Path, ports: list[int]) -> None:
             print(f"Error: {label} is already running (PID {pid}). Stop it first with: ccproxy stop")
             raise SystemExit(1)
 
-    # Phase 2: Orphan scan — kill ccproxy processes with no PID file
-    orphans = find_ccproxy_processes(exclude_pid=os.getpid())
-    if orphans:
-        logger.warning(f"Found {len(orphans)} orphaned ccproxy process(es)")
-        killed = kill_stale_processes(orphans)
-        if killed:
-            time.sleep(0.5)
-
-    # Phase 3: Port availability
+    # Phase 2: Port availability — kill stale ccproxy processes on configured ports
     for port in ports:
         pid, snippet = get_port_pid(port)
         if pid is None:
