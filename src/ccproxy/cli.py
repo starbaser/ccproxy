@@ -561,11 +561,26 @@ def start_litellm(
         except ImportError:
             pass
 
-    # When MITM is enabled, route LiteLLM's outbound traffic through forward proxy
+    # When MITM is enabled, route LiteLLM's outbound traffic through forward proxy.
+    # mitmproxy intercepts TLS (MITM), so litellm sees mitmproxy-signed certs.
+    # Build a combined CA bundle with mitmproxy's CA + system/certifi CAs so the
+    # SSL context trusts both the proxy-issued certs and real upstream certs.
     if mitm:
         forward_proxy_url = f"http://localhost:{forward_port}"
         env["HTTPS_PROXY"] = forward_proxy_url
         env["HTTP_PROXY"] = forward_proxy_url
+
+        mitm_ca = Path.home() / ".mitmproxy" / "mitmproxy-ca-cert.pem"
+        if mitm_ca.exists():
+            combined_bundle = config_dir / "combined-ca-bundle.pem"
+            base_ca = env.get("SSL_CERT_FILE", "/etc/ssl/certs/ca-certificates.crt")
+            try:
+                mitm_ca_data = mitm_ca.read_text()
+                base_ca_data = Path(base_ca).read_text() if Path(base_ca).exists() else ""
+                combined_bundle.write_text(mitm_ca_data + "\n" + base_ca_data)
+                env["SSL_CERT_FILE"] = str(combined_bundle)
+            except OSError:
+                pass
 
     # Build litellm command using the bundled version from the same venv
     venv_bin = Path(sys.executable).parent
