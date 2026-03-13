@@ -103,6 +103,20 @@ class Context:
             del data["system"]
 
         data["provider_specific_header"] = self.provider_headers
+
+        # Back-propagate pipeline header decisions to proxy_server_request.headers
+        # so all LiteLLM merge paths (including async_pre_call_deployment_hook)
+        # see the pipeline's final values as authoritative.
+        extra_headers = self.provider_headers.get("extra_headers", {})
+        if extra_headers:
+            proxy_req = data.setdefault("proxy_server_request", {})
+            proxy_hdrs = proxy_req.setdefault("headers", {})
+            for key in extra_headers:
+                for existing_key in list(proxy_hdrs.keys()):
+                    if existing_key.lower() == key.lower():
+                        del proxy_hdrs[existing_key]
+            proxy_hdrs.update({k.lower(): v for k, v in extra_headers.items()})
+
         data["litellm_call_id"] = self.litellm_call_id
 
         if self.api_key is not None:

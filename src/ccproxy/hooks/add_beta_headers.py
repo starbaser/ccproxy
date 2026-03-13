@@ -70,12 +70,16 @@ def add_beta_headers(ctx: Context, params: dict[str, Any]) -> Context:
         )
         return ctx
 
-    # Build merged beta headers
+    # Build merged beta headers from pipeline state and client request
     existing = ""
     if "extra_headers" in ctx.provider_headers:
         existing = ctx.provider_headers["extra_headers"].get("anthropic-beta", "")
     elif "extra_headers" in ctx._raw_data:
         existing = ctx._raw_data["extra_headers"].get("anthropic-beta", "")
+
+    client_beta = ctx.headers.get("anthropic-beta", "")
+    if client_beta:
+        existing = f"{existing},{client_beta}" if existing else client_beta
 
     existing_list = [b.strip() for b in existing.split(",") if b.strip()]
     merged = list(dict.fromkeys(ANTHROPIC_BETA_HEADERS + existing_list))

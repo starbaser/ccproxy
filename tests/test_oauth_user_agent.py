@@ -61,23 +61,23 @@ class TestOAuthSource:
         assert config.get_oauth_token("provider") == "my-secret-token-12345"
 
     def test_oauth_source_file_not_found(self, tmp_path: Path) -> None:
-        """Test that missing file returns None and raises on all-fail."""
+        """Test that missing file results in None token without raising."""
         config = CCProxyConfig(
             oat_sources={"provider": OAuthSource(file=str(tmp_path / "nonexistent"))},
         )
-        with pytest.raises(RuntimeError, match="Failed to load OAuth tokens"):
-            config._load_credentials()
+        config._load_credentials()
+        assert config.get_oauth_token("provider") is None
 
     def test_oauth_source_file_empty(self, tmp_path: Path) -> None:
-        """Test that empty file returns None and raises on all-fail."""
+        """Test that empty file results in None token without raising."""
         token_file = tmp_path / "empty_key"
         token_file.write_text("  \n")
 
         config = CCProxyConfig(
             oat_sources={"provider": OAuthSource(file=str(token_file))},
         )
-        with pytest.raises(RuntimeError, match="Failed to load OAuth tokens"):
-            config._load_credentials()
+        config._load_credentials()
+        assert config.get_oauth_token("provider") is None
 
 
 class TestOAuthSourceConfigLoading:

@@ -73,8 +73,10 @@ def forward_oauth(ctx: Context, params: dict[str, Any]) -> Context:
         )
         return ctx
 
-    # Get auth header from raw headers
-    auth_header = ctx.authorization
+    # Get auth header — prefer Authorization, fall back to x-api-key (Anthropic SDK clients)
+    auth_header = ctx.authorization or (
+        f"Bearer {ctx.x_api_key}" if ctx.x_api_key else ""
+    )
 
     # Detect provider
     provider_name = _detect_provider(routed_model, custom_provider, api_base)
@@ -228,6 +230,11 @@ def _setup_provider_headers(ctx: Context, provider_name: str, auth_header: str) 
     # to remove x-api-key entirely so Anthropic uses Authorization: Bearer instead.
     # Without the patch, LiteLLM's Anthropic handler overwrites this with api_key.
     extra["x-api-key"] = ""
+    # Clear sentinel/stale key from context so downstream hooks (forward_apikey)
+    # don't re-forward it. Back-propagation in to_litellm_data() handles
+    # proxy_server_request.headers separately.
+    ctx.headers.pop("x-api-key", None)
+    ctx.raw_headers.pop("x-api-key", None)
 
     # Set custom User-Agent if configured
     config = get_config()

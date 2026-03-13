@@ -78,7 +78,7 @@ class TestClaudeCodeE2E:
         """Test that claude command environment is set up correctly by ccproxy run."""
         # Create a mock claude script that just verifies environment is set
         mock_claude = test_config_dir / "claude"
-        mock_claude.write_text(r"""#!/bin/bash
+        mock_claude.write_text(r"""#!/usr/bin/env bash
 # Check if ANTHROPIC_BASE_URL is set to something that looks like a proxy
 if [[ "$ANTHROPIC_BASE_URL" =~ ^http://127\.0\.0\.1:[0-9]+$ ]]; then
     echo "SUCCESS: Environment configured correctly"
@@ -92,14 +92,14 @@ fi
 """)
         mock_claude.chmod(0o755)
 
-        # Add mock claude to PATH
         env = os.environ.copy()
-        env["PATH"] = f"{test_config_dir}:{env['PATH']}"
         env["CCPROXY_CONFIG_DIR"] = str(test_config_dir)
 
-        # Run ccproxy run command with proper argument separation
+        # Use the absolute path to the mock so PATH lookup is bypassed.
+        # This avoids picking up system wrappers (e.g. NixOS claude shims) that
+        # would intercept a bare "claude" argument before the mock is reached.
         result = subprocess.run(
-            ["uv", "run", "ccproxy", "run", "--", "claude", "-p", "Hello"],
+            ["uv", "run", "ccproxy", "run", "--", str(mock_claude), "-p", "Hello"],
             env=env,
             cwd=test_config_dir,
             capture_output=True,
