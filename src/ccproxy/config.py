@@ -434,8 +434,8 @@ class CCProxyConfig(BaseSettings):
     def _load_credentials(self) -> None:
         """Execute shell commands to load OAuth tokens for all configured providers at startup.
 
-        Raises:
-            RuntimeError: If any shell command fails to execute or returns empty token
+        Logs errors for providers that fail but allows the proxy to continue running.
+        Requests requiring OAuth will fail at request time if tokens are unavailable.
         """
         if not self.oat_sources:
             self._oat_values = {}
@@ -471,9 +471,11 @@ class CCProxyConfig(BaseSettings):
             )
 
         if errors and not loaded_tokens:
-            raise RuntimeError(
-                f"Failed to load OAuth tokens for all {len(self.oat_sources)} provider(s):\n"
-                + "\n".join(f"  - {err}" for err in errors)
+            logger.error(
+                "Failed to load OAuth tokens for all %d provider(s). "
+                "Requests requiring OAuth will fail until tokens are available:\n%s",
+                len(self.oat_sources),
+                "\n".join(f"  - {err}" for err in errors)
             )
 
     @classmethod
