@@ -76,7 +76,10 @@ class TestHandlerLoggingHookMethods:
             result = await handler.async_pre_call_hook(data, {})
             assert "metadata" in result
             # Pipeline should have processed the request
-            assert result["metadata"].get("ccproxy_model_name") is not None or result["metadata"].get("ccproxy_alias_model") == ""
+            assert (
+                result["metadata"].get("ccproxy_model_name") is not None
+                or result["metadata"].get("ccproxy_alias_model") == ""
+            )
 
     @pytest.mark.asyncio
     async def test_handler_with_debug_hook_logging(self) -> None:

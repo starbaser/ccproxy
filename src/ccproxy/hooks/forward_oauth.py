@@ -21,18 +21,8 @@ logger = logging.getLogger(__name__)
 
 
 def forward_oauth_guard(ctx: Context) -> bool:
-    """Guard: Run if OAuth token present and model routing complete."""
-    # Need routed model to determine provider
-    if not ctx.ccproxy_litellm_model:
-        return False
-
-    # Run if we have OAuth token or sentinel key
-    auth = ctx.authorization
-    if auth.lower().startswith("bearer "):
-        return True
-
-    # Also run if we might need to inject cached OAuth token
-    return True
+    """Guard: Run if model routing is complete."""
+    return bool(ctx.ccproxy_litellm_model)
 
 
 @hook(
@@ -40,18 +30,11 @@ def forward_oauth_guard(ctx: Context) -> bool:
     writes=["authorization", "x-api-key", "provider_specific_header", "ccproxy_oauth_provider"],
 )
 def forward_oauth(ctx: Context, params: dict[str, Any]) -> Context:
-    """Forward OAuth token to provider if configured.
+    """Forward OAuth Bearer token to provider.
 
     Detects the target provider from routing metadata and forwards the OAuth
     Bearer token. For Anthropic-type APIs, also clears x-api-key (required
     for OAuth auth) and sets custom User-Agent if configured.
-
-    Args:
-        ctx: Pipeline context
-        params: Additional parameters (unused)
-
-    Returns:
-        Modified context with authorization headers set
     """
     routed_model = ctx.ccproxy_litellm_model
     if not routed_model:
@@ -74,9 +57,7 @@ def forward_oauth(ctx: Context, params: dict[str, Any]) -> Context:
         return ctx
 
     # Get auth header — prefer Authorization, fall back to x-api-key (Anthropic SDK clients)
-    auth_header = ctx.authorization or (
-        f"Bearer {ctx.x_api_key}" if ctx.x_api_key else ""
-    )
+    auth_header = ctx.authorization or (f"Bearer {ctx.x_api_key}" if ctx.x_api_key else "")
 
     # Detect provider
     provider_name = _detect_provider(routed_model, custom_provider, api_base)

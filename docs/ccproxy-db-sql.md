@@ -25,7 +25,7 @@ The command reads the database URL from (in order):
 2. `DATABASE_URL` environment variable
 3. `ccproxy.yaml` → `litellm.environment.CCPROXY_DATABASE_URL`
 
-Current production URL: `postgresql://ccproxy:test@localhost:5432/ccproxy_mitm`
+Current production URL: `postgresql://ccproxy:test@localhost:5433/ccproxy_mitm`
 
 ## Schema: CCProxy_HttpTraces
 
@@ -54,7 +54,6 @@ CREATE TABLE "CCProxy_HttpTraces" (
     is_https              BOOLEAN DEFAULT FALSE,
     error_message         TEXT,
     error_type            TEXT,
-    traffic_type          TEXT DEFAULT 'unknown',
     created_at            TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
     proxy_direction       INTEGER DEFAULT 0,  -- 0=reverse, 1=forward
     session_id            TEXT
@@ -67,7 +66,6 @@ CREATE TABLE "CCProxy_HttpTraces" (
 |-------|-------------|
 | `proxy_direction` | 0 = reverse (client→LiteLLM), 1 = forward (LiteLLM→provider) |
 | `session_id` | Claude Code session ID (from `metadata.user_id`) |
-| `traffic_type` | `llm`, `mcp`, `web`, `other`, `unknown` |
 | `duration_ms` | Request duration in milliseconds |
 | `host` | Target host (e.g., `api.anthropic.com`, `localhost`) |
 
@@ -77,7 +75,6 @@ CREATE TABLE "CCProxy_HttpTraces" (
 - `start_time` - For duration analysis
 - `host` - For filtering by provider
 - `status_code` - For error analysis
-- `traffic_type` - For traffic categorization
 - `proxy_direction` - For direction filtering
 - `session_id` - For session correlation
 
@@ -122,13 +119,6 @@ FROM "CCProxy_HttpTraces" WHERE duration_ms > 5000 ORDER BY duration_ms DESC'
 ```bash
 ccproxy db sql 'SELECT COUNT(*), session_id FROM "CCProxy_HttpTraces"
 WHERE session_id IS NOT NULL GROUP BY session_id'
-```
-
-### Traffic type breakdown
-```bash
-ccproxy db sql 'SELECT traffic_type, COUNT(*) as count,
-AVG(duration_ms) as avg_duration FROM "CCProxy_HttpTraces"
-GROUP BY traffic_type ORDER BY count DESC'
 ```
 
 ### Time range (last hour)

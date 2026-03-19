@@ -24,14 +24,16 @@ logger = logging.getLogger(__name__)
 # Langfuse metadata keys read from litellm_params["metadata"] that get stripped
 # by validate_anthropic_api_metadata on /v1/messages routes.  Injecting them as
 # langfuse_* headers lets Langfuse's add_metadata_from_header recover them.
-_LANGFUSE_HEADER_KEYS = frozenset({
-    "session_id",
-    "trace_name",
-    "generation_name",
-    "trace_id",
-    "existing_trace_id",
-    "trace_user_id",
-})
+_LANGFUSE_HEADER_KEYS = frozenset(
+    {
+        "session_id",
+        "trace_name",
+        "generation_name",
+        "trace_id",
+        "existing_trace_id",
+        "trace_user_id",
+    }
+)
 
 
 def extract_session_id_guard(ctx: Context) -> bool:
@@ -92,9 +94,7 @@ def extract_session_id(ctx: Context, params: dict[str, Any]) -> Context:
     return ctx
 
 
-def _inject_langfuse_headers(
-    request: dict[str, Any], metadata: dict[str, Any]
-) -> None:
+def _inject_langfuse_headers(request: dict[str, Any], metadata: dict[str, Any]) -> None:
     """Inject langfuse_* headers into proxy_server_request for Langfuse recovery.
 
     LiteLLM's Langfuse integration reads headers prefixed with ``langfuse_``

@@ -55,9 +55,6 @@ def model_router(ctx: Context, params: dict[str, Any]) -> Context:
 
     # Get model_name with safe default
     model_name = ctx.ccproxy_model_name or "default"
-    if not model_name:
-        logger.warning("No ccproxy_model_name found, using default")
-        model_name = "default"
 
     # Check if we should pass through the original model for "default" routing
     config = get_config()

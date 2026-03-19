@@ -239,9 +239,7 @@ class TestProxyDirectionFiltering:
         config = MitmConfig()
 
         # Test REVERSE direction
-        addon_reverse = CCProxyMitmAddon(
-            storage=mock_storage, config=config, proxy_direction=ProxyDirection.REVERSE
-        )
+        addon_reverse = CCProxyMitmAddon(storage=mock_storage, config=config, proxy_direction=ProxyDirection.REVERSE)
         mock_flow.id = "flow-1"
         mock_flow.request.pretty_host = "localhost"
         mock_flow.request.method = "POST"

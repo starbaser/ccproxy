@@ -24,36 +24,14 @@ class ClassificationRule(ABC):
 
     @abstractmethod
     def evaluate(self, request: dict[str, Any], config: "CCProxyConfig") -> bool:
-        """Evaluate the rule against the request.
-
-        Args:
-            request: The request to evaluate
-            config: The current configuration
-
-        Returns:
-            True if the rule matches, False otherwise
-        """
-
-
-class DefaultRule(ClassificationRule):
-    def __init__(self, passthrough: bool):
-        self.passthrough = passthrough
+        """Evaluate the rule against the request."""
 
 
 class ThinkingRule(ClassificationRule):
     """Rule for classifying requests with thinking field."""
 
     def evaluate(self, request: dict[str, Any], config: "CCProxyConfig") -> bool:
-        """Evaluate if request has thinking field.
-
-        Args:
-            request: The request to evaluate
-            config: The current configuration
-
-        Returns:
-            True if request has thinking field, False otherwise
-        """
-        # Check top-level thinking field
+        """Evaluate if request has thinking field."""
         return "thinking" in request
 
 
@@ -61,23 +39,10 @@ class MatchModelRule(ClassificationRule):
     """Rule for classifying requests based on model name."""
 
     def __init__(self, model_name: str) -> None:
-        """Initialize the rule with a model name to match.
-
-        Args:
-            model_name: The model name substring to match
-        """
         self.model_name = model_name
 
     def evaluate(self, request: dict[str, Any], config: "CCProxyConfig") -> bool:
-        """Evaluate if request matches the configured model name.
-
-        Args:
-            request: The request to evaluate
-            config: The current configuration
-
-        Returns:
-            True if model matches, False otherwise
-        """
+        """Evaluate if request matches the configured model name."""
         model = request.get("model", "")
         return isinstance(model, str) and self.model_name in model
 
@@ -86,24 +51,11 @@ class TokenCountRule(ClassificationRule):
     """Rule for classifying requests based on token count."""
 
     def __init__(self, threshold: int) -> None:
-        """Initialize the rule with a threshold.
-
-        Args:
-            threshold: The token count threshold
-        """
         self.threshold = threshold
         self._tokenizer_cache: dict[str, Any] = {}
 
     def _get_tokenizer(self, model: str) -> Any:
-        """Get appropriate tokenizer for the model.
-
-        Args:
-            model: Model name to get tokenizer for
-
-        Returns:
-            Tokenizer instance or None if not available
-        """
-        # Cache tokenizers to avoid repeated initialization
+        """Get appropriate tokenizer for the model, with caching."""
         if model in self._tokenizer_cache:
             return self._tokenizer_cache[model]
 
@@ -130,15 +82,7 @@ class TokenCountRule(ClassificationRule):
             return None
 
     def _count_tokens(self, text: str, model: str) -> int:
-        """Count tokens in text using model-specific tokenizer.
-
-        Args:
-            text: Text to count tokens for
-            model: Model name for tokenizer selection
-
-        Returns:
-            Token count
-        """
+        """Count tokens in text using model-specific tokenizer."""
         tokenizer = self._get_tokenizer(model)
         if tokenizer:
             try:
@@ -152,19 +96,9 @@ class TokenCountRule(ClassificationRule):
         return len(text) // 3
 
     def evaluate(self, request: dict[str, Any], config: "CCProxyConfig") -> bool:
-        """Evaluate if request has high token count based on threshold.
-
-        Args:
-            request: The request to evaluate
-            config: The current configuration
-
-        Returns:
-            True if token count exceeds threshold, False otherwise
-        """
-        # Check various token count fields
+        """Evaluate if request token count exceeds threshold."""
         token_count = 0
 
-        # Get model for tokenizer selection
         model = request.get("model", "")
 
         # Check messages token count
@@ -173,23 +107,19 @@ class TokenCountRule(ClassificationRule):
             total_text = ""
             for msg in messages:
                 if isinstance(msg, dict):
-                    # Handle message dict format
                     content = msg.get("content", "")
                     if isinstance(content, str):
                         total_text += content + " "
                     elif isinstance(content, list):
-                        # Handle multi-modal content
                         for item in content:
                             if isinstance(item, dict) and item.get("type") == "text":
                                 total_text += item.get("text", "") + " "
                 else:
-                    # Handle simple string messages
                     total_text += str(msg) + " "
 
             if total_text:
                 token_count = self._count_tokens(total_text.strip(), model)
 
-        # Check explicit token count fields
         token_count = max(
             token_count,
             request.get("token_count", 0) or 0,
@@ -197,7 +127,6 @@ class TokenCountRule(ClassificationRule):
             request.get("input_tokens", 0) or 0,
         )
 
-        # Check against threshold
         return token_count > self.threshold
 
 
@@ -205,33 +134,19 @@ class MatchToolRule(ClassificationRule):
     """Rule for classifying requests with specified tools."""
 
     def __init__(self, tool_name: str) -> None:
-        """Initialize the rule with a tool name to match.
-
-        Args:
-            tool_name: The tool name substring to match
-        """
         self.tool_name = tool_name.lower()
 
     def evaluate(self, request: dict[str, Any], config: "CCProxyConfig") -> bool:
-        """Evaluate if request uses the specified tool.
-
-        Args:
-            request: The request to evaluate
-            config: The current configuration
-
-        Returns:
-            True if request has the specified tool, False otherwise
-        """
+        """Evaluate if request uses the specified tool."""
         tools = request.get("tools", [])
         if isinstance(tools, list):
             for tool in tools:
                 if isinstance(tool, dict):
-                    # Check direct name field
                     name = tool.get("name", "")
                     if isinstance(name, str) and self.tool_name in name.lower():
                         return True
 
-                    # Check function.name field (OpenAI format)
+                    # Check function.name (OpenAI format)
                     function = tool.get("function", {})
                     if isinstance(function, dict):
                         function_name = function.get("name", "")

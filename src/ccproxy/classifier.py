@@ -46,18 +46,13 @@ class RequestClassifier:
         Rules are loaded from the ccproxy.yaml configuration file.
         Each rule configuration specifies the name and rule class to use.
         """
-        # Clear any existing rules
         self._clear_rules()
 
-        # Get configuration
         config = get_config()
 
-        # Load rules from configuration
         for rule_config in config.rules:
             try:
-                # Create rule instance
                 rule_instance = rule_config.create_instance()
-                # Add rule with its model_name
                 self.add_rule(rule_config.model_name, rule_instance)
             except (ImportError, TypeError, AttributeError) as e:
                 # Log error but continue loading other rules
@@ -80,7 +75,7 @@ class RequestClassifier:
         """
         # Convert pydantic model to dict if needed
         try:
-            if hasattr(request, "model_dump") and callable(getattr(request, "model_dump", None)):
+            if hasattr(request, "model_dump"):
                 request = request.model_dump()
         except Exception as e:
             logger.warning(f"Failed to convert request to dict: {e}")

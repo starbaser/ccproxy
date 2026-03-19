@@ -270,7 +270,7 @@ hooks:
       - headers: ["user-agent", "x-request-id"]  # Optional: filter specific headers
 ```
 
-See [`hooks.py`](src/ccproxy/hooks.py) and [`pipeline/hooks/`](src/ccproxy/pipeline/hooks/) for implementing custom hooks.
+See [`hooks/`](src/ccproxy/hooks/) for implementing custom hooks.
 
 See [`docs/sdk/`](docs/sdk/) for SDK integration examples (Anthropic, LiteLLM, Agent SDK).
 

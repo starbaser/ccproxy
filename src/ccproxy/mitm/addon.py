@@ -23,6 +23,7 @@ class ProxyDirection(IntEnum):
     REVERSE = 0  # Client -> LiteLLM (inbound)
     FORWARD = 1  # LiteLLM -> Provider (outbound)
 
+
 # Required system message prefix for Claude Code OAuth tokens
 CLAUDE_CODE_SYSTEM_PREFIX = "You are Claude Code, Anthropic's official CLI for Claude."
 

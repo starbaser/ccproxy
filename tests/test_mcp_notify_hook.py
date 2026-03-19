@@ -161,10 +161,7 @@ def test_multiple_task_ids_same_session():
     roles = [m["role"] for m in result.messages[:-1]]
     assert roles == ["assistant", "user", "assistant", "user"]
 
-    task_ids = {
-        result.messages[i]["content"][0]["input"]["taskId"]
-        for i in [0, 2]
-    }
+    task_ids = {result.messages[i]["content"][0]["input"]["taskId"] for i in [0, 2]}
     assert task_ids == {"task-1", "task-2"}
 
 

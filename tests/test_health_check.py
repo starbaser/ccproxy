@@ -207,7 +207,9 @@ def test_model_router_forces_passthrough_for_health_check():
     ctx.metadata = {"ccproxy_is_health_check": True}
 
     router = MagicMock()
-    model_config = {"litellm_params": {"model": "anthropic/claude-sonnet-4-5-20250929", "api_base": "https://api.anthropic.com"}}
+    model_config = {
+        "litellm_params": {"model": "anthropic/claude-sonnet-4-5-20250929", "api_base": "https://api.anthropic.com"}
+    }
     router.get_model_for_label.return_value = model_config
 
     mock_cfg = MagicMock()

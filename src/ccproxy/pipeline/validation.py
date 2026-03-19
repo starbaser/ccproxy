@@ -24,11 +24,7 @@ class AccessTracker:
         self._current_hook: str | None = None
 
     def start_hook(self, hook_name: str) -> None:
-        """Mark start of hook execution.
-
-        Args:
-            hook_name: Name of the hook starting execution
-        """
+        """Mark start of hook execution."""
         self._current_hook = hook_name
 
     def end_hook(self) -> None:
@@ -36,20 +32,12 @@ class AccessTracker:
         self._current_hook = None
 
     def record_read(self, key: str) -> None:
-        """Record a key read.
-
-        Args:
-            key: Key that was read
-        """
+        """Record a key read."""
         if self._current_hook:
             self._reads[self._current_hook].add(key)
 
     def record_write(self, key: str) -> None:
-        """Record a key write.
-
-        Args:
-            key: Key that was written
-        """
+        """Record a key write."""
         if self._current_hook:
             self._writes[self._current_hook].add(key)
 
@@ -108,12 +96,6 @@ class TrackedContext:
     """
 
     def __init__(self, ctx: Any, tracker: AccessTracker) -> None:
-        """Initialize tracked context.
-
-        Args:
-            ctx: Real Context instance
-            tracker: AccessTracker to record access
-        """
         object.__setattr__(self, "_ctx", ctx)
         object.__setattr__(self, "_tracker", tracker)
 
@@ -136,9 +118,5 @@ class TrackedContext:
         setattr(ctx, name, value)
 
     def unwrap(self) -> Any:
-        """Get the underlying Context.
-
-        Returns:
-            The wrapped Context instance
-        """
+        """Get the underlying Context."""
         return object.__getattribute__(self, "_ctx")

@@ -3,6 +3,7 @@
 This test suite validates that the `claude` command works correctly when routed through ccproxy.
 """
 
+import json
 import os
 import socket
 import subprocess
@@ -12,6 +13,7 @@ from collections.abc import Generator
 from contextlib import closing, suppress
 from pathlib import Path
 
+import httpx
 import psutil
 import pytest
 import yaml
@@ -132,13 +134,13 @@ fi
             ccproxy_dir.mkdir()
 
             # Create minimal settings.json for claude wrapper
-            import json
             (claude_dir / "settings.json").write_text(json.dumps({"custom": {}}))
 
             # Copy credentials from real home if they exist
             real_creds = real_home / ".claude" / ".credentials.json"
             if real_creds.exists():
                 import shutil
+
                 shutil.copy(real_creds, claude_dir / ".credentials.json")
 
             litellm_config = {
@@ -266,13 +268,23 @@ fi
             try:
                 result = subprocess.run(
                     [
-                        "uv", "run", "ccproxy", "--config-dir", config_dir_str, "run", "--",
-                        "claude", "-p", "What is 2+2?",
-                        "--model", "claude-opus-4-5-20251101",
+                        "uv",
+                        "run",
+                        "ccproxy",
+                        "--config-dir",
+                        config_dir_str,
+                        "run",
+                        "--",
+                        "claude",
+                        "-p",
+                        "What is 2+2?",
+                        "--model",
+                        "claude-opus-4-5-20251101",
                         "--no-session-persistence",
                         "--strict-mcp-config",
                         "--disable-slash-commands",
-                        "--allowedTools", "",  # No tools allowed
+                        "--allowedTools",
+                        "",  # No tools allowed
                     ],
                     env=env,
                     capture_output=True,
@@ -323,3 +335,203 @@ fi
                 timeout=10,
             )
             # Fixture cleanup will kill any remaining processes
+
+    @pytest.fixture
+    def oauth_config_dir(self) -> Generator[tuple[Path, int, str], None, None]:
+        """Create config directory for OAuth E2E test.
+
+        Resolves the OAuth token from known credential locations and
+        writes a ccproxy config that uses the token directly via file source.
+
+        Yields:
+            Tuple of (config_dir, port, oauth_token).
+        """
+        # Find OAuth token from known locations
+        oauth_token = self._resolve_oauth_token()
+        if not oauth_token:
+            pytest.fail(
+                "No OAuth token found. Checked:\n"
+                "  - ~/.ccproxy/.claude.credentials.json (claudeAiOauth.accessToken)\n"
+                "  - ~/.claude/.credentials.json (claudeAiOauth.accessToken)\n"
+                "  - CCPROXY_TEST_OAUTH_TOKEN env var"
+            )
+
+        port = find_free_port()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_dir = Path(temp_dir)
+
+            # Write the token to a file for the oat_sources file: source
+            token_file = config_dir / "oauth-token"
+            token_file.write_text(oauth_token)
+            token_file.chmod(0o600)
+
+            litellm_config = {
+                "model_list": [
+                    {
+                        "model_name": "claude-haiku-4-5-20251001",
+                        "litellm_params": {
+                            "model": "anthropic/claude-haiku-4-5-20251001",
+                            "api_base": "https://api.anthropic.com",
+                        },
+                    },
+                ],
+                "litellm_settings": {
+                    "callbacks": ["ccproxy.handler"],
+                },
+                "general_settings": {
+                    "max_parallel_requests": 1000000,
+                    "global_max_parallel_requests": 1000000,
+                    "forward_client_headers_to_llm_api": True,
+                },
+            }
+
+            ccproxy_config = {
+                "litellm": {"host": "127.0.0.1", "port": port, "num_workers": 1, "telemetry": False},
+                "ccproxy": {
+                    "debug": True,
+                    "default_model_passthrough": True,
+                    "hooks": [
+                        "ccproxy.hooks.rule_evaluator",
+                        "ccproxy.hooks.model_router",
+                        "ccproxy.hooks.forward_oauth",
+                        "ccproxy.hooks.add_beta_headers",
+                        "ccproxy.hooks.inject_claude_code_identity",
+                    ],
+                    "oat_sources": {
+                        "anthropic": {
+                            "file": str(token_file),
+                            "destinations": ["api.anthropic.com"],
+                        },
+                    },
+                    "rules": [],
+                },
+            }
+
+            (config_dir / "config.yaml").write_text(yaml.dump(litellm_config))
+            (config_dir / "ccproxy.yaml").write_text(yaml.dump(ccproxy_config))
+
+            try:
+                yield config_dir, port, oauth_token
+            finally:
+                self._kill_processes_on_port(port)
+
+    def _resolve_oauth_token(self) -> str | None:
+        """Find an OAuth token from known credential locations."""
+        # 1. Explicit test override
+        env_token = os.environ.get("CCPROXY_TEST_OAUTH_TOKEN")
+        if env_token:
+            return env_token
+
+        # 2. Active Claude Code session token
+        session_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
+        if session_token:
+            return session_token
+
+        # 3. Credentials files
+        for cred_path in [
+            Path.home() / ".ccproxy" / ".claude.credentials.json",
+            Path.home() / ".claude" / ".credentials.json",
+        ]:
+            if cred_path.exists():
+                try:
+                    creds = json.loads(cred_path.read_text())
+                    token = creds.get("claudeAiOauth", {}).get("accessToken")
+                    if token:
+                        return token
+                except (json.JSONDecodeError, KeyError):
+                    continue
+
+        return None
+
+    @pytest.mark.e2e
+    def test_oauth_forwarding_e2e(self, oauth_config_dir: tuple[Path, int, str]) -> None:
+        """Test OAuth token forwarding through ccproxy to Anthropic API.
+
+        Sends a direct HTTP request to the proxy with a Bearer OAuth token
+        and verifies the full pipeline: token forwarding, beta headers,
+        identity injection, and a successful API response.
+
+        Uses haiku with max_tokens=1 to minimize cost.
+        """
+        config_dir, port, oauth_token = oauth_config_dir
+        config_dir_str = str(config_dir)
+
+        env = os.environ.copy()
+        env["CCPROXY_TEST_MODE"] = "1"
+
+        # Start ccproxy
+        start_result = subprocess.run(
+            ["uv", "run", "ccproxy", "--config-dir", config_dir_str, "start", "--detach"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert start_result.returncode == 0, f"Failed to start ccproxy: {start_result.stderr}"
+
+        try:
+            # Wait for proxy to be ready
+            base_url = f"http://127.0.0.1:{port}"
+            self._wait_for_proxy(base_url, timeout=15)
+
+            # Send a minimal request with OAuth Bearer token
+            response = httpx.post(
+                f"{base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {oauth_token}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 1,
+                    "messages": [{"role": "user", "content": "Hi"}],
+                },
+                timeout=30,
+            )
+
+            print(f"\n=== OAuth E2E Response ===")
+            print(f"Status: {response.status_code}")
+            print(f"Body: {response.text[:2000]}")
+            print(f"==========================\n")
+
+            # Print proxy logs
+            log_file = config_dir / "litellm.log"
+            if log_file.exists():
+                print(f"\n=== Proxy Logs (last 5KB) ===")
+                print(log_file.read_text()[-5000:])
+                print(f"=============================\n")
+
+            # These non-200 statuses prove the pipeline worked (request reached Anthropic)
+            if response.status_code == 429:
+                pytest.skip("Rate limited by Anthropic — OAuth pipeline connectivity verified")
+            if response.status_code == 401 and "expired" in response.text.lower():
+                pytest.skip("OAuth token expired — OAuth pipeline connectivity verified (refresh token)")
+
+            assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text[:500]}"
+
+            body = response.json()
+            assert "choices" in body, f"Missing 'choices' in response: {body}"
+            assert len(body["choices"]) > 0, f"Empty choices in response: {body}"
+
+        finally:
+            subprocess.run(
+                ["uv", "run", "ccproxy", "--config-dir", config_dir_str, "stop"],
+                env=env,
+                capture_output=True,
+                timeout=10,
+            )
+
+    def _wait_for_proxy(self, base_url: str, timeout: int = 15) -> None:
+        """Poll the proxy health endpoint until it responds."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                r = httpx.get(f"{base_url}/health", timeout=2)
+                if r.status_code in (200, 503):
+                    # 503 = healthy but no models yet; proxy is up
+                    return
+            except httpx.ConnectError:
+                pass
+            time.sleep(0.5)
+        pytest.fail(f"Proxy at {base_url} did not become ready within {timeout}s")

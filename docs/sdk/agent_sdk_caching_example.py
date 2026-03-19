@@ -186,14 +186,12 @@ async def main() -> None:
                         cache_reads = message.usage["cache_read_input_tokens"]
                         if cache_reads > 0:
                             console.print(
-                                f"\n[bold green]✓ Cache Hit![/bold green] "
-                                f"Read {cache_reads} tokens from cache"
+                                f"\n[bold green]✓ Cache Hit![/bold green] Read {cache_reads} tokens from cache"
                             )
                     elif "cache_creation_input_tokens" in message.usage:
                         cache_created = message.usage["cache_creation_input_tokens"]
                         console.print(
-                            f"\n[bold cyan]Cache Created:[/bold cyan] "
-                            f"{cache_created} tokens cached for future requests"
+                            f"\n[bold cyan]Cache Created:[/bold cyan] {cache_created} tokens cached for future requests"
                         )
 
     except Exception as e:

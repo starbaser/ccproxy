@@ -443,6 +443,7 @@ class TestPostCallFailureHook:
 
             # Create a 401 error
             import litellm
+
             error = litellm.AuthenticationError(
                 message="Unauthorized",
                 llm_provider="anthropic",
@@ -480,6 +481,7 @@ class TestPostCallFailureHook:
 
             # Create a 401 error
             import litellm
+
             error = litellm.AuthenticationError(
                 message="Unauthorized",
                 llm_provider="anthropic",
@@ -518,6 +520,7 @@ class TestPostCallFailureHook:
 
             # Create a 401 error
             import litellm
+
             error = litellm.AuthenticationError(
                 message="Unauthorized",
                 llm_provider="anthropic",
@@ -554,6 +557,7 @@ class TestPostCallFailureHook:
 
                 # Result should be an HTTPException with 200 status (success response)
                 from fastapi import HTTPException
+
                 assert isinstance(result, HTTPException)
                 assert result.status_code == 200
 
@@ -575,6 +579,7 @@ class TestPostCallFailureHook:
 
             # Create a 401 error
             import litellm
+
             error = litellm.AuthenticationError(
                 message="Unauthorized",
                 llm_provider="anthropic",
@@ -621,6 +626,7 @@ class TestIsAuthException:
             handler = CCProxyHandler()
 
             import litellm
+
             error = litellm.AuthenticationError(
                 message="Unauthorized",
                 llm_provider="anthropic",

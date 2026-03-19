@@ -61,11 +61,7 @@ class NotificationBuffer:
         now = time.time()
         removed = 0
         with self._lock:
-            expired = [
-                tid
-                for tid, buf in self._buffers.items()
-                if now - buf.last_seen > ttl_seconds
-            ]
+            expired = [tid for tid, buf in self._buffers.items() if now - buf.last_seen > ttl_seconds]
             for tid in expired:
                 del self._buffers[tid]
                 removed += 1
@@ -74,10 +70,7 @@ class NotificationBuffer:
     def has_events_for_session(self, session_id: str) -> bool:
         """Check if any task with matching session_id has buffered events."""
         with self._lock:
-            return any(
-                buf.session_id == session_id and buf.events
-                for buf in self._buffers.values()
-            )
+            return any(buf.session_id == session_id and buf.events for buf in self._buffers.values())
 
     def is_empty(self) -> bool:
         """Check if the buffer has no entries."""

@@ -83,7 +83,9 @@ def main() -> None:
     """Run examples."""
     try:
         # Check if running
-        console.print("[yellow]Note:[/yellow] This script requires ccproxy running: [cyan]ccproxy start --detach[/cyan]\n")
+        console.print(
+            "[yellow]Note:[/yellow] This script requires ccproxy running: [cyan]ccproxy start --detach[/cyan]\n"
+        )
 
         # Simple request
         simple_request()

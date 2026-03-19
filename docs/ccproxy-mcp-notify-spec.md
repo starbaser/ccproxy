@@ -37,6 +37,7 @@ Receives fire-and-forget event notifications from mcptty's `NotifyClient`.
 {
   "task_id": "string (UUID)",
   "session_id": "string (e.g. 'main')",
+  "claude_session_id": "string (optional, Claude Code session ID)",
   "event": {
     "timestamp": "2026-03-01T12:34:56.789Z",
     "frame_index": 42,
@@ -69,6 +70,7 @@ Receives fire-and-forget event notifications from mcptty's `NotifyClient`.
 |-------|------|---------|-------------|
 | `task_id` | string | Always | UUID identifying the observer task |
 | `session_id` | string | Always | Terminal session ID (e.g. "main") |
+| `claude_session_id` | string | Optional | Claude Code session ID (defaults to empty string) |
 | `event.timestamp` | RFC3339 | Always | When the change was detected |
 | `event.frame_index` | int | Always | Monotonic frame counter |
 | `event.tier` | int | Always | 1=style, 2=content, 3=layout shift |
@@ -98,7 +100,7 @@ In-memory dict keyed by `task_id`. Each entry holds:
 class TaskBuffer:
     task_id: str
     session_id: str
-    events: deque  # maxlen=20
+    events: list  # capped at max_events, oldest dropped on overflow
     last_seen: float  # time.time()
 ```
 
@@ -106,15 +108,15 @@ class TaskBuffer:
 
 | Parameter | Value | Rationale |
 |-----------|-------|-----------|
-| Max events per task | 20 | Prevents unbounded growth |
+| Max events per task | 50 | Prevents unbounded growth |
 | Overflow strategy | Drop oldest | Matches mcptty's internal buffer |
 | TTL | 600 seconds (10 min) | Auto-cleanup stale tasks |
 | Cleanup interval | 60 seconds | Background sweep |
 
 ### Operations
 
-- **Write** (`POST /mcp/notify`): Append event to task's deque. Update `last_seen`. If deque full, oldest auto-dropped (deque maxlen).
-- **Drain** (hook injection): Atomically swap task's deque with empty deque. Returns all buffered events. Thread-safe via lock.
+- **Write** (`POST /mcp/notify`): Append event to task's list. Update `last_seen`. If list exceeds max_events, oldest are dropped.
+- **Drain** (hook injection): Atomically drain all tasks matching the current session_id. Returns `{task_id: events}` dict. Thread-safe via lock.
 - **Expire**: Background thread removes entries where `time.time() - last_seen > ttl`.
 
 ---
@@ -279,7 +281,7 @@ hooks:
 
 # Optional — defaults shown
 mcp_notifications:
-  max_events_per_task: 20
+  max_events_per_task: 50
   max_injection_tokens: 2000
   ttl_seconds: 600
   coalesce_tier1: true
@@ -322,7 +324,7 @@ mcp_notifications:
 | Endpoint accepts tier 1 | POST tier 1 event | 200 OK, event in buffer |
 | Endpoint accepts tier 2 | POST tier 2 event with report | 200 OK, event in buffer |
 | Endpoint accepts tier 3 | POST tier 3 event with screen_text | 200 OK, event in buffer |
-| Buffer overflow | POST 25 events to same task | Buffer has 20, oldest 5 dropped |
+| Buffer overflow | POST 55 events to same task | Buffer has 50, oldest 5 dropped |
 | TTL expiry | POST event, wait >TTL | Buffer empty after cleanup |
 | Hook no-op | Empty buffer, call hook | Messages unchanged |
 | Hook injects pair | Buffer 3 events, call hook | 2 messages inserted before final user msg |

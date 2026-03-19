@@ -180,7 +180,6 @@ class Context:
 
     @ccproxy_model_name.setter
     def ccproxy_model_name(self, value: str) -> None:
-        """Set classified model name in metadata."""
         self.metadata["ccproxy_model_name"] = value
 
     @property
@@ -190,7 +189,6 @@ class Context:
 
     @ccproxy_alias_model.setter
     def ccproxy_alias_model(self, value: str) -> None:
-        """Set original model alias in metadata."""
         self.metadata["ccproxy_alias_model"] = value
 
     @property
@@ -200,7 +198,6 @@ class Context:
 
     @ccproxy_litellm_model.setter
     def ccproxy_litellm_model(self, value: str) -> None:
-        """Set routed LiteLLM model in metadata."""
         self.metadata["ccproxy_litellm_model"] = value
 
     @property
@@ -210,7 +207,6 @@ class Context:
 
     @ccproxy_model_config.setter
     def ccproxy_model_config(self, value: dict[str, Any]) -> None:
-        """Set model configuration in metadata."""
         self.metadata["ccproxy_model_config"] = value
 
     @property
@@ -220,5 +216,4 @@ class Context:
 
     @ccproxy_is_passthrough.setter
     def ccproxy_is_passthrough(self, value: bool) -> None:
-        """Set passthrough mode flag."""
         self.metadata["ccproxy_is_passthrough"] = value

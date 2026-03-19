@@ -394,9 +394,7 @@ class TestFormatTraceMarkdown:
 
     def test_with_headers(self, sample_trace, sample_request, sample_response):
         """Test including HTTP headers."""
-        md = format_trace_markdown(
-            sample_trace, sample_request, sample_response, include_headers=True
-        )
+        md = format_trace_markdown(sample_trace, sample_request, sample_response, include_headers=True)
 
         assert "## HTTP Headers" in md
         assert "### Request Headers" in md
@@ -406,9 +404,7 @@ class TestFormatTraceMarkdown:
         """Test that auth headers are redacted."""
         sample_trace["request_headers"]["authorization"] = "Bearer sk-ant-api-key-12345678901234567890"
 
-        md = format_trace_markdown(
-            sample_trace, sample_request, sample_response, include_headers=True
-        )
+        md = format_trace_markdown(sample_trace, sample_request, sample_response, include_headers=True)
 
         # Should be truncated/redacted
         assert "sk-ant-api-key-12345678901234567890" not in md
@@ -595,9 +591,7 @@ class TestHandleDbPromptIntegration:
             "created_at": datetime.now(timezone.utc),
         }
 
-    def test_handle_db_prompt_success_markdown(
-        self, tmp_path, mock_trace_data, capsys
-    ):
+    def test_handle_db_prompt_success_markdown(self, tmp_path, mock_trace_data, capsys):
         """Test successful markdown output."""
         config_dir = tmp_path / ".ccproxy"
         config_dir.mkdir()

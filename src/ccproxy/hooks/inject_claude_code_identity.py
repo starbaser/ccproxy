@@ -39,30 +39,18 @@ def inject_claude_code_identity_guard(ctx: Context) -> bool:
     writes=["system"],
 )
 def inject_claude_code_identity(ctx: Context, params: dict[str, Any]) -> Context:
-    """Inject Claude Code identity into system message for OAuth authentication.
+    """Inject Claude Code identity prefix into system message for Anthropic OAuth.
 
-    Anthropic's OAuth tokens are restricted to Claude Code. To use them, the API
-    request must include a system message that starts with "You are Claude Code".
-    This hook prepends that required prefix to the system message.
-
-    Only injects for requests going to api.anthropic.com - other Anthropic-compatible
-    APIs like ZAI don't require this identity prefix.
-
-    Args:
-        ctx: Pipeline context
-        params: Additional parameters (unused)
-
-    Returns:
-        Modified context with system message containing required prefix
+    Anthropic's OAuth tokens are scoped to Claude Code and require the system message
+    to start with "You are Claude Code". Only applies to api.anthropic.com — other
+    Anthropic-compatible APIs (e.g., ZAI) don't require this prefix.
     """
     # Check if model has its own api_key - if so, don't inject identity
     model_config = ctx.ccproxy_model_config or {}
     litellm_params = model_config.get("litellm_params", {})
     configured_api_key = litellm_params.get("api_key")
     if configured_api_key:
-        logger.debug(
-            "inject_claude_code_identity: Model has configured api_key, skipping identity injection"
-        )
+        logger.debug("inject_claude_code_identity: Model has configured api_key, skipping identity injection")
         return ctx
 
     # Check if this is going to api.anthropic.com vs other Anthropic-compatible APIs

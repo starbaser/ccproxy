@@ -183,11 +183,6 @@ class RuleConfig:
                 return rule_class(**kwargs)
             # Otherwise treat as positional args
             return rule_class(*self.params)
-        if isinstance(self.params, dict):  # type: ignore[unreachable]
-            # Single dict of kwargs
-            return rule_class(**self.params)
-        # Single positional arg
-        return rule_class(self.params)
 
 
 class CCProxyConfig(BaseSettings):
@@ -308,9 +303,7 @@ class CCProxyConfig(BaseSettings):
             return self._read_oauth_file(oauth_source, provider)
         return self._run_oauth_command(oauth_source, provider)
 
-    def _read_oauth_file(
-        self, source: OAuthSource, provider: str
-    ) -> tuple[str, str | None] | None:
+    def _read_oauth_file(self, source: OAuthSource, provider: str) -> tuple[str, str | None] | None:
         """Read OAuth token from a file path."""
         try:
             path = Path(source.file).expanduser().resolve()  # type: ignore[arg-type]
@@ -326,9 +319,7 @@ class CCProxyConfig(BaseSettings):
             logger.error(f"Failed to read OAuth file for provider '{provider}': {e}")
             return None
 
-    def _run_oauth_command(
-        self, source: OAuthSource, provider: str
-    ) -> tuple[str, str | None] | None:
+    def _run_oauth_command(self, source: OAuthSource, provider: str) -> tuple[str, str | None] | None:
         """Execute a shell command to retrieve an OAuth token."""
         try:
             result = subprocess.run(  # noqa: S602
@@ -424,9 +415,7 @@ class CCProxyConfig(BaseSettings):
             # Check if api_base matches any destination pattern
             for dest in oauth_source.destinations:
                 if dest.lower() in api_base_lower:
-                    logger.debug(
-                        f"Matched api_base '{api_base}' to provider '{provider}' via destination '{dest}'"
-                    )
+                    logger.debug(f"Matched api_base '{api_base}' to provider '{provider}' via destination '{dest}'")
                     return provider
 
         return None
@@ -475,7 +464,7 @@ class CCProxyConfig(BaseSettings):
                 "Failed to load OAuth tokens for all %d provider(s). "
                 "Requests requiring OAuth will fail until tokens are available:\n%s",
                 len(self.oat_sources),
-                "\n".join(f"  - {err}" for err in errors)
+                "\n".join(f"  - {err}" for err in errors),
             )
 
     @classmethod

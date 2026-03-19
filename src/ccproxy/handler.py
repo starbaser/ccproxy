@@ -130,7 +130,9 @@ class CCProxyHandler(CustomLogger):
 
             _original_validate = AnthropicModelInfo.validate_environment
 
-            def _patched_validate(self, headers, model, messages, optional_params, litellm_params, api_key=None, api_base=None):
+            def _patched_validate(
+                self, headers, model, messages, optional_params, litellm_params, api_key=None, api_base=None
+            ):
                 # Check if caller explicitly set x-api-key to empty (OAuth mode)
                 oauth_mode = "x-api-key" in headers and headers["x-api-key"] == ""
                 if oauth_mode and not api_key:
@@ -141,7 +143,9 @@ class CCProxyHandler(CustomLogger):
                     auth = headers.get("authorization", "")
                     if auth.lower().startswith("bearer "):
                         api_key = auth[7:]  # len("bearer ") == 7
-                result = _original_validate(self, headers, model, messages, optional_params, litellm_params, api_key=api_key, api_base=api_base)
+                result = _original_validate(
+                    self, headers, model, messages, optional_params, litellm_params, api_key=api_key, api_base=api_base
+                )
                 if oauth_mode:
                     # Remove x-api-key so Anthropic uses Authorization header
                     result.pop("x-api-key", None)
@@ -310,23 +314,13 @@ class CCProxyHandler(CustomLogger):
         return False
 
     def _is_auth_exception(self, exception: Exception) -> bool:
-        """Check if exception indicates authentication failure (401).
-
-        Args:
-            exception: The exception to check
-
-        Returns:
-            True if exception indicates a 401 authentication error
-        """
-        # Check for LiteLLM AuthenticationError
+        """Check if exception indicates authentication failure (401)."""
         if isinstance(exception, litellm.AuthenticationError):
             return True
 
-        # Check status_code attribute
         if hasattr(exception, "status_code") and exception.status_code == 401:
             return True
 
-        # Check exception message
         exc_str = str(exception).lower()
         return "401" in exc_str or "unauthorized" in exc_str or "authentication" in exc_str
 
@@ -351,19 +345,7 @@ class CCProxyHandler(CustomLogger):
         return None
 
     def _extract_provider_from_request_data(self, request_data: dict) -> str | None:
-        """Extract provider name from request data (used in failure hooks).
-
-        Uses multiple strategies to determine the provider:
-        1. Check ccproxy metadata for model config with api_base
-        2. Check model name in request_data
-        3. Use LiteLLM's provider detection
-
-        Args:
-            request_data: Request data dict from failure hook
-
-        Returns:
-            Provider name (e.g., "anthropic", "openai") or None if not determinable
-        """
+        """Extract provider name from request data using tiered detection strategies."""
         config = get_config()
         metadata = request_data.get("metadata", {})
 

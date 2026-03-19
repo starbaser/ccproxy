@@ -95,9 +95,7 @@ class HookDAG:
         # Kahn's algorithm with min-heap for priority tie-breaking
         in_degree = {name: len(dep_set) for name, dep_set in deps.items()}
 
-        heap: list[tuple[int, str]] = [
-            (self._hooks[n].priority, n) for n in self._hooks if in_degree[n] == 0
-        ]
+        heap: list[tuple[int, str]] = [(self._hooks[n].priority, n) for n in self._hooks if in_degree[n] == 0]
         heapq.heapify(heap)
 
         order: list[str] = []
@@ -123,10 +121,7 @@ class HookDAG:
         self._parallel_groups = []
 
         while len(done) < len(self._hooks):
-            ready = {
-                n for n in self._hooks
-                if n not in done and in_degree[n] == 0
-            }
+            ready = {n for n in self._hooks if n not in done and in_degree[n] == 0}
             if not ready:
                 break
             self._parallel_groups.append(ready)

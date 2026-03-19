@@ -25,17 +25,13 @@ class TestGetDatabaseUrl:
 
     def test_env_var_ccproxy_database_url(self, tmp_path: Path) -> None:
         """Test database URL from CCPROXY_DATABASE_URL env var."""
-        with patch.dict(
-            "os.environ", {"CCPROXY_DATABASE_URL": "postgresql://test:123@host/db"}
-        ):
+        with patch.dict("os.environ", {"CCPROXY_DATABASE_URL": "postgresql://test:123@host/db"}):
             result = get_database_url(tmp_path)
         assert result == "postgresql://test:123@host/db"
 
     def test_env_var_database_url(self, tmp_path: Path) -> None:
         """Test database URL from DATABASE_URL env var."""
-        with patch.dict(
-            "os.environ", {"DATABASE_URL": "postgresql://test:456@host/db"}, clear=True
-        ):
+        with patch.dict("os.environ", {"DATABASE_URL": "postgresql://test:456@host/db"}, clear=True):
             result = get_database_url(tmp_path)
         assert result == "postgresql://test:456@host/db"
 
@@ -77,9 +73,7 @@ ccproxy:
 """
         )
 
-        with patch.dict(
-            "os.environ", {"DB_USER": "myuser", "DB_PASS": "mypass"}, clear=True
-        ):
+        with patch.dict("os.environ", {"DB_USER": "myuser", "DB_PASS": "mypass"}, clear=True):
             result = get_database_url(tmp_path)
         assert result == "postgresql://myuser:mypass@host/db"
 
@@ -154,9 +148,7 @@ class TestExecuteSql:
         mock_conn.fetch.return_value = [mock_record1, mock_record2]
 
         with patch("asyncpg.connect", return_value=mock_conn):
-            rows, columns = await execute_sql(
-                "postgresql://test@host/db", "SELECT * FROM test"
-            )
+            rows, columns = await execute_sql("postgresql://test@host/db", "SELECT * FROM test")
 
         assert set(columns) == {"id", "name"}
         assert len(rows) == 2
@@ -171,9 +163,7 @@ class TestExecuteSql:
         mock_conn.fetch.return_value = []
 
         with patch("asyncpg.connect", return_value=mock_conn):
-            rows, columns = await execute_sql(
-                "postgresql://test@host/db", "SELECT * FROM empty"
-            )
+            rows, columns = await execute_sql("postgresql://test@host/db", "SELECT * FROM empty")
 
         assert rows == []
         assert columns == []
@@ -355,9 +345,7 @@ class TestFormatCsvOutput:
 class TestHandleDbSql:
     """Test suite for handle_db_sql function."""
 
-    def test_handle_db_sql_mutually_exclusive_flags(
-        self, tmp_path: Path, capsys
-    ) -> None:
+    def test_handle_db_sql_mutually_exclusive_flags(self, tmp_path: Path, capsys) -> None:
         """Test error when both --json and --csv are specified."""
         cmd = DbSql(query="SELECT 1", json=True, csv=True)
 
@@ -397,9 +385,7 @@ class TestHandleDbSql:
         cmd = DbSql(query="SELECT 1")
 
         with patch.dict("os.environ", {"DATABASE_URL": "postgresql://test@host/db"}):
-            with patch(
-                "ccproxy.cli.execute_sql", side_effect=Exception("Connection refused")
-            ):
+            with patch("ccproxy.cli.execute_sql", side_effect=Exception("Connection refused")):
                 with pytest.raises(SystemExit) as exc_info:
                     handle_db_sql(tmp_path, cmd)
 

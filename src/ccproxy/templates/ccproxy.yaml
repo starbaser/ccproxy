@@ -8,32 +8,33 @@ ccproxy:
 
   # OAuth token sources - shell commands to retrieve tokens for each provider
   oat_sources:
-    # Simple string form (provider name used for detection)
-    anthropic: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+    anthropic:
+      command: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+      destinations:
+        - "api.anthropic.com"
+
+    # File-based token (reads file contents directly, mutually exclusive with command)
+    # openrouter:
+    #   file: "~/.config/ccproxy/openrouter-key"
+    #   destinations:
+    #     - "openrouter.ai"
 
     # Extended form with destinations (auto-inject token for matching api_base URLs)
     # zai:
-    #   command: "jq -r '.accessToken' ~/.zai/credentials.json"
-    #   user_agent: "MyApp/1.0.0"
+    #   command: "cat ~/.config/ccproxy/zai-key"
     #   destinations:
-    #     - "api.z.ai"           # Matches https://api.z.ai/api/anthropic
-    #     - "z.ai"               # Matches any z.ai subdomain
+    #     - "z.ai"
 
     # Extended form with custom User-Agent only
     # gemini:
     #   command: "jq -r '.access_token' ~/.gemini/oauth_creds.json"
     #   user_agent: "MyApp/1.0.0"
 
-    # File-based token (reads file contents directly, mutually exclusive with command)
-    # openrouter:
-    #   file: "~/.config/openrouter/api_key"
-    #   destinations:
-    #     - "openrouter.ai"
-
   # Pipeline hooks — executed in DAG order. List order breaks ties.
   hooks:
     - ccproxy.hooks.rule_evaluator         # evaluates rules against request
     - ccproxy.hooks.model_router            # routes to appropriate model
+    # - ccproxy.hooks.extract_session_id      # extracts session_id for Langfuse grouping
     - ccproxy.hooks.capture_headers          # captures HTTP headers with sensitive value redaction
     # Hook with params example - capture only specific headers:
     # - hook: ccproxy.hooks.capture_headers
@@ -43,7 +44,7 @@ ccproxy:
     - ccproxy.hooks.add_beta_headers          # adds anthropic-beta headers for Claude Code OAuth
     - ccproxy.hooks.inject_claude_code_identity # injects required system message for OAuth
     # - ccproxy.hooks.forward_apikey           # forwards x-api-key header from request
-    # - ccproxy.hooks.inject_mcp_notifications # auto-inject terminal events from mcptty
+    # - ccproxy.hooks.inject_mcp_notifications # inject mcp notifications into matching sessions
 
   # uses the original model that Claude Code requested when no routing rule matches.
   # NOTE: model deployments in config.yaml are still required
@@ -55,10 +56,12 @@ ccproxy:
   mitm:
     enabled: false
     port: 8081
-    # PostgreSQL database for MITM traces
-    database_url: "postgresql://ccproxy:test@localhost:5432/ccproxy_mitm"
+    upstream_proxy: "http://localhost:4000"
+    database_url: "postgresql://ccproxy:${CCPROXY_DB_PASSWORD:-test}@localhost:5433/ccproxy_mitm"
     capture_bodies: true
-    max_body_size: 0  # 0 = unlimited
+    max_body_size: 0  # 0 = unlimited (live example: 10485760 for 10MB)
+    excluded_hosts: []
+    cert_dir: ~/.ccproxy
     debug: false
 
 litellm:
@@ -68,8 +71,9 @@ litellm:
   debug: true
   detailed_debug: true
 
-  # LiteLLM database features - disabled by default
-  # Uncomment to enable model management via UI (requires litellm-db container)
+  # Environment variables passed to LiteLLM subprocess
+  # Supports ${VAR} and ${VAR:-default} substitution from shell environment
   # environment:
+  #   CCPROXY_DATABASE_URL: "postgresql://ccproxy:${CCPROXY_DB_PASSWORD:-test}@localhost:5433/ccproxy_mitm"
   #   STORE_MODEL_IN_DB: "true"
-  #   DATABASE_URL: "postgresql://ccproxy:test@localhost:5433/litellm"
+  #   DATABASE_URL: "postgresql://ccproxy:${CCPROXY_DB_PASSWORD:-test}@localhost:5434/litellm"

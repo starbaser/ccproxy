@@ -123,6 +123,7 @@ Request → CCProxyHandler → Hook Pipeline → Response
   - `forward_apikey` - Forwards x-api-key header
   - `add_beta_headers` - Adds anthropic-beta headers for Claude Code OAuth
   - `inject_claude_code_identity` - Injects required system message for OAuth
+  - `inject_mcp_notifications` - Injects buffered MCP terminal events as synthetic tool_use/tool_result pairs before the final user message
 - **mitm/addon.py**: MITM proxy addon for HTTP-layer modifications:
   - Removes `x-api-key` for OAuth requests
   - Adds `anthropic-beta` headers for Claude Code compliance

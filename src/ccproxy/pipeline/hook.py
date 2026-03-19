@@ -55,26 +55,11 @@ class HookSpec:
         return self.name == other.name
 
     def should_run(self, ctx: Context) -> bool:
-        """Check if this hook should run for the given context.
-
-        Args:
-            ctx: Pipeline context
-
-        Returns:
-            True if guard passes, False otherwise
-        """
+        """Check if this hook should run for the given context."""
         return self.guard(ctx)
 
     def execute(self, ctx: Context, extra_params: dict[str, Any] | None = None) -> Context:
-        """Execute the hook handler.
-
-        Args:
-            ctx: Pipeline context
-            extra_params: Additional parameters to merge with static params
-
-        Returns:
-            Modified context
-        """
+        """Execute the hook handler."""
         params = dict(self.params)
         if extra_params:
             params.update(extra_params)

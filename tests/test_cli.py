@@ -138,9 +138,7 @@ class TestStartProxy:
         assert "litellm.log" in output_flat
 
     @patch("os.kill")
-    def test_litellm_detach_already_running(
-        self, mock_kill: Mock, tmp_path: Path, capsys
-    ) -> None:
+    def test_litellm_detach_already_running(self, mock_kill: Mock, tmp_path: Path, capsys) -> None:
         """Test litellm detach when already running - preflight rejects start."""
         config_file = tmp_path / "config.yaml"
         config_file.write_text("litellm: config")
@@ -1222,7 +1220,9 @@ class TestMainFunction:
         cmd = Status(json=False)
         main(cmd, config_dir=tmp_path)
 
-        mock_status.assert_called_once_with(tmp_path, json_output=False, check_proxy=False, check_reverse=False, check_forward=False)
+        mock_status.assert_called_once_with(
+            tmp_path, json_output=False, check_proxy=False, check_reverse=False, check_forward=False
+        )
 
     @patch("ccproxy.cli.show_status")
     def test_main_status_command_json(self, mock_status: Mock, tmp_path: Path) -> None:
@@ -1230,4 +1230,6 @@ class TestMainFunction:
         cmd = Status(json=True)
         main(cmd, config_dir=tmp_path)
 
-        mock_status.assert_called_once_with(tmp_path, json_output=True, check_proxy=False, check_reverse=False, check_forward=False)
+        mock_status.assert_called_once_with(
+            tmp_path, json_output=True, check_proxy=False, check_reverse=False, check_forward=False
+        )

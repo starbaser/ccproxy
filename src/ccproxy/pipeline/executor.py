@@ -148,70 +148,18 @@ class PipelineExecutor:
             )
             return ctx
 
-    def execute_sync(
-        self,
-        data: dict[str, Any],
-        user_api_key_dict: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Synchronous execution (alias for execute).
-
-        Args:
-            data: LiteLLM request data dict
-            user_api_key_dict: LiteLLM user API key info
-
-        Returns:
-            Modified data dict
-        """
-        return self.execute(data, user_api_key_dict)
-
-    async def execute_async(
-        self,
-        data: dict[str, Any],
-        user_api_key_dict: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Async execution (currently same as sync).
-
-        Future: Could parallelize independent hooks.
-
-        Args:
-            data: LiteLLM request data dict
-            user_api_key_dict: LiteLLM user API key info
-
-        Returns:
-            Modified data dict
-        """
-        # For now, just use sync execution
-        # Future: Use parallel_groups for concurrent execution
-        return self.execute(data, user_api_key_dict)
-
     def get_execution_order(self) -> list[str]:
-        """Get hook names in execution order.
-
-        Returns:
-            List of hook names
-        """
+        """Get hook names in execution order."""
         return self.dag.execution_order
 
     def get_parallel_groups(self) -> list[set[str]]:
-        """Get groups of hooks that can execute in parallel.
-
-        Returns:
-            List of sets of hook names
-        """
+        """Get groups of hooks that can execute in parallel."""
         return self.dag.parallel_groups
 
     def to_mermaid(self) -> str:
-        """Generate Mermaid diagram of the pipeline.
-
-        Returns:
-            Mermaid graph definition
-        """
+        """Generate Mermaid diagram of the pipeline."""
         return self.dag.to_mermaid()
 
     def to_ascii(self) -> str:
-        """Generate ASCII representation of the pipeline.
-
-        Returns:
-            ASCII art string
-        """
+        """Generate ASCII representation of the pipeline."""
         return self.dag.to_ascii()

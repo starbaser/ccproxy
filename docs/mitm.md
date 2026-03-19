@@ -14,8 +14,8 @@ The MITM (Man-in-the-Middle) feature captures all HTTP/HTTPS traffic passing thr
 - Works transparently with `ccproxy run`
 
 **Recent Changes:**
-- Dedicated `ccproxy-db` PostgreSQL container for MITM traces (port 5432)
-- LiteLLM database (`litellm-db`) now optional and commented out by default
+- Dedicated `ccproxy-db` PostgreSQL container for MITM traces (port 5433)
+- Dedicated `litellm-db` PostgreSQL container for LiteLLM's internal database (port 5434)
 - New `proxy_direction` field to distinguish client→LiteLLM vs LiteLLM→provider traffic
 - New `session_id` field to link related requests across proxy layers
 
@@ -35,20 +35,20 @@ prisma generate
 
 The MITM traces use a **dedicated database container** (`ccproxy-db`):
 
-- **MITM traces database**: `postgresql://ccproxy:test@localhost:5432/ccproxy` (dedicated container: `ccproxy-db`)
-- **LiteLLM database** (optional): `postgresql://ccproxy:test@localhost:5433/litellm` (commented out by default in `compose.yaml`)
+- **MITM traces database**: `postgresql://ccproxy:test@localhost:5433/ccproxy_mitm` (dedicated container: `ccproxy-db`)
+- **LiteLLM database**: `postgresql://ccproxy:test@localhost:5434/litellm` (dedicated container: `litellm-db`)
 
 Set the connection URL via environment variable:
 
 ```bash
 # MITM database (preferred)
-export CCPROXY_DATABASE_URL="postgresql://ccproxy:test@localhost:5432/ccproxy"
+export CCPROXY_DATABASE_URL="postgresql://ccproxy:test@localhost:5433/ccproxy_mitm"
 
 # Falls back to DATABASE_URL if CCPROXY_DATABASE_URL is not set
-export DATABASE_URL="postgresql://ccproxy:test@localhost:5432/ccproxy"
+export DATABASE_URL="postgresql://ccproxy:test@localhost:5433/ccproxy_mitm"
 ```
 
-> **Note:** The docker compose creates a dedicated `ccproxy-db` PostgreSQL container for MITM traces. The LiteLLM database (`litellm-db`) is commented out by default and can be enabled if needed.
+> **Note:** The docker compose creates a dedicated `ccproxy-db` PostgreSQL container for MITM traces on host port 5433, and a `litellm-db` container for LiteLLM's internal database on host port 5434.
 
 ### Apply Schema
 
@@ -59,7 +59,7 @@ Start the database container and apply the schema:
 docker compose up -d
 
 # Apply schema to create the CCProxy_HttpTraces table
-DATABASE_URL="postgresql://ccproxy:test@localhost:5432/ccproxy" prisma db push
+DATABASE_URL="postgresql://ccproxy:test@localhost:5433/ccproxy_mitm" prisma db push
 ```
 
 ## Configuration
@@ -72,16 +72,12 @@ ccproxy:
     enabled: true              # Enable traffic capture
     port: 8081                 # Mitmproxy listen port
     upstream_proxy: "http://localhost:4000"  # LiteLLM proxy URL
-    database_url: "postgresql://ccproxy:test@localhost:5432/ccproxy"  # MITM database URL
+    database_url: "postgresql://ccproxy:test@localhost:5433/ccproxy_mitm"  # MITM database URL
     max_body_size: 0              # Max body bytes to capture (0 = unlimited)
     capture_bodies: true       # Store request/response bodies
     excluded_hosts: []         # Hosts to skip (optional)
     cert_dir: null             # Custom SSL cert directory (optional)
     debug: false               # Enable debug logging
-    llm_hosts:                 # Additional LLM provider hosts
-      - "api.anthropic.com"
-      - "api.openai.com"
-      - "generativelanguage.googleapis.com"
 ```
 
 ### MitmConfig Fields
@@ -97,7 +93,6 @@ ccproxy:
 | `excluded_hosts` | list[str] | `[]` | Hosts to exclude from capture |
 | `cert_dir` | Path\|None | `None` | Custom SSL certificate directory |
 | `debug` | bool | `false` | Enable debug logging |
-| `llm_hosts` | list[str] | (see config) | LLM provider hosts for classification |
 
 ## CLI Commands
 
@@ -181,9 +176,6 @@ is_https              BOOLEAN           -- TLS connection
 error_message         TEXT              -- Error description (if any)
 error_type            TEXT              -- Error type/category
 
--- Classification
-traffic_type          TEXT              -- llm | mcp | web | other
-
 -- Audit
 created_at            TIMESTAMP         -- Record creation time
 ```
@@ -191,7 +183,6 @@ created_at            TIMESTAMP         -- Record creation time
 **Indexes:**
 - `start_time` - Query by time range
 - `host` - Filter by hostname
-- `traffic_type` - Filter by classification
 - `created_at` - Sort by creation
 - `status_code` - Filter by status
 - `proxy_direction` - Filter by proxy direction
@@ -228,59 +219,6 @@ The addon extracts the final UUID after `_session_` and stores it in the `sessio
 
 Extracted `session_id`: `789xyz`
 
-## Traffic Classification
-
-Traffic is automatically classified based on host and path patterns:
-
-### Classification Logic
-
-```
-┌─────────────────────────────────────────┐
-│          Request Received               │
-└─────────────┬───────────────────────────┘
-              ↓
-      ┌───────────────┐
-      │ Extract host  │
-      │ and path      │
-      └───────┬───────┘
-              ↓
-     ┌────────────────────┐
-     │ Check LLM patterns │──yes──▶ llm
-     └────────┬───────────┘
-              │no
-              ↓
-     ┌────────────────────┐
-     │ Check MCP patterns │──yes──▶ mcp
-     └────────┬───────────┘
-              │no
-              ↓
-     ┌────────────────────┐
-     │ Check if localhost │──yes──▶ other
-     └────────┬───────────┘
-              │no
-              ↓
-            web
-```
-
-### Classification Types
-
-**llm** - LLM API requests:
-- `api.anthropic.com` - Claude API
-- `api.openai.com` - OpenAI API
-- `generativelanguage.googleapis.com` - Gemini API
-- `api.cohere.ai` - Cohere API
-- `bedrock` - AWS Bedrock
-- `azure.com/openai` - Azure OpenAI
-
-**mcp** - Model Context Protocol:
-- Host or path contains "mcp"
-
-**web** - External web requests:
-- Any non-localhost HTTP/HTTPS traffic
-
-**other** - Internal/proxy traffic:
-- `localhost`, `127.0.0.1`, `::1`
-
 ## Usage Workflows
 
 ### Basic Workflow
@@ -290,7 +228,7 @@ Traffic is automatically classified based on host and path patterns:
 docker compose up -d
 
 # 2. Apply schema
-DATABASE_URL="postgresql://ccproxy:test@localhost:5432/ccproxy" prisma db push
+DATABASE_URL="postgresql://ccproxy:test@localhost:5433/ccproxy_mitm" prisma db push
 
 # 3. Start proxy with MITM enabled
 ccproxy start --mitm --detach
@@ -306,7 +244,7 @@ tail -f ~/.ccproxy/mitm-reverse.log
 tail -f ~/.ccproxy/mitm-forward.log
 
 # 7. Query database
-psql postgresql://ccproxy:test@localhost:5432/ccproxy -c "SELECT * FROM \"CCProxy_HttpTraces\" ORDER BY start_time DESC LIMIT 10;"
+psql postgresql://ccproxy:test@localhost:5433/ccproxy_mitm -c "SELECT * FROM \"CCProxy_HttpTraces\" ORDER BY start_time DESC LIMIT 10;"
 
 # 8. Stop all proxies
 ccproxy stop
@@ -360,7 +298,7 @@ ccproxy run curl https://api.anthropic.com/v1/messages
 psql $DATABASE_URL -c "
   SELECT method, url, status_code, duration_ms
   FROM \"CCProxy_HttpTraces\"
-  WHERE traffic_type = 'llm'
+  WHERE host = 'api.anthropic.com'
   ORDER BY start_time DESC
   LIMIT 5;
 "
@@ -409,11 +347,10 @@ SELECT
     WHEN 0 THEN 'reverse (client→LiteLLM)'
     WHEN 1 THEN 'forward (LiteLLM→provider)'
   END AS direction,
-  traffic_type,
   COUNT(*) AS requests,
   ROUND(AVG(duration_ms)::numeric, 2) AS avg_duration_ms
 FROM "CCProxy_HttpTraces"
-GROUP BY proxy_direction, traffic_type
+GROUP BY proxy_direction
 ORDER BY proxy_direction, requests DESC;
 
 -- Recent LLM API calls with session tracking
@@ -426,7 +363,7 @@ SELECT
   proxy_direction,
   start_time
 FROM "CCProxy_HttpTraces"
-WHERE traffic_type = 'llm'
+WHERE host = 'api.anthropic.com'
 ORDER BY start_time DESC
 LIMIT 20;
 ```
@@ -480,9 +417,9 @@ export CCPROXY_MITM_MAX_BODY_SIZE=0
 export CCPROXY_MITM_MODE=reverse  # or "forward" for LiteLLM→provider direction
 
 # MITM database (dedicated ccproxy-db container)
-export CCPROXY_DATABASE_URL=postgresql://ccproxy:test@localhost:5432/ccproxy
+export CCPROXY_DATABASE_URL=postgresql://ccproxy:test@localhost:5433/ccproxy_mitm
 # Falls back to DATABASE_URL if CCPROXY_DATABASE_URL not set
-export DATABASE_URL=postgresql://ccproxy:test@localhost:5432/ccproxy
+export DATABASE_URL=postgresql://ccproxy:test@localhost:5433/ccproxy_mitm
 
 # Debug mode
 export CCPROXY_DEBUG=true

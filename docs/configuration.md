@@ -361,7 +361,8 @@ ccproxy:
 ```
 
 **Field reference:**
-- **`command`** (required): Shell command to retrieve OAuth token
+- **`command`** (mutually exclusive with `file`): Shell command to retrieve OAuth token
+- **`file`** (mutually exclusive with `command`): File path to read the OAuth token from (contents stripped of whitespace)
 - **`user_agent`** (optional): Custom User-Agent header for requests using this token
 - **`destinations`** (optional): List of URL patterns that should use this token (e.g., `["api.z.ai", "anthropic.com"]`)
 
@@ -377,7 +378,9 @@ client = Anthropic(api_key="sk-ant-oat-ccproxy-anthropic")
 When ccproxy detects this sentinel key, it:
 1. Substitutes it with the actual OAuth token from `oat_sources[provider]`
 2. Applies the configured `user_agent` and `destinations` for that provider
-3. **Requires MITM mode** for native SDK usage (system message injection happens at HTTP layer)
+3. Injects required headers and system message via the pipeline hooks (`inject_claude_code_identity`, `add_beta_headers`)
+
+MITM mode is optional and provides a redundant safety net for header injection at the HTTP layer.
 
 ### Deprecation Notice
 
