@@ -38,9 +38,10 @@ class CCProxyScript:
         self.storage: TraceStorage | None = None
         self.addon: CCProxyMitmAddon | None = None
         self.proxy_direction: ProxyDirection = ProxyDirection.REVERSE
+        self.traffic_source: str | None = None
         self._initialized = False
 
-    def load(self, loader: Any) -> None:  # noqa: ANN401
+    def load(self, _loader: Any) -> None:  # noqa: ANN401
         """Called when addon is loaded by mitmproxy."""
         logger.info("Loading CCProxy mitmproxy addon...")
 
@@ -50,7 +51,10 @@ class CCProxyScript:
 
         # Determine proxy direction from environment
         mode_str = os.environ.get("CCPROXY_MITM_MODE", "reverse").lower()
-        self.proxy_direction = ProxyDirection.FORWARD if mode_str == "forward" else ProxyDirection.REVERSE
+        self.proxy_direction = ProxyDirection.FORWARD if mode_str in ("forward", "shadow") else ProxyDirection.REVERSE
+
+        # Traffic source label for trace identification
+        self.traffic_source = os.environ.get("CCPROXY_TRAFFIC_SOURCE") or None
 
         self.config = MitmConfig(
             port=mitm_port,
@@ -96,6 +100,7 @@ class CCProxyScript:
                     self.storage,
                     self.config,
                     proxy_direction=self.proxy_direction,
+                    traffic_source=self.traffic_source,
                 )
                 self._initialized = True
                 logger.info("CCProxy addon initialized with storage (direction: %s)", direction_str)
@@ -106,6 +111,7 @@ class CCProxyScript:
                     storage=None,
                     config=self.config,
                     proxy_direction=self.proxy_direction,
+                    traffic_source=self.traffic_source,
                 )
                 self._initialized = True
                 logger.info("CCProxy addon initialized without storage (direction: %s)", direction_str)
@@ -115,6 +121,7 @@ class CCProxyScript:
                 storage=None,
                 config=self.config,
                 proxy_direction=self.proxy_direction,
+                traffic_source=self.traffic_source,
             )
             self._initialized = True
             logger.info("CCProxy addon initialized, no storage (direction: %s)", direction_str)

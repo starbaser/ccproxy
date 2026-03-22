@@ -26,6 +26,8 @@ from rich.table import Table
 from ccproxy.process import is_process_running, write_pid
 from ccproxy.utils import get_templates_dir
 
+logger = logging.getLogger(__name__)
+
 
 def _read_proxy_settings(config_dir: Path) -> tuple[str, int]:
     """Read host and port from the config directory.
@@ -120,6 +122,17 @@ class Run:
 
     command: Annotated[list[str], tyro.conf.Positional]
     """Command and arguments to execute with proxy settings."""
+
+    shadow: Annotated[bool, tyro.conf.arg(aliases=["-s"])] = False
+    """Route all subprocess HTTP/HTTPS through MITM shadow proxy for capture.
+    Sets HTTP_PROXY/HTTPS_PROXY to route non-localhost traffic through a
+    dedicated forward proxy instance. API calls still flow through the
+    primary proxy via ANTHROPIC_BASE_URL. Note: Node.js does not natively
+    honor HTTP_PROXY; this captures traffic from curl, Python, and other
+    tools that respect standard proxy env vars."""
+
+    shadow_port: int = 8082
+    """Port for the shadow forward proxy (only used with --shadow)."""
 
 
 @attrs.define
@@ -341,7 +354,40 @@ def install_config(config_dir: Path, force: bool = False) -> None:
     print("  3. Start the proxy with: ccproxy start")
 
 
-def run_with_proxy(config_dir: Path, command: list[str]) -> None:
+def _ensure_combined_ca_bundle(config_dir: Path, base_ssl_cert: str | None = None) -> Path | None:
+    """Build a combined CA bundle with mitmproxy's CA + system CAs.
+
+    mitmproxy intercepts TLS and re-signs with its own CA. Subprocesses need
+    to trust both the mitmproxy CA and real upstream CAs.
+
+    Args:
+        config_dir: Configuration directory for storing the bundle
+        base_ssl_cert: Base SSL_CERT_FILE path (uses system default if None)
+
+    Returns:
+        Path to combined bundle, or None if mitmproxy CA not found
+    """
+    mitm_ca = Path.home() / ".mitmproxy" / "mitmproxy-ca-cert.pem"
+    if not mitm_ca.exists():
+        return None
+
+    combined_bundle = config_dir / "combined-ca-bundle.pem"
+    base_ca = base_ssl_cert or os.environ.get("SSL_CERT_FILE", "/etc/ssl/certs/ca-certificates.crt")
+    try:
+        mitm_ca_data = mitm_ca.read_text()
+        base_ca_data = Path(base_ca).read_text() if Path(base_ca).exists() else ""
+        combined_bundle.write_text(mitm_ca_data + "\n" + base_ca_data)
+        return combined_bundle
+    except OSError:
+        return None
+
+
+def run_with_proxy(
+    config_dir: Path,
+    command: list[str],
+    shadow: bool = False,
+    shadow_port: int = 8082,
+) -> None:
     """Run a command with ccproxy environment variables set.
 
     The main port (default 4000) is always the entry point:
@@ -351,6 +397,8 @@ def run_with_proxy(config_dir: Path, command: list[str]) -> None:
     Args:
         config_dir: Configuration directory
         command: Command and arguments to execute
+        shadow: Enable shadow proxy for blanket HTTP traffic capture
+        shadow_port: Port for the shadow forward proxy
     """
     # Load config to get proxy settings
     ccproxy_config_path = config_dir / "ccproxy.yaml"
@@ -369,6 +417,36 @@ def run_with_proxy(config_dir: Path, command: list[str]) -> None:
     env["OPENAI_BASE_URL"] = proxy_url
     env["ANTHROPIC_BASE_URL"] = proxy_url
 
+    # Shadow mode: route all non-localhost HTTP through a dedicated forward proxy
+    shadow_started = False
+    if shadow:
+        from ccproxy.mitm.process import ProxyMode, is_running, start_mitm, stop_mitm
+
+        running, _ = is_running(config_dir, ProxyMode.SHADOW)
+        if not running:
+            logger.info("Starting shadow proxy on port %d...", shadow_port)
+            start_mitm(config_dir, port=shadow_port, mode=ProxyMode.SHADOW, detach=True)
+            shadow_started = True
+
+        shadow_proxy_url = f"http://127.0.0.1:{shadow_port}"
+        env["HTTP_PROXY"] = shadow_proxy_url
+        env["HTTPS_PROXY"] = shadow_proxy_url
+        env["NO_PROXY"] = "localhost,127.0.0.1,::1"
+        env["no_proxy"] = "localhost,127.0.0.1,::1"
+
+        # Ensure SSL trust for mitmproxy-signed certs
+        combined_bundle = _ensure_combined_ca_bundle(config_dir, env.get("SSL_CERT_FILE"))
+        if combined_bundle:
+            env["SSL_CERT_FILE"] = str(combined_bundle)
+            env["NODE_EXTRA_CA_CERTS"] = str(combined_bundle)
+            env["REQUESTS_CA_BUNDLE"] = str(combined_bundle)
+        else:
+            print(
+                "Warning: mitmproxy CA not found (~/.mitmproxy/mitmproxy-ca-cert.pem). "
+                "HTTPS capture may fail. Run 'ccproxy start --mitm' once to generate it.",
+                file=sys.stderr,
+            )
+
     # Execute the command with the proxy environment
     try:
         # S603: Command comes from user input - this is the intended behavior
@@ -379,6 +457,11 @@ def run_with_proxy(config_dir: Path, command: list[str]) -> None:
         sys.exit(1)
     except KeyboardInterrupt:
         sys.exit(130)  # Standard exit code for Ctrl+C
+    finally:
+        if shadow_started:
+            from ccproxy.mitm.process import ProxyMode, stop_mitm
+
+            stop_mitm(config_dir, mode=ProxyMode.SHADOW)
 
 
 def generate_handler_file(config_dir: Path) -> None:
@@ -559,17 +642,9 @@ def start_litellm(
         env["HTTPS_PROXY"] = forward_proxy_url
         env["HTTP_PROXY"] = forward_proxy_url
 
-        mitm_ca = Path.home() / ".mitmproxy" / "mitmproxy-ca-cert.pem"
-        if mitm_ca.exists():
-            combined_bundle = config_dir / "combined-ca-bundle.pem"
-            base_ca = env.get("SSL_CERT_FILE", "/etc/ssl/certs/ca-certificates.crt")
-            try:
-                mitm_ca_data = mitm_ca.read_text()
-                base_ca_data = Path(base_ca).read_text() if Path(base_ca).exists() else ""
-                combined_bundle.write_text(mitm_ca_data + "\n" + base_ca_data)
-                env["SSL_CERT_FILE"] = str(combined_bundle)
-            except OSError:
-                pass
+        combined_bundle = _ensure_combined_ca_bundle(config_dir, env.get("SSL_CERT_FILE"))
+        if combined_bundle:
+            env["SSL_CERT_FILE"] = str(combined_bundle)
 
     # Build litellm command using the bundled version from the same venv
     venv_bin = Path(sys.executable).parent
@@ -710,7 +785,8 @@ def stop_litellm(config_dir: Path) -> bool:
 
     reverse_running, _ = mitm_is_running(config_dir, ProxyMode.REVERSE)
     forward_running, _ = mitm_is_running(config_dir, ProxyMode.FORWARD)
-    if reverse_running or forward_running:
+    shadow_running, _ = mitm_is_running(config_dir, ProxyMode.SHADOW)
+    if reverse_running or forward_running or shadow_running:
         print("Stopping MITM proxies...")
         stop_mitm(config_dir)  # Stops all modes
 
@@ -1019,9 +1095,10 @@ def show_status(
     host, main_port = _read_proxy_settings(config_dir)
     proxy_url = f"http://{host}:{main_port}"
 
-    # Check MITM status for both modes
+    # Check MITM status for all modes
     reverse_running, reverse_pid = mitm_is_running(config_dir, ProxyMode.REVERSE)
     forward_running, forward_pid = mitm_is_running(config_dir, ProxyMode.FORWARD)
+    shadow_running, shadow_pid = mitm_is_running(config_dir, ProxyMode.SHADOW)
     mitm_enabled = mitm_config.get("enabled", False)
     litellm_actual_port = main_port  # Default: LiteLLM on main port
 
@@ -1051,6 +1128,11 @@ def show_status(
                 "running": forward_running,
                 "pid": forward_pid,
                 "port": forward_port,
+            },
+            "shadow": {
+                "running": shadow_running,
+                "pid": shadow_pid,
+                "port": 8082,
             },
             "litellm_port": litellm_actual_port,
         },
@@ -1115,6 +1197,15 @@ def show_status(
             mitm_parts.append(forward_status)
         else:
             mitm_parts.append("[dim]forward: stopped[/dim]")
+
+        # Shadow proxy status
+        shadow_info = mitm_info["shadow"]
+        if shadow_info["running"]:
+            shadow_port = shadow_info["port"]
+            shadow_status = f"[green]shadow[/green] on [cyan]{shadow_port}[/cyan] → all HTTP capture"
+            if shadow_info["pid"]:
+                shadow_status += f" [dim](pid: {shadow_info['pid']})[/dim]"
+            mitm_parts.append(shadow_status)
 
         mitm_display = "\n".join(mitm_parts)
         table.add_row("mitm", mitm_display)
@@ -1309,12 +1400,12 @@ def format_table(rows: list[dict], columns: list[str], console: Console) -> None
     console.print(table)
 
 
-def format_json_output(rows: list[dict], console: Console) -> None:
+def format_json_output(rows: list[dict], _console: Console) -> None:
     """Format query results as JSON output.
 
     Args:
         rows: List of row dictionaries
-        console: Rich console for output
+        _console: Unused; retained for API consistency with format_table_output
     """
     import json as json_module
 
@@ -1895,7 +1986,7 @@ def main(
             print("Error: No command specified to run", file=sys.stderr)
             print("Usage: ccproxy run <command> [args...]", file=sys.stderr)
             sys.exit(1)
-        run_with_proxy(config_dir, cmd.command)
+        run_with_proxy(config_dir, cmd.command, shadow=cmd.shadow, shadow_port=cmd.shadow_port)
 
     elif isinstance(cmd, Stop):
         success = stop_litellm(config_dir)
@@ -1979,7 +2070,7 @@ def handle_dag_viz(cmd: DagViz) -> None:
     from ccproxy.pipeline.hook import get_registry
 
     # Import all hooks to register them
-    from ccproxy.hooks import (  # noqa: F401
+    from ccproxy.hooks import (  # noqa: F401  # pyright: ignore[reportUnusedImport]
         add_beta_headers,
         capture_headers,
         extract_session_id,

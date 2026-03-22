@@ -86,6 +86,9 @@ class ProxyMode(Enum):
     FORWARD = "forward"
     """Forward proxy mode - sits behind LiteLLM for provider API calls"""
 
+    SHADOW = "shadow"
+    """Shadow forward proxy - captures all HTTP from ccproxy run --shadow subprocess"""
+
 
 def get_pid_file(config_dir: Path, mode: ProxyMode = ProxyMode.REVERSE) -> Path:
     """Get the path to the mitmproxy PID file for a specific mode.
@@ -99,6 +102,8 @@ def get_pid_file(config_dir: Path, mode: ProxyMode = ProxyMode.REVERSE) -> Path:
     """
     if mode == ProxyMode.FORWARD:
         return config_dir / ".mitm-forward.lock"
+    if mode == ProxyMode.SHADOW:
+        return config_dir / ".mitm-shadow.lock"
     return config_dir / ".mitm.lock"
 
 
@@ -114,6 +119,8 @@ def get_log_file(config_dir: Path, mode: ProxyMode = ProxyMode.REVERSE) -> Path:
     """
     if mode == ProxyMode.FORWARD:
         return config_dir / "mitm-forward.log"
+    if mode == ProxyMode.SHADOW:
+        return config_dir / "mitm-shadow.log"
     return config_dir / "mitm.log"
 
 
@@ -193,7 +200,7 @@ def start_mitm(
             str(script_path),
         ]
     else:
-        # Forward mode is the default mitmproxy mode
+        # Forward/Shadow mode is the default mitmproxy mode (explicit forward proxy)
         cmd = [
             str(mitmdump_path),
             "--listen-port",
@@ -211,6 +218,8 @@ def start_mitm(
     env["CCPROXY_CONFIG_DIR"] = str(config_dir)
     if mode == ProxyMode.REVERSE:
         env["CCPROXY_LITELLM_PORT"] = str(litellm_port)
+    if mode == ProxyMode.SHADOW:
+        env["CCPROXY_TRAFFIC_SOURCE"] = "shadow"
 
     if detach:
         # Run in background mode

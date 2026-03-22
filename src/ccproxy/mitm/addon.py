@@ -41,6 +41,7 @@ class CCProxyMitmAddon:
         storage: TraceStorage | None,
         config: MitmConfig,
         proxy_direction: ProxyDirection = ProxyDirection.REVERSE,
+        traffic_source: str | None = None,
     ) -> None:
         """Initialize the addon.
 
@@ -48,10 +49,12 @@ class CCProxyMitmAddon:
             storage: Storage backend for traces (None if no persistence)
             config: Mitmproxy configuration
             proxy_direction: Traffic direction (REVERSE for client->LiteLLM, FORWARD for LiteLLM->provider)
+            traffic_source: Source label for traces (e.g. "shadow", "litellm")
         """
         self.storage = storage
         self.config = config
         self.proxy_direction = proxy_direction
+        self.traffic_source = traffic_source
 
     def _truncate_body(self, body: bytes | None) -> bytes | None:
         """Truncate body to configured max size.
@@ -293,6 +296,7 @@ class CCProxyMitmAddon:
                 "trace_id": flow.id,
                 "proxy_direction": self.proxy_direction.value,
                 "session_id": session_id,
+                "traffic_source": self.traffic_source,
                 "method": request.method,
                 "url": request.pretty_url,
                 "host": host,

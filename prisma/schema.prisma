@@ -21,6 +21,9 @@ model CCProxy_HttpTraces {
   // Claude Code session ID (extracted from metadata.user_id)
   session_id String?
 
+  // Traffic source identifier: "shadow" (ccproxy run --shadow), "litellm" (provider calls), null (legacy/untagged)
+  traffic_source String?
+
   // Request data
   method             String
   url                String
@@ -63,4 +66,5 @@ model CCProxy_HttpTraces {
   @@index([proxy_direction])
   @@index([session_id])
   @@index([session_id, start_time])
+  @@index([traffic_source])
 }
