@@ -50,25 +50,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 logger = logging.getLogger(__name__)
 
 
-class StatuslineConfig(BaseModel):
-    """Statusline widget configuration (Starship-style)."""
-
-    format: str = "⸢$status⸥"
-    """Format string with $status placeholder"""
-
-    symbol: str = ""
-    """Symbol/icon prefix (available as $symbol in format)"""
-
-    on: str = "ccproxy: ON"
-    """Status text when proxy is active"""
-
-    off: str = "ccproxy: OFF"
-    """Status text when proxy is inactive"""
-
-    disabled: bool = False
-    """Disable statusline output entirely"""
-
-
 class OAuthSource(BaseModel):
     """OAuth token source configuration.
 
@@ -91,7 +72,10 @@ class OAuthSource(BaseModel):
     """URL patterns that should use this token (e.g., ['api.z.ai', 'anthropic.com'])"""
 
     auth_header: str | None = None
-    """Target header name for the token (e.g., 'x-api-key'). When set, sends raw token as this header instead of Authorization: Bearer."""
+    """Target header name for the token (e.g., 'x-api-key').
+
+    When set, sends raw token as this header instead of Authorization: Bearer.
+    """
 
     @model_validator(mode="after")
     def validate_source(self) -> "OAuthSource":
@@ -131,14 +115,6 @@ class MitmConfig(BaseModel):
 
     database_url: str | None = None
     """PostgreSQL connection URL for MITM traces. Falls back to CCPROXY_DATABASE_URL or DATABASE_URL env vars."""
-
-
-# Import proxy_server to access runtime configuration
-try:
-    from litellm.proxy import proxy_server
-except ImportError:
-    # Handle case where proxy_server is not available (e.g., during testing)
-    proxy_server = None
 
 
 class RuleConfig:
@@ -206,9 +182,6 @@ class CCProxyConfig(BaseSettings):
 
     # Mitmproxy configuration
     mitm: MitmConfig = Field(default_factory=MitmConfig)
-
-    # Statusline configuration
-    statusline: StatuslineConfig = Field(default_factory=StatuslineConfig)
 
     # OAuth token sources - dict mapping provider name to shell command or OAuthSource
     # Example: {"anthropic": "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"}
@@ -547,14 +520,6 @@ class CCProxyConfig(BaseSettings):
                     if "debug" not in mitm_data and instance.debug:
                         mitm_data = {**mitm_data, "debug": instance.debug}
                     instance.mitm = MitmConfig(**mitm_data)
-
-                # Load statusline configuration
-                if "statusline" in ccproxy_data:
-                    statusline_data = ccproxy_data["statusline"]
-                    if isinstance(statusline_data, dict):
-                        instance.statusline = StatuslineConfig(**statusline_data)
-                    else:
-                        logger.warning(f"Invalid statusline config format: {type(statusline_data)}")
 
                 # Backwards compatibility: migrate deprecated 'credentials' field
                 if "credentials" in ccproxy_data:

@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-from datetime import datetime
 from typing import Any, TypedDict
 
 import litellm
@@ -42,7 +41,6 @@ class RequestData(TypedDict, total=False):
 class CCProxyHandler(CustomLogger):
     """Main module of ccproxy, an instance of CCProxyHandler is instantiated in the LiteLLM callback python script"""
 
-    _last_status: dict[str, Any] | None = None  # Class-level state
     _oauth_refresh_task: asyncio.Task | None = None  # Background refresh task
 
     def __init__(self) -> None:
@@ -66,7 +64,7 @@ class CCProxyHandler(CustomLogger):
         # Initialize pipeline executor with DAG-based hook ordering
         self._init_pipeline()
 
-        # Register custom routes with LiteLLM proxy (for statusline integration)
+        # Register custom routes with LiteLLM proxy
         self._register_routes()
 
         # Patch health checks to inject OAuth credentials for real provider validation
@@ -244,22 +242,16 @@ class CCProxyHandler(CustomLogger):
             )
 
     def _register_routes(self) -> None:
-        """Register custom routes with LiteLLM proxy for statusline integration."""
+        """Register custom routes with LiteLLM proxy."""
         if CCProxyHandler._routes_registered:
             return
 
         try:
             from litellm.proxy.proxy_server import app
 
-            from ccproxy.routes import router as ccproxy_router
-
-            # Check if router already registered (by checking for our endpoint)
-            existing_routes = [r.path for r in app.routes]
-            if "/ccproxy/status" not in existing_routes:
-                app.include_router(ccproxy_router)
-                logger.debug("Registered ccproxy custom routes")
-
             from ccproxy.mcp.routes import router as mcp_router
+
+            existing_routes = [r.path for r in app.routes]
 
             if "/mcp/notify" not in existing_routes:
                 # Insert before LiteLLM's app.mount("/mcp") catch-all so our
@@ -289,13 +281,8 @@ class CCProxyHandler(CustomLogger):
 
                 self._langfuse_client = Langfuse()
             except Exception:
-                pass
+                logger.debug("Langfuse client initialization failed, observability disabled")
         return self._langfuse_client
-
-    @classmethod
-    def get_status(cls) -> dict[str, Any] | None:
-        """Get the last routing status for statusline widget."""
-        return cls._last_status
 
     def _is_auth_error(self, response_obj: Any) -> bool:
         """Check if response indicates authentication failure (401).
@@ -371,7 +358,7 @@ class CCProxyHandler(CustomLogger):
             if provider_name:
                 return provider_name
         except Exception:
-            pass
+            logger.debug("LiteLLM provider detection failed for model %s", model)
 
         # Strategy 4: Fallback to model name-based detection
         model_lower = model.lower()
@@ -502,15 +489,6 @@ class CCProxyHandler(CustomLogger):
             model_config=metadata.get("ccproxy_model_config"),
             is_passthrough=metadata.get("ccproxy_is_passthrough", False),
         )
-
-        # Update status for statusline widget
-        CCProxyHandler._last_status = {
-            "rule": metadata.get("ccproxy_model_name"),
-            "model": metadata.get("ccproxy_litellm_model") or data.get("model"),
-            "original_model": metadata.get("ccproxy_alias_model"),
-            "is_passthrough": metadata.get("ccproxy_is_passthrough", False),
-            "timestamp": datetime.now().isoformat(),
-        }
 
         return data
 
@@ -800,7 +778,7 @@ class CCProxyHandler(CustomLogger):
     async def async_log_stream_event(
         self,
         kwargs: dict[str, Any],
-        response_obj: Any,
+        _response_obj: Any,
         start_time: float,
         end_time: float,
     ) -> None:
@@ -808,7 +786,7 @@ class CCProxyHandler(CustomLogger):
 
         Args:
             kwargs: Request arguments
-            response_obj: LiteLLM streaming response object
+            _response_obj: LiteLLM streaming response object (unused)
             start_time: Request start timestamp
             end_time: Request completion timestamp
         """
@@ -951,7 +929,7 @@ class CCProxyHandler(CustomLogger):
             if hasattr(response, "model_dump"):
                 response_dict = response.model_dump()
             elif hasattr(response, "dict"):
-                response_dict = response.dict()
+                response_dict = response.dict()  # type: ignore[union-attr]
             else:
                 response_dict = dict(response) if hasattr(response, "__iter__") else {"response": str(response)}
 

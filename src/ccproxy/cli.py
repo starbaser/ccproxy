@@ -204,32 +204,6 @@ class Status:
 
 
 @attrs.define
-class StatuslineOutput:
-    """Output routing status for the statusline widget."""
-
-
-@attrs.define
-class StatuslineInstall:
-    """Install the statusline widget and configure Claude Code integration."""
-
-    force: bool = False
-    """Overwrite existing configuration."""
-
-    use_bun: bool = False
-    """Use bunx instead of npx."""
-
-
-@attrs.define
-class StatuslineUninstall:
-    """Remove statusline configuration."""
-
-
-@attrs.define
-class StatuslineStatus:
-    """Show statusline installation status."""
-
-
-@attrs.define
 class DbSql:
     """Execute SQL queries against the MITM traces database."""
 
@@ -289,10 +263,6 @@ Command = (
     | Annotated[Restart, tyro.conf.subcommand(name="restart")]
     | Annotated[Logs, tyro.conf.subcommand(name="logs")]
     | Annotated[Status, tyro.conf.subcommand(name="status")]
-    | Annotated[StatuslineOutput, tyro.conf.subcommand(name="statusline")]
-    | Annotated[StatuslineInstall, tyro.conf.subcommand(name="statusline-install")]
-    | Annotated[StatuslineUninstall, tyro.conf.subcommand(name="statusline-uninstall")]
-    | Annotated[StatuslineStatus, tyro.conf.subcommand(name="statusline-status")]
     | Annotated[DbSql, tyro.conf.subcommand(name="db-sql")]
     | Annotated[DbPrompt, tyro.conf.subcommand(name="db-prompt")]
     | Annotated[DagViz, tyro.conf.subcommand(name="dag-viz")]
@@ -488,7 +458,7 @@ def generate_handler_file(config_dir: Path) -> None:
                 if config and "ccproxy" in config and "handler" in config["ccproxy"]:
                     handler_import = config["ccproxy"]["handler"]
         except Exception:
-            pass  # Use default if config can't be loaded
+            logger.debug("Could not load ccproxy config for handler import, using default")
 
     # Parse handler import path (format: "module.path:ClassName")
     if ":" in handler_import:
@@ -1005,25 +975,6 @@ def view_logs(config_dir: Path, source: LogSource = "litellm", follow: bool = Fa
                 sys.exit(0)
 
 
-def handle_statusline_output(config_dir: Path) -> None:
-    """Output routing status for ccstatusline widget.
-
-    Args:
-        config_dir: Configuration directory to get proxy settings
-    """
-    from ccproxy.statusline import format_status_output, query_status
-
-    _, port = _read_proxy_settings(config_dir)
-
-    # Query proxy and format output
-    status = query_status(port=port, timeout=0.1)
-    proxy_reachable = status is not None
-    output = format_status_output(status, proxy_reachable=proxy_reachable)
-
-    # Always print output (ON or OFF)
-    builtin_print(output)
-
-
 def show_status(
     config_dir: Path,
     json_output: bool = False,
@@ -1253,10 +1204,7 @@ def show_status(
                     hook_path = hook.get("hook", "")
                     hook_name = hook_path.split(".")[-1] if hook_path else ""
                     params = hook.get("params", {})
-                    if params:
-                        params_display = ", ".join(f"{k}={v}" for k, v in params.items())
-                    else:
-                        params_display = "[dim]none[/dim]"
+                    params_display = ", ".join(f"{k}={v}" for k, v in params.items()) if params else "[dim]none[/dim]"
 
                 hooks_table.add_row(
                     str(i),
@@ -1971,10 +1919,7 @@ def main(
     """
     if config_dir is None:
         env_config_dir = os.environ.get("CCPROXY_CONFIG_DIR")
-        if env_config_dir:
-            config_dir = Path(env_config_dir)
-        else:
-            config_dir = Path.home() / ".ccproxy"
+        config_dir = Path(env_config_dir) if env_config_dir else Path.home() / ".ccproxy"
 
     # Setup logging with 100-character text width
     setup_logging()
@@ -2040,34 +1985,6 @@ def main(
             check_forward=cmd.forward,
         )
 
-    elif isinstance(cmd, StatuslineOutput):
-        handle_statusline_output(config_dir)
-
-    elif isinstance(cmd, (StatuslineInstall, StatuslineUninstall, StatuslineStatus)):
-        from ccproxy.statusline import (
-            install_statusline,
-            show_statusline_status,
-            uninstall_statusline,
-        )
-
-        # Extract Claude config dir from global config_dir if different
-        claude_config_dir = Path.home() / ".claude"
-
-        if isinstance(cmd, StatuslineInstall):
-            success = install_statusline(
-                force=cmd.force,
-                use_bun=cmd.use_bun,
-                claude_config_dir=claude_config_dir,
-            )
-            sys.exit(0 if success else 1)
-
-        elif isinstance(cmd, StatuslineUninstall):
-            success = uninstall_statusline(claude_config_dir=claude_config_dir)
-            sys.exit(0 if success else 1)
-
-        elif isinstance(cmd, StatuslineStatus):
-            show_statusline_status(claude_config_dir=claude_config_dir)
-
     elif isinstance(cmd, DbSql):
         handle_db_sql(config_dir, cmd)
 
@@ -2080,9 +1997,6 @@ def main(
 
 def handle_dag_viz(cmd: DagViz) -> None:
     """Handle dag-viz subcommand to visualize the pipeline DAG."""
-    from ccproxy.pipeline import PipelineExecutor
-    from ccproxy.pipeline.hook import get_registry
-
     # Import all hooks to register them
     from ccproxy.hooks import (  # noqa: F401  # pyright: ignore[reportUnusedImport]
         add_beta_headers,
@@ -2093,6 +2007,8 @@ def handle_dag_viz(cmd: DagViz) -> None:
         model_router,
         rule_evaluator,
     )
+    from ccproxy.pipeline import PipelineExecutor
+    from ccproxy.pipeline.hook import get_registry
 
     # Get registered hooks
     registry = get_registry()
@@ -2190,13 +2106,11 @@ def handle_dag_viz(cmd: DagViz) -> None:
 
 def entry_point() -> None:
     """Entry point for the ccproxy command."""
-    # Handle 'run' and 'statusline' subcommands specially
-    # - 'run': avoid tyro parsing command arguments (ccproxy run claude -p foo)
-    # - 'statusline' (no subcommand): route to StatuslineOutput
-    # - 'statusline <subcommand>': rewrite to statusline-<subcommand> for tyro
+    # Handle 'run' subcommand specially to avoid tyro parsing command arguments
+    # (e.g., ccproxy run claude -p foo)
+    # Handle 'db' with subcommands by rewriting to hyphenated form for tyro
     args = sys.argv[1:]
 
-    # Check for 'statusline' and 'db' with subcommands
     subcommands = {
         "start",
         "stop",
@@ -2205,13 +2119,10 @@ def entry_point() -> None:
         "logs",
         "status",
         "run",
-        "statusline",
         "db",
     }
-    statusline_subcommands = {"install", "uninstall", "status"}
     db_subcommands = {"sql", "prompt"}
 
-    statusline_idx = None
     run_idx = None
 
     for i, arg in enumerate(args):
@@ -2223,47 +2134,12 @@ def entry_point() -> None:
                 new_args = args[:i] + [f"db-{subcommand}"] + args[i + 2 :]
                 sys.argv = [sys.argv[0]] + new_args
             break
-        elif arg == "statusline":
-            # Check if next arg is a statusline subcommand
-            if i + 1 < len(args) and args[i + 1] in statusline_subcommands:
-                # Rewrite "statusline install" -> "statusline-install"
-                subcommand = args[i + 1]
-                new_args = args[:i] + [f"statusline-{subcommand}"] + args[i + 2 :]
-                sys.argv = [sys.argv[0]] + new_args
-                break
-            # Check for flags (--help, --force, etc.)
-            elif i + 1 < len(args) and args[i + 1].startswith("-"):
-                # Has flags but no subcommand - error case, let tyro handle it
-                pass
-            else:
-                # Standalone 'statusline' with no subcommand
-                statusline_idx = i
-            break
         elif arg == "run":
             run_idx = i
             break
         # Stop if we hit a different subcommand
         if arg in subcommands:
             break
-
-    # Handle standalone 'ccproxy statusline' (no subcommand)
-    if statusline_idx is not None:
-        # Route to StatuslineOutput
-        args_before = args[:statusline_idx]
-
-        # Parse config_dir from args if present
-        config_dir = Path.home() / ".ccproxy"
-        try:
-            if "--config-dir" in args_before:
-                idx = args_before.index("--config-dir")
-                if idx + 1 < len(args_before):
-                    config_dir = Path(args_before[idx + 1])
-        except (ValueError, IndexError):
-            pass
-
-        # Call statusline output directly
-        handle_statusline_output(config_dir)
-        sys.exit(0)
 
     # Handle 'run' subcommand
     if run_idx is not None:
