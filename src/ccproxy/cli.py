@@ -120,18 +120,7 @@ class Install:
 class Run:
     """Run a command with ccproxy environment.
 
-    Usage: ccproxy run [--shadow] [--shadow-port PORT] -- <command> [args...]"""
-
-    shadow: Annotated[bool, tyro.conf.arg(aliases=["-s"])] = False
-    """Route all subprocess HTTP/HTTPS through MITM shadow proxy for capture.
-    Sets HTTP_PROXY/HTTPS_PROXY to route non-localhost traffic through a
-    dedicated forward proxy instance. API calls still flow through the
-    primary proxy via ANTHROPIC_BASE_URL. Note: Node.js does not natively
-    honor HTTP_PROXY; this captures traffic from curl, Python, and other
-    tools that respect standard proxy env vars."""
-
-    shadow_port: int = 8082
-    """Port for the shadow forward proxy (only used with --shadow)."""
+    Usage: ccproxy run [--shadow [HOST:PORT]] -- <command> [args...]"""
 
     command: Annotated[list[str], tyro.conf.Positional] = attrs.Factory(list)
     """Command and arguments to execute with proxy settings."""
@@ -221,6 +210,23 @@ class DbSql:
 
 
 @attrs.define
+class DbGql:
+    """Execute GraphQL queries against the MITM traces GraphQL API."""
+
+    query: Annotated[str | None, tyro.conf.Positional] = None
+    """GraphQL query to execute (inline)."""
+
+    file: Annotated[Path | None, tyro.conf.arg(aliases=["-f"])] = None
+    """Read query from file."""
+
+    json: Annotated[bool, tyro.conf.arg(aliases=["-j"])] = False
+    """Output results as JSON."""
+
+    csv: Annotated[bool, tyro.conf.arg(aliases=["-c"])] = False
+    """Output results as CSV."""
+
+
+@attrs.define
 class DbPrompt:
     """Convert a MITM trace to formatted markdown showing the conversation."""
 
@@ -264,6 +270,7 @@ Command = (
     | Annotated[Logs, tyro.conf.subcommand(name="logs")]
     | Annotated[Status, tyro.conf.subcommand(name="status")]
     | Annotated[DbSql, tyro.conf.subcommand(name="db-sql")]
+    | Annotated[DbGql, tyro.conf.subcommand(name="db-gql")]
     | Annotated[DbPrompt, tyro.conf.subcommand(name="db-prompt")]
     | Annotated[DagViz, tyro.conf.subcommand(name="dag-viz")]
 )
@@ -357,11 +364,28 @@ def _ensure_combined_ca_bundle(config_dir: Path, base_ssl_cert: str | None = Non
         return None
 
 
+def _parse_shadow_bind(shadow: str | None) -> tuple[str, int]:
+    """Parse shadow bind address from --shadow value.
+
+    Args:
+        shadow: Optional "[host:]port" string, or empty/None for defaults
+
+    Returns:
+        Tuple of (host, port)
+    """
+    default_host, default_port = "127.0.0.1", 8082
+    if not shadow:
+        return default_host, default_port
+    if ":" in shadow:
+        host, port_str = shadow.rsplit(":", 1)
+        return host, int(port_str)
+    return default_host, int(shadow)
+
+
 def run_with_proxy(
     config_dir: Path,
     command: list[str],
-    shadow: bool = False,
-    shadow_port: int = 8082,
+    shadow: str | None = None,
 ) -> None:
     """Run a command with ccproxy environment variables set.
 
@@ -372,8 +396,7 @@ def run_with_proxy(
     Args:
         config_dir: Configuration directory
         command: Command and arguments to execute
-        shadow: Enable shadow proxy for blanket HTTP traffic capture
-        shadow_port: Port for the shadow forward proxy
+        shadow: Shadow proxy bind address ([host:]port) or None to disable
     """
     # Load config to get proxy settings
     ccproxy_config_path = config_dir / "ccproxy.yaml"
@@ -394,16 +417,18 @@ def run_with_proxy(
 
     # Shadow mode: route all non-localhost HTTP through a dedicated forward proxy
     shadow_started = False
-    if shadow:
-        from ccproxy.mitm.process import ProxyMode, is_running, start_mitm, stop_mitm
+    if shadow is not None:
+        from ccproxy.mitm.process import ProxyMode, is_running, start_mitm
+
+        shadow_host, shadow_port = _parse_shadow_bind(shadow)
 
         running, _ = is_running(config_dir, ProxyMode.SHADOW)
         if not running:
-            logger.info("Starting shadow proxy on port %d...", shadow_port)
+            logger.info("Starting shadow proxy on %s:%d...", shadow_host, shadow_port)
             start_mitm(config_dir, port=shadow_port, mode=ProxyMode.SHADOW, detach=True)
             shadow_started = True
 
-        shadow_proxy_url = f"http://127.0.0.1:{shadow_port}"
+        shadow_proxy_url = f"http://{shadow_host}:{shadow_port}"
         env["HTTP_PROXY"] = shadow_proxy_url
         env["HTTPS_PROXY"] = shadow_proxy_url
         env["NO_PROXY"] = "localhost,127.0.0.1,::1"
@@ -1286,6 +1311,79 @@ def get_database_url(config_dir: Path) -> str | None:
     return None
 
 
+def get_graphql_url(config_dir: Path) -> str:
+    """Resolve GraphQL endpoint URL from environment or config.
+
+    Args:
+        config_dir: Configuration directory containing ccproxy.yaml
+
+    Returns:
+        GraphQL URL string (always returns a value, defaults to localhost:5435)
+    """
+    if url := os.environ.get("CCPROXY_GRAPHQL_URL"):
+        return url
+
+    ccproxy_yaml = config_dir / "ccproxy.yaml"
+    if ccproxy_yaml.exists():
+        with ccproxy_yaml.open() as f:
+            data = yaml.safe_load(f)
+        if data and "ccproxy" in data:
+            mitm = data["ccproxy"].get("mitm", {})
+            if url := mitm.get("graphql_url"):
+                return _expand_env_vars(url) if "${" in url else url
+    return "http://localhost:5435/graphql"
+
+
+async def execute_graphql(graphql_url: str, query: str) -> tuple[list[dict], list[str]]:
+    """Execute a GraphQL query against PostGraphile and return results.
+
+    Args:
+        graphql_url: GraphQL endpoint URL
+        query: GraphQL query string
+
+    Returns:
+        Tuple of (rows as list of dicts, column names)
+    """
+    import httpx
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            graphql_url,
+            json={"query": query},
+            headers={"Content-Type": "application/json"},
+            timeout=30.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+    if errors := data.get("errors"):
+        messages = "; ".join(e.get("message", str(e)) for e in errors)
+        raise RuntimeError(f"GraphQL errors: {messages}")
+
+    result_data = data.get("data", {})
+    if not result_data:
+        return [], []
+
+    # Flatten single-key response (PostGraphile patterns)
+    if len(result_data) == 1:
+        value = next(iter(result_data.values()))
+        if isinstance(value, dict) and "nodes" in value:
+            rows = value["nodes"]
+        elif isinstance(value, list):
+            rows = value
+        elif isinstance(value, dict):
+            rows = [value]
+        else:
+            rows = [{"result": value}]
+    else:
+        rows = [result_data]
+
+    if not rows:
+        return [], []
+    columns = list(rows[0].keys())
+    return rows, columns
+
+
 async def execute_sql(database_url: str, query: str) -> tuple[list[dict], list[str]]:
     """Execute SQL query and return results.
 
@@ -1310,14 +1408,14 @@ async def execute_sql(database_url: str, query: str) -> tuple[list[dict], list[s
         await conn.close()
 
 
-def resolve_sql_input(cmd: DbSql) -> str | None:
-    """Resolve SQL query from inline argument, file, or stdin.
+def resolve_query_input(cmd: DbSql | DbGql) -> str | None:
+    """Resolve query from inline argument, file, or stdin.
 
     Args:
-        cmd: DbSql command with query sources
+        cmd: Command with query, file, and stdin sources
 
     Returns:
-        SQL query string or None if no input provided
+        Query string or None if no input provided
     """
     if cmd.query:
         return cmd.query
@@ -1408,7 +1506,7 @@ def handle_db_sql(config_dir: Path, cmd: DbSql) -> None:
         console.print("[red]Error:[/red] --json and --csv are mutually exclusive")
         sys.exit(1)
 
-    sql = resolve_sql_input(cmd)
+    sql = resolve_query_input(cmd)
     if not sql:
         console.print("[red]Error:[/red] No SQL query provided")
         console.print('Usage: ccproxy db sql "SELECT ..." or --file query.sql or pipe via stdin')
@@ -1423,6 +1521,54 @@ def handle_db_sql(config_dir: Path, cmd: DbSql) -> None:
 
     try:
         rows, columns = asyncio.run(execute_sql(database_url, sql))
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+
+    if not rows:
+        if not cmd.json and not cmd.csv:
+            console.print("[dim]No results[/dim]")
+        elif cmd.json:
+            builtin_print("[]")
+        return
+
+    out = Console()
+    if cmd.json:
+        format_json_output(rows, out)
+    elif cmd.csv:
+        format_csv_output(rows, columns)
+    else:
+        format_table(rows, columns, out)
+
+
+def handle_db_gql(config_dir: Path, cmd: DbGql) -> None:
+    """Handle the db gql command.
+
+    Args:
+        config_dir: Configuration directory
+        cmd: DbGql command instance
+    """
+    import asyncio
+
+    console = Console(stderr=True)
+
+    if cmd.json and cmd.csv:
+        console.print("[red]Error:[/red] --json and --csv are mutually exclusive")
+        sys.exit(1)
+
+    query = resolve_query_input(cmd)
+    if not query:
+        console.print("[red]Error:[/red] No GraphQL query provided")
+        console.print(
+            'Usage: ccproxy db gql "{ allCcproxyHttpTraces { nodes { traceId } } }"'
+            " or --file query.graphql or pipe via stdin"
+        )
+        sys.exit(1)
+
+    graphql_url = get_graphql_url(config_dir)
+
+    try:
+        rows, columns = asyncio.run(execute_graphql(graphql_url, query))
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         sys.exit(1)
@@ -1932,20 +2078,47 @@ def main(
         install_config(config_dir, force=cmd.force)
 
     elif isinstance(cmd, Run):
-        # Tyro's greedy Positional consumes --help/-h before tyro can intercept
-        if not cmd.command or cmd.command in (["-h"], ["--help"]):
-            print("usage: ccproxy run [--shadow] [--shadow-port PORT] -- <command> [args...]")
+        # Tyro's greedy Positional consumes all args including flags.
+        # Extract --shadow/-s and --help/-h manually from the command list.
+        args = list(cmd.command)
+        if not args or args == ["-h"] or args == ["--help"]:
+            print("usage: ccproxy run [--shadow [HOST:PORT]] -- <command> [args...]")
             print()
             print("Run a command with ccproxy environment.")
             print()
             print("options:")
-            print("  --shadow, -s        Route all subprocess HTTP/HTTPS through MITM shadow")
-            print("                      proxy for capture. API calls still flow through the")
-            print("                      primary proxy via ANTHROPIC_BASE_URL.")
-            print("  --shadow-port PORT  Port for the shadow forward proxy (default: 8082)")
+            print("  --shadow, -s [HOST:PORT]")
+            print("                      Route all subprocess HTTP/HTTPS through MITM shadow")
+            print("                      proxy for capture. Optionally specify bind address")
+            print("                      (default: 127.0.0.1:8082). API calls still flow")
+            print("                      through the primary proxy via ANTHROPIC_BASE_URL.")
             print("  command ...         Command and arguments to execute with proxy settings")
-            sys.exit(0 if cmd.command else 1)
-        run_with_proxy(config_dir, cmd.command, shadow=cmd.shadow, shadow_port=cmd.shadow_port)
+            sys.exit(0 if not args else 0)
+
+        # Extract --shadow / -s [HOST:PORT] from args
+        shadow = None
+        filtered: list[str] = []
+        i = 0
+        while i < len(args):
+            if args[i] in ("--shadow", "-s"):
+                # Check if next arg looks like a bind address (not a command)
+                if i + 1 < len(args) and args[i + 1][:1].isdigit():
+                    shadow = args[i + 1]
+                    i += 2
+                else:
+                    shadow = ""
+                    i += 1
+            elif args[i] == "--":
+                filtered.extend(args[i + 1 :])
+                break
+            else:
+                filtered.append(args[i])
+                i += 1
+
+        if not filtered:
+            print("Error: No command specified to run", file=sys.stderr)
+            sys.exit(1)
+        run_with_proxy(config_dir, filtered, shadow=shadow)
 
     elif isinstance(cmd, Stop):
         success = stop_litellm(config_dir)
@@ -1987,6 +2160,9 @@ def main(
 
     elif isinstance(cmd, DbSql):
         handle_db_sql(config_dir, cmd)
+
+    elif isinstance(cmd, DbGql):
+        handle_db_gql(config_dir, cmd)
 
     elif isinstance(cmd, DbPrompt):
         handle_db_prompt(config_dir, cmd)
@@ -2121,7 +2297,7 @@ def entry_point() -> None:
         "run",
         "db",
     }
-    db_subcommands = {"sql", "prompt"}
+    db_subcommands = {"sql", "gql", "prompt"}
 
     run_idx = None
 

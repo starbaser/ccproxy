@@ -8,15 +8,19 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from ccproxy.cli import (
+    DbGql,
     DbSql,
+    execute_graphql,
     execute_sql,
     format_csv_output,
     format_json_output,
     format_table,
     get_database_url,
+    get_graphql_url,
+    handle_db_gql,
     handle_db_sql,
     main,
-    resolve_sql_input,
+    resolve_query_input,
 )
 
 
@@ -178,12 +182,12 @@ class TestExecuteSql:
 
 
 class TestResolveSqlInput:
-    """Test suite for resolve_sql_input function."""
+    """Test suite for resolve_query_input function."""
 
     def test_inline_query(self) -> None:
         """Test resolving inline SQL query."""
         cmd = DbSql(query="SELECT * FROM test")
-        result = resolve_sql_input(cmd)
+        result = resolve_query_input(cmd)
         assert result == "SELECT * FROM test"
 
     def test_file_query(self, tmp_path: Path) -> None:
@@ -192,7 +196,7 @@ class TestResolveSqlInput:
         sql_file.write_text("SELECT COUNT(*) FROM users")
 
         cmd = DbSql(file=sql_file)
-        result = resolve_sql_input(cmd)
+        result = resolve_query_input(cmd)
         assert result == "SELECT COUNT(*) FROM users"
 
     def test_stdin_query(self) -> None:
@@ -201,7 +205,7 @@ class TestResolveSqlInput:
 
         with patch("sys.stdin.isatty", return_value=False):
             with patch("sys.stdin.read", return_value="  SELECT 1  \n"):
-                result = resolve_sql_input(cmd)
+                result = resolve_query_input(cmd)
 
         assert result == "SELECT 1"
 
@@ -210,7 +214,7 @@ class TestResolveSqlInput:
         cmd = DbSql()
 
         with patch("sys.stdin.isatty", return_value=True):
-            result = resolve_sql_input(cmd)
+            result = resolve_query_input(cmd)
 
         assert result is None
 
@@ -220,7 +224,7 @@ class TestResolveSqlInput:
         sql_file.write_text("SELECT FROM file")
 
         cmd = DbSql(query="SELECT FROM inline", file=sql_file)
-        result = resolve_sql_input(cmd)
+        result = resolve_query_input(cmd)
         assert result == "SELECT FROM inline"
 
 
@@ -513,3 +517,200 @@ class TestEntryPointRewriting:
             assert sys.argv == ["ccproxy", "db"]
         finally:
             sys.argv = original_argv
+
+
+# === GraphQL Tests ===
+
+
+class TestGetGraphqlUrl:
+    """Test suite for get_graphql_url function."""
+
+    def test_env_var(self, tmp_path: Path) -> None:
+        """Test GraphQL URL from CCPROXY_GRAPHQL_URL env var."""
+        with patch.dict("os.environ", {"CCPROXY_GRAPHQL_URL": "http://custom:9999/graphql"}):
+            result = get_graphql_url(tmp_path)
+        assert result == "http://custom:9999/graphql"
+
+    def test_from_yaml(self, tmp_path: Path) -> None:
+        """Test GraphQL URL from ccproxy.yaml config."""
+        yaml_content = (
+            "ccproxy:\n"
+            "  mitm:\n"
+            "    graphql_url: http://yaml-host:5435/graphql\n"
+        )
+        (tmp_path / "ccproxy.yaml").write_text(yaml_content)
+        with patch.dict("os.environ", {}, clear=True):
+            result = get_graphql_url(tmp_path)
+        assert result == "http://yaml-host:5435/graphql"
+
+    def test_default_fallback(self, tmp_path: Path) -> None:
+        """Test default URL when no config exists."""
+        with patch.dict("os.environ", {}, clear=True):
+            result = get_graphql_url(tmp_path)
+        assert result == "http://localhost:5435/graphql"
+
+
+class TestExecuteGraphql:
+    """Test suite for execute_graphql function."""
+
+    @pytest.mark.asyncio
+    async def test_success_with_nodes(self) -> None:
+        """Test successful GraphQL query with PostGraphile connection type."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {
+            "data": {
+                "allCcproxyHttpTraces": {
+                    "nodes": [
+                        {"traceId": "abc", "host": "api.example.com"},
+                        {"traceId": "def", "host": "api.other.com"},
+                    ]
+                }
+            }
+        }
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            rows, columns = await execute_graphql(
+                "http://localhost:5435/graphql",
+                "{ allCcproxyHttpTraces { nodes { traceId host } } }",
+            )
+
+        assert len(rows) == 2
+        assert columns == ["traceId", "host"]
+        assert rows[0]["traceId"] == "abc"
+
+    @pytest.mark.asyncio
+    async def test_success_with_single_object(self) -> None:
+        """Test GraphQL query returning a single object (by-PK lookup)."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {
+            "data": {
+                "ccproxyHttpTraceByTraceId": {
+                    "traceId": "abc",
+                    "host": "api.example.com",
+                }
+            }
+        }
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            rows, columns = await execute_graphql(
+                "http://localhost:5435/graphql",
+                '{ ccproxyHttpTraceByTraceId(traceId: "abc") { traceId host } }',
+            )
+
+        assert len(rows) == 1
+        assert rows[0]["traceId"] == "abc"
+
+    @pytest.mark.asyncio
+    async def test_graphql_errors(self) -> None:
+        """Test RuntimeError raised on GraphQL error payload."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {
+            "errors": [{"message": "Cannot query field \"bad\" on type \"Query\"."}]
+        }
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with (
+            patch("httpx.AsyncClient", return_value=mock_client),
+            pytest.raises(RuntimeError, match="GraphQL errors"),
+        ):
+            await execute_graphql("http://localhost:5435/graphql", "{ bad }")
+
+    @pytest.mark.asyncio
+    async def test_empty_result(self) -> None:
+        """Test empty nodes list returns empty rows."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {
+            "data": {"allCcproxyHttpTraces": {"nodes": []}}
+        }
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            rows, columns = await execute_graphql(
+                "http://localhost:5435/graphql",
+                "{ allCcproxyHttpTraces { nodes { traceId } } }",
+            )
+
+        assert rows == []
+        assert columns == []
+
+
+class TestHandleDbGql:
+    """Test suite for handle_db_gql function."""
+
+    def test_no_query_exits(self, tmp_path: Path) -> None:
+        """Test sys.exit(1) when no query provided."""
+        cmd = DbGql()
+        with patch("sys.stdin.isatty", return_value=True), pytest.raises(SystemExit, match="1"):
+            handle_db_gql(tmp_path, cmd)
+
+    def test_mutually_exclusive_flags(self, tmp_path: Path) -> None:
+        """Test sys.exit(1) when both --json and --csv provided."""
+        cmd = DbGql(query="{ test }", json=True, csv=True)
+        with pytest.raises(SystemExit, match="1"):
+            handle_db_gql(tmp_path, cmd)
+
+    def test_successful_query(self, tmp_path: Path, capsys) -> None:
+        """Test successful GraphQL execution with table output."""
+        cmd = DbGql(query="{ allCcproxyHttpTraces { nodes { traceId } } }")
+
+        async def mock_execute(*args):
+            return [{"traceId": "abc-123"}], ["traceId"]
+
+        with patch("ccproxy.cli.execute_graphql", side_effect=mock_execute):
+            handle_db_gql(tmp_path, cmd)
+
+        captured = capsys.readouterr()
+        assert "traceId" in captured.out
+        assert "abc-123" in captured.out
+
+    def test_json_output(self, tmp_path: Path, capsys) -> None:
+        """Test successful GraphQL execution with JSON output."""
+        cmd = DbGql(query="{ test }", json=True)
+
+        async def mock_execute(*args):
+            return [{"traceId": "abc"}], ["traceId"]
+
+        with patch("ccproxy.cli.execute_graphql", side_effect=mock_execute):
+            handle_db_gql(tmp_path, cmd)
+
+        captured = capsys.readouterr()
+        assert '"traceId"' in captured.out
+        assert '"abc"' in captured.out
+
+
+class TestDbGqlMainDispatch:
+    """Test suite for DbGql command dispatch in main()."""
+
+    @patch("ccproxy.cli.handle_db_gql")
+    def test_main_db_gql_command(self, mock_handle: Mock, tmp_path: Path) -> None:
+        """Test main dispatches DbGql to handle_db_gql."""
+        cmd = DbGql(query="{ test }")
+        main(cmd, config_dir=tmp_path)
+
+        mock_handle.assert_called_once_with(tmp_path, cmd)

@@ -1168,7 +1168,7 @@ class TestMainFunction:
         cmd = Run(command=["echo", "hello", "world"])
         main(cmd, config_dir=tmp_path)
 
-        mock_run.assert_called_once_with(tmp_path, ["echo", "hello", "world"], shadow=False, shadow_port=8082)
+        mock_run.assert_called_once_with(tmp_path, ["echo", "hello", "world"], shadow=None)
 
     def test_main_run_no_args(self, tmp_path: Path, capsys) -> None:
         """Test main run command without arguments shows help."""
@@ -1177,7 +1177,7 @@ class TestMainFunction:
         with pytest.raises(SystemExit) as exc_info:
             main(cmd, config_dir=tmp_path)
 
-        assert exc_info.value.code == 1
+        assert exc_info.value.code == 0
         captured = capsys.readouterr()
         assert "usage: ccproxy run" in captured.out
 
