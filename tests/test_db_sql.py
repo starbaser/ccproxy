@@ -532,16 +532,31 @@ class TestGetGraphqlUrl:
         assert result == "http://custom:9999/graphql"
 
     def test_from_yaml(self, tmp_path: Path) -> None:
-        """Test GraphQL URL from ccproxy.yaml config."""
+        """Test GraphQL URL from ccproxy.yaml host/port config."""
         yaml_content = (
             "ccproxy:\n"
             "  mitm:\n"
-            "    graphql_url: http://yaml-host:5435/graphql\n"
+            "    graphql:\n"
+            "      host: yaml-host\n"
+            "      port: 9999\n"
         )
         (tmp_path / "ccproxy.yaml").write_text(yaml_content)
         with patch.dict("os.environ", {}, clear=True):
             result = get_graphql_url(tmp_path)
-        assert result == "http://yaml-host:5435/graphql"
+        assert result == "http://yaml-host:9999/graphql"
+
+    def test_from_yaml_partial(self, tmp_path: Path) -> None:
+        """Test GraphQL URL with only host set (port defaults to 5435)."""
+        yaml_content = (
+            "ccproxy:\n"
+            "  mitm:\n"
+            "    graphql:\n"
+            "      host: custom-host\n"
+        )
+        (tmp_path / "ccproxy.yaml").write_text(yaml_content)
+        with patch.dict("os.environ", {}, clear=True):
+            result = get_graphql_url(tmp_path)
+        assert result == "http://custom-host:5435/graphql"
 
     def test_default_fallback(self, tmp_path: Path) -> None:
         """Test default URL when no config exists."""

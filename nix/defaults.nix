@@ -25,6 +25,10 @@
       port = 8081;
       upstream_proxy = "http://localhost:4000";
       database_url = "postgresql://ccproxy:\${CCPROXY_DB_PASSWORD:-test}@localhost:5433/ccproxy_mitm";
+      graphql = {
+        host = "localhost";
+        port = 5435;
+      };
       capture_bodies = true;
       max_body_size = 0;
       excluded_hosts = [ ];

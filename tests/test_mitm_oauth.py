@@ -1,4 +1,4 @@
-"""Tests for MITM OAuth header fixing."""
+"""Tests for MITM traffic capture addon."""
 
 from unittest.mock import AsyncMock, MagicMock
 
@@ -9,151 +9,27 @@ from ccproxy.mitm.addon import CCProxyMitmAddon, ProxyDirection
 
 
 @pytest.fixture
-def addon() -> CCProxyMitmAddon:
-    """Create addon without storage."""
-    config = MitmConfig()
-    return CCProxyMitmAddon(storage=None, config=config)
-
-
-@pytest.fixture
 def mock_flow() -> MagicMock:
     """Create a mock HTTP flow."""
     flow = MagicMock()
     flow.request = MagicMock()
     flow.request.headers = {}
-    flow.request.content = None  # No body by default
-    flow.request.path = "/v1/messages"  # Default to Anthropic-type endpoint
+    flow.request.content = None
+    flow.request.path = "/v1/messages"
     return flow
 
 
-class TestFixOAuthHeaders:
-    """Tests for _fix_oauth_headers method."""
-
-    def test_removes_x_api_key_when_bearer_present(self, addon: CCProxyMitmAddon, mock_flow: MagicMock) -> None:
-        """x-api-key should be removed when Authorization Bearer is present."""
-        mock_flow.request.pretty_host = "api.anthropic.com"
-        mock_flow.request.headers = {
-            "authorization": "Bearer oauth-token-123",
-            "x-api-key": "sk-ant-dummy-key",
-            "content-type": "application/json",
-        }
-
-        addon._fix_oauth_headers(mock_flow)
-
-        assert "x-api-key" not in mock_flow.request.headers
-        assert mock_flow.request.headers["authorization"] == "Bearer oauth-token-123"
-        assert mock_flow.request.headers["content-type"] == "application/json"
-
-    def test_preserves_x_api_key_when_no_bearer(self, addon: CCProxyMitmAddon, mock_flow: MagicMock) -> None:
-        """x-api-key should be preserved when no Bearer token is present."""
-        mock_flow.request.pretty_host = "api.anthropic.com"
-        mock_flow.request.headers = {
-            "x-api-key": "sk-ant-real-key",
-            "content-type": "application/json",
-        }
-
-        addon._fix_oauth_headers(mock_flow)
-
-        assert mock_flow.request.headers["x-api-key"] == "sk-ant-real-key"
-
-    def test_ignores_non_messages_endpoints(self, addon: CCProxyMitmAddon, mock_flow: MagicMock) -> None:
-        """Non-messages endpoints should not have headers modified."""
-        mock_flow.request.pretty_host = "api.anthropic.com"
-        mock_flow.request.path = "/v1/chat/completions"  # OpenAI-style endpoint
-        mock_flow.request.headers = {
-            "authorization": "Bearer some-token",
-            "x-api-key": "some-key",
-        }
-
-        addon._fix_oauth_headers(mock_flow)
-
-        assert mock_flow.request.headers["x-api-key"] == "some-key"
-        assert mock_flow.request.headers["authorization"] == "Bearer some-token"
-
-    def test_handles_case_insensitive_bearer(self, addon: CCProxyMitmAddon, mock_flow: MagicMock) -> None:
-        """Bearer token check should be case-insensitive."""
-        mock_flow.request.pretty_host = "api.anthropic.com"
-        mock_flow.request.headers = {
-            "authorization": "BEARER oauth-token-123",
-            "x-api-key": "sk-ant-dummy",
-        }
-
-        addon._fix_oauth_headers(mock_flow)
-
-        assert "x-api-key" not in mock_flow.request.headers
-
-    def test_handles_missing_authorization_header(self, addon: CCProxyMitmAddon, mock_flow: MagicMock) -> None:
-        """Should handle missing authorization header gracefully."""
-        mock_flow.request.pretty_host = "api.anthropic.com"
-        mock_flow.request.headers = {
-            "x-api-key": "sk-ant-key",
-        }
-
-        addon._fix_oauth_headers(mock_flow)
-
-        assert mock_flow.request.headers["x-api-key"] == "sk-ant-key"
-
-    def test_handles_no_x_api_key(self, addon: CCProxyMitmAddon, mock_flow: MagicMock) -> None:
-        """Should not error when x-api-key is not present."""
-        mock_flow.request.pretty_host = "api.anthropic.com"
-        mock_flow.request.headers = {
-            "authorization": "Bearer oauth-token",
-        }
-
-        # Should not raise
-        addon._fix_oauth_headers(mock_flow)
-
-        assert "x-api-key" not in mock_flow.request.headers
-
-    def test_handles_zai_provider(self, addon: CCProxyMitmAddon, mock_flow: MagicMock) -> None:
-        """Should work with api.z.ai and other Anthropic-compatible providers."""
-        mock_flow.request.pretty_host = "api.z.ai"
-        mock_flow.request.path = "/api/anthropic/v1/messages"
-        mock_flow.request.headers = {
-            "authorization": "Bearer oauth-token",
-            "x-api-key": "dummy",
-        }
-
-        addon._fix_oauth_headers(mock_flow)
-
-        assert "x-api-key" not in mock_flow.request.headers
-
-    def test_preserves_real_api_key(self, addon: CCProxyMitmAddon, mock_flow: MagicMock) -> None:
-        """Real API keys (sk-ant-*) should not be converted to Bearer."""
-        mock_flow.request.pretty_host = "api.anthropic.com"
-        mock_flow.request.path = "/v1/messages"
-        mock_flow.request.headers = {
-            "x-api-key": "sk-ant-real-api-key-123",
-            "content-type": "application/json",
-        }
-
-        addon._fix_oauth_headers(mock_flow)
-
-        # Should preserve as-is since it's a real API key
-        assert mock_flow.request.headers["x-api-key"] == "sk-ant-real-api-key-123"
-        assert "authorization" not in mock_flow.request.headers
-
-
 class TestRequestMethod:
-    """Tests for the request method integration.
-
-    Note: OAuth header fixing is now handled by the pipeline's forward_oauth hook,
-    not the MITM addon. The addon's request() method only handles trace capture.
-    """
+    """Tests for the request method trace capture."""
 
     @pytest.mark.asyncio
     async def test_request_works_without_storage(self, mock_flow: MagicMock) -> None:
-        """request() should work even without storage configured."""
+        """request() should return early without storage configured."""
         config = MitmConfig()
         addon = CCProxyMitmAddon(storage=None, config=config)
 
         mock_flow.request.pretty_host = "api.anthropic.com"
-        mock_flow.request.headers = {
-            "authorization": "Bearer token",
-            "x-api-key": "dummy",
-        }
 
-        # Should not raise
         await addon.request(mock_flow)
 
 

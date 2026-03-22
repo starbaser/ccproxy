@@ -24,9 +24,6 @@ class ProxyDirection(IntEnum):
     FORWARD = 1  # LiteLLM -> Provider (outbound)
 
 
-# Required system message prefix for Claude Code OAuth tokens
-CLAUDE_CODE_SYSTEM_PREFIX = "You are Claude Code, Anthropic's official CLI for Claude."
-
 if TYPE_CHECKING:
     from ccproxy.mitm.storage import TraceStorage
 
@@ -131,144 +128,12 @@ class CCProxyMitmAddon:
 
         return None
 
-    def _inject_claude_code_identity(self, request: http.Request) -> None:
-        """Inject Claude Code identity into system message for OAuth authentication.
-
-        Anthropic's OAuth tokens are restricted to Claude Code. The API request
-        must include a system message that starts with "You are Claude Code".
-        This method prepends that required prefix to the system message.
-
-        Args:
-            request: HTTP request object
-        """
-        if not request.content:
-            return
-
-        try:
-            body = json.loads(request.content)
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            return
-
-        # Only process if this looks like an Anthropic messages request
-        if "messages" not in body:
-            return
-
-        system = body.get("system")
-        modified = False
-
-        if system is None:
-            # No system message - add the prefix as the system
-            body["system"] = CLAUDE_CODE_SYSTEM_PREFIX
-            modified = True
-        elif isinstance(system, str):
-            # String system message - prepend prefix if not already present
-            if not system.startswith(CLAUDE_CODE_SYSTEM_PREFIX):
-                body["system"] = f"{CLAUDE_CODE_SYSTEM_PREFIX}\n\n{system}"
-                modified = True
-        elif isinstance(system, list):
-            # List of content blocks - insert prefix as first text block
-            has_prefix = False
-            for block in system:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    text = block.get("text", "")
-                    if text.startswith(CLAUDE_CODE_SYSTEM_PREFIX):
-                        has_prefix = True
-                        break
-            if not has_prefix:
-                system.insert(0, {"type": "text", "text": CLAUDE_CODE_SYSTEM_PREFIX})
-                modified = True
-
-        if modified:
-            request.content = json.dumps(body).encode("utf-8")
-            # Update content-length header
-            request.headers["content-length"] = str(len(request.content))
-            logger.info("Injected Claude Code identity into system message")
-
-    def _fix_oauth_headers(self, flow: http.HTTPFlow) -> None:
-        """Fix OAuth headers for Anthropic-type API requests from Claude Code clients.
-
-        When using OAuth Bearer tokens, the x-api-key header must be removed so
-        the provider uses the Authorization header instead. LiteLLM always sends
-        x-api-key, so we remove it here at the HTTP layer.
-
-        Detection: Claude CLI user-agent + /v1/messages endpoint = Anthropic-type
-        This works for api.anthropic.com, api.z.ai, and other Claude Code providers.
-
-        Args:
-            flow: HTTP flow object
-        """
-        request = flow.request
-        path = request.path.lower()
-
-        # Detect Anthropic-type API by endpoint pattern
-        is_messages_endpoint = "/v1/messages" in path
-
-        if not is_messages_endpoint:
-            return
-
-        auth_header = request.headers.get("authorization", "")
-        api_key = request.headers.get("x-api-key", "")
-        host = request.pretty_host
-
-        # Detect OAuth token: either Bearer header present, or OAuth token in x-api-key.
-        # LiteLLM's Anthropic handler hardcodes x-api-key from api_key param,
-        # so OAuth tokens (sk-ant-oat*) end up in x-api-key instead of Authorization.
-        has_bearer = auth_header.lower().startswith("bearer ")
-        has_oauth_in_apikey = api_key and api_key.startswith("sk-ant-oat")
-
-        if not has_bearer and not has_oauth_in_apikey:
-            return
-
-        # If OAuth token is in x-api-key (LiteLLM converted it), move back to Authorization
-        if has_oauth_in_apikey and not has_bearer:
-            request.headers["authorization"] = f"Bearer {api_key}"
-            del request.headers["x-api-key"]
-            logger.info(
-                "Restored OAuth token to Authorization header for %s%s",
-                host,
-                path,
-            )
-        elif has_bearer and "x-api-key" in request.headers:
-            # Bearer present but also x-api-key - remove the duplicate
-            del request.headers["x-api-key"]
-            logger.info(
-                "Removed x-api-key for OAuth request to %s%s",
-                host,
-                path,
-            )
-
-        # Ensure required beta headers are present for OAuth
-        required_betas = ["oauth-2025-04-20", "claude-code-20250219", "interleaved-thinking-2025-05-14"]
-        existing_beta = request.headers.get("anthropic-beta", "")
-        existing_list = [b.strip() for b in existing_beta.split(",") if b.strip()]
-
-        # Add missing required betas
-        merged = list(dict.fromkeys(required_betas + existing_list))
-        request.headers["anthropic-beta"] = ",".join(merged)
-        logger.info("Set anthropic-beta: %s", request.headers["anthropic-beta"])
-
-        # Inject Claude Code system message prefix for OAuth authentication
-        # Anthropic requires system message to start with "You are Claude Code" for OAuth tokens
-        self._inject_claude_code_identity(request)
-
-        # Log request body for debugging (only in debug mode to avoid token exposure)
-        if request.content and self.config.debug:
-            body_preview = request.content[:3000].decode("utf-8", errors="replace")
-            logger.info("Request body: %s", body_preview)
-
     async def request(self, flow: http.HTTPFlow) -> None:
-        """Process request: fix OAuth headers and capture trace.
+        """Process request: capture trace data.
 
         Args:
             flow: HTTP flow object
         """
-        # Fix OAuth headers at the HTTP layer AFTER LiteLLM constructs them.
-        # LiteLLM's Anthropic handler hardcodes x-api-key from api_key in
-        # get_anthropic_headers(), overriding extra_headers["x-api-key"]="".
-        # The pipeline hook sets the token correctly, but only the MITM layer
-        # can strip x-api-key after LiteLLM's final header construction.
-        self._fix_oauth_headers(flow)
-
         # Skip trace capture if no storage configured
         if self.storage is None:
             return

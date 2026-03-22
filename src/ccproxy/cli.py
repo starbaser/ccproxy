@@ -1314,6 +1314,9 @@ def get_database_url(config_dir: Path) -> str | None:
 def get_graphql_url(config_dir: Path) -> str:
     """Resolve GraphQL endpoint URL from environment or config.
 
+    Reads host/port from ccproxy.yaml mitm.graphql section (matching litellm's
+    host/port convention) and composes the URL.
+
     Args:
         config_dir: Configuration directory containing ccproxy.yaml
 
@@ -1328,9 +1331,10 @@ def get_graphql_url(config_dir: Path) -> str:
         with ccproxy_yaml.open() as f:
             data = yaml.safe_load(f)
         if data and "ccproxy" in data:
-            mitm = data["ccproxy"].get("mitm", {})
-            if url := mitm.get("graphql_url"):
-                return _expand_env_vars(url) if "${" in url else url
+            graphql = data["ccproxy"].get("mitm", {}).get("graphql", {})
+            host = graphql.get("host", "localhost")
+            port = graphql.get("port", 5435)
+            return f"http://{host}:{port}/graphql"
     return "http://localhost:5435/graphql"
 
 

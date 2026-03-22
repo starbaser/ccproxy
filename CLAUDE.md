@@ -75,11 +75,16 @@ ccproxy status [--json]
 # Run command with proxy environment
 ccproxy run <command> [args...]
 
-# Query MITM traces database
+# Query MITM traces database (SQL)
 ccproxy db sql "SELECT COUNT(*) FROM \"CCProxy_HttpTraces\""
 ccproxy db sql --file query.sql
 ccproxy db sql "SELECT * FROM ..." --json
 ccproxy db sql "SELECT * FROM ..." --csv
+
+# Query MITM traces database (GraphQL via PostGraphile)
+ccproxy db gql "{ allCcproxyHttpTraces(first: 5) { nodes { traceId host statusCode } } }"
+ccproxy db gql --json "{ allCcproxyHttpTraces { nodes { traceId } } }"
+ccproxy db gql -f query.graphql
 ```
 
 **MITM Mode**: The `--mitm` flag enables the MITM proxy layer which intercepts HTTP traffic for header/body modification. Required for OAuth sentinel key with native Anthropic SDK.
@@ -125,10 +130,7 @@ Request → CCProxyHandler → Hook Pipeline → Response
   - `verbose_mode` - Strips `redact-thinking-*` beta header to enable full thinking block output
   - `inject_claude_code_identity` - Injects required system message for OAuth
   - `inject_mcp_notifications` - Injects buffered MCP terminal events as synthetic tool_use/tool_result pairs before the final user message
-- **mitm/addon.py**: MITM proxy addon for HTTP-layer modifications:
-  - Removes `x-api-key` for OAuth requests
-  - Adds `anthropic-beta` headers for Claude Code compliance
-  - Injects "You are Claude Code" system message prefix for OAuth tokens
+- **mitm/addon.py**: MITM proxy addon for HTTP traffic capture and tracing. Stores request/response data in PostgreSQL via `TraceStorage`.
 - **cli.py**: Tyro-based CLI interface (~900 lines) for managing the proxy server.
 - **utils.py**: Template discovery and debug utilities (`dt()`, `dv()`, `d()`, `p()`).
 
@@ -193,12 +195,14 @@ The test suite uses pytest with comprehensive fixtures (18 test files, 90% cover
 - **Health checks**: LiteLLM's `/health` endpoint performs real API calls to each provider. `_inject_health_check_auth()` patches `_update_litellm_params_for_health_check` to inject OAuth credentials (api_key, extra_headers) before `acompletion()` — required because LiteLLM validates API keys before `async_pre_call_hook` runs. The pipeline then runs with forced passthrough (rule_evaluator skips classification, model_router forces passthrough via `ccproxy_is_health_check` metadata flag) so hooks like `forward_oauth`, `add_beta_headers`, and `inject_claude_code_identity` enhance the request. Health probes use `max_tokens=1` to minimize cost.
 - **Hook error isolation**: Errors in one hook don't block others from executing.
 - **Lazy model loading**: Models loaded from LiteLLM proxy on first request, not at startup.
-- **MITM proxy**: Two-layer architecture - reverse proxy on port 4000 (user-facing), forward proxy on port 8081 (outbound to providers). Enables HTTP traffic capture and tracing. OAuth works without MITM via pipeline hooks; MITM provides a redundant header safety net.
+- **MITM proxy**: Two-layer architecture - reverse proxy on port 4000 (user-facing), forward proxy on port 8081 (outbound to providers). Enables HTTP traffic capture and tracing. OAuth is handled entirely by pipeline hooks + `_patch_anthropic_oauth_headers()` monkey-patch; MITM is not required for OAuth.
 - **MITM database**: PostgreSQL for HTTP trace storage. Database URL set via `CCPROXY_DATABASE_URL` env var or in `ccproxy.yaml` under `ccproxy.mitm.database_url`. Uses the `ccproxy-db` container.
-- **Docker containers**: Two PostgreSQL containers managed via `compose.yaml`:
+- **GraphQL API**: PostGraphile v4 on port 5435 auto-introspects the Prisma schema to provide a GraphQL query API for MITM traces. Config via `ccproxy.mitm.graphql.host`/`port` scalars (matching litellm convention). PostGraphile camelCases column names: `trace_id` → `traceId`, `CCProxy_HttpTraces` → `allCcproxyHttpTraces`. GraphiQL IDE at `http://localhost:5435/graphiql`.
+- **Docker containers**: Three containers managed via `compose.yaml`:
   - `ccproxy-db` (port 5433) - MITM trace storage (`ccproxy_mitm` database)
   - `litellm-db` (port 5434) - LiteLLM's internal database (`litellm` database)
-  - When "too many database connections" errors occur, restart **both** containers: `docker restart ccproxy-db litellm-db`
+  - `ccproxy-graphql` (port 5435) - PostGraphile v4 GraphQL API for MITM traces
+  - When "too many database connections" errors occur, restart **both** DB containers: `docker restart ccproxy-db litellm-db`
 - **Proxy direction tracking**: MITM traces include `proxy_direction` field (0=reverse, 1=forward) to distinguish client→LiteLLM vs LiteLLM→provider traffic.
 - **Session tracking**: MITM addon extracts `session_id` from Claude Code's `metadata.user_id` field to link related requests across proxy layers.
 

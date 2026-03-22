@@ -59,7 +59,9 @@ ccproxy:
     port: 8081
     upstream_proxy: "http://localhost:4000"
     database_url: "postgresql://ccproxy:${CCPROXY_DB_PASSWORD:-test}@localhost:5433/ccproxy_mitm"
-    graphql_url: "http://localhost:5435/graphql"
+    graphql:
+      host: localhost
+      port: 5435
     capture_bodies: true
     max_body_size: 0  # 0 = unlimited (live example: 10485760 for 10MB)
     excluded_hosts: []
