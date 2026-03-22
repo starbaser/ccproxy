@@ -252,3 +252,113 @@ async def test_oauth_forwarding_for_anthropic_direct_api():
 
     clear_config_instance()
     clear_router()
+
+
+@pytest.mark.asyncio
+async def test_oauth_forwarding_auth_header_mode():
+    """Test that auth_header sends token as the named header instead of Authorization."""
+    mock_proxy_server = MagicMock()
+    mock_proxy_server.llm_router = MagicMock()
+    mock_proxy_server.llm_router.model_list = [
+        {
+            "model_name": "glm-5",
+            "litellm_params": {
+                "model": "anthropic/glm-5",
+                "api_base": "https://api.z.ai/api/anthropic",
+            },
+        },
+    ]
+
+    mock_module = MagicMock()
+    mock_module.proxy_server = mock_proxy_server
+
+    from ccproxy.config import CCProxyConfig, OAuthSource, set_config_instance
+
+    config = CCProxyConfig(
+        debug=False,
+        default_model_passthrough=True,
+        hooks=["ccproxy.hooks.rule_evaluator", "ccproxy.hooks.model_router", "ccproxy.hooks.forward_oauth"],
+        rules=[],
+        oat_sources={
+            "zai": OAuthSource(
+                file="/dev/null",
+                destinations=["z.ai"],
+                auth_header="x-api-key",
+            )
+        },
+    )
+    config._oat_values["zai"] = ("zai-secret-key-12345", 0.0)
+    set_config_instance(config)
+
+    with patch.dict("sys.modules", {"litellm.proxy": mock_module}):
+        clear_router()
+        handler = CCProxyHandler()
+
+        data = {
+            "model": "glm-5",
+            "messages": [{"role": "user", "content": "test"}],
+            "metadata": {},
+            "provider_specific_header": {"extra_headers": {}},
+            "proxy_server_request": {"headers": {}},
+            "secret_fields": {"raw_headers": {"authorization": "Bearer zai-secret-key-12345"}},
+        }
+
+        result = await handler.async_pre_call_hook(data, {})
+
+        extra = result["provider_specific_header"]["extra_headers"]
+        assert extra["x-api-key"] == "zai-secret-key-12345"
+        assert "authorization" not in extra
+
+    clear_config_instance()
+    clear_router()
+
+
+@pytest.mark.asyncio
+async def test_oauth_forwarding_default_bearer_clears_api_key():
+    """Test that default bearer mode sets Authorization and clears x-api-key."""
+    mock_proxy_server = MagicMock()
+    mock_proxy_server.llm_router = MagicMock()
+    mock_proxy_server.llm_router.model_list = [
+        {
+            "model_name": "default",
+            "litellm_params": {
+                "model": "anthropic/claude-sonnet-4-5-20250929",
+                "api_base": "https://api.anthropic.com",
+            },
+        },
+    ]
+
+    mock_module = MagicMock()
+    mock_module.proxy_server = mock_proxy_server
+
+    from ccproxy.config import CCProxyConfig, set_config_instance
+
+    config = CCProxyConfig(
+        debug=False,
+        default_model_passthrough=False,
+        hooks=["ccproxy.hooks.rule_evaluator", "ccproxy.hooks.model_router", "ccproxy.hooks.forward_oauth"],
+        rules=[],
+    )
+    set_config_instance(config)
+
+    with patch.dict("sys.modules", {"litellm.proxy": mock_module}):
+        clear_router()
+        handler = CCProxyHandler()
+
+        data = {
+            "model": "default",
+            "messages": [{"role": "user", "content": "test"}],
+            "metadata": {},
+            "provider_specific_header": {"extra_headers": {}},
+            "proxy_server_request": {"headers": {}},
+            "secret_fields": {"raw_headers": {"authorization": "Bearer sk-ant-oat01-test-token"}},
+        }
+
+        result = await handler.async_pre_call_hook(data, {})
+
+        extra = result["provider_specific_header"]["extra_headers"]
+        assert extra["authorization"] == "Bearer sk-ant-oat01-test-token"
+        assert extra["x-api-key"] == ""
+
+    clear_config_instance()
+    clear_router()

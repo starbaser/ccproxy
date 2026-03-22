@@ -24,6 +24,7 @@ ccproxy:
     #   command: "cat ~/.config/ccproxy/zai-key"
     #   destinations:
     #     - "z.ai"
+    #   auth_header: x-api-key  # send token as this header instead of Authorization: Bearer
 
     # Extended form with custom User-Agent only
     # gemini:

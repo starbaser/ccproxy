@@ -203,22 +203,31 @@ def _setup_provider_headers(ctx: Context, provider_name: str, auth_header: str) 
         ctx.provider_headers["extra_headers"] = {}
 
     extra = ctx.provider_headers["extra_headers"]
+    config = get_config()
+    target_header = config.get_oauth_auth_header(provider_name)
 
-    # Set authorization header
-    extra["authorization"] = auth_header
+    if target_header:
+        # Custom auth header mode: send raw token as the named header
+        token = auth_header.removeprefix("Bearer ").strip()
+        extra[target_header] = token
+        logger.debug(
+            "Sending token as '%s' header for provider '%s'",
+            target_header,
+            provider_name,
+        )
+    else:
+        # Default Bearer mode: Authorization header + clear x-api-key
+        extra["authorization"] = auth_header
 
-    # Signal OAuth mode: empty x-api-key tells the patched validate_environment
-    # to remove x-api-key entirely so Anthropic uses Authorization: Bearer instead.
-    # Without the patch, LiteLLM's Anthropic handler overwrites this with api_key.
-    extra["x-api-key"] = ""
-    # Clear sentinel/stale key from context so downstream hooks (forward_apikey)
-    # don't re-forward it. Back-propagation in to_litellm_data() handles
-    # proxy_server_request.headers separately.
-    ctx.headers.pop("x-api-key", None)
-    ctx.raw_headers.pop("x-api-key", None)
+        # Signal OAuth mode: empty x-api-key tells the patched validate_environment
+        # to remove x-api-key entirely so Anthropic uses Authorization: Bearer instead.
+        extra["x-api-key"] = ""
+        # Clear sentinel/stale key from context so downstream hooks (forward_apikey)
+        # don't re-forward it.
+        ctx.headers.pop("x-api-key", None)
+        ctx.raw_headers.pop("x-api-key", None)
 
     # Set custom User-Agent if configured
-    config = get_config()
     custom_user_agent = config.get_oauth_user_agent(provider_name)
     if custom_user_agent:
         extra["user-agent"] = custom_user_agent

@@ -36,10 +36,15 @@ model_list:
       model: anthropic/claude-3-5-haiku-20241022
       api_base: https://api.anthropic.com
 
-  # ZAI (z.ai) models — requires OAuth or ZAI_API_KEY
+  # ZAI (z.ai) models — requires oat_sources zai config with auth_header: x-api-key
   # - model_name: glm-5
   #   litellm_params:
   #     model: anthropic/glm-5
+  #     api_base: https://api.z.ai/api/anthropic
+  #
+  # - model_name: glm-5-turbo
+  #   litellm_params:
+  #     model: anthropic/glm-5-turbo
   #     api_base: https://api.z.ai/api/anthropic
   #
   # - model_name: glm-4.7

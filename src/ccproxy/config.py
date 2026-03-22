@@ -90,6 +90,9 @@ class OAuthSource(BaseModel):
     destinations: list[str] = Field(default_factory=list)
     """URL patterns that should use this token (e.g., ['api.z.ai', 'anthropic.com'])"""
 
+    auth_header: str | None = None
+    """Target header name for the token (e.g., 'x-api-key'). When set, sends raw token as this header instead of Authorization: Bearer."""
+
     @model_validator(mode="after")
     def validate_source(self) -> "OAuthSource":
         if self.command and self.file:
@@ -384,6 +387,22 @@ class CCProxyConfig(BaseSettings):
             Custom User-Agent string or None if not configured for this provider
         """
         return self._oat_user_agents.get(provider)
+
+    def get_oauth_auth_header(self, provider: str) -> str | None:
+        """Get target auth header name for a specific provider.
+
+        Args:
+            provider: Provider name (e.g., "zai")
+
+        Returns:
+            Header name string (e.g., 'x-api-key') or None for default Bearer behavior
+        """
+        source = self.oat_sources.get(provider)
+        if isinstance(source, OAuthSource):
+            return source.auth_header
+        elif isinstance(source, dict):
+            return source.get("auth_header")
+        return None
 
     def get_provider_for_destination(self, api_base: str | None) -> str | None:
         """Find which provider should handle requests to a given api_base.
