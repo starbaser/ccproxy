@@ -1171,7 +1171,7 @@ class TestMainFunction:
         mock_run.assert_called_once_with(tmp_path, ["echo", "hello", "world"], shadow=False, shadow_port=8082)
 
     def test_main_run_no_args(self, tmp_path: Path, capsys) -> None:
-        """Test main run command without arguments."""
+        """Test main run command without arguments shows help."""
         cmd = Run(command=[])
 
         with pytest.raises(SystemExit) as exc_info:
@@ -1179,8 +1179,7 @@ class TestMainFunction:
 
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
-        assert "No command specified" in captured.err
-        assert "Usage: ccproxy run <command>" in captured.err
+        assert "usage: ccproxy run" in captured.out
 
     def test_main_default_config_dir(self, tmp_path: Path) -> None:
         """Test main uses default config directory when not specified."""

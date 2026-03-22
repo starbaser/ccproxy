@@ -118,10 +118,9 @@ class Install:
 
 @attrs.define
 class Run:
-    """Run a command with ccproxy environment."""
+    """Run a command with ccproxy environment.
 
-    command: Annotated[list[str], tyro.conf.Positional]
-    """Command and arguments to execute with proxy settings."""
+    Usage: ccproxy run [--shadow] [--shadow-port PORT] -- <command> [args...]"""
 
     shadow: Annotated[bool, tyro.conf.arg(aliases=["-s"])] = False
     """Route all subprocess HTTP/HTTPS through MITM shadow proxy for capture.
@@ -134,19 +133,21 @@ class Run:
     shadow_port: int = 8082
     """Port for the shadow forward proxy (only used with --shadow)."""
 
+    command: Annotated[list[str], tyro.conf.Positional] = attrs.Factory(list)
+    """Command and arguments to execute with proxy settings."""
+
 
 @attrs.define
 class Stop:
-    """Stop the background LiteLLM proxy server."""
+    """Stop the LiteLLM proxy server."""
 
 
 @attrs.define
 class Restart:
     """Restart the LiteLLM proxy server (stop then start).
 
-    MITM state is auto-detected from the running configuration — do not
-    pass --mitm here. If MITM reverse proxy was running before the restart,
-    it will be re-enabled automatically."""
+    MITM state is preserved automatically from the running configuration.
+    """
 
     args: Annotated[list[str] | None, tyro.conf.Positional] = None
     """Additional arguments to pass to litellm command."""
@@ -180,8 +181,8 @@ class Status:
     runs in health check mode with bitmask exit codes:
 
       0 = all healthy    4 = forward down
-      1 = proxy down     5 = proxy + forward
-      2 = reverse down   6 = reverse + forward
+      1 = proxy down     5 = proxy+forward
+      2 = reverse down   6 = reverse+forward
       3 = proxy+reverse  7 = all down
 
     Examples:
@@ -204,12 +205,12 @@ class Status:
 
 @attrs.define
 class StatuslineOutput:
-    """Output routing status for ccstatusline widget."""
+    """Output routing status for the statusline widget."""
 
 
 @attrs.define
 class StatuslineInstall:
-    """Install ccstatusline and configure Claude Code integration."""
+    """Install the statusline widget and configure Claude Code integration."""
 
     force: bool = False
     """Overwrite existing configuration."""
@@ -220,12 +221,12 @@ class StatuslineInstall:
 
 @attrs.define
 class StatuslineUninstall:
-    """Remove ccstatusline configuration."""
+    """Remove statusline configuration."""
 
 
 @attrs.define
 class StatuslineStatus:
-    """Show ccstatusline installation status."""
+    """Show statusline installation status."""
 
 
 @attrs.define
@@ -1961,12 +1962,12 @@ def handle_db_prompt(config_dir: Path, cmd: DbPrompt) -> None:
 def main(
     cmd: Annotated[Command, tyro.conf.arg(name="")],
     *,
-    config_dir: Annotated[Path | None, tyro.conf.arg(help="Configuration directory")] = None,
+    config_dir: Annotated[Path | None, tyro.conf.arg(help="Configuration directory", metavar="PATH")] = None,
 ) -> None:
-    """ccproxy - LiteLLM Transformation Hook System.
+    """ccproxy - Intercept and route Claude Code requests to LLM providers.
 
-    A powerful routing system for LiteLLM that dynamically routes requests
-    to different models based on configurable rules.
+    Intelligent request routing via LiteLLM proxy based on token count,
+    model type, tool usage, or custom rules.
     """
     if config_dir is None:
         env_config_dir = os.environ.get("CCPROXY_CONFIG_DIR")
@@ -1986,10 +1987,19 @@ def main(
         install_config(config_dir, force=cmd.force)
 
     elif isinstance(cmd, Run):
-        if not cmd.command:
-            print("Error: No command specified to run", file=sys.stderr)
-            print("Usage: ccproxy run <command> [args...]", file=sys.stderr)
-            sys.exit(1)
+        # Tyro's greedy Positional consumes --help/-h before tyro can intercept
+        if not cmd.command or cmd.command in (["-h"], ["--help"]):
+            print("usage: ccproxy run [--shadow] [--shadow-port PORT] -- <command> [args...]")
+            print()
+            print("Run a command with ccproxy environment.")
+            print()
+            print("options:")
+            print("  --shadow, -s        Route all subprocess HTTP/HTTPS through MITM shadow")
+            print("                      proxy for capture. API calls still flow through the")
+            print("                      primary proxy via ANTHROPIC_BASE_URL.")
+            print("  --shadow-port PORT  Port for the shadow forward proxy (default: 8082)")
+            print("  command ...         Command and arguments to execute with proxy settings")
+            sys.exit(0 if cmd.command else 1)
         run_with_proxy(config_dir, cmd.command, shadow=cmd.shadow, shadow_port=cmd.shadow_port)
 
     elif isinstance(cmd, Stop):
