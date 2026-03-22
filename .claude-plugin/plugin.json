@@ -1,0 +1,10 @@
+{
+  "name": "ccproxy",
+  "version": "1.0.0",
+  "description": "Guides users through ccproxy as an OpenAI-compatible and Anthropic-compatible LLM API server with SDK integration, OAuth authentication, sentinel key substitution, model routing, and troubleshooting.",
+  "author": {
+    "name": "eigenmage",
+    "email": "mail@eigenmage.com"
+  },
+  "keywords": ["ccproxy", "litellm", "oauth", "anthropic", "openai", "agent-sdk", "langfuse"]
+}
