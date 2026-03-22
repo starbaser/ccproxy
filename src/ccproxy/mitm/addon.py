@@ -84,8 +84,9 @@ class CCProxyMitmAddon:
     def _extract_session_id(self, request: http.Request) -> str | None:
         """Extract session_id from Claude Code's metadata.user_id field.
 
-        Claude Code embeds session info in the metadata.user_id field with format:
-        user_{hash}_account_{uuid}_session_{uuid}
+        Claude Code embeds session info in the metadata.user_id field in one of two formats:
+        - JSON object: {"device_id": "...", "account_uuid": "...", "session_id": "<uuid>"}
+        - Legacy compound string: user_{hash}_account_{uuid}_session_{uuid}
 
         Args:
             request: HTTP request object
@@ -107,13 +108,24 @@ class CCProxyMitmAddon:
             return None
 
         user_id = metadata.get("user_id", "")
-        if not user_id or "_session_" not in user_id:
+        if not user_id:
             return None
 
-        # Parse: user_{hash}_account_{uuid}_session_{uuid}
-        parts = user_id.split("_session_")
-        if len(parts) == 2:
-            return parts[1]
+        # New format: JSON-encoded object with session_id key
+        if user_id.startswith("{"):
+            try:
+                user_id_obj = json.loads(user_id)
+                if isinstance(user_id_obj, dict) and user_id_obj.get("session_id"):
+                    return user_id_obj["session_id"]
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # Legacy format: user_{hash}_account_{uuid}_session_{uuid}
+        if "_session_" in user_id:
+            parts = user_id.split("_session_")
+            if len(parts) == 2:
+                return parts[1]
+
         return None
 
     def _inject_claude_code_identity(self, request: http.Request) -> None:

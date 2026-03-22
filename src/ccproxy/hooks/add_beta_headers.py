@@ -83,6 +83,7 @@ def add_beta_headers(ctx: Context, params: dict[str, Any]) -> Context:
 
     existing_list = [b.strip() for b in existing.split(",") if b.strip()]
     merged = list(dict.fromkeys(ANTHROPIC_BETA_HEADERS + existing_list))
+
     merged_str = ",".join(merged)
 
     # Method 1: provider_specific_header (for proxy router)

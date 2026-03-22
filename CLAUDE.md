@@ -122,6 +122,7 @@ Request → CCProxyHandler → Hook Pipeline → Response
   - `capture_headers` - Captures HTTP headers with sensitive redaction (supports `headers` param)
   - `forward_apikey` - Forwards x-api-key header
   - `add_beta_headers` - Adds anthropic-beta headers for Claude Code OAuth
+  - `verbose_mode` - Strips `redact-thinking-*` beta header to enable full thinking block output
   - `inject_claude_code_identity` - Injects required system message for OAuth
   - `inject_mcp_notifications` - Injects buffered MCP terminal events as synthetic tool_use/tool_result pairs before the final user message
 - **mitm/addon.py**: MITM proxy addon for HTTP-layer modifications:

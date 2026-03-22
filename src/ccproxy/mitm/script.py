@@ -100,7 +100,7 @@ class CCProxyScript:
                 self._initialized = True
                 logger.info("CCProxy addon initialized with storage (direction: %s)", direction_str)
             except Exception as e:
-                logger.error("Failed to connect storage: %s", e)
+                logger.warning("Failed to connect storage: %s", e)
                 # Still create addon without storage for logging
                 self.addon = CCProxyMitmAddon(
                     storage=None,

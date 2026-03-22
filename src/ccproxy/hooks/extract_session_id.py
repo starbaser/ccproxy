@@ -1,7 +1,10 @@
 """Extract session ID hook for LangFuse tracking.
 
-Extracts session_id from Claude Code's user_id field format,
-with fallback to metadata.session_id for other clients (e.g. talkstream).
+Extracts session_id from Claude Code's user_id field, which may be either:
+- JSON object: {"device_id": "...", "account_uuid": "...", "session_id": "<uuid>"}
+- Legacy compound string: user_{hash}_account_{uuid}_session_{uuid}
+
+Falls back to metadata.session_id for other clients (e.g. talkstream).
 
 For /v1/messages (Anthropic) routes, LiteLLM's validate_anthropic_api_metadata
 strips non-user_id keys from data["metadata"] before Langfuse reads it.
@@ -11,6 +14,7 @@ proxy_server_request, which Langfuse recovers via add_metadata_from_header.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -68,24 +72,49 @@ def extract_session_id(ctx: Context, params: dict[str, Any]) -> Context:
 
     user_id = body_metadata.get("user_id", "")
 
-    # Claude Code user_id format: user_{hash}_account_{uuid}_session_{uuid}
-    if user_id and "_session_" in user_id:
-        parts = user_id.split("_session_")
-        if len(parts) == 2:
-            session_id = parts[1]
-            ctx.metadata["session_id"] = session_id
-            logger.debug("Extracted session_id from user_id: %s", session_id)
+    if user_id:
+        session_id = None
 
-            prefix = parts[0]
-            if "_account_" in prefix:
-                user_account = prefix.split("_account_")
-                if len(user_account) == 2:
-                    user_hash = user_account[0].replace("user_", "")
-                    account_id = user_account[1]
-                    ctx.metadata["trace_user_id"] = user_hash
-                    if "trace_metadata" not in ctx.metadata:
-                        ctx.metadata["trace_metadata"] = {}
-                    ctx.metadata["trace_metadata"]["claude_account_id"] = account_id
+        # New format: JSON-encoded object {"device_id": "...", "account_uuid": "...", "session_id": "<uuid>"}
+        if user_id.startswith("{"):
+            try:
+                user_id_obj = json.loads(user_id)
+                if isinstance(user_id_obj, dict):
+                    session_id = user_id_obj.get("session_id") or None
+                    if session_id:
+                        ctx.metadata["session_id"] = session_id
+                        logger.debug("Extracted session_id from user_id JSON: %s", session_id)
+                        account_uuid = user_id_obj.get("account_uuid")
+                        device_id = user_id_obj.get("device_id")
+                        if account_uuid:
+                            ctx.metadata["trace_user_id"] = account_uuid
+                        if "trace_metadata" not in ctx.metadata:
+                            ctx.metadata["trace_metadata"] = {}
+                        if device_id:
+                            ctx.metadata["trace_metadata"]["claude_device_id"] = device_id
+                        if account_uuid:
+                            ctx.metadata["trace_metadata"]["claude_account_id"] = account_uuid
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # Legacy format: user_{hash}_account_{uuid}_session_{uuid}
+        if not session_id and "_session_" in user_id:
+            parts = user_id.split("_session_")
+            if len(parts) == 2:
+                session_id = parts[1]
+                ctx.metadata["session_id"] = session_id
+                logger.debug("Extracted session_id from user_id legacy format: %s", session_id)
+
+                prefix = parts[0]
+                if "_account_" in prefix:
+                    user_account = prefix.split("_account_")
+                    if len(user_account) == 2:
+                        user_hash = user_account[0].replace("user_", "")
+                        account_id = user_account[1]
+                        ctx.metadata["trace_user_id"] = user_hash
+                        if "trace_metadata" not in ctx.metadata:
+                            ctx.metadata["trace_metadata"] = {}
+                        ctx.metadata["trace_metadata"]["claude_account_id"] = account_id
 
     # Inject langfuse_* headers so values survive LiteLLM's
     # validate_anthropic_api_metadata stripping on /v1/messages routes.
