@@ -142,7 +142,11 @@ class Stop:
 
 @attrs.define
 class Restart:
-    """Restart the LiteLLM proxy server (stop then start)."""
+    """Restart the LiteLLM proxy server (stop then start).
+
+    MITM state is auto-detected from the running configuration — do not
+    pass --mitm here. If MITM reverse proxy was running before the restart,
+    it will be re-enabled automatically."""
 
     args: Annotated[list[str] | None, tyro.conf.Positional] = None
     """Additional arguments to pass to litellm command."""

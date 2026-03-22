@@ -187,7 +187,7 @@ class TestStartProxy:
 
     @patch("subprocess.Popen")
     @patch("os.kill")
-    def test_litellm_detach_invalid_pid_file(self, mock_kill: Mock, mock_popen: Mock, tmp_path: Path) -> None:
+    def test_litellm_detach_invalid_pid_file(self, _mock_kill: Mock, mock_popen: Mock, tmp_path: Path) -> None:
         """Test litellm detach with invalid PID file content."""
         config_file = tmp_path / "config.yaml"
         config_file.write_text("litellm: config")
@@ -307,7 +307,7 @@ class TestInstallConfig:
                 install_config(config_dir)
             assert exc_info.value.code == 1
 
-    def test_install_skip_existing_file(self, tmp_path: Path, capsys) -> None:
+    def test_install_skip_existing_file(self, tmp_path: Path, capsys) -> None:  # pyright: ignore[reportUnusedParameter]
         """Test install skips existing files without force flag."""
         templates_dir = tmp_path / "templates"
         templates_dir.mkdir()
@@ -800,7 +800,7 @@ class TestStopLiteLLM:
 
     @patch("os.kill")
     @patch("time.sleep")
-    def test_stop_successful(self, mock_sleep: Mock, mock_kill: Mock, tmp_path: Path, capsys) -> None:
+    def test_stop_successful(self, _mock_sleep: Mock, mock_kill: Mock, tmp_path: Path, capsys) -> None:
         """Test successful stop of running process."""
         pid_file = tmp_path / "litellm.lock"
         pid_file.write_text("12345")
@@ -826,7 +826,7 @@ class TestStopLiteLLM:
 
     @patch("os.kill")
     @patch("time.sleep")
-    def test_stop_force_kill(self, mock_sleep: Mock, mock_kill: Mock, tmp_path: Path, capsys) -> None:
+    def test_stop_force_kill(self, _mock_sleep: Mock, mock_kill: Mock, tmp_path: Path, capsys) -> None:
         """Test force kill when process doesn't respond to SIGTERM."""
         pid_file = tmp_path / "litellm.lock"
         pid_file.write_text("12345")
