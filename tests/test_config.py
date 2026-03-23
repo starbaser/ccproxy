@@ -322,42 +322,16 @@ ccproxy:
 
     def test_config_from_runtime(self) -> None:
         """Test loading configuration from proxy_server runtime."""
-        # Mock proxy_server
-        mock_proxy_server = mock.MagicMock()
-        mock_proxy_server.general_settings = {}
-        mock_proxy_server.llm_router = mock.MagicMock()
-        mock_proxy_server.llm_router.model_list = [
-            {
-                "model_name": "default",
-                "litellm_params": {
-                    "model": "anthropic/claude-sonnet-4-5-20250929",
-                    "api_base": "https://api.anthropic.com",
-                },
-            },
-            {
-                "model_name": "background",
-                "litellm_params": {
-                    "model": "anthropic/claude-haiku-4-5-20251001-20241022",
-                    "api_base": "https://api.anthropic.com",
-                },
-            },
-        ]
+        config = CCProxyConfig.from_proxy_runtime()
 
-        with mock.patch("ccproxy.config.proxy_server", mock_proxy_server):
-            config = CCProxyConfig.from_proxy_runtime()
-
-            # Config should be created successfully
-            assert config is not None
-            # Model lookup functionality has been moved to router.py
+        # Config should be created successfully
+        assert config is not None
+        # Model lookup functionality has been moved to router.py
 
     def test_get_config_uses_runtime_when_available(self) -> None:
         """Test that get_config prefers runtime config when available."""
         # Clear any existing instance
         clear_config_instance()
-
-        # Mock proxy_server
-        mock_proxy_server = mock.MagicMock()
-        mock_proxy_server.general_settings = {}
 
         # Create temporary ccproxy.yaml
         ccproxy_yaml_content = """
@@ -390,10 +364,7 @@ ccproxy:
 
             try:
                 # Set environment variable to point to test directory
-                with (
-                    mock.patch("ccproxy.config.proxy_server", mock_proxy_server),
-                    mock.patch.dict(os.environ, {"CCPROXY_CONFIG_DIR": temp_dir}),
-                ):
+                with mock.patch.dict(os.environ, {"CCPROXY_CONFIG_DIR": temp_dir}):
                     config = get_config()
                     assert config.debug is True
                     assert len(config.rules) == 1
