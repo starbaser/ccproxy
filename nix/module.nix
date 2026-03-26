@@ -19,7 +19,7 @@ in
 
     package = lib.mkOption {
       type = lib.types.package;
-      default = inputs.ccproxy.packages.${pkgs.system}.default;
+      default = inputs.ccproxy.packages.${pkgs.stdenv.hostPlatform.system}.default;
       description = "The ccproxy package.";
     };
 

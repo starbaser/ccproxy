@@ -1,6 +1,6 @@
 {
   repositories = {
-    "BerriAI/litellm" = {
+    "litellm" = {
       url = "https://github.com/BerriAI/litellm";
     };
   };
