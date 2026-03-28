@@ -60,6 +60,12 @@ def ensure_prisma_client(database_url: str) -> bool:
     env = os.environ.copy()
     env["DATABASE_URL"] = database_url
 
+    # Ensure the bin directory containing prisma-client-py is on PATH.
+    # Prisma CLI spawns /bin/sh to run the generator, which won't inherit
+    # Nix store paths unless explicitly added.
+    exe_bin_dir = str(Path(sys.executable).parent)
+    env["PATH"] = exe_bin_dir + os.pathsep + env.get("PATH", "")
+
     try:
         result = subprocess.run(
             [sys.executable, "-m", "prisma", "generate", "--schema", str(schema_path)],

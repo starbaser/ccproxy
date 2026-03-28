@@ -31,89 +31,102 @@
       ...
     }:
     let
-      system = "x86_64-linux";
-      pkgs = nixpkgs.legacyPackages.${system};
       inherit (nixpkgs) lib;
+      supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
+      forAllSystems = f: lib.genAttrs supportedSystems f;
 
       workspace = uv2nix.lib.workspace.loadWorkspace { workspaceRoot = ./.; };
       overlay = workspace.mkPyprojectOverlay { sourcePreference = "wheel"; };
-      python = pkgs.python312;
-
-      # Rust/C extension wheels that need autoPatchelf relaxation
-      wheelFixes = final: prev: {
-        mitmproxy-rs = prev.mitmproxy-rs.overrideAttrs {
-          autoPatchelfIgnoreMissingDeps = true;
-        };
-        tiktoken = prev.tiktoken.overrideAttrs {
-          autoPatchelfIgnoreMissingDeps = true;
-        };
-      };
-
-      pythonSet =
-        (pkgs.callPackage pyproject-nix.build.packages {
-          inherit python;
-        }).overrideScope
-          (
-            lib.composeManyExtensions [
-              pyproject-build-systems.overlays.default
-              overlay
-              wheelFixes
-            ]
-          );
-
-      venv = pythonSet.mkVirtualEnv "ccproxy-env" workspace.deps.default;
-
-      yaml = pkgs.formats.yaml { };
-
       defaultSettings = import ./nix/defaults.nix;
-    in
-    {
-      packages.${system}.default = pkgs.writeShellScriptBin "ccproxy" ''
-        exec ${venv}/bin/ccproxy "$@"
-      '';
 
-      homeModules.ccproxy = import ./nix/module.nix;
+      perSystem = forAllSystems (system: let
+        pkgs = nixpkgs.legacyPackages.${system};
+        python = pkgs.python312;
 
-      lib.${system}.mkConfig =
-        {
-          settings ? defaultSettings.settings,
-          litellmSettings ? defaultSettings.litellmSettings,
-          litellmConfig ? defaultSettings.litellmConfig,
-          configDir ? ".ccproxy",
-        }:
-        let
-          ccproxyYaml = yaml.generate "ccproxy.yaml" (
-            { ccproxy = settings; }
-            // lib.optionalAttrs (litellmSettings != { }) { litellm = litellmSettings; }
-          );
-          litellmConfigYaml = yaml.generate "config.yaml" litellmConfig;
-        in
-        {
-          inherit ccproxyYaml litellmConfigYaml;
+        # Rust/C extension wheels that need autoPatchelf relaxation
+        wheelFixes = final: prev: {
+          mitmproxy-rs = prev.mitmproxy-rs.overrideAttrs {
+            autoPatchelfIgnoreMissingDeps = true;
+          };
+          tiktoken = prev.tiktoken.overrideAttrs {
+            autoPatchelfIgnoreMissingDeps = true;
+          };
+        };
 
-          shellHook = ''
-            mkdir -p ${configDir}
-            ln -sfn ${ccproxyYaml} ${configDir}/ccproxy.yaml
-            ln -sfn ${litellmConfigYaml} ${configDir}/config.yaml
-            export CCPROXY_CONFIG_DIR="$PWD/${configDir}"
+        pythonSet =
+          (pkgs.callPackage pyproject-nix.build.packages {
+            inherit python;
+          }).overrideScope
+            (
+              lib.composeManyExtensions [
+                pyproject-build-systems.overlays.default
+                overlay
+                wheelFixes
+              ]
+            );
+
+        venv = pythonSet.mkVirtualEnv "ccproxy-env" workspace.deps.default;
+
+        yaml = pkgs.formats.yaml { };
+      in {
+        packages = {
+          default = pkgs.writeShellScriptBin "ccproxy" ''
+            exec ${venv}/bin/ccproxy "$@"
           '';
         };
 
-      devShells.${system}.default = pkgs.mkShell {
-        packages = with pkgs; [
-          python312
-          uv
-          ruff
-          mypy
-          jq
-          git
-        ];
+        devShells = {
+          default = pkgs.mkShell {
+            packages = with pkgs; [
+              python312
+              uv
+              ruff
+              mypy
+              jq
+              git
+            ];
 
-        shellHook = ''
-          uv sync --quiet 2>/dev/null || true
-          export VIRTUAL_ENV="$PWD/.venv"
-          export PATH="$PWD/.venv/bin:$PATH"
-        '';
-      };
+            shellHook = ''
+              uv sync --quiet 2>/dev/null || true
+              export VIRTUAL_ENV="$PWD/.venv"
+              export PATH="$PWD/.venv/bin:$PATH"
+            '';
+          };
+        };
+
+        lib = {
+          mkConfig =
+            {
+              settings ? defaultSettings.settings,
+              litellmSettings ? defaultSettings.litellmSettings,
+              litellmConfig ? defaultSettings.litellmConfig,
+              configDir ? ".ccproxy",
+            }:
+            let
+              ccproxyYaml = yaml.generate "ccproxy.yaml" (
+                { ccproxy = settings; }
+                // lib.optionalAttrs (litellmSettings != { }) { litellm = litellmSettings; }
+              );
+              litellmConfigYaml = yaml.generate "config.yaml" litellmConfig;
+            in
+            {
+              inherit ccproxyYaml litellmConfigYaml;
+
+              shellHook = ''
+                mkdir -p ${configDir}
+                ln -sfn ${ccproxyYaml} ${configDir}/ccproxy.yaml
+                ln -sfn ${litellmConfigYaml} ${configDir}/config.yaml
+                export CCPROXY_CONFIG_DIR="$PWD/${configDir}"
+              '';
+            };
+        };
+      });
+    in
+    {
+      packages = lib.mapAttrs (_: v: v.packages) perSystem;
+      devShells = lib.mapAttrs (_: v: v.devShells) perSystem;
+      lib = lib.mapAttrs (_: v: v.lib) perSystem;
+
+      homeModules.ccproxy = import ./nix/module.nix;
     };
 }
