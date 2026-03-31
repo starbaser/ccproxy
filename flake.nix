@@ -67,10 +67,17 @@
 
         venv = pythonSet.mkVirtualEnv "ccproxy-env" workspace.deps.default;
 
+        prismaGenerated = pkgs.callPackage ./nix/prisma-cli {
+          inherit pkgs venv python;
+          schemaFile = ./prisma/schema.prisma;
+        };
+
         yaml = pkgs.formats.yaml { };
       in {
         packages = {
           default = pkgs.writeShellScriptBin "ccproxy" ''
+            export PYTHONPATH="${prismaGenerated}/lib/python${python.pythonVersion}/site-packages''${PYTHONPATH:+:$PYTHONPATH}"
+            export PATH="${venv}/bin:$PATH"
             exec ${venv}/bin/ccproxy "$@"
           '';
         };

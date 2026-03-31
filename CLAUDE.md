@@ -266,12 +266,30 @@ When modifying `prisma/schema.prisma` (e.g., adding fields to `CCProxy_HttpTrace
 # 1. Push schema changes to database
 DATABASE_URL="postgresql://ccproxy:test@localhost:5433/ccproxy_mitm" uv run prisma db push
 
-# 2. Regenerate Prisma client for the TOOL installation (not just .venv)
-DATABASE_URL="postgresql://ccproxy:test@localhost:5433/ccproxy_mitm" \
-  uv tool run --from claude-ccproxy prisma generate --schema prisma/schema.prisma
+# 2. Regenerate Prisma client for the devShell .venv
+DATABASE_URL="postgresql://ccproxy:test@localhost:5433/ccproxy_mitm" uv run prisma generate --schema prisma/schema.prisma
 
-# 3. Restart proxy
+# 3. Rebuild the Nix package (regenerates the build-time client)
+nix build
+
+# 4. Restart proxy
 ccproxy stop && ccproxy start --detach --mitm
 ```
 
-**Why both steps?** The `uv run prisma generate` only updates `.venv/`, but ccproxy runs from the tool installation at `~/.local/share/uv/tools/claude-ccproxy/`. The tool's Prisma client must be regenerated separately.
+### Prisma Build-Time Generation (Nix)
+
+The Nix package generates the Prisma client at **build time** via `nix/prisma-cli/default.nix`. This is necessary because `prisma generate` writes into `site-packages/prisma/` which is read-only in the Nix store.
+
+The build derivation:
+1. Pre-fetches the Prisma CLI npm packages (v5.17.0) via `importNpmLock` using SRI hashes in `nix/prisma-cli/package-lock.json`
+2. Copies the base `prisma` site-package to a writable staging area
+3. Runs `prisma generate` with stub engine binaries (real engine resolved at runtime)
+4. Outputs the generated package; the wrapper prepends `PYTHONPATH` so it shadows the base wheel
+
+At runtime, `ensure_prisma_client()` succeeds immediately since the generated `client.py` is already importable. The query engine binary is fetched lazily into `~/.cache/prisma-python/` on first database connection.
+
+When updating `prisma-client-py` version, also update `nix/prisma-cli/package.json` and `package-lock.json` to match the new Prisma CLI version.
+
+## Marketplace Plugin Sync
+
+This project's plugin files (`.claude-plugin/`, `skills/`, `hooks/`, `CLAUDE.md`) are synced to `starbaser/eigenmage-marketplace` via CI. Pushes to `starbased/dev` trigger `.github/workflows/notify-marketplace.yml`, which dispatches a `plugin-updated` event to the marketplace repo. The marketplace CI then pulls the latest submodule and copies plugin-relevant files into `plugins/ccproxy/`.

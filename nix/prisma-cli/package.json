@@ -1,0 +1,1 @@
+{"name":"prisma-binaries","version":"1.0.0","private":true,"description":"Cache directory created by Prisma Client Python to store Prisma Engines","main":"node_modules/prisma/build/index.js","author":"RobertCraigie","license":"Apache-2.0","dependencies":{"prisma":"^5.17.0"}}
