@@ -1,13 +1,14 @@
-"""Mitmproxy addon script for use with mitmdump -s flag.
+"""Mitmproxy addon script for use with mitmdump/mitmweb -s flag.
 
-This script is loaded by mitmdump to capture HTTP/HTTPS traffic and store
+This script is loaded by mitmproxy to capture HTTP/HTTPS traffic and store
 traces in PostgreSQL via the CCProxyMitmAddon.
 
-In reverse proxy mode, mitmproxy handles forwarding to LiteLLM automatically.
-This addon focuses on logging/storage of traffic.
+In combined mode, mitmproxy runs both reverse and forward proxy listeners
+in a single process. Direction is detected per-flow via proxy_mode.
 
 Usage:
-    mitmdump --mode reverse:http://localhost:{litellm_port} -s script.py
+    mitmdump --mode reverse:http://localhost:{litellm_port}@{reverse_port} \
+             --mode regular@{forward_port} -s script.py
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ import os
 from typing import TYPE_CHECKING, Any
 
 from ccproxy.config import MitmConfig
-from ccproxy.mitm.addon import CCProxyMitmAddon, ProxyDirection
+from ccproxy.mitm.addon import CCProxyMitmAddon
 
 if TYPE_CHECKING:
     from ccproxy.mitm.storage import TraceStorage
@@ -37,39 +38,49 @@ class CCProxyScript:
         self.config: MitmConfig | None = None
         self.storage: TraceStorage | None = None
         self.addon: CCProxyMitmAddon | None = None
-        self.proxy_direction: ProxyDirection = ProxyDirection.REVERSE
         self.traffic_source: str | None = None
         self._initialized = False
 
-    def load(self, _loader: Any) -> None:  # noqa: ANN401
+        # OTel configuration
+        self._otel_enabled = False
+        self._otel_endpoint = "http://localhost:4317"
+        self._otel_service_name = "ccproxy-mitm"
+
+    def load(self, _loader: Any) -> None:
         """Called when addon is loaded by mitmproxy."""
         logger.info("Loading CCProxy mitmproxy addon...")
 
-        # Get configuration from environment
-        mitm_port = int(os.environ.get("CCPROXY_MITM_PORT", "4000"))
-        litellm_port = int(os.environ.get("CCPROXY_LITELLM_PORT", "4001"))
-
-        # Determine proxy direction from environment
-        mode_str = os.environ.get("CCPROXY_MITM_MODE", "reverse").lower()
-        self.proxy_direction = ProxyDirection.FORWARD if mode_str in ("forward", "shadow") else ProxyDirection.REVERSE
-
-        # Traffic source label for trace identification
+        mitm_mode = os.environ.get("CCPROXY_MITM_MODE", "combined")
         self.traffic_source = os.environ.get("CCPROXY_TRAFFIC_SOURCE") or None
 
+        # Port configuration for logging
+        if mitm_mode == "combined":
+            reverse_port = int(os.environ.get("CCPROXY_MITM_REVERSE_PORT", "4002"))
+            forward_port = int(os.environ.get("CCPROXY_MITM_FORWARD_PORT", "4003"))
+            litellm_port = int(os.environ.get("CCPROXY_LITELLM_PORT", "4001"))
+            logger.info(
+                "MITM mode: combined, reverse@%d → LiteLLM@%d, forward@%d",
+                reverse_port,
+                litellm_port,
+                forward_port,
+            )
+            primary_port = reverse_port
+        else:
+            # Shadow mode — single port
+            primary_port = int(os.environ.get("CCPROXY_MITM_PORT", "8082"))
+            litellm_port = int(os.environ.get("CCPROXY_LITELLM_PORT", "4001"))
+            logger.info("MITM mode: %s, port %d", mitm_mode, primary_port)
+
         self.config = MitmConfig(
-            port=mitm_port,
             upstream_proxy=f"http://localhost:{litellm_port}",
             max_body_size=int(os.environ.get("CCPROXY_MITM_MAX_BODY_SIZE", "0")),
             debug=os.environ.get("CCPROXY_DEBUG", "false").lower() in ("true", "1", "yes"),
         )
 
-        direction_str = "forward" if self.proxy_direction == ProxyDirection.FORWARD else "reverse"
-        logger.info(
-            "MITM mode: %s, listening on port %d, forwarding to LiteLLM on port %d",
-            direction_str,
-            mitm_port,
-            litellm_port,
-        )
+        # OTel configuration from env vars
+        self._otel_enabled = os.environ.get("CCPROXY_OTEL_ENABLED", "false").lower() in ("true", "1", "yes")
+        self._otel_endpoint = os.environ.get("CCPROXY_OTEL_ENDPOINT", "http://localhost:4317")
+        self._otel_service_name = os.environ.get("CCPROXY_OTEL_SERVICE_NAME", "ccproxy-mitm")
 
         database_url = os.environ.get("CCPROXY_DATABASE_URL") or os.environ.get("DATABASE_URL")
         if not database_url:
@@ -85,65 +96,73 @@ class CCProxyScript:
             logger.warning("Failed to initialize storage: %s - traces will not be persisted", e)
 
     async def running(self) -> None:
-        """Called when mitmproxy is fully running - async context available."""
+        """Called when mitmproxy is fully running — async context available."""
         if self._initialized:
             return
 
         assert self.config is not None
 
-        direction_str = "forward" if self.proxy_direction == ProxyDirection.FORWARD else "reverse"
-
         if self.storage:
             try:
                 await self.storage.connect()
-                self.addon = CCProxyMitmAddon(
-                    self.storage,
-                    self.config,
-                    proxy_direction=self.proxy_direction,
-                    traffic_source=self.traffic_source,
-                )
-                self._initialized = True
-                logger.info("CCProxy addon initialized with storage (direction: %s)", direction_str)
             except Exception as e:
                 logger.warning("Failed to connect storage: %s", e)
-                # Still create addon without storage for logging
-                self.addon = CCProxyMitmAddon(
-                    storage=None,
-                    config=self.config,
-                    proxy_direction=self.proxy_direction,
-                    traffic_source=self.traffic_source,
-                )
-                self._initialized = True
-                logger.info("CCProxy addon initialized without storage (direction: %s)", direction_str)
-        else:
-            # No storage configured
-            self.addon = CCProxyMitmAddon(
-                storage=None,
-                config=self.config,
-                proxy_direction=self.proxy_direction,
-                traffic_source=self.traffic_source,
+                self.storage = None
+
+        self.addon = CCProxyMitmAddon(
+            storage=self.storage,
+            config=self.config,
+            traffic_source=self.traffic_source,
+        )
+
+        # Initialize OTel tracer
+        try:
+            from ccproxy.mitm.telemetry import MitmTracer
+
+            tracer = MitmTracer(
+                enabled=self._otel_enabled,
+                otlp_endpoint=self._otel_endpoint,
+                service_name=self._otel_service_name,
             )
-            self._initialized = True
-            logger.info("CCProxy addon initialized, no storage (direction: %s)", direction_str)
+            self.addon.set_tracer(tracer)
+            if self._otel_enabled:
+                logger.info("OTel tracing enabled, exporting to %s", self._otel_endpoint)
+        except Exception as e:
+            logger.warning("Failed to initialize OTel tracer: %s", e)
+
+        self._initialized = True
+        logger.info(
+            "CCProxy addon initialized (storage: %s, otel: %s)",
+            "connected" if self.storage else "disabled",
+            "enabled" if self._otel_enabled else "disabled",
+        )
 
     async def done(self) -> None:
         """Called when mitmproxy shuts down."""
+        logger.info("Shutting down CCProxy addon...")
         if self.storage:
-            logger.info("Shutting down CCProxy addon...")
             await self.storage.disconnect()
-            logger.info("CCProxy addon shutdown complete")
 
-    async def request(self, flow: Any) -> None:  # noqa: ANN401
+        try:
+            from ccproxy.mitm.telemetry import shutdown_tracer
+
+            shutdown_tracer()
+        except Exception as e:
+            logger.warning("Error shutting down OTel tracer: %s", e)
+
+        logger.info("CCProxy addon shutdown complete")
+
+    async def request(self, flow: Any) -> None:
         """Handle HTTP request."""
         if self.addon:
             await self.addon.request(flow)
 
-    async def response(self, flow: Any) -> None:  # noqa: ANN401
+    async def response(self, flow: Any) -> None:
         """Handle HTTP response."""
         if self.addon:
             await self.addon.response(flow)
 
-    async def error(self, flow: Any) -> None:  # noqa: ANN401
+    async def error(self, flow: Any) -> None:
         """Handle flow error."""
         if self.addon:
             await self.addon.error(flow)

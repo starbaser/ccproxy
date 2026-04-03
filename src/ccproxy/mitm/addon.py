@@ -1,7 +1,8 @@
 """Mitmproxy addon for HTTP/HTTPS traffic capture.
 
-In reverse proxy mode, mitmproxy handles forwarding automatically.
-This addon focuses on logging/storage of traffic.
+Captures all HTTP traffic flowing through both reverse and forward proxy
+listeners and stores traces in PostgreSQL. Direction is detected per-flow
+via mitmproxy's multi-mode `flow.client_conn.proxy_mode` attribute.
 """
 
 from __future__ import annotations
@@ -26,8 +27,25 @@ class ProxyDirection(IntEnum):
 
 if TYPE_CHECKING:
     from ccproxy.mitm.storage import TraceStorage
+    from ccproxy.mitm.telemetry import MitmTracer
 
 logger = logging.getLogger(__name__)
+
+# Cached mode type references (avoid repeated imports per-flow)
+_ReverseMode: type | None = None
+_RegularMode: type | None = None
+
+
+def _get_mode_types() -> tuple[type, type]:
+    """Lazily resolve mitmproxy mode_specs types."""
+    global _ReverseMode, _RegularMode
+    if _ReverseMode is None:
+        from mitmproxy.proxy.mode_specs import RegularMode, ReverseMode
+
+        _ReverseMode = ReverseMode
+        _RegularMode = RegularMode
+    assert _ReverseMode is not None and _RegularMode is not None
+    return _ReverseMode, _RegularMode
 
 
 class CCProxyMitmAddon:
@@ -37,7 +55,6 @@ class CCProxyMitmAddon:
         self,
         storage: TraceStorage | None,
         config: MitmConfig,
-        proxy_direction: ProxyDirection = ProxyDirection.REVERSE,
         traffic_source: str | None = None,
     ) -> None:
         """Initialize the addon.
@@ -45,13 +62,44 @@ class CCProxyMitmAddon:
         Args:
             storage: Storage backend for traces (None if no persistence)
             config: Mitmproxy configuration
-            proxy_direction: Traffic direction (REVERSE for client->LiteLLM, FORWARD for LiteLLM->provider)
             traffic_source: Source label for traces (e.g. "shadow", "litellm")
         """
         self.storage = storage
         self.config = config
-        self.proxy_direction = proxy_direction
         self.traffic_source = traffic_source
+        self.tracer: MitmTracer | None = None
+
+    def set_tracer(self, tracer: MitmTracer) -> None:
+        """Set the OTel tracer for span emission.
+
+        Args:
+            tracer: Initialized MitmTracer instance
+        """
+        self.tracer = tracer
+
+    def _get_direction(self, flow: http.HTTPFlow) -> ProxyDirection | None:
+        """Detect traffic direction from which listener accepted this flow.
+
+        Uses mitmproxy's multi-mode `flow.client_conn.proxy_mode` to determine
+        whether the flow arrived on the reverse or forward proxy listener.
+
+        Args:
+            flow: HTTP flow object
+
+        Returns:
+            ProxyDirection or None if the flow's mode is unsupported
+        """
+        if not hasattr(flow, "client_conn") or flow.client_conn is None:  # type: ignore[comparison-overlap]
+            return None  # Synthetic/replayed flows
+
+        reverse_mode, regular_mode = _get_mode_types()
+        mode = flow.client_conn.proxy_mode
+
+        if isinstance(mode, reverse_mode):
+            return ProxyDirection.REVERSE
+        if isinstance(mode, regular_mode):
+            return ProxyDirection.FORWARD
+        return None
 
     def _truncate_body(self, body: bytes | None) -> bytes | None:
         """Truncate body to configured max size.
@@ -134,32 +182,27 @@ class CCProxyMitmAddon:
         Args:
             flow: HTTP flow object
         """
-        # Skip trace capture if no storage configured
         if self.storage is None:
             return
 
         try:
+            direction = self._get_direction(flow)
+            if direction is None:
+                return
+
             request = flow.request
             host = request.pretty_host
 
-            # Filter based on proxy direction
-            if self.proxy_direction == ProxyDirection.REVERSE:
-                # Reverse: only trace client→LiteLLM traffic (localhost)
-                if host.lower() not in ("localhost", "127.0.0.1", "::1"):
-                    return
-            else:
-                # Forward: only trace LiteLLM→provider traffic (external APIs)
-                if host.lower() in ("localhost", "127.0.0.1", "::1"):
-                    return
+            # Shadow mode: exclude loopback traffic from captured subprocess HTTP
+            if self.traffic_source == "shadow" and host.lower() in ("localhost", "127.0.0.1", "::1"):
+                return
 
             path = request.path
-
-            # Extract session_id from request body metadata
             session_id = self._extract_session_id(request)
 
             trace_data = {
                 "trace_id": flow.id,
-                "proxy_direction": self.proxy_direction.value,
+                "proxy_direction": direction.value,
                 "session_id": session_id,
                 "traffic_source": self.traffic_source,
                 "method": request.method,
@@ -170,7 +213,6 @@ class CCProxyMitmAddon:
                 "start_time": datetime.now(UTC),
             }
 
-            # Add body fields if capture_bodies is enabled
             if self.config.capture_bodies:
                 logger.info(
                     "max_body_size=%d, content_len=%d",
@@ -182,7 +224,12 @@ class CCProxyMitmAddon:
                 trace_data["request_content_type"] = request.headers.get("content-type", "")
 
             await self.storage.create_trace(trace_data)
-            direction_str = "reverse" if self.proxy_direction == ProxyDirection.REVERSE else "forward"
+
+            # Start OTel span
+            if self.tracer:
+                self.tracer.start_span(flow, direction, host, request.method, session_id)
+
+            direction_str = direction.name.lower()
             logger.debug(
                 "Captured request: %s %s (trace_id: %s, direction: %s, session: %s)",
                 request.method,
@@ -214,22 +261,23 @@ class CCProxyMitmAddon:
             ended = response.timestamp_end
             duration_ms = (ended - started) * 1000 if started and ended else None
 
-            # Prepare response data
-            response_data = {
+            response_data: dict[str, Any] = {
                 "status_code": response.status_code,
                 "response_headers": self._serialize_headers(response.headers),
                 "duration_ms": duration_ms,
                 "end_time": datetime.now(UTC),
             }
 
-            # Add body fields if capture_bodies is enabled
             if self.config.capture_bodies:
                 response_data["response_body"] = self._truncate_body(response.content)
                 response_data["response_body_size"] = len(response.content) if response.content else 0
                 response_data["response_content_type"] = response.headers.get("content-type", "")
 
-            # Complete trace
             await self.storage.complete_trace(flow.id, response_data)
+
+            # End OTel span
+            if self.tracer:
+                self.tracer.finish_span(flow, response.status_code, duration_ms)
 
             logger.debug(
                 "Captured response: %s (status: %d, duration: %.2fms, trace_id: %s)",
@@ -256,16 +304,18 @@ class CCProxyMitmAddon:
             if not error:
                 return
 
-            # Prepare error data
             error_data = {
-                "status_code": 0,  # Indicate error state
+                "status_code": 0,
                 "response_headers": {},
                 "error_message": str(error),
                 "end_time": datetime.now(UTC),
             }
 
-            # Complete trace with error
             await self.storage.complete_trace(flow.id, error_data)
+
+            # End OTel span with error
+            if self.tracer:
+                self.tracer.finish_span_error(flow, str(error))
 
             logger.warning("Request error: %s (trace_id: %s)", error, flow.id)
 

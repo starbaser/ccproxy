@@ -8,15 +8,34 @@ from ccproxy.config import MitmConfig
 from ccproxy.mitm.addon import CCProxyMitmAddon, ProxyDirection
 
 
-@pytest.fixture
-def mock_flow() -> MagicMock:
-    """Create a mock HTTP flow."""
+def _make_mock_flow(*, reverse: bool = True) -> MagicMock:
+    """Create a mock HTTP flow with proxy_mode set for direction detection.
+
+    Args:
+        reverse: If True, simulate ReverseMode; if False, simulate RegularMode.
+    """
+    from mitmproxy.proxy.mode_specs import ProxyMode as MitmProxyMode
+
     flow = MagicMock()
     flow.request = MagicMock()
     flow.request.headers = {}
     flow.request.content = None
     flow.request.path = "/v1/messages"
+    flow.metadata = {}
+
+    # Set proxy_mode for per-flow direction detection
+    if reverse:
+        flow.client_conn.proxy_mode = MitmProxyMode.parse("reverse:http://localhost:4001@4002")
+    else:
+        flow.client_conn.proxy_mode = MitmProxyMode.parse("regular@4003")
+
     return flow
+
+
+@pytest.fixture
+def mock_flow() -> MagicMock:
+    """Create a mock HTTP flow (reverse mode by default)."""
+    return _make_mock_flow(reverse=True)
 
 
 class TestRequestMethod:
@@ -34,7 +53,7 @@ class TestRequestMethod:
 
 
 class TestProxyDirectionFiltering:
-    """Tests for proxy direction-based traffic filtering."""
+    """Tests for proxy direction-based traffic filtering via proxy_mode."""
 
     @pytest.fixture
     def mock_storage(self) -> AsyncMock:
@@ -44,95 +63,85 @@ class TestProxyDirectionFiltering:
         return storage
 
     @pytest.mark.asyncio
-    async def test_reverse_proxy_captures_localhost_only(self, mock_storage: AsyncMock, mock_flow: MagicMock) -> None:
-        """Reverse proxy should only capture traffic to localhost."""
+    async def test_reverse_proxy_captures_traffic(self, mock_storage: AsyncMock) -> None:
+        """Reverse proxy mode flow should be captured with REVERSE direction."""
         config = MitmConfig()
-        addon = CCProxyMitmAddon(storage=mock_storage, config=config, proxy_direction=ProxyDirection.REVERSE)
+        addon = CCProxyMitmAddon(storage=mock_storage, config=config)
 
-        # Localhost request should be captured
-        mock_flow.id = "flow-1"
-        mock_flow.request.pretty_host = "localhost"
-        mock_flow.request.method = "POST"
-        mock_flow.request.path = "/v1/chat/completions"
-        mock_flow.request.pretty_url = "http://localhost/v1/chat/completions"
-        mock_flow.request.content = None
+        flow = _make_mock_flow(reverse=True)
+        flow.id = "flow-1"
+        flow.request.pretty_host = "localhost"
+        flow.request.method = "POST"
+        flow.request.path = "/v1/chat/completions"
+        flow.request.pretty_url = "http://localhost/v1/chat/completions"
+        flow.request.content = None
 
-        await addon.request(mock_flow)
+        await addon.request(flow)
         assert mock_storage.create_trace.called
 
-        # External request should NOT be captured
-        mock_storage.reset_mock()
-        mock_flow.request.pretty_host = "api.anthropic.com"
-        mock_flow.request.pretty_url = "https://api.anthropic.com/v1/messages"
-
-        await addon.request(mock_flow)
-        assert not mock_storage.create_trace.called
-
     @pytest.mark.asyncio
-    async def test_forward_proxy_captures_external_only(self, mock_storage: AsyncMock, mock_flow: MagicMock) -> None:
-        """Forward proxy should only capture traffic to external APIs."""
+    async def test_forward_proxy_captures_traffic(self, mock_storage: AsyncMock) -> None:
+        """Forward proxy mode flow should be captured with FORWARD direction."""
         config = MitmConfig()
-        addon = CCProxyMitmAddon(storage=mock_storage, config=config, proxy_direction=ProxyDirection.FORWARD)
+        addon = CCProxyMitmAddon(storage=mock_storage, config=config)
 
-        # External request should be captured
-        mock_flow.id = "flow-1"
-        mock_flow.request.pretty_host = "api.anthropic.com"
-        mock_flow.request.method = "POST"
-        mock_flow.request.path = "/v1/messages"
-        mock_flow.request.pretty_url = "https://api.anthropic.com/v1/messages"
-        mock_flow.request.content = None
+        flow = _make_mock_flow(reverse=False)
+        flow.id = "flow-1"
+        flow.request.pretty_host = "api.anthropic.com"
+        flow.request.method = "POST"
+        flow.request.path = "/v1/messages"
+        flow.request.pretty_url = "https://api.anthropic.com/v1/messages"
+        flow.request.content = None
 
-        await addon.request(mock_flow)
+        await addon.request(flow)
         assert mock_storage.create_trace.called
 
-        # Localhost request should NOT be captured
-        mock_storage.reset_mock()
-        mock_flow.request.pretty_host = "localhost"
-        mock_flow.request.pretty_url = "http://localhost/status"
-
-        await addon.request(mock_flow)
-        assert not mock_storage.create_trace.called
-
     @pytest.mark.asyncio
-    async def test_forward_proxy_captures_langfuse(self, mock_storage: AsyncMock, mock_flow: MagicMock) -> None:
+    async def test_forward_proxy_captures_langfuse(self, mock_storage: AsyncMock) -> None:
         """Forward proxy should capture Langfuse API calls."""
         config = MitmConfig()
-        addon = CCProxyMitmAddon(storage=mock_storage, config=config, proxy_direction=ProxyDirection.FORWARD)
+        addon = CCProxyMitmAddon(storage=mock_storage, config=config)
 
-        mock_flow.id = "flow-1"
-        mock_flow.request.pretty_host = "us.cloud.langfuse.com"
-        mock_flow.request.method = "GET"
-        mock_flow.request.path = "/api/public/projects"
-        mock_flow.request.pretty_url = "https://us.cloud.langfuse.com/api/public/projects"
-        mock_flow.request.content = None
+        flow = _make_mock_flow(reverse=False)
+        flow.id = "flow-1"
+        flow.request.pretty_host = "us.cloud.langfuse.com"
+        flow.request.method = "GET"
+        flow.request.path = "/api/public/projects"
+        flow.request.pretty_url = "https://us.cloud.langfuse.com/api/public/projects"
+        flow.request.content = None
 
-        await addon.request(mock_flow)
+        await addon.request(flow)
         assert mock_storage.create_trace.called
 
     @pytest.mark.asyncio
-    async def test_proxy_direction_stored_correctly(self, mock_storage: AsyncMock, mock_flow: MagicMock) -> None:
-        """Proxy direction should be stored in trace data."""
+    async def test_proxy_direction_stored_correctly(self, mock_storage: AsyncMock) -> None:
+        """Proxy direction should be stored in trace data based on proxy_mode."""
         config = MitmConfig()
+        addon = CCProxyMitmAddon(storage=mock_storage, config=config)
 
         # Test REVERSE direction
-        addon_reverse = CCProxyMitmAddon(storage=mock_storage, config=config, proxy_direction=ProxyDirection.REVERSE)
-        mock_flow.id = "flow-1"
-        mock_flow.request.pretty_host = "localhost"
-        mock_flow.request.method = "POST"
-        mock_flow.request.path = "/v1/chat/completions"
-        mock_flow.request.pretty_url = "http://localhost/v1/chat/completions"
-        mock_flow.request.content = None
+        flow_reverse = _make_mock_flow(reverse=True)
+        flow_reverse.id = "flow-1"
+        flow_reverse.request.pretty_host = "localhost"
+        flow_reverse.request.method = "POST"
+        flow_reverse.request.path = "/v1/chat/completions"
+        flow_reverse.request.pretty_url = "http://localhost/v1/chat/completions"
+        flow_reverse.request.content = None
 
-        await addon_reverse.request(mock_flow)
+        await addon.request(flow_reverse)
         call_args = mock_storage.create_trace.call_args[0][0]
         assert call_args["proxy_direction"] == ProxyDirection.REVERSE.value
 
         # Test FORWARD direction
         mock_storage.reset_mock()
-        addon_forward = CCProxyMitmAddon(storage=mock_storage, config=config, proxy_direction=ProxyDirection.FORWARD)
-        mock_flow.request.pretty_host = "api.anthropic.com"
-        mock_flow.request.pretty_url = "https://api.anthropic.com/v1/messages"
+        flow_forward = _make_mock_flow(reverse=False)
+        flow_forward.id = "flow-2"
+        flow_forward.request.pretty_host = "api.anthropic.com"
+        flow_forward.request.method = "POST"
+        flow_forward.request.path = "/v1/messages"
+        flow_forward.request.pretty_url = "https://api.anthropic.com/v1/messages"
+        flow_forward.request.content = None
 
-        await addon_forward.request(mock_flow)
+        await addon.request(flow_forward)
         call_args = mock_storage.create_trace.call_args[0][0]
         assert call_args["proxy_direction"] == ProxyDirection.FORWARD.value

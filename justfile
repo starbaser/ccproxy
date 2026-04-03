@@ -20,3 +20,6 @@ up:
 
 down:
     process-compose down
+
+logs *ARGS:
+    process-compose process logs ccproxy {{ARGS}}

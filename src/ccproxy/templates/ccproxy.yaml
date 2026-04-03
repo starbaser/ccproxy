@@ -53,11 +53,12 @@ ccproxy:
 
   rules: []
 
-  # MITM proxy settings (enable with --mitm flag)
+  # MITM proxy settings (enable with --inspect flag)
   mitm:
     enabled: false
     forward_port: 8081
     # reverse_port: 4002  # When set, reverse proxy uses this port; LiteLLM keeps its own port
+    inspect_port: 8083   # mitmweb browser UI port
     upstream_proxy: "http://localhost:4000"
     database_url: "postgresql://ccproxy:${CCPROXY_DB_PASSWORD:-test}@localhost:5433/ccproxy_mitm"
     graphql:
@@ -68,6 +69,10 @@ ccproxy:
     excluded_hosts: []
     cert_dir: ~/.ccproxy
     debug: false
+    # OpenTelemetry span emission
+    otel_enabled: false
+    otel_endpoint: "http://localhost:4317"
+    otel_service_name: "ccproxy-mitm"
 
 litellm:
   host: 127.0.0.1

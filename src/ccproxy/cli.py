@@ -104,8 +104,8 @@ class Start:
     detach: Annotated[bool, tyro.conf.arg(aliases=["-d"])] = False
     """Run in background and save PID to litellm.lock."""
 
-    mitm: Annotated[bool, tyro.conf.arg(aliases=["-m"])] = False
-    """Also start mitmproxy for traffic capture."""
+    inspect: Annotated[bool, tyro.conf.arg(aliases=["-i"])] = False
+    """Start mitmproxy for traffic capture with browser-based flow inspection."""
 
 
 @attrs.define
@@ -145,7 +145,7 @@ class Restart:
     """Run in background and save PID to litellm.lock."""
 
 
-LogSource = Literal["litellm", "mitm", "forward", "all"]
+LogSource = Literal["litellm", "mitm", "forward", "combined", "all"]
 
 
 @attrs.define
@@ -418,14 +418,14 @@ def run_with_proxy(
     # Shadow mode: route all non-localhost HTTP through a dedicated forward proxy
     shadow_started = False
     if shadow is not None:
-        from ccproxy.mitm.process import ProxyMode, is_running, start_mitm
+        from ccproxy.mitm.process import ProxyMode, is_running, start_shadow_mitm
 
         shadow_host, shadow_port = _parse_shadow_bind(shadow)
 
         running, _ = is_running(config_dir, ProxyMode.SHADOW)
         if not running:
             logger.info("Starting shadow proxy on %s:%d...", shadow_host, shadow_port)
-            start_mitm(config_dir, port=shadow_port, mode=ProxyMode.SHADOW, detach=True)
+            start_shadow_mitm(config_dir, port=shadow_port, detach=True)
             shadow_started = True
 
         shadow_proxy_url = f"http://{shadow_host}:{shadow_port}"
@@ -544,7 +544,7 @@ def start_litellm(
     config_dir: Path,
     args: list[str] | None = None,
     detach: bool = False,
-    mitm: bool = False,
+    inspect: bool = False,
 ) -> None:
     """Start the LiteLLM proxy server with ccproxy configuration.
 
@@ -552,8 +552,9 @@ def start_litellm(
         config_dir: Configuration directory containing config files
         args: Additional arguments to pass to litellm command
         detach: Run in background mode with PID tracking
-        mitm: Also start MITM proxy for traffic capture
+        inspect: Start mitmproxy with browser-based flow inspection
     """
+    mitm = inspect
     from ccproxy.utils import find_available_port
 
     # Check if config exists
@@ -567,6 +568,7 @@ def start_litellm(
     litellm_host, main_port = _read_proxy_settings(config_dir)
     forward_port = 8081  # Forward proxy port for provider API calls
     reverse_port = None  # Reverse proxy port (None = take over main_port)
+    inspect_port = 8083  # mitmweb inspector UI port
     mitm_confdir = None  # mitmproxy confdir for CA certs (None = ~/.mitmproxy default)
 
     # Load ccproxy.yaml for MITM port config
@@ -579,6 +581,7 @@ def start_litellm(
                 mitm_section = ccproxy_config.get("ccproxy", {}).get("mitm", {})
                 forward_port = mitm_section.get("forward_port", 8081)
                 reverse_port = mitm_section.get("reverse_port")
+                inspect_port = mitm_section.get("inspect_port", 8083)
                 mitm_confdir = mitm_section.get("cert_dir")
 
     # Pre-flight: kill orphans, verify ports are free
@@ -589,6 +592,7 @@ def start_litellm(
         ports_to_check.append(forward_port)
         if reverse_port:
             ports_to_check.append(reverse_port)
+        ports_to_check.append(inspect_port)
     run_preflight_checks(config_dir, ports=ports_to_check)
 
     # Generate the handler file before starting LiteLLM
@@ -687,42 +691,34 @@ def start_litellm(
     if args:
         cmd.extend(args)
 
-    # Start both MITM proxies if enabled (treated as a single unit)
+    # Start combined MITM proxy (reverse + forward in one mitmweb process)
     if mitm:
         import time
 
-        from ccproxy.mitm import ProxyMode, start_mitm, stop_mitm
+        from ccproxy.mitm import ProxyMode, start_mitm
         from ccproxy.mitm.process import is_running as mitm_is_running
 
-        print("Starting MITM reverse proxy...")
         reverse_listen_port = reverse_port or main_port
+        print(
+            f"Starting MITM proxy: reverse@{reverse_listen_port} + forward@{forward_port}, "
+            f"inspect UI@{inspect_port}"
+        )
         start_mitm(
             config_dir,
-            port=reverse_listen_port,
+            reverse_port=reverse_listen_port,
+            forward_port=forward_port,
             litellm_port=litellm_port,
-            mode=ProxyMode.REVERSE,
+            web=True,
+            inspect_port=inspect_port,
             detach=True,
             confdir=mitm_confdir,
         )
 
-        # Verify reverse proxy started
+        # Verify combined process started
         time.sleep(0.5)
-        reverse_running, _ = mitm_is_running(config_dir, ProxyMode.REVERSE)
-        if not reverse_running:
-            print("Error: MITM reverse proxy failed to start", file=sys.stderr)
-            sys.exit(1)
-
-        print("Starting MITM forward proxy...")
-        # MITM₂ (forward) listens on forward_port (8081) for LiteLLM's outbound calls
-        start_mitm(config_dir, port=forward_port, mode=ProxyMode.FORWARD, detach=True, confdir=mitm_confdir)
-
-        # Verify forward proxy started
-        time.sleep(0.5)
-        forward_running, _ = mitm_is_running(config_dir, ProxyMode.FORWARD)
-        if not forward_running:
-            print("Error: MITM forward proxy failed to start", file=sys.stderr)
-            print("Stopping reverse proxy...")
-            stop_mitm(config_dir, ProxyMode.REVERSE)
+        combined_running, _ = mitm_is_running(config_dir, ProxyMode.COMBINED)
+        if not combined_running:
+            print("Error: MITM proxy failed to start", file=sys.stderr)
             sys.exit(1)
 
     if detach:
@@ -790,18 +786,17 @@ def stop_litellm(config_dir: Path) -> bool:
     Returns:
         True if server was stopped successfully, False otherwise
     """
-    # Also stop MITM if either proxy is running
+    # Stop MITM if running (combined process + shadow + legacy)
     from ccproxy.mitm import stop_mitm
     from ccproxy.mitm.process import ProxyMode
     from ccproxy.mitm.process import is_running as mitm_is_running
     from ccproxy.process import read_pid
 
-    reverse_running, _ = mitm_is_running(config_dir, ProxyMode.REVERSE)
-    forward_running, _ = mitm_is_running(config_dir, ProxyMode.FORWARD)
+    combined_running, _ = mitm_is_running(config_dir, ProxyMode.COMBINED)
     shadow_running, _ = mitm_is_running(config_dir, ProxyMode.SHADOW)
-    if reverse_running or forward_running or shadow_running:
+    if combined_running or shadow_running:
         print("Stopping MITM proxies...")
-        stop_mitm(config_dir)  # Stops all modes
+        stop_mitm(config_dir)  # Stops combined + shadow + legacy
 
     pid_file = config_dir / "litellm.lock"
 
@@ -862,10 +857,11 @@ def get_log_paths(config_dir: Path, source: LogSource) -> list[tuple[str, Path]]
     paths = []
     if source in ("litellm", "all"):
         paths.append(("litellm", config_dir / "litellm.log"))
-    if source in ("mitm", "all"):
-        paths.append(("mitm", config_dir / "mitm.log"))
+    if source in ("mitm", "combined", "all"):
+        paths.append(("mitm", config_dir / "mitm-combined.log"))
     if source in ("forward", "all"):
-        paths.append(("forward", config_dir / "mitm-forward.log"))
+        # Legacy: forward is now included in the combined log
+        paths.append(("forward", config_dir / "mitm-combined.log"))
     return paths
 
 
@@ -1091,11 +1087,11 @@ def show_status(
     reverse_port = mitm_config.get("reverse_port")
     proxy_url = f"http://{host}:{reverse_port or main_port}"
 
-    # Check MITM status for all modes
-    reverse_running, reverse_pid = mitm_is_running(config_dir, ProxyMode.REVERSE)
-    forward_running, forward_pid = mitm_is_running(config_dir, ProxyMode.FORWARD)
+    # Check MITM status
+    combined_running, combined_pid = mitm_is_running(config_dir, ProxyMode.COMBINED)
     shadow_running, shadow_pid = mitm_is_running(config_dir, ProxyMode.SHADOW)
     mitm_enabled = mitm_config.get("enabled", False)
+    inspect_port = mitm_config.get("inspect_port", 8083)
     litellm_actual_port = main_port  # Default: LiteLLM on main port
 
     # Read actual LiteLLM port from state file (when MITM is running)
@@ -1115,14 +1111,23 @@ def show_status(
         "log": str(log_file) if log_file.exists() else None,
         "mitm": {
             "enabled": mitm_enabled,
+            "combined": {
+                "running": combined_running,
+                "pid": combined_pid,
+                "reverse_port": reverse_port or main_port,
+                "forward_port": forward_port,
+                "inspect_port": inspect_port,
+                "inspect_url": f"http://127.0.0.1:{inspect_port}" if combined_running else None,
+            },
+            # Backward compat: both reflect combined process state
             "reverse": {
-                "running": reverse_running,
-                "pid": reverse_pid,
+                "running": combined_running,
+                "pid": combined_pid,
                 "port": reverse_port or main_port,
             },
             "forward": {
-                "running": forward_running,
-                "pid": forward_pid,
+                "running": combined_running,
+                "pid": combined_pid,
                 "port": forward_port,
             },
             "shadow": {
@@ -1135,14 +1140,14 @@ def show_status(
     }
 
     # Health check mode: exit with bitmask code indicating failed services
-    # Bit 0 (1): proxy, Bit 1 (2): reverse, Bit 2 (4): forward
+    # Bit 0 (1): proxy, Bit 1 (2): reverse/combined, Bit 2 (4): forward/combined
     if check_proxy or check_reverse or check_forward:
         exit_code = 0
         if check_proxy and not proxy_running:
             exit_code |= 1
-        if check_reverse and not reverse_running:
+        if check_reverse and not combined_running:
             exit_code |= 2
-        if check_forward and not forward_running:
+        if check_forward and not combined_running:
             exit_code |= 4
         sys.exit(exit_code)
 
@@ -1164,35 +1169,27 @@ def show_status(
             proxy_status = f"[dim]{url}[/dim] [red]false[/red]"
         table.add_row("proxy", proxy_status)
 
-        # MITM status - show both proxies
+        # MITM status — combined process
         mitm_info = status_data["mitm"]
-        reverse_info = mitm_info["reverse"]
-        forward_info = mitm_info["forward"]
+        combined_info = mitm_info["combined"]
         litellm_port = mitm_info["litellm_port"]
 
         mitm_parts = []
 
-        # Reverse proxy status
-        if reverse_info["running"]:
-            reverse_port = reverse_info["port"]
-            reverse_status = (
-                f"[green]reverse[/green] on [cyan]{reverse_port}[/cyan] → litellm on [cyan]{litellm_port}[/cyan]"
+        if combined_info["running"]:
+            rev_port = combined_info["reverse_port"]
+            fwd_port = combined_info["forward_port"]
+            combined_status = (
+                f"[green]reverse[/green]@[cyan]{rev_port}[/cyan] → litellm@[cyan]{litellm_port}[/cyan]  "
+                f"[green]forward[/green]@[cyan]{fwd_port}[/cyan] → providers"
             )
-            if reverse_info["pid"]:
-                reverse_status += f" [dim](pid: {reverse_info['pid']})[/dim]"
-            mitm_parts.append(reverse_status)
+            if combined_info["pid"]:
+                combined_status += f"  [dim](pid: {combined_info['pid']})[/dim]"
+            if combined_info.get("inspect_url"):
+                combined_status += f"\n[green]inspect[/green] → [cyan]{combined_info['inspect_url']}[/cyan]"
+            mitm_parts.append(combined_status)
         else:
-            mitm_parts.append("[dim]reverse: stopped[/dim]")
-
-        # Forward proxy status
-        if forward_info["running"]:
-            forward_port = forward_info["port"]
-            forward_status = f"[green]forward[/green] on [cyan]{forward_port}[/cyan] → providers"
-            if forward_info["pid"]:
-                forward_status += f" [dim](pid: {forward_info['pid']})[/dim]"
-            mitm_parts.append(forward_status)
-        else:
-            mitm_parts.append("[dim]forward: stopped[/dim]")
+            mitm_parts.append("[dim]stopped[/dim]")
 
         # Shadow proxy status
         shadow_info = mitm_info["shadow"]
@@ -2091,7 +2088,7 @@ def main(
 
     # Handle each command type
     if isinstance(cmd, Start):
-        start_litellm(config_dir, args=cmd.args, detach=cmd.detach, mitm=cmd.mitm)
+        start_litellm(config_dir, args=cmd.args, detach=cmd.detach, inspect=cmd.inspect)
 
     elif isinstance(cmd, Install):
         install_config(config_dir, force=cmd.force)
@@ -2144,11 +2141,11 @@ def main(
         sys.exit(0 if success else 1)
 
     elif isinstance(cmd, Restart):
-        # Check if MITM is running before stopping (check reverse mode)
+        # Check if MITM was running before stopping
         from ccproxy.mitm import ProxyMode
         from ccproxy.mitm.process import is_running as mitm_is_running
 
-        mitm_was_running, _ = mitm_is_running(config_dir, ProxyMode.REVERSE)
+        mitm_was_running, _ = mitm_is_running(config_dir, ProxyMode.COMBINED)
 
         # Stop the server first
         pid_file = config_dir / "litellm.lock"
@@ -2163,7 +2160,7 @@ def main(
 
         # Start the server with same MITM state
         print("Starting LiteLLM server...")
-        start_litellm(config_dir, args=cmd.args, detach=cmd.detach, mitm=mitm_was_running)
+        start_litellm(config_dir, args=cmd.args, detach=cmd.detach, inspect=mitm_was_running)
 
     elif isinstance(cmd, Logs):
         view_logs(config_dir, source=cmd.source, follow=cmd.follow, lines=cmd.lines)

@@ -43,6 +43,12 @@ dependencies = [
 ccproxy = "ccproxy.cli:entry_point"
 
 [project.optional-dependencies]
+otel = [
+  "opentelemetry-api>=1.20.0",
+  "opentelemetry-sdk>=1.20.0",
+  "opentelemetry-exporter-otlp-proto-grpc>=1.20.0",
+  "opentelemetry-semantic-conventions>=0.41b0",
+]
 dev = [
   "pytest>=8.0.0",
   "pytest-asyncio>=0.23.0",

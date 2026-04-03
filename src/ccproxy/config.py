@@ -119,6 +119,18 @@ class MitmConfig(BaseModel):
     database_url: str | None = None
     """PostgreSQL connection URL for MITM traces. Falls back to CCPROXY_DATABASE_URL or DATABASE_URL env vars."""
 
+    inspect_port: int = 8083
+    """Port for mitmweb browser-based flow inspector UI. Only used with --inspect flag."""
+
+    otel_enabled: bool = False
+    """Enable OpenTelemetry span emission from MITM addon."""
+
+    otel_endpoint: str = "http://localhost:4317"
+    """OTLP gRPC endpoint URL for span export (Jaeger or OTel Collector)."""
+
+    otel_service_name: str = "ccproxy-mitm"
+    """OTel resource service.name attribute."""
+
 
 class RuleConfig:
     """Configuration for a single classification rule."""
