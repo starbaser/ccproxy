@@ -202,9 +202,11 @@ def _resolve_confdir(confdir: Path | None) -> str:
     return str(Path(confdir).expanduser()) if confdir else str(Path.home() / ".mitmproxy")
 
 
-def _auto_generate_prisma() -> None:
+def _auto_generate_prisma(config_dir: Path | None = None) -> None:
     """Auto-generate Prisma client if database is configured."""
     database_url = os.environ.get("CCPROXY_DATABASE_URL") or os.environ.get("DATABASE_URL")
+    if not database_url and config_dir:
+        database_url = _resolve_database_url(config_dir)
     if database_url and not ensure_prisma_client(database_url):
         logger.warning("Prisma client generation failed - traces will not be persisted")
 
@@ -235,7 +237,38 @@ def _build_env(
     if traffic_source:
         env["CCPROXY_TRAFFIC_SOURCE"] = traffic_source
 
+    # Ensure database URL is available — resolve from ccproxy.yaml if not in env
+    if "CCPROXY_DATABASE_URL" not in env and "DATABASE_URL" not in env:
+        database_url = _resolve_database_url(config_dir)
+        if database_url:
+            env["CCPROXY_DATABASE_URL"] = database_url
+
     return env
+
+
+def _resolve_database_url(config_dir: Path) -> str | None:
+    """Resolve database URL from ccproxy.yaml config."""
+    import re
+
+    config_path = config_dir / "ccproxy.yaml"
+    if not config_path.exists():
+        return None
+    try:
+        import yaml
+
+        with config_path.open() as f:
+            data = yaml.safe_load(f)
+        url = data.get("ccproxy", {}).get("mitm", {}).get("database_url")
+        if not url:
+            return None
+        # Expand ${VAR:-default} patterns
+        return re.sub(
+            r"\$\{([^}:]+)(?::-(.*?))?\}",
+            lambda m: os.environ.get(m.group(1), m.group(2) or ""),
+            url,
+        )
+    except Exception:
+        return None
 
 
 def _launch_process(
@@ -319,7 +352,7 @@ def start_mitm(
         logger.error(f"Mitmproxy (combined) is already running with PID {pid}")
         sys.exit(1)
 
-    _auto_generate_prisma()
+    _auto_generate_prisma(config_dir)
 
     pid_file = get_pid_file(config_dir, ProxyMode.COMBINED)
     log_file = get_log_file(config_dir, ProxyMode.COMBINED)
@@ -385,7 +418,7 @@ def start_shadow_mitm(
         logger.error(f"Mitmproxy (shadow) is already running with PID {pid}")
         sys.exit(1)
 
-    _auto_generate_prisma()
+    _auto_generate_prisma(config_dir)
 
     pid_file = get_pid_file(config_dir, ProxyMode.SHADOW)
     log_file = get_log_file(config_dir, ProxyMode.SHADOW)

@@ -1,7 +1,5 @@
 # Development
 
-export PC_SOCKET_PATH := "/tmp/process-compose-ccproxy.sock"
-
 test:
     uv run pytest
 

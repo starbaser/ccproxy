@@ -25,7 +25,7 @@
       forward_port = 8081;
       # reverse_port — when set, reverse proxy uses this port; LiteLLM keeps its own port
       upstream_proxy = "http://localhost:4000";
-      database_url = "postgresql://ccproxy:\${CCPROXY_DB_PASSWORD:-test}@localhost:5433/ccproxy_mitm";
+      database_url = "postgresql://ccproxy:\${CCPROXY_DB_PASSWORD:-test}@127.0.0.1:5433/ccproxy_mitm";
       graphql = {
         host = "localhost";
         port = 5435;
