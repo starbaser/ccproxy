@@ -92,8 +92,11 @@ class MitmConfig(BaseModel):
     enabled: bool = False
     """Enable mitmproxy traffic capture"""
 
-    port: int = 8081
-    """Port for mitmproxy to listen on"""
+    forward_port: int = 8081
+    """Port for the MITM forward proxy (LiteLLM outbound to providers)"""
+
+    reverse_port: int | None = None
+    """Port for the MITM reverse proxy (client-facing). When set, LiteLLM stays on its configured port and the reverse proxy listens here instead of taking over the main port."""
 
     upstream_proxy: str = "http://localhost:4000"
     """Upstream proxy server URL (typically LiteLLM)"""

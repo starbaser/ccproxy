@@ -566,8 +566,10 @@ def start_litellm(
     # Read proxy host/port from config.yaml general_settings
     litellm_host, main_port = _read_proxy_settings(config_dir)
     forward_port = 8081  # Forward proxy port for provider API calls
+    reverse_port = None  # Reverse proxy port (None = take over main_port)
+    mitm_confdir = None  # mitmproxy confdir for CA certs (None = ~/.mitmproxy default)
 
-    # Load ccproxy.yaml for MITM forward port
+    # Load ccproxy.yaml for MITM port config
     ccproxy_config_path = config_dir / "ccproxy.yaml"
     ccproxy_config = None
     if ccproxy_config_path.exists():
@@ -575,12 +577,18 @@ def start_litellm(
             ccproxy_config = yaml.safe_load(f)
             if ccproxy_config:
                 mitm_section = ccproxy_config.get("ccproxy", {}).get("mitm", {})
-                forward_port = mitm_section.get("port", 8081)
+                forward_port = mitm_section.get("forward_port", 8081)
+                reverse_port = mitm_section.get("reverse_port")
+                mitm_confdir = mitm_section.get("cert_dir")
 
     # Pre-flight: kill orphans, verify ports are free
     from ccproxy.preflight import run_preflight_checks
 
-    ports_to_check = [main_port, forward_port] if mitm else [main_port]
+    ports_to_check = [main_port]
+    if mitm:
+        ports_to_check.append(forward_port)
+        if reverse_port:
+            ports_to_check.append(reverse_port)
     run_preflight_checks(config_dir, ports=ports_to_check)
 
     # Generate the handler file before starting LiteLLM
@@ -591,10 +599,14 @@ def start_litellm(
         sys.exit(1)
 
     # Determine LiteLLM's actual port
-    # When MITM enabled: MITM takes main_port, LiteLLM gets random port
+    # When MITM enabled with reverse_port: LiteLLM keeps main_port, reverse proxy on reverse_port
+    # When MITM enabled without reverse_port: MITM takes main_port, LiteLLM gets random port
     # When MITM disabled: LiteLLM runs on main_port directly
     if mitm:
-        litellm_port = find_available_port()
+        if reverse_port:
+            litellm_port = main_port
+        else:
+            litellm_port = find_available_port()
         # Write LiteLLM port to state file for status/other tools
         litellm_port_file = config_dir / ".litellm_port"
         litellm_port_file.write_text(str(litellm_port))
@@ -683,13 +695,14 @@ def start_litellm(
         from ccproxy.mitm.process import is_running as mitm_is_running
 
         print("Starting MITM reverse proxy...")
-        # MITM₁ (reverse) listens on main_port (4000) and forwards to LiteLLM's random port
+        reverse_listen_port = reverse_port or main_port
         start_mitm(
             config_dir,
-            port=main_port,
+            port=reverse_listen_port,
             litellm_port=litellm_port,
             mode=ProxyMode.REVERSE,
             detach=True,
+            confdir=mitm_confdir,
         )
 
         # Verify reverse proxy started
@@ -701,7 +714,7 @@ def start_litellm(
 
         print("Starting MITM forward proxy...")
         # MITM₂ (forward) listens on forward_port (8081) for LiteLLM's outbound calls
-        start_mitm(config_dir, port=forward_port, mode=ProxyMode.FORWARD, detach=True)
+        start_mitm(config_dir, port=forward_port, mode=ProxyMode.FORWARD, detach=True, confdir=mitm_confdir)
 
         # Verify forward proxy started
         time.sleep(0.5)
@@ -1068,13 +1081,15 @@ def show_status(
                 ccproxy_section = ccproxy_data.get("ccproxy", {})
                 hooks = ccproxy_section.get("hooks", [])
                 mitm_config = ccproxy_section.get("mitm", {})
-                forward_port = mitm_config.get("port", 8081)
+                forward_port = mitm_config.get("forward_port", 8081)
+                reverse_port = mitm_config.get("reverse_port")
         except (yaml.YAMLError, OSError):
             pass
 
     # Read proxy host/port from config.yaml general_settings
     host, main_port = _read_proxy_settings(config_dir)
-    proxy_url = f"http://{host}:{main_port}"
+    reverse_port = mitm_config.get("reverse_port")
+    proxy_url = f"http://{host}:{reverse_port or main_port}"
 
     # Check MITM status for all modes
     reverse_running, reverse_pid = mitm_is_running(config_dir, ProxyMode.REVERSE)
@@ -1103,7 +1118,7 @@ def show_status(
             "reverse": {
                 "running": reverse_running,
                 "pid": reverse_pid,
-                "port": main_port,
+                "port": reverse_port or main_port,
             },
             "forward": {
                 "running": forward_running,

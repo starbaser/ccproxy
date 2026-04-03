@@ -150,6 +150,7 @@ def start_mitm(
     litellm_port: int = 4001,
     mode: ProxyMode = ProxyMode.REVERSE,
     detach: bool = False,
+    confdir: Path | None = None,
 ) -> None:
     """Start the mitmproxy traffic capture proxy.
 
@@ -159,6 +160,7 @@ def start_mitm(
         litellm_port: Port where LiteLLM is running (only used in REVERSE mode)
         mode: Proxy mode (REVERSE or FORWARD)
         detach: Run in background mode
+        confdir: mitmproxy confdir for CA certs (defaults to ~/.mitmproxy)
     """
     # Check if already running
     running, pid = is_running(config_dir, mode)
@@ -191,6 +193,11 @@ def start_mitm(
         logger.error(f"Addon script not found at {script_path}")
         sys.exit(1)
 
+    # Resolve mitmproxy confdir for CA certificate store.
+    # Passing confdir explicitly forces certstore initialization during startup,
+    # preventing a race where early TLS connections arrive before configure() runs.
+    mitm_confdir = str(Path(confdir).expanduser()) if confdir else str(Path.home() / ".mitmproxy")
+
     # Build mitmdump command based on mode
     if mode == ProxyMode.REVERSE:
         # Reverse mode forwards requests directly to LiteLLM without CONNECT tunneling
@@ -200,6 +207,8 @@ def start_mitm(
             f"reverse:http://localhost:{litellm_port}",
             "--listen-port",
             str(port),
+            "--set",
+            f"confdir={mitm_confdir}",
             "--set",
             "stream_large_bodies=1m",
             "-s",
@@ -211,6 +220,8 @@ def start_mitm(
             str(mitmdump_path),
             "--listen-port",
             str(port),
+            "--set",
+            f"confdir={mitm_confdir}",
             "--set",
             "stream_large_bodies=1m",
             "-s",

@@ -73,6 +73,45 @@
         };
 
         yaml = pkgs.formats.yaml { };
+
+        mkConfig =
+          {
+            settings ? defaultSettings.settings,
+            litellmSettings ? defaultSettings.litellmSettings,
+            litellmConfig ? defaultSettings.litellmConfig,
+            configDir ? ".ccproxy",
+          }:
+          let
+            ccproxyYaml = yaml.generate "ccproxy.yaml" (
+              { ccproxy = settings; }
+              // lib.optionalAttrs (litellmSettings != { }) { litellm = litellmSettings; }
+            );
+            litellmConfigYaml = yaml.generate "config.yaml" litellmConfig;
+          in
+          {
+            inherit ccproxyYaml litellmConfigYaml;
+
+            shellHook = ''
+              mkdir -p ${configDir}
+              ln -sfn ${ccproxyYaml} ${configDir}/ccproxy.yaml
+              ln -sfn ${litellmConfigYaml} ${configDir}/config.yaml
+              export CCPROXY_CONFIG_DIR="$PWD/${configDir}"
+            '';
+          };
+
+        devConfig = mkConfig {
+          settings = defaultSettings.settings // {
+            mitm = defaultSettings.settings.mitm // {
+              forward_port = 4003;
+              reverse_port = 4002;
+              upstream_proxy = "http://localhost:4001";
+              cert_dir = "./.ccproxy";
+            };
+          };
+          litellmSettings = defaultSettings.litellmSettings // {
+            port = 4001;
+          };
+        };
       in {
         packages = {
           default = pkgs.writeShellScriptBin "ccproxy" ''
@@ -94,39 +133,16 @@
             ];
 
             shellHook = ''
+              ${devConfig.shellHook}
               uv sync --quiet 2>/dev/null || true
               export VIRTUAL_ENV="$PWD/.venv"
               export PATH="$PWD/.venv/bin:$PATH"
+              export CCPROXY_PORT=4001
             '';
           };
         };
 
-        lib = {
-          mkConfig =
-            {
-              settings ? defaultSettings.settings,
-              litellmSettings ? defaultSettings.litellmSettings,
-              litellmConfig ? defaultSettings.litellmConfig,
-              configDir ? ".ccproxy",
-            }:
-            let
-              ccproxyYaml = yaml.generate "ccproxy.yaml" (
-                { ccproxy = settings; }
-                // lib.optionalAttrs (litellmSettings != { }) { litellm = litellmSettings; }
-              );
-              litellmConfigYaml = yaml.generate "config.yaml" litellmConfig;
-            in
-            {
-              inherit ccproxyYaml litellmConfigYaml;
-
-              shellHook = ''
-                mkdir -p ${configDir}
-                ln -sfn ${ccproxyYaml} ${configDir}/ccproxy.yaml
-                ln -sfn ${litellmConfigYaml} ${configDir}/config.yaml
-                export CCPROXY_CONFIG_DIR="$PWD/${configDir}"
-              '';
-            };
-        };
+        lib = { inherit mkConfig; };
       });
     in
     {
