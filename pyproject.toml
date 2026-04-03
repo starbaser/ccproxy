@@ -3,7 +3,7 @@ name = "claude-ccproxy"
 version = "1.2.0"
 description = "Scriptable Claude Code LiteLLM-based proxy"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = { text = "AGPL-3.0-or-later" }
 keywords = ["litellm", "proxy", "routing", "ai", "llm"]
 classifiers = [
@@ -11,7 +11,6 @@ classifiers = [
   "Intended Audience :: Developers",
   "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
@@ -72,14 +71,9 @@ include = ["src/ccproxy", "templates", "tests", "README.md", "LICENSE"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = [
-  "--verbose",
-  "--cov=ccproxy",
-  "--cov-report=term-missing",
-  "--cov-report=html",
-  "--cov-fail-under=90",
-  "-m", "not e2e",
-  "--ignore=tests/test_shell_integration.py",
+addopts = ["--color=yes", "--tb=short", "--strict-markers", "--strict-config",
+  "--cov=ccproxy", "--cov-report=term-missing", "--cov-fail-under=90",
+  "-m", "not e2e", "--ignore=tests/test_shell_integration.py",
 ]
 markers = [
   "e2e: end-to-end integration tests that run real Claude CLI (may be slow)",
@@ -103,41 +97,40 @@ exclude_lines = [
 ]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
-check_untyped_defs = true
-disallow_untyped_decorators = true
-no_implicit_optional = true
-warn_redundant_casts = true
-warn_unused_ignores = true
-warn_no_return = true
-warn_unreachable = true
-strict_equality = true
 mypy_path = "stubs"
 
+[[tool.mypy.overrides]]
+module = [
+  "litellm.*",
+  "prisma.*",
+  "langfuse.*",
+  "mitmproxy.*",
+  "tiktoken.*",
+]
+ignore_missing_imports = true
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+
+[tool.ty]
+python_version = "3.12"
+
+[tool.ty.src]
+root = "src"
+
 [tool.ruff]
-target-version = "py311"
+target-version = "py312"
+src = ["src", "tests"]
 line-length = 120
 
 [tool.ruff.lint]
-select = [
-  "E",   # pycodestyle errors
-  "W",   # pycodestyle warnings
-  "F",   # pyflakes
-  "I",   # isort
-  "B",   # flake8-bugbear
-  "C4",  # flake8-comprehensions
-  "UP",  # pyupgrade
-  "N",   # pep8-naming
-  "YTT", # flake8-2020
-  "S",   # flake8-bandit
-  "SIM", # flake8-simplify
-  "PTH", # flake8-use-pathlib
-]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "C4", "N", "YTT", "S", "PTH"]
 ignore = [
   "S101", # Use of assert detected
   "S104", # Possible binding to all interfaces

@@ -96,6 +96,57 @@
           api_base = "https://api.anthropic.com";
         };
       }
+      # Gemini pro models
+      {
+        model_name = "gemini-3.1-pro-preview";
+        litellm_params.model = "gemini/gemini-3.1-pro-preview";
+      }
+      {
+        model_name = "gemini-3-pro-preview";
+        litellm_params.model = "gemini/gemini-3-pro-preview";
+      }
+      {
+        model_name = "gemini-2.5-pro";
+        litellm_params.model = "gemini/gemini-2.5-pro";
+      }
+      # Gemini flash models
+      {
+        model_name = "gemini-3-flash-preview";
+        litellm_params.model = "gemini/gemini-3-flash-preview";
+      }
+      {
+        model_name = "gemini-3.1-flash-lite-preview";
+        litellm_params.model = "gemini/gemini-3.1-flash-lite-preview";
+      }
+      {
+        model_name = "gemini-2.5-flash";
+        litellm_params.model = "gemini/gemini-2.5-flash";
+      }
+      {
+        model_name = "gemini-2.5-flash-lite";
+        litellm_params.model = "gemini/gemini-2.5-flash-lite";
+      }
+      {
+        model_name = "gemini-2.0-flash";
+        litellm_params.model = "gemini/gemini-2.0-flash";
+      }
+      {
+        model_name = "gemini-2.0-flash-lite";
+        litellm_params.model = "gemini/gemini-2.0-flash-lite";
+      }
+      # Gemini image models
+      {
+        model_name = "gemini-3-pro-image-preview";
+        litellm_params.model = "gemini/gemini-3-pro-image-preview";
+      }
+      {
+        model_name = "gemini-3.1-flash-image-preview";
+        litellm_params.model = "gemini/gemini-3.1-flash-image-preview";
+      }
+      {
+        model_name = "gemini-2.5-flash-image";
+        litellm_params.model = "gemini/gemini-2.5-flash-image";
+      }
     ];
     litellm_settings = {
       force_stream = true;

@@ -1,0 +1,17 @@
+version: "0.5"
+
+processes:
+  ccproxy:
+    command: "uv run ccproxy start"
+    readiness_probe:
+      exec:
+        command: "curl -sf --max-time 5 http://127.0.0.1:4001/health > /dev/null"
+      initial_delay_seconds: 5
+      period_seconds: 30
+      timeout_seconds: 10
+      failure_threshold: 6
+    availability:
+      restart: on_failure
+      backoff_seconds: 2
+      max_restarts: 5
+    namespace: dev

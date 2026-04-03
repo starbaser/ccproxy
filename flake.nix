@@ -130,10 +130,15 @@
               mypy
               jq
               git
+              just
+              process-compose
             ];
 
             shellHook = ''
               ${devConfig.shellHook}
+              export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [
+                pkgs.stdenv.cc.cc.lib
+              ]}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
               uv sync --quiet 2>/dev/null || true
               export VIRTUAL_ENV="$PWD/.venv"
               export PATH="$PWD/.venv/bin:$PATH"
