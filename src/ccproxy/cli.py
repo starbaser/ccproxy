@@ -676,24 +676,23 @@ def start_litellm(
             env[key] = expanded
             os.environ[key] = expanded
 
-    if "SSL_CERT_FILE" not in env:
+    if "SSL_CERT_FILE" not in env or not Path(env["SSL_CERT_FILE"]).exists():
+        ssl_cert = None
         try:
             import certifi
 
-            env["SSL_CERT_FILE"] = certifi.where()
+            ssl_cert = certifi.where()
         except ImportError:
             pass
+        if ssl_cert and Path(ssl_cert).exists():
+            env["SSL_CERT_FILE"] = ssl_cert
+        elif Path("/etc/ssl/certs/ca-certificates.crt").exists():
+            env["SSL_CERT_FILE"] = "/etc/ssl/certs/ca-certificates.crt"
 
     if mitm:
         forward_proxy_url = f"http://localhost:{forward_port}"
         env["HTTPS_PROXY"] = forward_proxy_url
         env["HTTP_PROXY"] = forward_proxy_url
-
-        combined_bundle = _ensure_combined_ca_bundle(
-            config_dir, env.get("SSL_CERT_FILE"), confdir=Path(mitm_confdir) if mitm_confdir else None
-        )
-        if combined_bundle:
-            env["SSL_CERT_FILE"] = str(combined_bundle)
 
     venv_bin = Path(sys.executable).parent
     litellm_path = venv_bin / "litellm"
@@ -763,6 +762,24 @@ def start_litellm(
                 (config_dir / ".mitm-wireguard-client.conf").write_text(wg_client_conf)
             else:
                 logger.warning("Failed to retrieve WireGuard client config from mitmweb")
+
+            # Build combined CA bundle now that mitmproxy has started and its CA cert exists
+            combined_bundle = _ensure_combined_ca_bundle(
+                config_dir,
+                env.get("SSL_CERT_FILE"),
+                confdir=Path(mitm_confdir) if mitm_confdir else None,
+            )
+            if combined_bundle:
+                bundle = str(combined_bundle)
+                env["SSL_CERT_FILE"] = bundle
+                env["REQUESTS_CA_BUNDLE"] = bundle
+                env["CURL_CA_BUNDLE"] = bundle
+                env["NODE_EXTRA_CA_CERTS"] = bundle
+            else:
+                logger.warning(
+                    "mitmproxy CA certificate not found — "
+                    "LiteLLM may fail SSL verification through the forward proxy"
+                )
 
         # S603: Command construction is safe - we control the litellm path
         result = subprocess.run(litellm_cmd, env=env)  # noqa: S603

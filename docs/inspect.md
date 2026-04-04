@@ -20,7 +20,7 @@ This is distinct from the basic MITM approach (`HTTP_PROXY` injection) which onl
 
 All three activate together. There is no partial-mode configuration — `--inspect` is the WireGuard stack or nothing.
 
-### `ccproxy run --inspect` — the namespace jail
+### `ccproxy run --inspect -- claude` —
 
 ```
 ┌─ Host ────────────────────────────────────────────────────────┐
