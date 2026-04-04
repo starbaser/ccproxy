@@ -43,8 +43,11 @@
         pkgs = nixpkgs.legacyPackages.${system};
         python = pkgs.python312;
 
-        # Rust/C extension wheels that need autoPatchelf relaxation
+        # Rust/C extension wheels that need autoPatchelf fixes
         wheelFixes = final: prev: {
+          tokenizers = prev.tokenizers.overrideAttrs (old: {
+            buildInputs = (old.buildInputs or []) ++ [ pkgs.stdenv.cc.cc.lib ];
+          });
           mitmproxy-rs = prev.mitmproxy-rs.overrideAttrs {
             autoPatchelfIgnoreMissingDeps = true;
           };

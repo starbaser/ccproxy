@@ -5,7 +5,6 @@ import json
 import logging
 import logging.config
 import os
-import select
 import shutil
 import signal
 import subprocess
@@ -13,7 +12,7 @@ import sys
 import time
 from builtins import print as builtin_print
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 
 import attrs
 import tyro
@@ -122,15 +121,9 @@ class Run:
     """Command and arguments to execute with proxy settings."""
 
 
-LogSource = Literal["litellm", "mitm", "forward", "combined", "all"]
-
-
 @attrs.define
 class Logs:
-    """View the LiteLLM log file."""
-
-    source: Annotated[LogSource, tyro.conf.Positional] = "litellm"
-    """Log source to view: litellm, mitm, forward, or all."""
+    """View ccproxy logs from journal or process-compose."""
 
     follow: Annotated[bool, tyro.conf.arg(aliases=["-f"])] = False
     """Follow log output (like tail -f)."""
@@ -790,169 +783,56 @@ def start_litellm(
             _terminate_proc(mitm_proc)
 
 
-def get_log_paths(config_dir: Path, source: LogSource) -> list[tuple[str, Path]]:
-    """Get (tag, path) tuples for the specified source.
-
-    Args:
-        config_dir: Configuration directory containing log files
-        source: Log source to retrieve
-
-    Returns:
-        List of (tag, path) tuples for the log files
-    """
-    paths = []
-    if source in ("litellm", "all"):
-        paths.append(("litellm", config_dir / "litellm.log"))
-    if source in ("mitm", "combined", "all"):
-        paths.append(("mitm", config_dir / "mitm-combined.log"))
-    if source in ("forward", "all"):
-        # Legacy: forward is now included in the combined log
-        paths.append(("forward", config_dir / "mitm-combined.log"))
-    return paths
-
-
-def view_logs(config_dir: Path, source: LogSource = "litellm", follow: bool = False, lines: int = 100) -> None:
-    """View log files using system pager.
-
-    Args:
-        config_dir: Configuration directory containing the log files
-        source: Log source to view (litellm, mitm, forward, or all)
-        follow: Follow log output (like tail -f)
-        lines: Number of lines to show
-    """
-    log_paths = get_log_paths(config_dir, source)
-
-    # Check if log files exist
-    existing_logs = [(tag, path) for tag, path in log_paths if path.exists()]
-
-    if not existing_logs:
-        print("[red]No log files found[/red]", file=sys.stderr)
-        print("[dim]Expected log files:[/dim]", file=sys.stderr)
-        for tag, path in log_paths:
-            print(f"  {tag}: {path}", file=sys.stderr)
-        sys.exit(1)
-
-    if follow:
-        # Single file: use plain tail -f
-        if len(existing_logs) == 1:
-            _, log_file = existing_logs[0]
+def view_logs(follow: bool = False, lines: int = 100) -> None:
+    """View ccproxy logs from journal or process-compose."""
+    if shutil.which("systemctl"):
+        result = subprocess.run(
+            ["systemctl", "--user", "is-active", "ccproxy.service"],  # noqa: S607
+            capture_output=True,
+            text=True,
+        )
+        if result.stdout.strip() in ("active", "activating"):
+            jctl_cmd: list[str] = [
+                "journalctl",
+                "--user",
+                "-u",
+                "ccproxy.service",
+                "-n",
+                str(lines),
+            ]
+            if follow:
+                jctl_cmd.append("-f")
             try:
-                # S603, S607: tail is a standard system command, file path is validated
-                result = subprocess.run(["tail", "-f", str(log_file)])  # noqa: S603, S607
-                sys.exit(result.returncode)
+                proc = subprocess.run(jctl_cmd)  # noqa: S603
+                sys.exit(proc.returncode)
             except KeyboardInterrupt:
                 sys.exit(0)
-            except FileNotFoundError:
-                print("[red]Error: 'tail' command not found[/red]", file=sys.stderr)
-                sys.exit(1)
 
-        # Multiple files: multiplex with colored tags
-        colors = {
-            "litellm": "\033[36m",  # cyan
-            "mitm": "\033[32m",  # green
-            "forward": "\033[33m",  # yellow
-        }
-        reset = "\033[0m"
-
-        # Start tail processes for each file
-        processes = []
-        for tag, log_file in existing_logs:
-            try:
-                # S603, S607: tail is a standard system command, file path is validated
-                proc = subprocess.Popen(  # noqa: S603
-                    ["tail", "-f", str(log_file)],  # noqa: S607
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    bufsize=1,
-                    universal_newlines=True,
-                )
-                processes.append((tag, proc))
-            except FileNotFoundError:
-                print("[red]Error: 'tail' command not found[/red]", file=sys.stderr)
-                sys.exit(1)
-
+    pc_socket = Path("/tmp/process-compose-ccproxy.sock")  # noqa: S108
+    if pc_socket.exists() and shutil.which("process-compose"):
+        pc_cmd: list[str] = [
+            "process-compose",
+            "--unix-socket",
+            str(pc_socket),
+            "process",
+            "logs",
+            "ccproxy",
+        ]
+        if follow:
+            pc_cmd.append("-f")
         try:
-            # Multiplex output from all processes
-            while True:
-                for tag, proc in processes:
-                    # Use select to check if data is available (non-blocking)
-                    if proc.stdout and select.select([proc.stdout], [], [], 0.1)[0]:
-                        line = proc.stdout.readline()
-                        if line:
-                            color = colors.get(tag, "")
-                            # Print with colored tag prefix
-                            print(f"{color}[{tag}]{reset} {line}", end="")
-
+            proc = subprocess.run(pc_cmd)  # noqa: S603
+            sys.exit(proc.returncode)
         except KeyboardInterrupt:
-            # Clean up processes
-            for _, proc in processes:
-                proc.terminate()
             sys.exit(0)
 
-    else:
-        # Non-follow mode: read last N lines
-        if len(existing_logs) == 1:
-            # Single file: use existing pager logic
-            _, log_file = existing_logs[0]
-            pager = os.environ.get("PAGER", "less")
-
-            try:
-                with log_file.open("r") as f:
-                    all_lines = f.readlines()
-                    tail_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
-                    content = "".join(tail_lines)
-
-                    if not content.strip():
-                        print("[yellow]Log file is empty[/yellow]")
-                        sys.exit(0)
-
-                    if len(tail_lines) > 20 or pager == "cat":
-                        # S603: pager comes from PAGER env var, standard practice for CLI tools
-                        process = subprocess.Popen([pager], stdin=subprocess.PIPE)  # noqa: S603
-                        process.communicate(content.encode())
-                        sys.exit(process.returncode)
-                    else:
-                        print(content, end="")
-                        sys.exit(0)
-
-            except OSError as e:
-                print(f"[red]Error reading log file: {e}[/red]", file=sys.stderr)
-                sys.exit(1)
-
-        else:
-            # Multiple files: show last N lines from each with headers
-            pager = os.environ.get("PAGER", "less")
-            all_content = []
-
-            for tag, log_file in existing_logs:
-                try:
-                    with log_file.open("r") as f:
-                        file_lines = f.readlines()
-                        tail_lines = file_lines[-lines:] if len(file_lines) > lines else file_lines
-
-                        if tail_lines:
-                            # Add header for this log file
-                            all_content.append(f"==> {tag} <==\n")
-                            all_content.extend(tail_lines)
-                            all_content.append("\n")
-
-                except OSError as e:
-                    print(f"[yellow]Warning: Could not read {tag}: {e}[/yellow]", file=sys.stderr)
-
-            if not all_content:
-                print("[yellow]All log files are empty[/yellow]")
-                sys.exit(0)
-
-            content = "".join(all_content)
-
-            if len(all_content) > 20 or pager == "cat":
-                # S603: pager comes from PAGER env var, standard practice for CLI tools
-                process = subprocess.Popen([pager], stdin=subprocess.PIPE)  # noqa: S603
-                process.communicate(content.encode())
-                sys.exit(process.returncode)
-            else:
-                print(content, end="")
-                sys.exit(0)
+    print(
+        "No active ccproxy service found.\n"
+        "Run 'systemctl --user status ccproxy.service' or "
+        "'process-compose attach' to inspect.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 
 def show_status(
@@ -980,8 +860,6 @@ def show_status(
                 return True
         except OSError:
             return False
-
-    log_file = config_dir / "litellm.log"
 
     # Check configuration files
     ccproxy_config = config_dir / "ccproxy.yaml"
@@ -1050,7 +928,7 @@ def show_status(
         "callbacks": callbacks,
         "hooks": hooks,
         "model_list": model_list,
-        "log": str(log_file) if log_file.exists() else None,
+        "log": None,
         "mitm": {
             "running": combined_running,
             "entry_port": reverse_port or main_port,
@@ -2020,7 +1898,7 @@ def main(
         run_with_proxy(config_dir, filtered, inspect=inspect)
 
     elif isinstance(cmd, Logs):
-        view_logs(config_dir, source=cmd.source, follow=cmd.follow, lines=cmd.lines)
+        view_logs(follow=cmd.follow, lines=cmd.lines)
 
     elif isinstance(cmd, Status):
         show_status(

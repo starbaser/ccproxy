@@ -18,6 +18,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from ccproxy.mitm.process import _pipe_output
+
 logger = logging.getLogger(__name__)
 
 
@@ -157,9 +159,10 @@ def create_namespace(wg_client_conf: str, wg_port: int) -> NamespaceContext:
         slirp_proc = subprocess.Popen(
             slirp_cmd,
             pass_fds=(ready_w, exit_r),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
         )
+        _pipe_output(slirp_proc, "slirp4netns")
 
         # Close the FDs that slirp4netns now owns
         os.close(ready_w)

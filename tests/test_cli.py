@@ -2,7 +2,6 @@
 
 import json
 import os
-import subprocess
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -666,111 +665,91 @@ ccproxy:
 class TestViewLogs:
     """Test suite for view_logs function."""
 
-    def test_logs_no_file(self, tmp_path: Path, capsys) -> None:
-        """Test logs when log file doesn't exist."""
+    @patch("shutil.which")
+    @patch("subprocess.run")
+    def test_logs_journalctl_when_service_active(self, mock_run: Mock, mock_which: Mock) -> None:
+        """Test that logs delegates to journalctl when systemd service is active."""
+        mock_which.return_value = "/usr/bin/systemctl"
+        mock_run.side_effect = [
+            Mock(stdout="active\n", returncode=0),
+            Mock(returncode=0),
+        ]
+
         with pytest.raises(SystemExit) as exc_info:
-            view_logs(tmp_path)
+            view_logs()
+
+        assert exc_info.value.code == 0
+        journalctl_call = mock_run.call_args_list[1]
+        assert "journalctl" in journalctl_call[0][0]
+        assert "-u" in journalctl_call[0][0]
+        assert "ccproxy.service" in journalctl_call[0][0]
+
+    @patch("shutil.which")
+    @patch("subprocess.run")
+    def test_logs_follow_passes_flag(self, mock_run: Mock, mock_which: Mock) -> None:
+        """Test that follow flag is passed to journalctl."""
+        mock_which.return_value = "/usr/bin/systemctl"
+        mock_run.side_effect = [
+            Mock(stdout="active\n", returncode=0),
+            Mock(returncode=0),
+        ]
+
+        with pytest.raises(SystemExit):
+            view_logs(follow=True)
+
+        journalctl_call = mock_run.call_args_list[1]
+        assert "-f" in journalctl_call[0][0]
+
+    @patch("shutil.which")
+    @patch("subprocess.run")
+    def test_logs_lines_passed_to_journalctl(self, mock_run: Mock, mock_which: Mock) -> None:
+        """Test that lines count is passed to journalctl."""
+        mock_which.return_value = "/usr/bin/systemctl"
+        mock_run.side_effect = [
+            Mock(stdout="active\n", returncode=0),
+            Mock(returncode=0),
+        ]
+
+        with pytest.raises(SystemExit):
+            view_logs(lines=50)
+
+        journalctl_call = mock_run.call_args_list[1]
+        cmd = journalctl_call[0][0]
+        n_idx = cmd.index("-n")
+        assert cmd[n_idx + 1] == "50"
+
+    @patch("ccproxy.cli.Path")
+    @patch("shutil.which")
+    @patch("subprocess.run")
+    def test_logs_process_compose_when_socket_present(
+        self, mock_run: Mock, mock_which: Mock, mock_path: Mock
+    ) -> None:
+        """Test that logs delegates to process-compose when socket exists."""
+        mock_which.side_effect = lambda cmd: "/usr/bin/systemctl" if cmd == "systemctl" else "/usr/bin/process-compose"
+        mock_run.side_effect = [
+            Mock(stdout="inactive\n", returncode=3),
+            Mock(returncode=0),
+        ]
+        mock_socket = Mock()
+        mock_socket.exists.return_value = True
+        mock_path.return_value = mock_socket
+
+        with pytest.raises(SystemExit) as exc_info:
+            view_logs()
+
+        assert exc_info.value.code == 0
+        pc_call = mock_run.call_args_list[1]
+        assert "process-compose" in pc_call[0][0]
+
+    @patch("shutil.which", return_value=None)
+    def test_logs_exits_1_when_no_supervisor(self, mock_which: Mock, capsys) -> None:
+        """Test that logs exits 1 when no supervisor is found."""
+        with pytest.raises(SystemExit) as exc_info:
+            view_logs()
 
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
-        assert "No log files found" in captured.err
-        assert str(tmp_path / "litellm.log") in captured.err
-
-    @patch("subprocess.run")
-    def test_logs_follow(self, mock_run: Mock, tmp_path: Path) -> None:
-        """Test logs with follow option."""
-        log_file = tmp_path / "litellm.log"
-        log_file.write_text("log content")
-
-        mock_run.return_value = Mock(returncode=0)
-
-        with pytest.raises(SystemExit) as exc_info:
-            view_logs(tmp_path, follow=True)
-
-        assert exc_info.value.code == 0
-        mock_run.assert_called_once_with(["tail", "-f", str(log_file)])
-
-    @patch("subprocess.run")
-    def test_logs_follow_keyboard_interrupt(self, mock_run: Mock, tmp_path: Path) -> None:
-        """Test logs follow with keyboard interrupt."""
-        log_file = tmp_path / "litellm.log"
-        log_file.write_text("log content")
-
-        mock_run.side_effect = KeyboardInterrupt()
-
-        with pytest.raises(SystemExit) as exc_info:
-            view_logs(tmp_path, follow=True)
-
-        assert exc_info.value.code == 0
-
-    def test_logs_empty_file(self, tmp_path: Path, capsys) -> None:
-        """Test logs with empty log file."""
-        log_file = tmp_path / "litellm.log"
-        log_file.write_text("")
-
-        with pytest.raises(SystemExit) as exc_info:
-            view_logs(tmp_path)
-
-        assert exc_info.value.code == 0
-        captured = capsys.readouterr()
-        assert "Log file is empty" in captured.out
-
-    def test_logs_short_content(self, tmp_path: Path, capsys) -> None:
-        """Test logs with short content (no pager)."""
-        log_file = tmp_path / "litellm.log"
-        content = "\n".join([f"Line {i}" for i in range(10)])
-        log_file.write_text(content)
-
-        with pytest.raises(SystemExit) as exc_info:
-            view_logs(tmp_path, lines=20)
-
-        assert exc_info.value.code == 0
-        captured = capsys.readouterr()
-        assert "Line 0" in captured.out
-        assert "Line 9" in captured.out
-
-    @patch("subprocess.Popen")
-    def test_logs_long_content_with_pager(self, mock_popen: Mock, tmp_path: Path) -> None:
-        """Test logs with long content (uses pager)."""
-        log_file = tmp_path / "litellm.log"
-        content = "\n".join([f"Line {i}" for i in range(30)])
-        log_file.write_text(content)
-
-        mock_process = Mock()
-        mock_process.returncode = 0
-        mock_process.communicate.return_value = (b"", b"")
-        mock_popen.return_value = mock_process
-
-        with pytest.raises(SystemExit) as exc_info:
-            view_logs(tmp_path, lines=25)
-
-        assert exc_info.value.code == 0
-        mock_popen.assert_called_once()
-
-        # Verify last 25 lines were passed to pager
-        call_args = mock_process.communicate.call_args[0][0].decode()
-        assert "Line 5" in call_args
-        assert "Line 29" in call_args
-        assert "Line 4" not in call_args
-
-    @patch("subprocess.Popen")
-    @patch.dict(os.environ, {"PAGER": "cat"})
-    def test_logs_with_cat_pager(self, mock_popen: Mock, tmp_path: Path) -> None:
-        """Test logs with cat as pager."""
-        log_file = tmp_path / "litellm.log"
-        content = "Some log content"
-        log_file.write_text(content)
-
-        mock_process = Mock()
-        mock_process.returncode = 0
-        mock_process.communicate.return_value = (b"", b"")
-        mock_popen.return_value = mock_process
-
-        with pytest.raises(SystemExit) as exc_info:
-            view_logs(tmp_path)
-
-        assert exc_info.value.code == 0
-        mock_popen.assert_called_once_with(["cat"], stdin=subprocess.PIPE)
+        assert "No active ccproxy service found" in captured.err
 
 
 class TestShowStatus:
@@ -794,9 +773,6 @@ litellm_settings:
         user_hooks = tmp_path / "ccproxy.py"
         user_hooks.write_text("# hooks")
 
-        log_file = tmp_path / "litellm.log"
-        log_file.write_text("log content")
-
         # Mock TCP probe: proxy is reachable
         mock_conn.return_value.__enter__ = Mock(return_value=Mock())
         mock_conn.return_value.__exit__ = Mock(return_value=False)
@@ -810,7 +786,7 @@ litellm_settings:
         assert status["config"]["config.yaml"] == str(litellm_config)
         assert status["config"]["ccproxy.py"] == str(user_hooks)
         assert status["callbacks"] == ["ccproxy.handler", "langfuse"]
-        assert status["log"] == str(log_file)
+        assert status["log"] is None
 
     def test_status_json_proxy_stopped(self, tmp_path: Path, capsys) -> None:
         """Test status JSON output with proxy stopped."""
@@ -966,7 +942,7 @@ class TestMainFunction:
         cmd = Logs(follow=True, lines=50)
         main(cmd, config_dir=tmp_path)
 
-        mock_logs.assert_called_once_with(tmp_path, source="litellm", follow=True, lines=50)
+        mock_logs.assert_called_once_with(follow=True, lines=50)
 
     @patch("ccproxy.cli.show_status")
     def test_main_status_command(self, mock_status: Mock, tmp_path: Path) -> None:

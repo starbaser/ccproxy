@@ -5,6 +5,7 @@ import os
 import socket
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -79,16 +80,17 @@ def ensure_prisma_client(database_url: str) -> bool:
         return False
 
 
-def get_log_file(config_dir: Path) -> Path:
-    """Get the path to the mitmproxy log file.
+def _pipe_output(proc: subprocess.Popen[bytes], tag: str) -> threading.Thread:
+    """Forward subprocess stdout to stderr with a [tag] prefix."""
+    def reader() -> None:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            sys.stderr.buffer.write(f"[{tag}] ".encode() + line)
+            sys.stderr.buffer.flush()
 
-    Args:
-        config_dir: Configuration directory
-
-    Returns:
-        Path to log file
-    """
-    return config_dir / "mitm.log"
+    t = threading.Thread(target=reader, daemon=True)
+    t.start()
+    return t
 
 
 def _check_port_alive(host: str, port: int, timeout: float = 0.5) -> bool:
@@ -208,7 +210,6 @@ def _resolve_database_url(config_dir: Path) -> str | None:
 def _launch_process(
     cmd: list[str],
     env: dict[str, str],
-    log_file: Path,
     description: str,
 ) -> subprocess.Popen[bytes]:
     """Launch a mitmproxy subprocess and return the Popen object.
@@ -216,25 +217,23 @@ def _launch_process(
     Args:
         cmd: Command and arguments
         env: Environment variables
-        log_file: Log file path for subprocess output
         description: Human-readable description for log messages
 
     Returns:
         The running subprocess as a Popen object
     """
     logger.info("Starting %s", description)
-    logger.info("Log file: %s", log_file)
 
     try:
-        log = log_file.open("w")
-        process = subprocess.Popen(  # noqa: S603
+        process = subprocess.Popen(        # noqa: S603
             cmd,
-            stdout=log,
+            stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             start_new_session=False,
             env=env,
         )
         logger.info("Mitmproxy started with PID %d", process.pid)
+        _pipe_output(process, "mitm")
         return process
     except FileNotFoundError:
         logger.error("mitmproxy command not found")
@@ -273,7 +272,6 @@ def start_mitm(
     """
     _auto_generate_prisma(config_dir)
 
-    log_file = get_log_file(config_dir)
     mitm_bin = _resolve_mitm_binary(web=web)
     script_path = _resolve_addon_script()
     mitm_confdir = _resolve_confdir(confdir)
@@ -289,7 +287,7 @@ def start_mitm(
         "--set",
         f"confdir={mitm_confdir}",
         "--set",
-        "stream_large_bodies=1m",
+        "stream_large_bodies=1048576",
         "--set",
         "ssl_insecure=true",
         "-s",
@@ -325,14 +323,11 @@ def start_mitm(
     if web:
         description += f", inspect UI@{inspect_port}"
 
-    return _launch_process(cmd, env, log_file, description)
+    return _launch_process(cmd, env, description)
 
 
-def get_mitm_status(config_dir: Path) -> dict[str, dict[str, bool | str | None]]:
+def get_mitm_status() -> dict[str, dict[str, bool | str | None]]:
     """Get the status of mitmproxy via TCP port probes.
-
-    Args:
-        config_dir: Configuration directory
 
     Returns:
         Dictionary with status information
@@ -350,8 +345,5 @@ def get_mitm_status(config_dir: Path) -> dict[str, dict[str, bool | str | None]]
     )
 
     status: dict[str, bool | str | None] = {"running": running}
-    if running:
-        log = get_log_file(config_dir)
-        status["log_file"] = str(log) if log.exists() else None
 
     return {"combined": status}

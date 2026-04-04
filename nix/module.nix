@@ -79,6 +79,7 @@ in
         ExecStart = "${cfg.package}/bin/ccproxy start${lib.optionalString cfg.inspect " --inspect"}";
         Restart = "on-failure";
         RestartSec = "5s";
+        SyslogIdentifier = "ccproxy";
         Environment = [
           "HOME=%h"
           "CCPROXY_CONFIG_DIR=%h/${cfg.configDir}"
