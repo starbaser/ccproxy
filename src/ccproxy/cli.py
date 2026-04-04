@@ -116,7 +116,7 @@ class Install:
 class Run:
     """Run a command with ccproxy environment.
 
-    Usage: ccproxy run [--shadow [HOST:PORT]] [--inspect] -- <command> [args...]"""
+    Usage: ccproxy run [--inspect] -- <command> [args...]"""
 
     command: Annotated[list[str], tyro.conf.Positional] = attrs.Factory(list)
     """Command and arguments to execute with proxy settings."""
@@ -339,28 +339,9 @@ def _ensure_combined_ca_bundle(config_dir: Path, base_ssl_cert: str | None = Non
         return None
 
 
-def _parse_shadow_bind(shadow: str | None) -> tuple[str, int]:
-    """Parse shadow bind address from --shadow value.
-
-    Args:
-        shadow: Optional "[host:]port" string, or empty/None for defaults
-
-    Returns:
-        Tuple of (host, port)
-    """
-    default_host, default_port = "127.0.0.1", 8082
-    if not shadow:
-        return default_host, default_port
-    if ":" in shadow:
-        host, port_str = shadow.rsplit(":", 1)
-        return host, int(port_str)
-    return default_host, int(shadow)
-
-
 def run_with_proxy(
     config_dir: Path,
     command: list[str],
-    shadow: str | None = None,
     inspect: bool = False,
 ) -> None:
     """Run a command with ccproxy environment variables set.
@@ -372,7 +353,6 @@ def run_with_proxy(
     Args:
         config_dir: Configuration directory
         command: Command and arguments to execute
-        shadow: Shadow proxy bind address ([host:]port) or None to disable
         inspect: Route subprocess traffic through a WireGuard namespace for transparent capture
     """
     # Load config to get proxy settings
@@ -442,36 +422,6 @@ def run_with_proxy(
         finally:
             if ctx:
                 cleanup_namespace(ctx)
-        return
-
-    # Shadow mode: route all non-localhost HTTP through a dedicated forward proxy
-    shadow_proc = None
-    if shadow is not None:
-        from ccproxy.mitm.process import start_shadow_mitm
-
-        shadow_host, shadow_port = _parse_shadow_bind(shadow)
-
-        logger.info("Starting shadow proxy on %s:%d...", shadow_host, shadow_port)
-        shadow_proc = start_shadow_mitm(config_dir, port=shadow_port)
-
-        shadow_proxy_url = f"http://{shadow_host}:{shadow_port}"
-        env["HTTP_PROXY"] = shadow_proxy_url
-        env["HTTPS_PROXY"] = shadow_proxy_url
-        env["NO_PROXY"] = "localhost,127.0.0.1,::1"
-        env["no_proxy"] = "localhost,127.0.0.1,::1"
-
-        # Ensure SSL trust for mitmproxy-signed certs
-        combined_bundle = _ensure_combined_ca_bundle(config_dir, env.get("SSL_CERT_FILE"))
-        if combined_bundle:
-            env["SSL_CERT_FILE"] = str(combined_bundle)
-            env["NODE_EXTRA_CA_CERTS"] = str(combined_bundle)
-            env["REQUESTS_CA_BUNDLE"] = str(combined_bundle)
-        else:
-            print(
-                "Warning: mitmproxy CA not found (~/.mitmproxy/mitmproxy-ca-cert.pem). "
-                "HTTPS capture may fail. Run 'ccproxy start --mitm' once to generate it.",
-                file=sys.stderr,
-            )
 
     # Execute the command with the proxy environment
     try:
@@ -482,11 +432,7 @@ def run_with_proxy(
         print(f"Error: Command not found: {command[0]}", file=sys.stderr)
         sys.exit(1)
     except KeyboardInterrupt:
-        sys.exit(130)  # Standard exit code for Ctrl+C
-    finally:
-        if shadow_proc is not None:
-            shadow_proc.terminate()
-            shadow_proc.wait()
+        sys.exit(130)
 
 
 def generate_handler_file(config_dir: Path) -> None:
@@ -2033,40 +1979,26 @@ def main(
 
     elif isinstance(cmd, Run):
         # Tyro's greedy Positional consumes all args including flags.
-        # Extract --shadow/-s and --help/-h manually from the command list.
+        # Extract --inspect/-i and --help/-h manually from the command list.
         args = list(cmd.command)
         if not args or args == ["-h"] or args == ["--help"]:
-            print("usage: ccproxy run [--shadow [HOST:PORT]] [--inspect] -- <command> [args...]")
+            print("usage: ccproxy run [--inspect] -- <command> [args...]")
             print()
             print("Run a command with ccproxy environment.")
             print()
             print("options:")
-            print("  --shadow, -s [HOST:PORT]")
-            print("                      Route all subprocess HTTP/HTTPS through MITM shadow")
-            print("                      proxy for capture. Optionally specify bind address")
-            print("                      (default: 127.0.0.1:8082). API calls still flow")
-            print("                      through the primary proxy via ANTHROPIC_BASE_URL.")
             print("  --inspect, -i       Route subprocess traffic through a WireGuard namespace")
-            print("                      for transparent capture. Requires ccproxy start --inspect")
-            print("                      and Linux unprivileged user namespaces.")
+            print("                      for transparent capture of all TCP/UDP traffic.")
+            print("                      Requires ccproxy start --inspect to be running.")
             print("  command ...         Command and arguments to execute with proxy settings")
             sys.exit(0 if not args else 0)
 
-        # Extract --shadow / -s [HOST:PORT] and --inspect / -i from args
-        shadow = None
+        # Extract --inspect / -i from args
         inspect = False
         filtered: list[str] = []
         i = 0
         while i < len(args):
-            if args[i] in ("--shadow", "-s"):
-                # Check if next arg looks like a bind address (not a command)
-                if i + 1 < len(args) and args[i + 1][:1].isdigit():
-                    shadow = args[i + 1]
-                    i += 2
-                else:
-                    shadow = ""
-                    i += 1
-            elif args[i] in ("--inspect", "-i"):
+            if args[i] in ("--inspect", "-i"):
                 inspect = True
                 i += 1
             elif args[i] == "--":
@@ -2079,7 +2011,7 @@ def main(
         if not filtered:
             print("Error: No command specified to run", file=sys.stderr)
             sys.exit(1)
-        run_with_proxy(config_dir, filtered, shadow=shadow, inspect=inspect)
+        run_with_proxy(config_dir, filtered, inspect=inspect)
 
     elif isinstance(cmd, Logs):
         view_logs(config_dir, source=cmd.source, follow=cmd.follow, lines=cmd.lines)

@@ -200,10 +200,6 @@ class CCProxyMitmAddon:
             request = flow.request
             host = request.pretty_host
 
-            # Shadow mode: exclude loopback traffic from captured subprocess HTTP
-            if self.traffic_source == "shadow" and host.lower() in ("localhost", "127.0.0.1", "::1"):
-                return
-
             path = request.path
             session_id = self._extract_session_id(request)
 

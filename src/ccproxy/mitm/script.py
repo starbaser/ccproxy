@@ -50,26 +50,17 @@ class CCProxyScript:
         """Called when addon is loaded by mitmproxy."""
         logger.info("Loading CCProxy mitmproxy addon...")
 
-        mitm_mode = os.environ.get("CCPROXY_MITM_MODE", "combined")
         self.traffic_source = os.environ.get("CCPROXY_TRAFFIC_SOURCE") or None
 
-        # Port configuration for logging
-        if mitm_mode == "combined":
-            reverse_port = int(os.environ.get("CCPROXY_MITM_REVERSE_PORT", "4002"))
-            forward_port = int(os.environ.get("CCPROXY_MITM_FORWARD_PORT", "4003"))
-            litellm_port = int(os.environ.get("CCPROXY_LITELLM_PORT", "4001"))
-            logger.info(
-                "MITM mode: combined, reverse@%d → LiteLLM@%d, forward@%d",
-                reverse_port,
-                litellm_port,
-                forward_port,
-            )
-            primary_port = reverse_port
-        else:
-            # Shadow mode — single port
-            primary_port = int(os.environ.get("CCPROXY_MITM_PORT", "8082"))
-            litellm_port = int(os.environ.get("CCPROXY_LITELLM_PORT", "4001"))
-            logger.info("MITM mode: %s, port %d", mitm_mode, primary_port)
+        reverse_port = int(os.environ.get("CCPROXY_MITM_REVERSE_PORT", "4002"))
+        forward_port = int(os.environ.get("CCPROXY_MITM_FORWARD_PORT", "4003"))
+        litellm_port = int(os.environ.get("CCPROXY_LITELLM_PORT", "4001"))
+        logger.info(
+            "MITM mode: combined, reverse@%d → LiteLLM@%d, forward@%d",
+            reverse_port,
+            litellm_port,
+            forward_port,
+        )
 
         self.config = MitmConfig(
             upstream_proxy=f"http://localhost:{litellm_port}",

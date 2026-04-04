@@ -607,7 +607,7 @@ ccproxy:
 
     @patch("subprocess.run")
     def test_run_with_mitm_not_running(self, mock_run: Mock, tmp_path: Path) -> None:
-        """Test run without shadow proxy routes directly to LiteLLM."""
+        """Test run without inspect routes directly to LiteLLM."""
         config_file = tmp_path / "ccproxy.yaml"
         config_file.write_text("""
 litellm:
@@ -630,7 +630,7 @@ ccproxy:
         env = call_args[1]["env"]
         assert env["OPENAI_API_BASE"] == "http://127.0.0.1:4000"
         assert env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:4000"
-        # HTTP_PROXY should not be set when shadow proxy is not requested
+        # HTTP_PROXY should not be set when inspect is not requested
         assert "HTTPS_PROXY" not in env or env.get("HTTPS_PROXY") == os.environ.get("HTTPS_PROXY")
         assert "HTTP_PROXY" not in env or env.get("HTTP_PROXY") == os.environ.get("HTTP_PROXY")
 
@@ -934,7 +934,7 @@ class TestMainFunction:
         cmd = Run(command=["echo", "hello", "world"])
         main(cmd, config_dir=tmp_path)
 
-        mock_run.assert_called_once_with(tmp_path, ["echo", "hello", "world"], shadow=None, inspect=False)
+        mock_run.assert_called_once_with(tmp_path, ["echo", "hello", "world"], inspect=False)
 
     def test_main_run_no_args(self, tmp_path: Path, capsys) -> None:
         """Test main run command without arguments shows help."""

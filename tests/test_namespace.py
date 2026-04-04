@@ -671,7 +671,7 @@ class TestCliInspectHardFailure:
         main(cmd, config_dir=tmp_path)
 
         mock_run.assert_called_once_with(
-            tmp_path, ["echo", "hello"], shadow=None, inspect=True
+            tmp_path, ["echo", "hello"], inspect=True
         )
 
     @patch("ccproxy.mitm.namespace.check_namespace_capabilities")

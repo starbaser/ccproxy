@@ -5,7 +5,6 @@ import os
 import socket
 import subprocess
 import sys
-from enum import Enum
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -80,31 +79,16 @@ def ensure_prisma_client(database_url: str) -> bool:
         return False
 
 
-class ProxyMode(Enum):
-    """Mitmproxy operating mode."""
-
-    SHADOW = "shadow"
-    """Shadow forward proxy — captures all HTTP from ccproxy run --shadow subprocess"""
-
-    COMBINED = "combined"
-    """Merged reverse+forward in a single multi-mode process"""
-
-
-def get_log_file(config_dir: Path, mode: ProxyMode = ProxyMode.COMBINED) -> Path:
-    """Get the path to the mitmproxy log file for a specific mode.
+def get_log_file(config_dir: Path) -> Path:
+    """Get the path to the mitmproxy log file.
 
     Args:
         config_dir: Configuration directory
-        mode: Proxy mode
 
     Returns:
         Path to log file
     """
-    match mode:
-        case ProxyMode.COMBINED:
-            return config_dir / "mitm-combined.log"
-        case ProxyMode.SHADOW:
-            return config_dir / "mitm-shadow.log"
+    return config_dir / "mitm.log"
 
 
 def _check_port_alive(host: str, port: int, timeout: float = 0.5) -> bool:
@@ -175,14 +159,10 @@ def _build_env(
     reverse_port: int | None = None,
     forward_port: int | None = None,
     litellm_port: int | None = None,
-    mode: str = "combined",
-    traffic_source: str | None = None,
-    shadow_port: int | None = None,
 ) -> dict[str, str]:
-    """Build environment variables for a mitmproxy subprocess."""
+    """Build environment variables for the mitmweb subprocess."""
     env = os.environ.copy()
     env["CCPROXY_CONFIG_DIR"] = str(config_dir)
-    env["CCPROXY_MITM_MODE"] = mode
 
     if reverse_port is not None:
         env["CCPROXY_MITM_REVERSE_PORT"] = str(reverse_port)
@@ -190,10 +170,6 @@ def _build_env(
         env["CCPROXY_MITM_FORWARD_PORT"] = str(forward_port)
     if litellm_port is not None:
         env["CCPROXY_LITELLM_PORT"] = str(litellm_port)
-    if shadow_port is not None:
-        env["CCPROXY_MITM_PORT"] = str(shadow_port)
-    if traffic_source:
-        env["CCPROXY_TRAFFIC_SOURCE"] = traffic_source
 
     # Ensure database URL is available — resolve from ccproxy.yaml if not in env
     if "CCPROXY_DATABASE_URL" not in env and "DATABASE_URL" not in env:
@@ -297,7 +273,7 @@ def start_mitm(
     """
     _auto_generate_prisma(config_dir)
 
-    log_file = get_log_file(config_dir, ProxyMode.COMBINED)
+    log_file = get_log_file(config_dir)
     mitm_bin = _resolve_mitm_binary(web=web)
     script_path = _resolve_addon_script()
     mitm_confdir = _resolve_confdir(confdir)
@@ -326,7 +302,6 @@ def start_mitm(
         reverse_port=reverse_port,
         forward_port=forward_port,
         litellm_port=litellm_port,
-        mode="combined",
     )
 
     description = (
@@ -340,61 +315,14 @@ def start_mitm(
     return _launch_process(cmd, env, log_file, description)
 
 
-def start_shadow_mitm(
-    config_dir: Path,
-    port: int = 8082,
-    confdir: Path | None = None,
-) -> subprocess.Popen[bytes]:
-    """Start a shadow mitmproxy process for subprocess HTTP capture.
-
-    Shadow mode captures all HTTP traffic from a `ccproxy run --shadow` subprocess
-    as a standalone forward proxy.
-
-    Args:
-        config_dir: Configuration directory for log files
-        port: Port for the shadow forward proxy
-        confdir: mitmproxy confdir for CA certs (defaults to ~/.mitmproxy)
-
-    Returns:
-        The running subprocess as a Popen object
-    """
-    _auto_generate_prisma(config_dir)
-
-    log_file = get_log_file(config_dir, ProxyMode.SHADOW)
-    mitm_bin = _resolve_mitm_binary(web=False)
-    script_path = _resolve_addon_script()
-    mitm_confdir = _resolve_confdir(confdir)
-
-    cmd = [
-        str(mitm_bin),
-        "--listen-port",
-        str(port),
-        "--set",
-        f"confdir={mitm_confdir}",
-        "--set",
-        "stream_large_bodies=1m",
-        "-s",
-        str(script_path),
-    ]
-
-    env = _build_env(
-        config_dir,
-        mode="shadow",
-        traffic_source="shadow",
-        shadow_port=port,
-    )
-
-    return _launch_process(cmd, env, log_file, f"mitmproxy shadow mode on port {port}")
-
-
 def get_mitm_status(config_dir: Path) -> dict[str, dict[str, bool | str | None]]:
-    """Get the status of all mitmproxy servers via TCP port probes.
+    """Get the status of mitmproxy via TCP port probes.
 
     Args:
         config_dir: Configuration directory
 
     Returns:
-        Dictionary with status information for each logical mode
+        Dictionary with status information
     """
     from ccproxy.config import get_config
 
@@ -404,23 +332,13 @@ def get_mitm_status(config_dir: Path) -> dict[str, dict[str, bool | str | None]]
     reverse_port: int = getattr(mitm_cfg, "reverse_port", None) or 4002
     forward_port: int = getattr(mitm_cfg, "forward_port", None) or 4003
 
-    combined_running = _check_port_alive("127.0.0.1", reverse_port) or _check_port_alive(
+    running = _check_port_alive("127.0.0.1", reverse_port) or _check_port_alive(
         "127.0.0.1", forward_port
     )
 
-    def _mode_status(running: bool, mode: ProxyMode) -> dict[str, bool | str | None]:
-        status: dict[str, bool | str | None] = {"running": running}
-        if running:
-            log = get_log_file(config_dir, mode)
-            status["log_file"] = str(log) if log.exists() else None
-        return status
+    status: dict[str, bool | str | None] = {"running": running}
+    if running:
+        log = get_log_file(config_dir)
+        status["log_file"] = str(log) if log.exists() else None
 
-    combined_status = _mode_status(combined_running, ProxyMode.COMBINED)
-
-    return {
-        "combined": combined_status,
-        # Backward compat: both reflect the combined process state
-        "reverse": {**combined_status, "mode": "combined"},
-        "forward": {**combined_status, "mode": "combined"},
-        "shadow": _mode_status(False, ProxyMode.SHADOW),
-    }
+    return {"combined": status}
