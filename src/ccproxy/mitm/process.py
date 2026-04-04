@@ -290,6 +290,8 @@ def start_mitm(
         f"confdir={mitm_confdir}",
         "--set",
         "stream_large_bodies=1m",
+        "--set",
+        "ssl_insecure=true",
         "-s",
         str(script_path),
     ]
