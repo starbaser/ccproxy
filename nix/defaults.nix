@@ -20,19 +20,17 @@
     ];
     default_model_passthrough = true;
     rules = [ ];
+    otel = {
+      enabled = false;
+      endpoint = "http://localhost:4317";
+      service_name = "ccproxy";
+    };
     inspector = {
       port = 8083;
       wireguard_port = 51820;
-      database_url = "postgresql://ccproxy:\${CCPROXY_DB_PASSWORD:-test}@127.0.0.1:5433/ccproxy_mitm";
       capture_bodies = true;
-      max_body_size = 0;
-      excluded_hosts = [ ];
       cert_dir = "~/.ccproxy";
       debug = false;
-      graphql = {
-        host = "localhost";
-        port = 5435;
-      };
     };
   };
 
