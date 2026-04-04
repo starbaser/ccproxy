@@ -381,12 +381,8 @@ def run_with_proxy(
     # Set up environment for the subprocess
     env = os.environ.copy()
 
-    proxy_url = f"http://{host}:{port}"
-    env["OPENAI_API_BASE"] = proxy_url
-    env["OPENAI_BASE_URL"] = proxy_url
-    env["ANTHROPIC_BASE_URL"] = proxy_url
-
-    # Inspect mode: route subprocess traffic through a WireGuard namespace for transparent capture
+    # Inspect mode: route subprocess traffic through a WireGuard namespace for transparent capture.
+    # No base URL env vars — the MITM addon forwards LLM API domain traffic to LiteLLM.
     if inspect:
         from ccproxy.mitm.namespace import (
             check_namespace_capabilities,
@@ -452,6 +448,12 @@ def run_with_proxy(
         finally:
             if ctx:
                 cleanup_namespace(ctx)
+
+    # Non-inspect: point SDKs directly at the proxy
+    proxy_url = f"http://{host}:{port}"
+    env["OPENAI_API_BASE"] = proxy_url
+    env["OPENAI_BASE_URL"] = proxy_url
+    env["ANTHROPIC_BASE_URL"] = proxy_url
 
     # Execute the command with the proxy environment
     try:

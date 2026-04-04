@@ -38,6 +38,27 @@ def mock_flow() -> MagicMock:
     return _make_mock_flow(reverse=True)
 
 
+def _make_wg_flow(host: str = "api.anthropic.com", path: str = "/v1/messages") -> MagicMock:
+    """Create a mock HTTP flow in WireGuard mode."""
+    from mitmproxy.proxy.mode_specs import ProxyMode as MitmProxyMode
+
+    flow = MagicMock()
+    flow.request = MagicMock()
+    flow.request.headers = {}
+    flow.request.content = None
+    flow.request.pretty_host = host
+    flow.request.host = host
+    flow.request.port = 443
+    flow.request.scheme = "https"
+    flow.request.method = "POST"
+    flow.request.path = path
+    flow.request.pretty_url = f"https://{host}{path}"
+    flow.id = "wg-flow-1"
+    flow.metadata = {}
+    flow.client_conn.proxy_mode = MitmProxyMode.parse("wireguard@51820")
+    return flow
+
+
 class TestRequestMethod:
     """Tests for the request method trace capture."""
 
@@ -145,3 +166,116 @@ class TestProxyDirectionFiltering:
         await addon.request(flow_forward)
         call_args = mock_storage.create_trace.call_args[0][0]
         assert call_args["proxy_direction"] == ProxyDirection.FORWARD.value
+
+
+class TestWireGuardForwarding:
+    """Tests for WireGuard LLM API domain forwarding to LiteLLM."""
+
+    @pytest.fixture
+    def mock_storage(self) -> AsyncMock:
+        storage = AsyncMock()
+        storage.create_trace = AsyncMock()
+        return storage
+
+    @pytest.mark.asyncio
+    async def test_forwards_anthropic_to_litellm(self, mock_storage: AsyncMock) -> None:
+        """WireGuard flow to api.anthropic.com should be forwarded to LiteLLM."""
+        config = MitmConfig(upstream_proxy="http://localhost:4001")
+        addon = CCProxyMitmAddon(storage=mock_storage, config=config)
+
+        flow = _make_wg_flow(host="api.anthropic.com")
+        await addon.request(flow)
+
+        assert flow.request.host == "localhost"
+        assert flow.request.port == 4001
+        assert flow.request.scheme == "http"
+        assert flow.request.headers["X-Forwarded-Host"] == "api.anthropic.com"
+
+    @pytest.mark.asyncio
+    async def test_forwards_openai_to_litellm(self, mock_storage: AsyncMock) -> None:
+        """WireGuard flow to api.openai.com should be forwarded to LiteLLM."""
+        config = MitmConfig(upstream_proxy="http://localhost:4001")
+        addon = CCProxyMitmAddon(storage=mock_storage, config=config)
+
+        flow = _make_wg_flow(host="api.openai.com")
+        await addon.request(flow)
+
+        assert flow.request.host == "localhost"
+        assert flow.request.port == 4001
+        assert flow.request.scheme == "http"
+
+    @pytest.mark.asyncio
+    async def test_non_llm_domain_passes_through(self, mock_storage: AsyncMock) -> None:
+        """WireGuard flow to non-LLM domains should not be forwarded."""
+        config = MitmConfig(upstream_proxy="http://localhost:4001")
+        addon = CCProxyMitmAddon(storage=mock_storage, config=config)
+
+        flow = _make_wg_flow(host="github.com", path="/api/v3/repos")
+        await addon.request(flow)
+
+        assert flow.request.host == "github.com"
+        assert flow.request.port == 443
+        assert flow.request.scheme == "https"
+
+    @pytest.mark.asyncio
+    async def test_reverse_flow_not_forwarded(self, mock_storage: AsyncMock) -> None:
+        """Reverse proxy flows should never be forwarded, even for LLM domains."""
+        config = MitmConfig(upstream_proxy="http://localhost:4001")
+        addon = CCProxyMitmAddon(storage=mock_storage, config=config)
+
+        flow = _make_mock_flow(reverse=True)
+        flow.id = "rev-1"
+        flow.request.pretty_host = "api.anthropic.com"
+        flow.request.host = "api.anthropic.com"
+        flow.request.method = "POST"
+        flow.request.path = "/v1/messages"
+        flow.request.pretty_url = "https://api.anthropic.com/v1/messages"
+        flow.request.content = None
+
+        await addon.request(flow)
+        # host should NOT have been rewritten
+        assert flow.request.host == "api.anthropic.com"
+
+    @pytest.mark.asyncio
+    async def test_custom_forward_domains(self, mock_storage: AsyncMock) -> None:
+        """Custom forward_domains in config should be respected."""
+        config = MitmConfig(
+            upstream_proxy="http://localhost:4001",
+            forward_domains=["custom-llm.example.com"],
+        )
+        addon = CCProxyMitmAddon(storage=mock_storage, config=config)
+
+        flow = _make_wg_flow(host="custom-llm.example.com")
+        await addon.request(flow)
+        assert flow.request.host == "localhost"
+        assert flow.request.port == 4001
+
+        # Default domain should NOT be forwarded when custom list replaces it
+        flow2 = _make_wg_flow(host="api.anthropic.com")
+        await addon.request(flow2)
+        assert flow2.request.host == "api.anthropic.com"
+
+    @pytest.mark.asyncio
+    async def test_trace_captures_original_host(self, mock_storage: AsyncMock) -> None:
+        """Trace should record the original host, not the rewritten one."""
+        config = MitmConfig(upstream_proxy="http://localhost:4001")
+        addon = CCProxyMitmAddon(storage=mock_storage, config=config)
+
+        flow = _make_wg_flow(host="api.anthropic.com")
+        await addon.request(flow)
+
+        trace_data = mock_storage.create_trace.call_args[0][0]
+        assert trace_data["host"] == "api.anthropic.com"
+
+    @pytest.mark.asyncio
+    async def test_forwarding_works_without_storage(self) -> None:
+        """Forwarding should still rewrite the request even without storage."""
+        config = MitmConfig(upstream_proxy="http://localhost:4001")
+        addon = CCProxyMitmAddon(storage=None, config=config)
+
+        flow = _make_wg_flow(host="api.anthropic.com")
+        await addon.request(flow)
+
+        assert flow.request.host == "localhost"
+        assert flow.request.port == 4001
+        assert flow.request.scheme == "http"

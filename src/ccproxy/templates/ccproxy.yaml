@@ -67,6 +67,13 @@ ccproxy:
     capture_bodies: true
     max_body_size: 0  # 0 = unlimited (live example: 10485760 for 10MB)
     excluded_hosts: []
+    # LLM API domains to intercept from WireGuard and forward to LiteLLM
+    forward_domains:
+      - api.anthropic.com
+      - api.openai.com
+      - generativelanguage.googleapis.com
+      - openrouter.ai
+      - api.z.ai
     cert_dir: ~/.ccproxy
     debug: false
     # OpenTelemetry span emission

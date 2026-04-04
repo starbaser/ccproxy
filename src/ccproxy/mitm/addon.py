@@ -12,6 +12,7 @@ import logging
 from datetime import UTC, datetime
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import urlsplit
 
 from mitmproxy import http
 
@@ -70,6 +71,7 @@ class CCProxyMitmAddon:
         self.traffic_source = traffic_source
         self.tracer: MitmTracer | None = None
         self._WireGuardMode: type | None = None
+        self._forward_domains: set[str] = set(config.forward_domains)
 
     def set_tracer(self, tracer: MitmTracer) -> None:
         """Set the OTel tracer for span emission.
@@ -183,22 +185,43 @@ class CCProxyMitmAddon:
 
         return None
 
+    def _maybe_forward(self, flow: http.HTTPFlow, direction: ProxyDirection, host: str) -> None:
+        """Forward WireGuard LLM API traffic to LiteLLM.
+
+        Rewrites the request target so mitmproxy connects to LiteLLM instead
+        of the original API domain. Only applies to WireGuard flows whose host
+        is in the configured forward_domains list.
+        """
+        if direction != ProxyDirection.WIREGUARD or host not in self._forward_domains:
+            return
+        upstream = urlsplit(self.config.upstream_proxy)
+        flow.request.headers["X-Forwarded-Host"] = host
+        flow.request.host = upstream.hostname or "localhost"
+        flow.request.port = upstream.port or 4000
+        flow.request.scheme = "http"
+        logger.info("Forwarding %s → %s:%d", host, flow.request.host, flow.request.port)
+
     async def request(self, flow: http.HTTPFlow) -> None:
-        """Process request: capture trace data.
+        """Process request: capture trace data and forward WireGuard LLM traffic.
 
         Args:
             flow: HTTP flow object
         """
+        direction = self._get_direction(flow)
+        if direction is None:
+            return
+
+        host = flow.request.pretty_host
+
+        # Forward WireGuard LLM API traffic to LiteLLM (before trace capture
+        # exits early due to missing storage)
+        self._maybe_forward(flow, direction, host)
+
         if self.storage is None:
             return
 
         try:
-            direction = self._get_direction(flow)
-            if direction is None:
-                return
-
             request = flow.request
-            host = request.pretty_host
 
             path = request.path
             session_id = self._extract_session_id(request)

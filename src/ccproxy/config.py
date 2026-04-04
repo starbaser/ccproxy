@@ -110,6 +110,15 @@ class MitmConfig(BaseModel):
     excluded_hosts: list[str] = Field(default_factory=list)
     """List of hosts to exclude from capture"""
 
+    forward_domains: list[str] = Field(default_factory=lambda: [
+        "api.anthropic.com",
+        "api.openai.com",
+        "generativelanguage.googleapis.com",
+        "openrouter.ai",
+        "api.z.ai",
+    ])
+    """LLM API domains to forward from WireGuard to LiteLLM in inspect mode."""
+
     debug: bool = False
     """Enable debug logging (includes request body logging)"""
 
