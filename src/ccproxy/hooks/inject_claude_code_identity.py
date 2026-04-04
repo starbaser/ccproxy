@@ -79,7 +79,7 @@ def inject_claude_code_identity(ctx: Context, params: dict[str, Any]) -> Context
             )
             if not has_prefix:
                 prefix_block = {"type": "text", "text": CLAUDE_CODE_SYSTEM_PREFIX}
-                ctx.system = [prefix_block] + list(system_msg)
+                ctx.system = [prefix_block, *system_msg]
     else:
         # No system message - add one
         ctx.system = CLAUDE_CODE_SYSTEM_PREFIX

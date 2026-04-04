@@ -74,9 +74,8 @@ def capture_headers(ctx: Context, params: dict[str, Any]) -> Context:
         name_lower = name.lower()
 
         # Filter headers if a filter list is provided
-        if headers_filter is not None:
-            if name_lower not in [h.lower() for h in headers_filter]:
-                continue
+        if headers_filter is not None and name_lower not in [h.lower() for h in headers_filter]:
+            continue
 
         # Add to trace_metadata with header_ prefix
         redacted_value = _redact_value(name, str(value))

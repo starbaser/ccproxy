@@ -146,7 +146,7 @@ def _print_dict(data: dict[Any, Any], title: str, max_width: int | None, compact
         title=f"[cyan]{title}[/cyan]",
         box=box.SIMPLE if compact else box.ROUNDED,
         show_edge=not compact,
-        padding=(0, 1) if compact else (0, 1),
+        padding=(0, 1),
         collapse_padding=compact,
     )
 
@@ -166,7 +166,7 @@ def _print_list(data: list[Any] | tuple[Any, ...], title: str, max_width: int | 
         title=f"[cyan]{title}[/cyan] ({len(data)} items)",
         box=box.SIMPLE if compact else box.ROUNDED,
         show_edge=not compact,
-        padding=(0, 1) if compact else (0, 1),
+        padding=(0, 1),
     )
 
     table.add_column("#", style="dim", justify="right", width=4)
@@ -185,7 +185,7 @@ def _print_object(obj: Any, title: str, max_width: int | None, show_methods: boo
         title=f"[cyan]{title}[/cyan]",
         box=box.SIMPLE if compact else box.ROUNDED,
         show_edge=not compact,
-        padding=(0, 1) if compact else (0, 1),
+        padding=(0, 1),
     )
 
     table.add_column("Attribute", style="yellow", no_wrap=True)
@@ -252,10 +252,7 @@ def dv(*args: Any, **kwargs: Any) -> None:
         var_names = [f"arg{i}" for i in range(len(args))]
     else:
         code_context = inspect.getframeinfo(frame.f_back).code_context
-        if code_context:
-            code = code_context[0].strip()
-        else:
-            code = ""
+        code = code_context[0].strip() if code_context else ""
 
         # Extract variable names from the call
         import re

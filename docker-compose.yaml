@@ -13,45 +13,6 @@ services:
     volumes:
       - ccproxy-litellm-db:/var/lib/postgresql/data
 
-  # MITM traces database
-  ccproxy-db:
-    image: postgres:16-alpine
-    restart: always
-    container_name: ccproxy-db
-    environment:
-      POSTGRES_DB: ccproxy_mitm
-      POSTGRES_USER: ccproxy
-      POSTGRES_PASSWORD: test
-    ports:
-      - "127.0.0.1:5433:5432"
-    volumes:
-      - ccproxy-db:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ccproxy -d ccproxy_mitm"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  # GraphQL API for MITM traces (PostGraphile)
-  ccproxy-graphql:
-    image: graphile/postgraphile:4
-    restart: always
-    container_name: ccproxy-graphql
-    command:
-      - "--connection"
-      - "postgres://ccproxy:test@ccproxy-db:5432/ccproxy_mitm"
-      - "--schema"
-      - "public"
-      - "--port"
-      - "5435"
-      - "--enhance-graphiql"
-      - "--watch"
-    ports:
-      - "127.0.0.1:5435:5435"
-    depends_on:
-      ccproxy-db:
-        condition: service_healthy
-
   # Jaeger for OpenTelemetry trace collection and visualization
   ccproxy-jaeger:
     image: jaegertracing/all-in-one:latest
@@ -73,4 +34,3 @@ services:
 
 volumes:
   ccproxy-litellm-db:
-  ccproxy-db:

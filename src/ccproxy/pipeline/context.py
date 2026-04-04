@@ -6,7 +6,7 @@ Provides a typed interface to LiteLLM's request data dict.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 
 @dataclass
@@ -158,7 +158,7 @@ class Context:
         Returns:
             Header value or default
         """
-        extra = self.provider_headers.get("extra_headers", {})
+        extra: dict[str, str] = self.provider_headers.get("extra_headers", {})
         return extra.get(name, default)
 
     @property
@@ -174,7 +174,7 @@ class Context:
     @property
     def ccproxy_model_name(self) -> str:
         """Get classified model name from metadata."""
-        return self.metadata.get("ccproxy_model_name", "")
+        return cast(str, self.metadata.get("ccproxy_model_name", ""))
 
     @ccproxy_model_name.setter
     def ccproxy_model_name(self, value: str) -> None:
@@ -183,7 +183,7 @@ class Context:
     @property
     def ccproxy_alias_model(self) -> str:
         """Get original model alias from metadata."""
-        return self.metadata.get("ccproxy_alias_model", "")
+        return cast(str, self.metadata.get("ccproxy_alias_model", ""))
 
     @ccproxy_alias_model.setter
     def ccproxy_alias_model(self, value: str) -> None:
@@ -192,7 +192,7 @@ class Context:
     @property
     def ccproxy_litellm_model(self) -> str:
         """Get routed LiteLLM model from metadata."""
-        return self.metadata.get("ccproxy_litellm_model", "")
+        return cast(str, self.metadata.get("ccproxy_litellm_model", ""))
 
     @ccproxy_litellm_model.setter
     def ccproxy_litellm_model(self, value: str) -> None:
@@ -201,7 +201,7 @@ class Context:
     @property
     def ccproxy_model_config(self) -> dict[str, Any]:
         """Get model configuration from metadata."""
-        return self.metadata.get("ccproxy_model_config", {})
+        return cast(dict[str, Any], self.metadata.get("ccproxy_model_config", {}))
 
     @ccproxy_model_config.setter
     def ccproxy_model_config(self, value: dict[str, Any]) -> None:
@@ -210,7 +210,7 @@ class Context:
     @property
     def ccproxy_is_passthrough(self) -> bool:
         """Check if request is in passthrough mode."""
-        return self.metadata.get("ccproxy_is_passthrough", False)
+        return cast(bool, self.metadata.get("ccproxy_is_passthrough", False))
 
     @ccproxy_is_passthrough.setter
     def ccproxy_is_passthrough(self, value: bool) -> None:

@@ -1,5 +1,7 @@
 """Process management for inspector traffic capture."""
 
+from __future__ import annotations
+
 import logging
 import os
 import socket
@@ -7,78 +9,14 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ccproxy.config import InspectorConfig
+    from ccproxy.inspector.mitmproxy_options import MitmproxyOptions
 
 logger = logging.getLogger(__name__)
 
-
-def ensure_prisma_client(database_url: str) -> bool:
-    """Ensure Prisma client is generated for the current environment.
-
-    Prisma requires a generated client (build-time step). When ccproxy is installed
-    via `uv tool install`, the client may not exist. This function auto-generates
-    it if needed.
-
-    Args:
-        database_url: PostgreSQL connection URL (used for schema introspection)
-
-    Returns:
-        True if client is ready, False if generation failed
-    """
-    # Try importing and instantiating Prisma - if it works, client is ready
-    try:
-        from prisma import Prisma  # type: ignore[attr-defined]
-
-        Prisma()
-        return True
-    except Exception:
-        pass
-
-    # Client not generated - find schema and run prisma generate
-    import ccproxy
-
-    # Try multiple schema locations (dev vs installed)
-    pkg_dir = Path(ccproxy.__file__).parent
-    candidates = [
-        pkg_dir.parent.parent / "prisma" / "schema.prisma",  # Dev: src/../prisma/
-        pkg_dir / "prisma" / "schema.prisma",  # Installed: bundled with package
-    ]
-
-    schema_path = None
-    for candidate in candidates:
-        if candidate.exists():
-            schema_path = candidate
-            break
-
-    if not schema_path:
-        logger.warning("Prisma schema not found, cannot auto-generate client")
-        return False
-
-    logger.info("Auto-generating Prisma client for inspector storage...")
-    env = os.environ.copy()
-    env["DATABASE_URL"] = database_url
-
-    # Ensure the bin directory containing prisma-client-py is on PATH.
-    # Prisma CLI spawns /bin/sh to run the generator, which won't inherit
-    # Nix store paths unless explicitly added.
-    exe_bin_dir = str(Path(sys.executable).parent)
-    env["PATH"] = exe_bin_dir + os.pathsep + env.get("PATH", "")
-
-    try:
-        result = subprocess.run(
-            [sys.executable, "-m", "prisma", "generate", "--schema", str(schema_path)],
-            env=env,
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0:
-            logger.info("Prisma client generated successfully")
-            return True
-        logger.error(f"Prisma generate failed: {result.stderr}")
-        return False
-    except Exception as e:
-        logger.error(f"Failed to run prisma generate: {e}")
-        return False
 
 
 def _pipe_output(proc: subprocess.Popen[bytes], tag: str) -> threading.Thread:
@@ -145,13 +83,13 @@ def _resolve_addon_script() -> Path:
 _WEB_FIELDS = {"web_host", "web_password", "web_open_browser"}
 
 
-def _build_mitmproxy_set_args(opts: "MitmproxyOptions") -> list[str]:
+def _build_mitmproxy_set_args(opts: MitmproxyOptions) -> list[str]:
     """Convert MitmproxyOptions fields to mitmproxy --set arguments.
 
     Web UI fields (web_host, web_password, web_open_browser) are excluded —
     they use dedicated CLI flags handled by the caller.
     """
-    from ccproxy.inspector.mitmproxy_options import MitmproxyOptions  # noqa: F811
+    from ccproxy.inspector.mitmproxy_options import MitmproxyOptions
 
     args: list[str] = []
     for field_name in MitmproxyOptions.model_fields:
@@ -170,14 +108,6 @@ def _build_mitmproxy_set_args(opts: "MitmproxyOptions") -> list[str]:
             args += ["--set", f"{field_name}={value}"]
     return args
 
-
-def _auto_generate_prisma(config_dir: Path | None = None) -> None:
-    """Auto-generate Prisma client if database is configured."""
-    database_url = os.environ.get("CCPROXY_DATABASE_URL") or os.environ.get("DATABASE_URL")
-    if not database_url and config_dir:
-        database_url = _resolve_database_url(config_dir)
-    if database_url and not ensure_prisma_client(database_url):
-        logger.warning("Prisma client generation failed - traces will not be persisted")
 
 
 def _build_env(
@@ -198,38 +128,7 @@ def _build_env(
     if litellm_port is not None:
         env["CCPROXY_LITELLM_PORT"] = str(litellm_port)
 
-    # Ensure database URL is available — resolve from ccproxy.yaml if not in env
-    if "CCPROXY_DATABASE_URL" not in env and "DATABASE_URL" not in env:
-        database_url = _resolve_database_url(config_dir)
-        if database_url:
-            env["CCPROXY_DATABASE_URL"] = database_url
-
     return env
-
-
-def _resolve_database_url(config_dir: Path) -> str | None:
-    """Resolve database URL from ccproxy.yaml config."""
-    import re
-
-    config_path = config_dir / "ccproxy.yaml"
-    if not config_path.exists():
-        return None
-    try:
-        import yaml
-
-        with config_path.open() as f:
-            data: dict[str, Any] = yaml.safe_load(f)
-        url = data.get("ccproxy", {}).get("inspector", {}).get("database_url")
-        if not url:
-            return None
-        # Expand ${VAR:-default} patterns
-        return re.sub(
-            r"\$\{([^}:]+)(?::-(.*?))?\}",
-            lambda m: os.environ.get(m.group(1), m.group(2) or ""),
-            url,
-        )
-    except Exception:
-        return None
 
 
 def _launch_process(
@@ -267,7 +166,7 @@ def _launch_process(
 
 def start_inspector(
     config_dir: Path,
-    config: "InspectorConfig",
+    config: InspectorConfig,
     litellm_port: int,
     *,
     reverse_port: int | None = None,
@@ -289,9 +188,6 @@ def start_inspector(
     Returns:
         The running subprocess as a Popen object
     """
-    from ccproxy.config import InspectorConfig  # noqa: F811
-
-    _auto_generate_prisma(config_dir)
 
     mitm_bin = _resolve_mitmproxy_binary(web=True)
     script_path = _resolve_addon_script()

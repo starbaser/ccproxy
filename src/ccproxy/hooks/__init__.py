@@ -15,13 +15,13 @@ from ccproxy.hooks.model_router import model_router
 from ccproxy.hooks.rule_evaluator import rule_evaluator
 
 __all__ = [
-    "rule_evaluator",
-    "model_router",
-    "extract_session_id",
-    "capture_headers",
-    "forward_oauth",
-    "forward_apikey",
     "add_beta_headers",
+    "capture_headers",
+    "extract_session_id",
+    "forward_apikey",
+    "forward_oauth",
     "inject_claude_code_identity",
     "inject_mcp_notifications",
+    "model_router",
+    "rule_evaluator",
 ]

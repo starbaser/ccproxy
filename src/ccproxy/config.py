@@ -133,9 +133,6 @@ class InspectorConfig(BaseModel):
     """mitmproxy CA certificate store directory. Populates mitmproxy.confdir
     via model validator when set."""
 
-    database_url: str | None = None
-    """PostgreSQL connection URL for inspector traces (deprecated — migrating to OTel).
-    Falls back to CCPROXY_DATABASE_URL or DATABASE_URL env vars."""
 
     wireguard_port: int = 51820
     """WireGuard listen port. Active when --inspect is used."""

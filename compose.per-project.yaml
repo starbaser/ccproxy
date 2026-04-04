@@ -2,36 +2,15 @@
 # Copy to your project as `compose.yaml`
 #
 # Usage:
-#   docker compose --profile mitm up -d                          # MITM traces database
-#   docker compose --profile litellm up -d                       # LiteLLM spend database
-#   docker compose --profile mitm --profile litellm up -d        # both
+#   docker compose --profile litellm up -d        # LiteLLM spend database
 #
 # Set ports in .env:
-#   CCPROXY_DB_PORT=5435
 #   LITELLM_DB_PORT=5436
 #
 # Use -p to scope container names per project:
-#   docker compose -p myproject --profile mitm up -d
+#   docker compose -p myproject --profile litellm up -d
 
 services:
-  ccproxy-db:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    profiles: [mitm]
-    environment:
-      POSTGRES_DB: ccproxy_mitm
-      POSTGRES_USER: ccproxy
-      POSTGRES_PASSWORD: ${CCPROXY_DB_PASSWORD:-test}
-    ports:
-      - "127.0.0.1:${CCPROXY_DB_PORT:-5435}:5432"
-    volumes:
-      - ccproxy-db:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ccproxy -d ccproxy_mitm"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   litellm-db:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -51,5 +30,4 @@ services:
       retries: 5
 
 volumes:
-  ccproxy-db:
   litellm-db:

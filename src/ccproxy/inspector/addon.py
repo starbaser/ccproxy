@@ -1,8 +1,8 @@
 """Mitmproxy addon for HTTP/HTTPS traffic capture.
 
 Captures all HTTP traffic flowing through reverse, forward, and WireGuard
-proxy listeners and stores traces in PostgreSQL. Mode is detected per-flow
-via mitmproxy's multi-mode `flow.client_conn.proxy_mode` attribute.
+proxy listeners. Mode is detected per-flow via mitmproxy's multi-mode
+`flow.client_conn.proxy_mode` attribute.
 """
 
 from __future__ import annotations
@@ -10,11 +10,10 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import UTC, datetime
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any, cast
 
-from mitmproxy import http  # type: ignore[import-untyped]
+from mitmproxy import http
 
 from ccproxy.config import InspectorConfig
 
@@ -33,7 +32,6 @@ class ProxyDirection(IntEnum):
 
 
 if TYPE_CHECKING:
-    from ccproxy.inspector.storage import TraceStorage
     from ccproxy.inspector.telemetry import InspectorTracer
 
 logger = logging.getLogger(__name__)
@@ -60,18 +58,15 @@ class InspectorAddon:
 
     def __init__(
         self,
-        storage: TraceStorage | None,
         config: InspectorConfig,
         traffic_source: str | None = None,
     ) -> None:
         """Initialize the addon.
 
         Args:
-            storage: Storage backend for traces (None if no persistence)
             config: Mitmproxy configuration
             traffic_source: Source label for traces (e.g. "shadow", "litellm")
         """
-        self.storage = storage
         self.config = config
         self.traffic_source = traffic_source
         self.tracer: InspectorTracer | None = None
@@ -207,7 +202,7 @@ class InspectorAddon:
         logger.info("Forwarding %s → localhost:%d", host, litellm_port)
 
     async def request(self, flow: http.HTTPFlow) -> None:
-        """Process request: capture trace data and forward WireGuard LLM traffic.
+        """Process request: forward WireGuard LLM traffic and emit OTel span.
 
         Args:
             flow: HTTP flow object
@@ -217,56 +212,21 @@ class InspectorAddon:
             return
 
         host = flow.request.pretty_host
-
-        # Forward WireGuard LLM API traffic to LiteLLM (before trace capture
-        # exits early due to missing storage)
         self._maybe_forward(flow, direction, host)
-
-        if self.storage is None:
-            return
 
         try:
             request = flow.request
-
-            path = request.path
             session_id = self._extract_session_id(request)
 
-            trace_data: dict[str, Any] = {
-                "trace_id": flow.id,
-                "proxy_direction": direction.value,
-                "session_id": session_id,
-                "traffic_source": self.traffic_source,
-                "method": request.method,
-                "url": request.pretty_url,
-                "host": host,
-                "path": path,
-                "request_headers": self._serialize_headers(request.headers),
-                "start_time": datetime.now(UTC),
-            }
-
-            if self.config.capture_bodies:
-                logger.info(
-                    "max_body_size=%d, content_len=%d",
-                    self.config.max_body_size,
-                    len(request.content) if request.content else 0,
-                )
-                trace_data["request_body"] = self._truncate_body(request.content)
-                trace_data["request_body_size"] = len(request.content) if request.content else 0
-                trace_data["request_content_type"] = request.headers.get("content-type", "")
-
-            await self.storage.create_trace(trace_data)
-
-            # Start OTel span
             if self.tracer:
                 self.tracer.start_span(flow, direction, host, request.method, session_id)
 
-            direction_str = direction.name.lower()
             logger.debug(
                 "Captured request: %s %s (trace_id: %s, direction: %s, session: %s)",
                 request.method,
                 request.pretty_url,
                 flow.id,
-                direction_str,
+                direction.name.lower(),
                 session_id or "none",
             )
 
@@ -274,39 +234,20 @@ class InspectorAddon:
             logger.error("Error capturing request: %s", e, exc_info=True)
 
     async def response(self, flow: http.HTTPFlow) -> None:
-        """Complete trace with response data.
+        """Complete OTel span with response data.
 
         Args:
             flow: HTTP flow object
         """
-        if self.storage is None:
-            return
-
         try:
             response = flow.response
             if not response:
                 return
 
-            # Calculate duration
             started = flow.request.timestamp_start
             ended = response.timestamp_end
             duration_ms = (ended - started) * 1000 if started and ended else None
 
-            response_data: dict[str, Any] = {
-                "status_code": response.status_code,
-                "response_headers": self._serialize_headers(response.headers),
-                "duration_ms": duration_ms,
-                "end_time": datetime.now(UTC),
-            }
-
-            if self.config.capture_bodies:
-                response_data["response_body"] = self._truncate_body(response.content)
-                response_data["response_body_size"] = len(response.content) if response.content else 0
-                response_data["response_content_type"] = response.headers.get("content-type", "")
-
-            await self.storage.complete_trace(flow.id, response_data)
-
-            # End OTel span
             if self.tracer:
                 self.tracer.finish_span(flow, response.status_code, duration_ms)
 
@@ -327,24 +268,11 @@ class InspectorAddon:
         Args:
             flow: HTTP flow object
         """
-        if self.storage is None:
-            return
-
         try:
             error = flow.error
             if not error:
                 return
 
-            error_data = {
-                "status_code": 0,
-                "response_headers": {},
-                "error_message": str(error),
-                "end_time": datetime.now(UTC),
-            }
-
-            await self.storage.complete_trace(flow.id, error_data)
-
-            # End OTel span with error
             if self.tracer:
                 self.tracer.finish_span_error(flow, str(error))
 

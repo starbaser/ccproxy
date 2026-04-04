@@ -889,7 +889,7 @@ class CCProxyHandler(CustomLogger):
             if hasattr(response, "model_dump"):
                 response_dict = response.model_dump()
             elif hasattr(response, "dict"):
-                response_dict = response.dict()  # type: ignore[union-attr]
+                response_dict = response.dict()
             else:
                 response_dict = dict(response) if hasattr(response, "__iter__") else {"response": str(response)}
 

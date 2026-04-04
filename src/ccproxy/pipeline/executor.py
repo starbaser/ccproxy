@@ -122,10 +122,9 @@ class PipelineExecutor:
                 logger.debug("Hook '%s' skipped (override)", hook_name)
                 return ctx
 
-            if override != HookOverride.FORCE_RUN:
-                if not spec.should_run(ctx):
-                    logger.debug("Hook '%s' skipped (guard)", hook_name)
-                    return ctx
+            if override != HookOverride.FORCE_RUN and not spec.should_run(ctx):
+                logger.debug("Hook '%s' skipped (guard)", hook_name)
+                return ctx
 
             logger.debug("Executing hook '%s'", hook_name)
             return spec.execute(ctx, params)
