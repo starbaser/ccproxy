@@ -1,6 +1,6 @@
 # `ccproxy` - Claude Code Proxy [![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/starbased-co/ccproxy)
 
-> [Join starbased HQ](https://starbased.net/discord) for questions, sharing setups, and contributing to development.
+> [Discord](https://starbased.net/discord)
 
 `ccproxy` unlocks the full potential of your Claude Code by enabling Claude use alongside other LLM providers like OpenAI, Gemini, and Perplexity
 
