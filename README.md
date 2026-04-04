@@ -1,6 +1,6 @@
 # `ccproxy` - Claude Code Proxy [![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/starbased-co/ccproxy)
 
-> [Join starbased HQ](https://starbased.net/discord) for questions, sharing setups, and contributing to development.
+> [Discord](https://starbased.net/discord)
 
 `ccproxy` is a development platform for extending and customizing Claude Code. It intercepts requests through a [LiteLLM Proxy Server](https://docs.litellm.ai/docs/simple_proxy), enabling intelligent routing to different LLM providers based on request characteristics—token count, model type, tool usage, or custom rules.
 
