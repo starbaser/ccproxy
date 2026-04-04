@@ -1,7 +1,7 @@
 """Mitmproxy addon for HTTP/HTTPS traffic capture.
 
-Captures all HTTP traffic flowing through both reverse and forward proxy
-listeners and stores traces in PostgreSQL. Direction is detected per-flow
+Captures all HTTP traffic flowing through reverse, forward, and WireGuard
+proxy listeners and stores traces in PostgreSQL. Mode is detected per-flow
 via mitmproxy's multi-mode `flow.client_conn.proxy_mode` attribute.
 """
 
@@ -20,11 +20,16 @@ from ccproxy.config import MitmConfig
 
 
 class ProxyDirection(IntEnum):
-    """Proxy direction for traffic classification."""
+    """Internal mode identifier for the mitmproxy listener that handled a flow.
 
-    REVERSE = 0  # Client -> LiteLLM (inbound)
-    FORWARD = 1  # LiteLLM -> Provider (outbound)
-    WIREGUARD = 2  # WireGuard tunnel traffic
+    These integer values are stored in the database and must remain stable
+    for backward compatibility with existing traces. They are not user-facing
+    concepts — inspect mode activates all three modes as a single unit.
+    """
+
+    REVERSE = 0  # Client -> LiteLLM (inbound, reverse proxy listener)
+    FORWARD = 1  # LiteLLM -> Provider (outbound, regular/forward proxy listener)
+    WIREGUARD = 2  # WireGuard tunnel traffic (transparent namespace capture)
 
 
 if TYPE_CHECKING:

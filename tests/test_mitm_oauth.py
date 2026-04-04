@@ -73,8 +73,14 @@ class TestRequestMethod:
         await addon.request(mock_flow)
 
 
-class TestProxyDirectionFiltering:
-    """Tests for proxy direction-based traffic filtering via proxy_mode."""
+class TestProxyModeDetection:
+    """Tests for internal proxy mode detection via proxy_mode per-flow.
+
+    ProxyDirection values are internal implementation details — they identify
+    which mitmproxy listener handled a flow and are stored in the database.
+    They are not user-facing concepts; inspect mode activates all listeners
+    as a single unit.
+    """
 
     @pytest.fixture
     def mock_storage(self) -> AsyncMock:
@@ -85,7 +91,7 @@ class TestProxyDirectionFiltering:
 
     @pytest.mark.asyncio
     async def test_reverse_proxy_captures_traffic(self, mock_storage: AsyncMock) -> None:
-        """Reverse proxy mode flow should be captured with REVERSE direction."""
+        """Reverse listener flow should be captured with REVERSE mode identifier."""
         config = MitmConfig()
         addon = CCProxyMitmAddon(storage=mock_storage, config=config)
 
@@ -102,7 +108,7 @@ class TestProxyDirectionFiltering:
 
     @pytest.mark.asyncio
     async def test_forward_proxy_captures_traffic(self, mock_storage: AsyncMock) -> None:
-        """Forward proxy mode flow should be captured with FORWARD direction."""
+        """Regular listener flow should be captured with FORWARD mode identifier."""
         config = MitmConfig()
         addon = CCProxyMitmAddon(storage=mock_storage, config=config)
 
@@ -119,7 +125,7 @@ class TestProxyDirectionFiltering:
 
     @pytest.mark.asyncio
     async def test_forward_proxy_captures_langfuse(self, mock_storage: AsyncMock) -> None:
-        """Forward proxy should capture Langfuse API calls."""
+        """Regular listener should capture Langfuse API calls."""
         config = MitmConfig()
         addon = CCProxyMitmAddon(storage=mock_storage, config=config)
 
@@ -136,7 +142,7 @@ class TestProxyDirectionFiltering:
 
     @pytest.mark.asyncio
     async def test_proxy_direction_stored_correctly(self, mock_storage: AsyncMock) -> None:
-        """Proxy direction should be stored in trace data based on proxy_mode."""
+        """ProxyDirection integer should be stored in trace data based on per-flow proxy_mode."""
         config = MitmConfig()
         addon = CCProxyMitmAddon(storage=mock_storage, config=config)
 

@@ -382,7 +382,7 @@ class TestFormatTraceMarkdown:
 
         assert "# MITM Trace: abc-123-def" in md
         assert "claude-sonnet-4-5-20250929" in md
-        assert "Forward (LiteLLM→Provider)" in md
+        assert "| Mode | 1 |" in md
         assert "## System Message" in md
         assert "You are a helpful assistant." in md
         assert "## Conversation" in md
@@ -457,13 +457,13 @@ class TestFormatTraceMarkdown:
         assert "## Error" in md
         assert "**Rate limit exceeded**" in md
 
-    def test_reverse_direction(self, sample_trace, sample_request, sample_response):
-        """Test reverse proxy direction label."""
+    def test_proxy_direction_value(self, sample_trace, sample_request, sample_response):
+        """Test that proxy_direction integer is rendered in the mode field."""
         sample_trace["proxy_direction"] = 0
 
         md = format_trace_markdown(sample_trace, sample_request, sample_response)
 
-        assert "Reverse (Client→LiteLLM)" in md
+        assert "| Mode | 0 |" in md
 
     def test_no_system_message(self, sample_trace, sample_request, sample_response):
         """Test when no system message is present."""
@@ -598,7 +598,6 @@ class TestHandleDbPromptIntegration:
 
         cmd = DbPrompt(
             trace_id="test-trace-id",
-            direction="reverse",
             include_headers=False,
             raw=False,
             output=None,
@@ -630,7 +629,6 @@ class TestHandleDbPromptIntegration:
 
         cmd = DbPrompt(
             trace_id="test-trace-id",
-            direction="reverse",
             include_headers=False,
             raw=False,
             output=output_file,
@@ -660,7 +658,6 @@ class TestHandleDbPromptIntegration:
 
         cmd = DbPrompt(
             trace_id="test-trace-id",
-            direction="reverse",
             include_headers=False,
             raw=True,
             output=None,
@@ -691,7 +688,6 @@ class TestHandleDbPromptIntegration:
 
         cmd = DbPrompt(
             trace_id="nonexistent",
-            direction="reverse",
             include_headers=False,
             raw=False,
             output=None,
@@ -718,7 +714,6 @@ class TestHandleDbPromptIntegration:
 
         cmd = DbPrompt(
             trace_id="test-trace-id",
-            direction="reverse",
             include_headers=False,
             raw=False,
             output=None,
@@ -734,52 +729,6 @@ class TestHandleDbPromptIntegration:
 
         assert exc_info.value.code == 1
 
-    def test_handle_db_prompt_invalid_direction(self, tmp_path):
-        """Test error with invalid direction."""
-        config_dir = tmp_path / ".ccproxy"
-        config_dir.mkdir()
-
-        cmd = DbPrompt(
-            trace_id="test-trace-id",
-            direction="invalid",
-            include_headers=False,
-            raw=False,
-            output=None,
-        )
-
-        with pytest.raises(SystemExit) as exc_info:
-            handle_db_prompt(config_dir, cmd)
-
-        assert exc_info.value.code == 1
-
-    def test_handle_db_prompt_direction_filter(self, tmp_path, mock_trace_data):
-        """Test direction filtering with warning."""
-        config_dir = tmp_path / ".ccproxy"
-        config_dir.mkdir()
-
-        # Set proxy_direction to 1 (forward) but filter for reverse
-        mock_trace_data["proxy_direction"] = 1
-
-        cmd = DbPrompt(
-            trace_id="test-trace-id",
-            direction="reverse",
-            include_headers=False,
-            raw=False,
-            output=None,
-        )
-
-        with (
-            patch("ccproxy.cli.get_database_url") as mock_db_url,
-            patch("ccproxy.cli.fetch_trace", new_callable=AsyncMock) as mock_fetch,
-            patch("asyncio.run") as mock_run,
-        ):
-            mock_db_url.return_value = "postgresql://localhost/test"
-            mock_run.return_value = mock_trace_data
-            mock_fetch.return_value = mock_trace_data
-
-            # Should not raise, just warn
-            handle_db_prompt(config_dir, cmd)
-
     def test_handle_db_prompt_exception_handling(self, tmp_path):
         """Test exception handling during fetch."""
         config_dir = tmp_path / ".ccproxy"
@@ -787,7 +736,6 @@ class TestHandleDbPromptIntegration:
 
         cmd = DbPrompt(
             trace_id="test-trace-id",
-            direction="reverse",
             include_headers=False,
             raw=False,
             output=None,

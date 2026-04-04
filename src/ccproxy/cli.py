@@ -143,17 +143,17 @@ class Logs:
 class Status:
     """Show the status of LiteLLM proxy and ccproxy configuration.
 
-    When service flags (--proxy, --reverse, --forward) are specified,
+    When service flags (--proxy, --inspect) are specified,
     runs in health check mode with bitmask exit codes:
 
-      0 = all healthy    4 = forward down
-      1 = proxy down     5 = proxy+forward
-      2 = reverse down   6 = reverse+forward
-      3 = proxy+reverse  7 = all down
+      0 = all healthy
+      1 = proxy down
+      2 = inspect down
+      3 = both down
 
     Examples:
-        ccproxy status --proxy --reverse --forward  # All must be running
-        ccproxy status --proxy                      # Just check LiteLLM
+        ccproxy status --proxy --inspect  # All must be running
+        ccproxy status --proxy            # Just check LiteLLM
     """
 
     json: bool = False
@@ -162,11 +162,8 @@ class Status:
     proxy: bool = False
     """Check if LiteLLM proxy is running."""
 
-    reverse: bool = False
-    """Check if MITM reverse proxy is running."""
-
-    forward: bool = False
-    """Check if MITM forward proxy is running."""
+    inspect: bool = False
+    """Check if MITM inspect stack is running."""
 
 
 @attrs.define
@@ -212,9 +209,6 @@ class DbPrompt:
 
     output: Annotated[Path | None, tyro.conf.arg(aliases=["-o"])] = None
     """Output file path. Defaults to stdout."""
-
-    direction: Annotated[str, tyro.conf.arg(aliases=["-d"])] = "forward"
-    """Proxy direction filter: 'forward' (default), 'reverse', or 'both'."""
 
     include_headers: Annotated[bool, tyro.conf.arg(aliases=["-H"])] = False
     """Include HTTP headers in output."""
@@ -965,8 +959,7 @@ def show_status(
     config_dir: Path,
     json_output: bool = False,
     check_proxy: bool = False,
-    check_reverse: bool = False,
-    check_forward: bool = False,
+    check_inspect: bool = False,
 ) -> None:
     """Show the status of LiteLLM proxy and ccproxy configuration.
 
@@ -974,8 +967,7 @@ def show_status(
         config_dir: Configuration directory to check
         json_output: Output status as JSON with boolean values
         check_proxy: Health check - require LiteLLM proxy running
-        check_reverse: Health check - require MITM reverse proxy running
-        check_forward: Health check - require MITM forward proxy running
+        check_inspect: Health check - require MITM inspect stack running
 
     When any check_* flag is True, exits 0 only if ALL specified services
     are healthy, otherwise exits 1. No output is produced in check mode.
@@ -1060,35 +1052,23 @@ def show_status(
         "model_list": model_list,
         "log": str(log_file) if log_file.exists() else None,
         "mitm": {
-            "combined": {
-                "running": combined_running,
-                "reverse_port": reverse_port or main_port,
-                "forward_port": forward_port,
-                "inspect_port": inspect_port,
-                "inspect_url": f"http://127.0.0.1:{inspect_port}" if combined_running else None,
-            },
-            "reverse": {
-                "running": combined_running,
-                "port": reverse_port or main_port,
-            },
-            "forward": {
-                "running": combined_running,
-                "port": forward_port,
-            },
+            "running": combined_running,
+            "entry_port": reverse_port or main_port,
+            "forward_port": forward_port,
+            "inspect_port": inspect_port,
+            "inspect_url": f"http://127.0.0.1:{inspect_port}" if combined_running else None,
             "litellm_port": litellm_actual_port,
         },
     }
 
     # Health check mode: exit with bitmask code indicating failed services
-    # Bit 0 (1): proxy, Bit 1 (2): reverse/combined, Bit 2 (4): forward/combined
-    if check_proxy or check_reverse or check_forward:
+    # Bit 0 (1): proxy, Bit 1 (2): inspect stack
+    if check_proxy or check_inspect:
         exit_code = 0
         if check_proxy and not proxy_running:
             exit_code |= 1
-        if check_reverse and not combined_running:
+        if check_inspect and not combined_running:
             exit_code |= 2
-        if check_forward and not combined_running:
-            exit_code |= 4
         sys.exit(exit_code)
 
     if json_output:
@@ -1109,23 +1089,18 @@ def show_status(
             proxy_status = f"[dim]{url}[/dim] [red]false[/red]"
         table.add_row("proxy", proxy_status)
 
-        # MITM status — combined process
+        # MITM status — inspect stack
         mitm_info = status_data["mitm"]
-        combined_info = mitm_info["combined"]
         litellm_port = mitm_info["litellm_port"]
 
         mitm_parts = []
 
-        if combined_info["running"]:
-            rev_port = combined_info["reverse_port"]
-            fwd_port = combined_info["forward_port"]
-            combined_status = (
-                f"[green]reverse[/green]@[cyan]{rev_port}[/cyan] → litellm@[cyan]{litellm_port}[/cyan]  "
-                f"[green]forward[/green]@[cyan]{fwd_port}[/cyan] → providers"
-            )
-            if combined_info.get("inspect_url"):
-                combined_status += f"\n[green]inspect[/green] → [cyan]{combined_info['inspect_url']}[/cyan]"
-            mitm_parts.append(combined_status)
+        if mitm_info["running"]:
+            entry_port = mitm_info["entry_port"]
+            inspect_status = f"[green]inspect[/green]@[cyan]{entry_port}[/cyan] → litellm@[cyan]{litellm_port}[/cyan]"
+            if mitm_info.get("inspect_url"):
+                inspect_status += f"\n[green]ui[/green] → [cyan]{mitm_info['inspect_url']}[/cyan]"
+            mitm_parts.append(inspect_status)
         else:
             mitm_parts.append("[dim]stopped[/dim]")
 
@@ -1781,8 +1756,7 @@ def format_trace_markdown(
     lines.append("| Field | Value |")
     lines.append("|-------|-------|")
     lines.append(f"| Trace ID | `{trace['trace_id']}` |")
-    direction_label = "Forward (LiteLLM→Provider)" if trace.get("proxy_direction") == 1 else "Reverse (Client→LiteLLM)"
-    lines.append(f"| Direction | {direction_label} |")
+    lines.append(f"| Mode | {trace.get('proxy_direction', 'N/A')} |")
     lines.append(f"| Session ID | `{trace.get('session_id') or 'N/A'}` |")
     lines.append(f"| Model | `{request.get('model', 'unknown')}` |")
     lines.append(f"| URL | `{trace.get('url', 'N/A')}` |")
@@ -1927,12 +1901,6 @@ def handle_db_prompt(config_dir: Path, cmd: DbPrompt) -> None:
 
     console = Console(stderr=True)
 
-    # Validate direction
-    valid_directions = {"forward", "reverse", "both"}
-    if cmd.direction not in valid_directions:
-        console.print(f"[red]Error:[/red] Invalid direction '{cmd.direction}'. Use: {', '.join(valid_directions)}")
-        sys.exit(1)
-
     # Get database URL
     database_url = get_database_url(config_dir)
     if not database_url:
@@ -1951,13 +1919,6 @@ def handle_db_prompt(config_dir: Path, cmd: DbPrompt) -> None:
     if not trace:
         console.print(f"[red]Error:[/red] Trace not found: {cmd.trace_id}")
         sys.exit(1)
-
-    # Filter by direction
-    trace_direction = "forward" if trace.get("proxy_direction") == 1 else "reverse"
-    if cmd.direction != "both" and trace_direction != cmd.direction:
-        console.print(
-            f"[yellow]Warning:[/yellow] Trace direction is '{trace_direction}' but filter is '{cmd.direction}'"
-        )
 
     # Parse request and response
     request = parse_anthropic_request(trace.get("request_body"))
@@ -2066,8 +2027,7 @@ def main(
             config_dir,
             json_output=cmd.json,
             check_proxy=cmd.proxy,
-            check_reverse=cmd.reverse,
-            check_forward=cmd.forward,
+            check_inspect=cmd.inspect,
         )
 
     elif isinstance(cmd, DbSql):

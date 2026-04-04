@@ -975,7 +975,7 @@ class TestMainFunction:
         main(cmd, config_dir=tmp_path)
 
         mock_status.assert_called_once_with(
-            tmp_path, json_output=False, check_proxy=False, check_reverse=False, check_forward=False
+            tmp_path, json_output=False, check_proxy=False, check_inspect=False
         )
 
     @patch("ccproxy.cli.show_status")
@@ -985,5 +985,5 @@ class TestMainFunction:
         main(cmd, config_dir=tmp_path)
 
         mock_status.assert_called_once_with(
-            tmp_path, json_output=True, check_proxy=False, check_reverse=False, check_forward=False
+            tmp_path, json_output=True, check_proxy=False, check_inspect=False
         )
