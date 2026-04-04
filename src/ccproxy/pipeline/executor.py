@@ -79,25 +79,20 @@ class PipelineExecutor:
         Returns:
             Modified data dict
         """
-        # Convert to Context
         ctx = Context.from_litellm_data(data)
 
-        # Extract override header
         overrides = extract_overrides_from_context(ctx.headers)
         if overrides.raw_header:
             logger.debug("Hook overrides: %s", overrides.raw_header)
 
-        # Build extra params for hooks
         hook_params = dict(self.extra_params)
         if user_api_key_dict:
             hook_params["user_api_key_dict"] = user_api_key_dict
 
-        # Execute hooks in order
         for hook_name in self.dag.execution_order:
             spec = self.dag.get_hook(hook_name)
             ctx = self._execute_hook(ctx, spec, overrides, hook_params)
 
-        # Convert back to LiteLLM data
         return ctx.to_litellm_data()
 
     def _execute_hook(
@@ -121,20 +116,17 @@ class PipelineExecutor:
         hook_name = spec.name
 
         try:
-            # Check override first
             override = overrides.get_override(hook_name)
 
             if override == HookOverride.FORCE_SKIP:
                 logger.debug("Hook '%s' skipped (override)", hook_name)
                 return ctx
 
-            # Check guard unless forced to run
             if override != HookOverride.FORCE_RUN:
                 if not spec.should_run(ctx):
                     logger.debug("Hook '%s' skipped (guard)", hook_name)
                     return ctx
 
-            # Execute handler
             logger.debug("Executing hook '%s'", hook_name)
             return spec.execute(ctx, params)
 

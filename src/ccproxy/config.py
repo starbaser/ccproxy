@@ -151,13 +151,6 @@ class RuleConfig:
     """Configuration for a single classification rule."""
 
     def __init__(self, name: str, rule_path: str, params: list[Any] | None = None) -> None:
-        """Initialize a rule configuration.
-
-        Args:
-            name: The name for this rule (maps to model_name in LiteLLM config)
-            rule_path: Python import path to the rule class
-            params: Optional parameters to pass to the rule constructor
-        """
         self.model_name = name
         self.rule_path = rule_path
         self.params = params or []
@@ -177,21 +170,15 @@ class RuleConfig:
         module = importlib.import_module(module_path)
         rule_class = getattr(module, class_name)
 
-        # Create instance with parameters
         if not self.params:
-            # No parameters
             return rule_class()
 
-        if isinstance(self.params, list):
-            # If all params are dicts, assume they're kwargs
-            if all(isinstance(p, dict) for p in self.params):
-                # Merge all dicts into one kwargs dict
-                kwargs = {}
-                for p in self.params:
-                    kwargs.update(p)
-                return rule_class(**kwargs)
-            # Otherwise treat as positional args
-            return rule_class(*self.params)
+        if all(isinstance(p, dict) for p in self.params):
+            kwargs = {}
+            for p in self.params:
+                kwargs.update(p)
+            return rule_class(**kwargs)
+        return rule_class(*self.params)
 
 
 class CCProxyConfig(BaseSettings):
@@ -202,9 +189,7 @@ class CCProxyConfig(BaseSettings):
         extra="ignore",
     )
 
-    # Core settings
     debug: bool = False
-    metrics_enabled: bool = True
     default_model_passthrough: bool = True
 
     # Handler import path (e.g., "ccproxy.handler:CCProxyHandler")
@@ -294,7 +279,6 @@ class CCProxyConfig(BaseSettings):
             logger.warning(f"No OAuth source configured for provider '{provider}'")
             return None
 
-        # Normalize to OAuthSource
         if isinstance(source, str):
             oauth_source = OAuthSource(command=source)
         elif isinstance(source, OAuthSource):
@@ -403,8 +387,6 @@ class CCProxyConfig(BaseSettings):
         source = self.oat_sources.get(provider)
         if isinstance(source, OAuthSource):
             return source.auth_header
-        elif isinstance(source, dict):
-            return source.get("auth_header")
         return None
 
     def get_provider_for_destination(self, api_base: str | None) -> str | None:
@@ -424,7 +406,6 @@ class CCProxyConfig(BaseSettings):
         api_base_lower = api_base.lower()
 
         for provider, source in self.oat_sources.items():
-            # Normalize to OAuthSource
             if isinstance(source, str):
                 continue  # Simple string form has no destinations
             elif isinstance(source, OAuthSource):
@@ -495,7 +476,6 @@ class CCProxyConfig(BaseSettings):
 
         This method looks for ccproxy.yaml in the same directory as the LiteLLM config.
         """
-        # Create instance with defaults
         instance = cls(**kwargs)
 
         # Try to find ccproxy.yaml in the same directory as config.yaml
@@ -523,19 +503,14 @@ class CCProxyConfig(BaseSettings):
         """
         instance = cls(ccproxy_config_path=yaml_path, **kwargs)
 
-        # Load YAML if it exists
         if yaml_path.exists():
             with yaml_path.open() as f:
                 data = yaml.safe_load(f) or {}
 
-                # Get ccproxy section
                 ccproxy_data = data.get("ccproxy", {})
 
-                # Apply basic settings
                 if "debug" in ccproxy_data:
                     instance.debug = ccproxy_data["debug"]
-                if "metrics_enabled" in ccproxy_data:
-                    instance.metrics_enabled = ccproxy_data["metrics_enabled"]
                 if "default_model_passthrough" in ccproxy_data:
                     instance.default_model_passthrough = ccproxy_data["default_model_passthrough"]
                 if "oat_sources" in ccproxy_data:
@@ -571,12 +546,10 @@ class CCProxyConfig(BaseSettings):
                             "Using 'oat_sources[\"anthropic\"]' and ignoring deprecated 'credentials' field."
                         )
 
-                # Load hooks
                 hooks_data = ccproxy_data.get("hooks", [])
                 if hooks_data:
                     instance.hooks = hooks_data
 
-                # Load rules
                 rules_data = ccproxy_data.get("rules", [])
                 instance.rules = []
                 for rule_data in rules_data:
@@ -588,7 +561,6 @@ class CCProxyConfig(BaseSettings):
                             rule_config = RuleConfig(name, rule_path, params)
                             instance.rules.append(rule_config)
 
-        # Load credentials at startup (raises RuntimeError if fails)
         instance._load_credentials()
 
         return instance
@@ -605,13 +577,7 @@ def get_config() -> CCProxyConfig:
 
     if _config_instance is None:
         with _config_lock:
-            # Double-check locking pattern
             if _config_instance is None:
-                # Configuration discovery precedence:
-                # 1. CCPROXY_CONFIG_DIR environment variable (highest priority)
-                # 2. LiteLLM proxy server runtime directory
-                # 3. ~/.ccproxy directory (fallback)
-
                 import os
 
                 config_path = None

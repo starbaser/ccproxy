@@ -60,7 +60,6 @@ def inject_mcp_notifications(ctx: Context, params: dict[str, Any]) -> Context:
     for task_id, events in drained.items():
         tool_use_id = f"toolu_notify_{uuid.uuid4().hex[:8]}"
 
-        # Assistant message: synthetic tool_use block
         assistant_msg: dict[str, Any] = {
             "role": "assistant",
             "content": [
@@ -73,7 +72,6 @@ def inject_mcp_notifications(ctx: Context, params: dict[str, Any]) -> Context:
             ],
         }
 
-        # User message: tool_result with event payload
         import json
 
         user_msg: dict[str, Any] = {

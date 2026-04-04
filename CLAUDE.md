@@ -72,6 +72,11 @@ ccproxy db sql "SELECT * FROM ..." --csv
 ccproxy db gql "{ allCcproxyHttpTraces(first: 5) { nodes { traceId host statusCode } } }"
 ccproxy db gql --json "{ allCcproxyHttpTraces { nodes { traceId } } }"
 ccproxy db gql -f query.graphql
+
+# Convert a MITM trace to formatted markdown (conversation view)
+ccproxy db-prompt <trace-id>
+ccproxy db-prompt <trace-id> --output trace.md
+ccproxy db-prompt <trace-id> -H   # include HTTP headers
 ```
 
 **Inspect Mode**: `--inspect` enables the full MITM stack (mitmweb with reverse + forward + WireGuard modes). `ccproxy run --inspect` confines the subprocess in a rootless network namespace routed through the WireGuard tunnel for transparent traffic capture. See `docs/inspect.md` for architecture details.
@@ -119,8 +124,24 @@ Request → CCProxyHandler → Hook Pipeline → Response
   - `inject_mcp_notifications` - Injects buffered MCP terminal events as synthetic tool_use/tool_result pairs before the final user message
 - **mitm/addon.py**: MITM proxy addon for HTTP traffic capture and tracing. Stores request/response data in PostgreSQL via `TraceStorage`.
 - **mitm/namespace.py**: Network namespace confinement for `ccproxy run --inspect`. Creates user+net namespace with slirp4netns bridge and WireGuard client routing through mitmweb's WireGuard server. Requires `slirp4netns`, `wg`, `unshare`, `nsenter`, `ip` (all rootless on Linux 5.6+ with `unprivileged_userns_clone=1`).
+- **mitm/process.py**: Process management for launching and supervising mitmproxy (mitmdump/mitmweb). Handles Prisma client initialization and port readiness checks.
+- **mitm/script.py**: Mitmproxy addon script loaded via `-s` flag. Runs in the mitmproxy process; delegates to `CCProxyMitmAddon` for per-flow trace capture. Supports combined reverse+forward mode with direction detection.
+- **mitm/storage.py**: Database storage layer for MITM traces. Wraps Prisma client to persist HTTP flow data to PostgreSQL with type coercion for Prisma compatibility.
+- **mitm/telemetry.py**: OpenTelemetry span emission for MITM flows. Three-mode degradation: real OTLP export, no-op tracer, or stub — depending on package availability and config.
 - **cli.py**: Tyro-based CLI interface for managing the proxy server. Foreground-only (no `--detach`/`stop`/`restart`). Status detection via TCP health probes.
+- **constants.py**: Shared constants — `ANTHROPIC_BETA_HEADERS`, `OAUTH_SENTINEL_PREFIX`, `SENSITIVE_PATTERNS`, and `CLAUDE_CODE_SYSTEM_PREFIX`.
+- **metadata_store.py**: Thread-safe TTL store keyed by `litellm_call_id` for bridging request metadata across LiteLLM callback boundaries.
+- **mcp/buffer.py**: Thread-safe notification buffer for MCP terminal events (from mcptty). Stores per-task events with configurable TTL and max-event limits.
+- **mcp/routes.py**: FastAPI routes for MCP notification ingestion (`POST /mcp/notify`). Accepts events from mcptty and writes them to the buffer.
+- **preflight.py**: Pre-flight checks before proxy startup — kills orphaned ccproxy/mitmdump processes, verifies port availability, and enforces single-instance constraint.
 - **utils.py**: Template discovery and debug utilities (`dt()`, `dv()`, `d()`, `p()`).
+- **pipeline/**: Hook pipeline subsystem:
+  - `context.py` - Typed `Context` dataclass wrapping LiteLLM's request data dict for hook access
+  - `dag.py` - DAG-based dependency ordering via Kahn's algorithm; resolves hook execution order from `reads`/`writes` declarations
+  - `executor.py` - Executes hooks in DAG order with override support and error isolation
+  - `guards.py` - Shared guard predicates (e.g., `is_oauth_request`) used by hooks to conditionally self-skip
+  - `hook.py` - `HookSpec` class and `@hook` decorator for declaring hook dependencies and metadata
+  - `overrides.py` - Parses `x-ccproxy-hooks` header to force-run (`+hook`) or force-skip (`-hook`) individual hooks per request
 
 ### Rule System
 
@@ -184,7 +205,7 @@ The test suite uses pytest with comprehensive fixtures (18 test files, 90% cover
 - **Hook error isolation**: Errors in one hook don't block others from executing.
 - **Lazy model loading**: Models loaded from LiteLLM proxy on first request, not at startup.
 - **MITM proxy**: Three-mode architecture activated by `--inspect`. Reverse proxy (client-facing, `mitm.reverse_port`), forward proxy (`mitm.forward_port`, outbound via HTTPS_PROXY), and WireGuard transparent proxy (`mitm.wireguard_port`, default 51820). When `reverse_port` is set, LiteLLM keeps its configured port and the reverse proxy listens separately; otherwise the reverse proxy takes over the main port and LiteLLM gets a random port. Without `--inspect`, no MITM at all. OAuth is handled entirely by pipeline hooks + `_patch_anthropic_oauth_headers()` monkey-patch; MITM is not required for OAuth.
-- **Namespace confinement**: `ccproxy run --inspect` creates a rootless user+net namespace via `unshare`, bridges it to the host via `slirp4netns` (gateway `10.0.2.2`, namespace IP `10.0.2.100`), and routes all traffic through a WireGuard client (`10.0.0.1/32`) pointing at mitmweb's WireGuard server. Uses `--ready-fd`/`--exit-fd` pipes for clean lifecycle management. Hard-fails if prerequisites are missing (no fallback to unconfined execution). Combined CA bundle injected via `SSL_CERT_FILE`/`CURL_CA_BUNDLE`/`NODE_EXTRA_CA_CERTS` for transparent TLS interception.
+- **Namespace confinement**: `ccproxy run --inspect` creates a rootless user+net namespace via `unshare`, bridges it to the host via `slirp4netns` (gateway `10.0.2.2`, namespace IP `10.0.2.100`), and routes all traffic through a WireGuard client (`10.0.0.1/32`) pointing at mitmweb's WireGuard server. Uses `--ready-fd`/`--exit-fd` pipes for clean lifecycle management. Hard-fails if prerequisites are missing (no fallback to unconfined execution). Combined CA bundle injected via `SSL_CERT_FILE`/`CURL_CA_BUNDLE`/`NODE_EXTRA_CA_CERTS`/`REQUESTS_CA_BUNDLE` for transparent TLS interception.
 - **MITM database**: PostgreSQL for HTTP trace storage. Database URL set via `CCPROXY_DATABASE_URL` env var or in `ccproxy.yaml` under `ccproxy.mitm.database_url`. Uses the `ccproxy-db` container.
 - **GraphQL API**: PostGraphile v4 on port 5435 auto-introspects the Prisma schema to provide a GraphQL query API for MITM traces. Config via `ccproxy.mitm.graphql.host`/`port` scalars (matching litellm convention). PostGraphile camelCases column names: `trace_id` → `traceId`, `CCProxy_HttpTraces` → `allCcproxyHttpTraces`. GraphiQL IDE at `http://localhost:5435/graphiql`.
 - **Docker containers**: Three containers managed via `compose.yaml`:

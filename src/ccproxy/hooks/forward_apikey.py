@@ -43,7 +43,6 @@ def forward_apikey(ctx: Context, params: dict[str, Any]) -> Context:
     if "extra_headers" not in ctx.provider_headers:
         ctx.provider_headers["extra_headers"] = {}
 
-    # Set the x-api-key header
     ctx.provider_headers["extra_headers"]["x-api-key"] = api_key
 
     logger.info(

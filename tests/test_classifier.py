@@ -171,16 +171,13 @@ class TestRequestClassifier:
         finally:
             clear_config_instance()
 
-    def test_pydantic_conversion_exception_handling(self, classifier: RequestClassifier) -> None:
-        """Test exception handling for pydantic model conversion failure (lines 85-86)."""
-        # Create a mock object that has model_dump but raises an exception
+    def test_pydantic_conversion_exception_propagates(self, classifier: RequestClassifier) -> None:
+        """Test that model_dump() exceptions propagate naturally."""
         mock_model = mock.Mock()
         mock_model.model_dump.side_effect = Exception("Conversion failed")
 
-        # This should handle the exception and use the object as-is
-        result = classifier.classify(mock_model)
-        # Since the mock object isn't a dict, it should return "default"
-        assert result == "default"
+        with pytest.raises(Exception, match="Conversion failed"):
+            classifier.classify(mock_model)
 
     def test_non_dict_request_handling(self, classifier: RequestClassifier) -> None:
         """Test handling of non-dict requests that can't be converted (lines 90-91)."""

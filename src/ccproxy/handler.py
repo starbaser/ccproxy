@@ -8,12 +8,9 @@ import litellm
 from fastapi import HTTPException
 from litellm.integrations.custom_logger import CustomLogger
 from litellm.litellm_core_utils.get_llm_provider_logic import get_llm_provider
-from rich import print
 
 from ccproxy.classifier import RequestClassifier
 from ccproxy.config import get_config
-
-# Pipeline imports (new architecture)
 from ccproxy.pipeline import PipelineExecutor
 from ccproxy.pipeline.hook import get_registry
 from ccproxy.router import get_router
@@ -439,40 +436,10 @@ class CCProxyHandler(CustomLogger):
             data["metadata"] = metadata
             logger.debug("Health check request: pipeline will run with forced passthrough")
 
-        # Debug: Print thinking parameters if present
-        thinking_params = data.get("thinking")
-        if thinking_params is not None:
-            print(f"🧠 Thinking parameters: {thinking_params}")
-
         # Extract proxy_server_request from kwargs and add to data for pipeline hooks
         litellm_params = kwargs.get("litellm_params", {})
         if "proxy_server_request" in litellm_params:
             data["proxy_server_request"] = litellm_params["proxy_server_request"]
-
-        # Debug: Log cache_control in system messages
-        config = get_config()
-        if config.debug:
-            print(f"[CACHE DEBUG] REQUEST DATA KEYS: {list(data.keys())}")
-            # Check messages
-            messages = data.get("messages", [])
-            print(f"[CACHE DEBUG] Messages count: {len(messages)}")
-            for i, msg in enumerate(messages[:2]):  # First 2 messages
-                if isinstance(msg, dict):
-                    print(f"[CACHE DEBUG] Message {i}: role={msg.get('role')}, content_type={type(msg.get('content'))}")
-                    content = msg.get("content", [])
-                    if isinstance(content, list):
-                        for j, block in enumerate(content[:2]):
-                            if isinstance(block, dict):
-                                print(f"[CACHE DEBUG]   Block {j} keys: {list(block.keys())}")
-            # Check top-level system field
-            top_system = data.get("system", [])
-            if top_system:
-                print(f"[CACHE DEBUG] Top-level system present: {len(top_system)} blocks")
-                for i, block in enumerate(top_system[:2]):
-                    if isinstance(block, dict):
-                        print(f"[CACHE DEBUG]   System block {i} keys: {list(block.keys())}")
-                        if "cache_control" in block:
-                            print(f"[CACHE DEBUG]   cache_control: {block['cache_control']}")
 
         # Run hooks through pipeline with DAG-ordered execution
         if self._pipeline is not None:
@@ -480,7 +447,6 @@ class CCProxyHandler(CustomLogger):
         else:
             logger.error("Pipeline not initialized - hooks will not be executed")
 
-        # Log routing decision with structured logging
         metadata = data.get("metadata", {})
         self._log_routing_decision(
             model_name=metadata.get("ccproxy_model_name", None),
@@ -509,7 +475,6 @@ class CCProxyHandler(CustomLogger):
             model_config: Model configuration from router (None if fallback or passthrough)
             is_passthrough: Whether this was a passthrough decision (no rule applied + passthrough enabled)
         """
-        # Get config to check debug mode
         config = get_config()
 
         # Only display colored routing decision when debug is enabled
@@ -518,7 +483,6 @@ class CCProxyHandler(CustomLogger):
             from rich.panel import Panel
             from rich.text import Text
 
-            # Create console with 80 char width limit
             console = Console(width=80)
 
             # Color scheme based on routing
@@ -537,7 +501,6 @@ class CCProxyHandler(CustomLogger):
 
             # Helper function to truncate and wrap long model names
             def format_model_name(name: str | None, max_width: int = 60) -> str:
-                """Format model name to fit within max width."""
                 if name is None:
                     return "<none>"
                 if len(name) <= max_width:
@@ -568,7 +531,7 @@ class CCProxyHandler(CustomLogger):
             "is_passthrough": is_passthrough,
         }
 
-        # Add model info if available (excluding sensitive data)
+        # Exclude sensitive keys from model_info
         if model_config and "model_info" in model_config:
             model_info = model_config["model_info"]
             # Only include non-sensitive metadata
@@ -627,7 +590,6 @@ class CCProxyHandler(CustomLogger):
         metadata = kwargs.get("metadata", {})
         model_name = metadata.get("ccproxy_model_name", "unknown")
 
-        # Calculate duration using utility function
         duration_ms = calculate_duration_ms(start_time, end_time)
 
         log_data = {
@@ -637,7 +599,7 @@ class CCProxyHandler(CustomLogger):
             "model": kwargs.get("model", "unknown"),
         }
 
-        # Add usage stats if available (non-sensitive)
+        # Include non-sensitive token usage
         if hasattr(response_obj, "usage") and response_obj.usage:
             usage = response_obj.usage
             log_data["usage"] = {
@@ -745,7 +707,6 @@ class CCProxyHandler(CustomLogger):
         metadata = kwargs.get("metadata", {})
         model_name = metadata.get("ccproxy_model_name", "unknown")
 
-        # Calculate duration using utility function
         duration_ms = calculate_duration_ms(start_time, end_time)
 
         log_data = {
@@ -793,7 +754,6 @@ class CCProxyHandler(CustomLogger):
         metadata = kwargs.get("metadata", {})
         model_name = metadata.get("ccproxy_model_name", "unknown")
 
-        # Calculate duration using utility function
         duration_ms = calculate_duration_ms(start_time, end_time)
 
         log_data = {

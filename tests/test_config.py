@@ -19,7 +19,6 @@ class TestCCProxyConfig:
         """Test default configuration values."""
         config = CCProxyConfig()
         assert config.debug is False
-        assert config.metrics_enabled is True
         assert config.litellm_config_path == Path("./config.yaml")
         assert config.ccproxy_config_path == Path("./ccproxy.yaml")
         assert config.rules == []
@@ -28,9 +27,7 @@ class TestCCProxyConfig:
         """Test config attributes can be set directly."""
         config = CCProxyConfig()
         config.debug = True
-        config.metrics_enabled = False
         assert config.debug is True
-        assert config.metrics_enabled is False
 
     def test_rule_config(self) -> None:
         """Test rule configuration."""
@@ -51,7 +48,6 @@ class TestCCProxyConfig:
         ccproxy_yaml_content = """
 ccproxy:
   debug: true
-  metrics_enabled: false
   rules:
     - name: token_count
       rule: ccproxy.rules.TokenCountRule
@@ -93,7 +89,6 @@ model_list:
 
             # Check ccproxy settings
             assert config.debug is True
-            assert config.metrics_enabled is False
             assert len(config.rules) == 2
             assert config.rules[0].model_name == "token_count"
             assert config.rules[1].model_name == "background"
@@ -120,7 +115,6 @@ other_settings:
 
             # Should use defaults
             assert config.debug is False
-            assert config.metrics_enabled is True
             assert config.rules == []
 
         finally:
@@ -131,7 +125,6 @@ other_settings:
         yaml_content = """
 ccproxy:
   debug: true
-  metrics_enabled: false
   rules:
     - name: custom_rule
       rule: ccproxy.rules.TokenCountRule
@@ -146,7 +139,6 @@ ccproxy:
             config = CCProxyConfig.from_yaml(yaml_path)
             # YAML values should be loaded
             assert config.debug is True
-            assert config.metrics_enabled is False
             assert len(config.rules) == 1
             assert config.rules[0].model_name == "custom_rule"
             assert config.rules[0].params == [{"threshold": 70000}]
@@ -227,7 +219,7 @@ class TestConfigSingleton:
         clear_config_instance()
 
         # Create a custom config instance and set it directly
-        custom_config = CCProxyConfig(debug=True, metrics_enabled=False)
+        custom_config = CCProxyConfig(debug=True)
         from ccproxy.config import set_config_instance
 
         set_config_instance(custom_config)
@@ -238,8 +230,7 @@ class TestConfigSingleton:
 
             assert config1 is config2
             assert config1.debug is True
-            assert config1.metrics_enabled is False
-
+            
         finally:
             clear_config_instance()
 
@@ -267,7 +258,6 @@ model_list:
             ccproxy_yaml.write_text("""
 ccproxy:
   debug: true
-  metrics_enabled: false
   rules:
     - name: test
       rule: ccproxy.rules.TokenCountRule
@@ -281,7 +271,6 @@ ccproxy:
                 config = CCProxyConfig.from_proxy_runtime()
 
                 assert config.debug is True
-                assert config.metrics_enabled is False
                 assert len(config.rules) == 1
                 assert config.rules[0].model_name == "test"
 
@@ -300,7 +289,6 @@ ccproxy:
 
                 # Should use defaults
                 assert config.debug is False
-                assert config.metrics_enabled is True
                 assert config.rules == []
 
     def test_from_proxy_runtime_default_paths(self) -> None:
@@ -317,7 +305,6 @@ ccproxy:
 
                 # Should use defaults
                 assert config.debug is False
-                assert config.metrics_enabled is True
                 assert config.rules == []
 
     def test_config_from_runtime(self) -> None:

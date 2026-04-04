@@ -68,7 +68,7 @@ def forward_oauth(ctx: Context, params: dict[str, Any]) -> Context:
         return ctx
 
     # Handle sentinel key substitution
-    auth_header = _handle_sentinel_key(auth_header, provider_name)
+    auth_header = _handle_sentinel_key(auth_header)
 
     # Fallback to cached OAuth token if no auth header
     if not auth_header:
@@ -169,7 +169,7 @@ def _detect_provider(
     return None
 
 
-def _handle_sentinel_key(auth_header: str, provider_name: str) -> str:
+def _handle_sentinel_key(auth_header: str) -> str:
     """Handle sentinel key substitution."""
     sentinel_token = auth_header.removeprefix("Bearer ").strip()
     if not sentinel_token.startswith(OAUTH_SENTINEL_PREFIX):

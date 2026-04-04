@@ -60,7 +60,6 @@ class Context:
         secret_fields = data.get("secret_fields", {})
         provider_specific = data.get("provider_specific_header", {})
 
-        # Extract headers from proxy_server_request
         headers = {}
         raw_headers_data = proxy_request.get("headers", {})
         if isinstance(raw_headers_data, dict):
@@ -93,7 +92,6 @@ class Context:
         """
         data = dict(self._raw_data)
 
-        # Update modified fields
         data["model"] = self.model
         data["messages"] = self.messages
         data["metadata"] = self.metadata

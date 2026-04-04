@@ -36,16 +36,10 @@ class RequestClassifier:
     """
 
     def __init__(self) -> None:
-        """Initialize the request classifier."""
         self._rules: list[tuple[str, ClassificationRule]] = []
         self._setup_rules()
 
     def _setup_rules(self) -> None:
-        """Set up classification rules from configuration.
-
-        Rules are loaded from the ccproxy.yaml configuration file.
-        Each rule configuration specifies the name and rule class to use.
-        """
         self._clear_rules()
 
         config = get_config()
@@ -73,13 +67,8 @@ class RequestClassifier:
             Rules are evaluated in the order they are configured. The first matching rule
             determines the routing model_name. If no rules match, "default" is returned.
         """
-        # Convert pydantic model to dict if needed
-        try:
-            if hasattr(request, "model_dump"):
-                request = request.model_dump()
-        except Exception as e:
-            logger.warning(f"Failed to convert request to dict: {e}")
-            # If conversion fails, try to use request as-is
+        if hasattr(request, "model_dump"):
+            request = request.model_dump()
 
         if not isinstance(request, dict):
             logger.error("Request is not a dict and could not be converted")
@@ -87,12 +76,10 @@ class RequestClassifier:
 
         config = get_config()
 
-        # Evaluate rules in order
         for model_name, rule in self._rules:
             if rule.evaluate(request, config):
                 return model_name
 
-        # Default if no rules match
         return "default"
 
     def add_rule(self, model_name: str, rule: ClassificationRule) -> None:
@@ -101,11 +88,6 @@ class RequestClassifier:
         Args:
             model_name: The model_name to use if this rule matches (matches model_name in LiteLLM config)
             rule: The rule to add
-
-        Note:
-            Rules are evaluated in the order they are added.
-            For proper priority, use _setup_rules() to configure
-            the standard rule set from ccproxy.yaml.
         """
         self._rules.append((model_name, rule))
 

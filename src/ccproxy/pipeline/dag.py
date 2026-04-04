@@ -211,7 +211,6 @@ class HookDAG:
         lines = ["graph TD"]
         deps = self._build_dependencies()
 
-        # Add edges
         edges_added: set[tuple[str, str]] = set()
         for hook_name, hook_deps in deps.items():
             for dep in hook_deps:
@@ -220,7 +219,6 @@ class HookDAG:
                     lines.append(f"    {dep} --> {hook_name}")
                     edges_added.add(edge)
 
-        # Add isolated nodes (no dependencies)
         for name in self._hooks:
             if not deps[name] and not self.get_dependents(name):
                 lines.append(f"    {name}")
@@ -276,13 +274,11 @@ class HookDAG:
         """
         warnings: list[str] = []
 
-        # Check for reads without writers
         for hook_name, spec in self._hooks.items():
             for read_key in spec.reads:
                 if read_key not in self._key_writers:
                     warnings.append(f"Hook '{hook_name}' reads '{read_key}' but no hook writes it")
 
-        # Check for unused writes
         for write_key, writers in self._key_writers.items():
             readers = self._key_readers.get(write_key, set())
             if not readers:

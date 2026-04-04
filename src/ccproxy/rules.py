@@ -31,7 +31,6 @@ class ThinkingRule(ClassificationRule):
     """Rule for classifying requests with thinking field."""
 
     def evaluate(self, request: dict[str, Any], config: "CCProxyConfig") -> bool:
-        """Evaluate if request has thinking field."""
         return "thinking" in request
 
 
@@ -42,7 +41,6 @@ class MatchModelRule(ClassificationRule):
         self.model_name = model_name
 
     def evaluate(self, request: dict[str, Any], config: "CCProxyConfig") -> bool:
-        """Evaluate if request matches the configured model name."""
         model = request.get("model", "")
         return isinstance(model, str) and self.model_name in model
 
@@ -62,17 +60,9 @@ class TokenCountRule(ClassificationRule):
         try:
             import tiktoken
 
-            # Map model names to appropriate tiktoken encodings
             if "gpt-4" in model or "gpt-3.5" in model:
                 encoding = tiktoken.encoding_for_model(model)
-            elif "claude" in model:
-                # Claude uses similar tokenization to cl100k_base
-                encoding = tiktoken.get_encoding("cl100k_base")
-            elif "gemini" in model:
-                # Gemini uses similar tokenization to cl100k_base
-                encoding = tiktoken.get_encoding("cl100k_base")
             else:
-                # Default to cl100k_base for unknown models
                 encoding = tiktoken.get_encoding("cl100k_base")
 
             self._tokenizer_cache[model] = encoding
@@ -91,17 +81,14 @@ class TokenCountRule(ClassificationRule):
                 logger.warning(f"Token encoding failed for model {model}: {e}")
                 # Fall through to estimation
 
-        # Fallback to estimation if tokenizer not available
-        # Updated estimation: ~3 chars per token for better accuracy
+        # ~3 chars per token estimation
         return len(text) // 3
 
     def evaluate(self, request: dict[str, Any], config: "CCProxyConfig") -> bool:
-        """Evaluate if request token count exceeds threshold."""
         token_count = 0
 
         model = request.get("model", "")
 
-        # Check messages token count
         messages = request.get("messages", [])
         if isinstance(messages, list):
             total_text = ""
@@ -137,7 +124,6 @@ class MatchToolRule(ClassificationRule):
         self.tool_name = tool_name.lower()
 
     def evaluate(self, request: dict[str, Any], config: "CCProxyConfig") -> bool:
-        """Evaluate if request uses the specified tool."""
         tools = request.get("tools", [])
         if isinstance(tools, list):
             for tool in tools:

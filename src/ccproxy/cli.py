@@ -500,7 +500,7 @@ def generate_handler_file(config_dir: Path) -> None:
                         "It will NOT be overwritten.\n\n"
                         "To use auto-generation:\n"
                         f"  1. Remove the file: [dim]rm {handler_file}[/dim]\n"
-                        "  2. Restart the proxy: [dim]ccproxy restart[/dim]\n\n"
+                        "  2. Restart the proxy: [dim]ccproxy start[/dim]\n\n"
                         "To use your custom handler:\n"
                         f"  • Set [bold]handler:[/bold] in [cyan]{ccproxy_config_path}[/cyan]\n"
                         "  • Example: [dim]handler: your_module.path:YourHandler[/dim]",
@@ -2039,8 +2039,6 @@ def entry_point() -> None:
 
     subcommands = {
         "start",
-        "stop",
-        "restart",
         "install",
         "logs",
         "status",

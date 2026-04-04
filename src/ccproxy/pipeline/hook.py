@@ -71,7 +71,6 @@ class _HookRegistry:
 
     def __init__(self) -> None:
         self._hooks: dict[str, HookSpec] = {}
-        self._pending: dict[str, dict[str, Any]] = {}
 
     def register_spec(self, spec: HookSpec) -> None:
         """Register a hook specification."""
@@ -85,18 +84,9 @@ class _HookRegistry:
         """Get all registered hook specifications."""
         return dict(self._hooks)
 
-    def store_pending(self, name: str, metadata: dict[str, Any]) -> None:
-        """Store pending metadata for a hook being decorated."""
-        self._pending[name] = metadata
-
-    def get_pending(self, name: str) -> dict[str, Any] | None:
-        """Get and remove pending metadata."""
-        return self._pending.pop(name, None)
-
     def clear(self) -> None:
         """Clear all registered hooks (for testing)."""
         self._hooks.clear()
-        self._pending.clear()
 
 
 # Global registry
@@ -160,35 +150,3 @@ def hook(
         return fn
 
     return decorator
-
-
-def create_hook_spec(
-    name: str,
-    handler: HandlerFn,
-    *,
-    reads: list[str] | None = None,
-    writes: list[str] | None = None,
-    guard: GuardFn | None = None,
-    params: dict[str, Any] | None = None,
-) -> HookSpec:
-    """Create a HookSpec programmatically (without decorator).
-
-    Args:
-        name: Unique hook identifier
-        handler: Function that transforms context
-        reads: Keys this hook reads from context
-        writes: Keys this hook writes to context
-        guard: Predicate that determines if handler should run
-        params: Static parameters passed to handler
-
-    Returns:
-        HookSpec instance
-    """
-    return HookSpec(
-        name=name,
-        handler=handler,
-        guard=guard or always_true,
-        reads=frozenset(reads or []),
-        writes=frozenset(writes or []),
-        params=params or {},
-    )
