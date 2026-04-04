@@ -311,7 +311,9 @@ def install_config(config_dir: Path, force: bool = False) -> None:
     print("  3. Start the proxy with: ccproxy start")
 
 
-def _ensure_combined_ca_bundle(config_dir: Path, base_ssl_cert: str | None = None) -> Path | None:
+def _ensure_combined_ca_bundle(
+    config_dir: Path, base_ssl_cert: str | None = None, confdir: Path | None = None
+) -> Path | None:
     """Build a combined CA bundle with mitmproxy's CA + system CAs.
 
     mitmproxy intercepts TLS and re-signs with its own CA. Subprocesses need
@@ -320,12 +322,24 @@ def _ensure_combined_ca_bundle(config_dir: Path, base_ssl_cert: str | None = Non
     Args:
         config_dir: Configuration directory for storing the bundle
         base_ssl_cert: Base SSL_CERT_FILE path (uses system default if None)
+        confdir: mitmproxy confdir override (defaults to ~/.mitmproxy)
 
     Returns:
         Path to combined bundle, or None if mitmproxy CA not found
     """
-    mitm_ca = Path.home() / ".mitmproxy" / "mitmproxy-ca-cert.pem"
-    if not mitm_ca.exists():
+    search_dirs = []
+    if confdir:
+        search_dirs.append(Path(confdir))
+    search_dirs.append(Path.home() / ".mitmproxy")
+
+    mitm_ca = None
+    for d in search_dirs:
+        candidate = d / "mitmproxy-ca-cert.pem"
+        if candidate.exists():
+            mitm_ca = candidate
+            break
+
+    if mitm_ca is None:
         return None
 
     combined_bundle = config_dir / "combined-ca-bundle.pem"
@@ -403,13 +417,29 @@ def run_with_proxy(
         wg_client_conf = wg_conf_file.read_text()
 
         wg_port = 51820
+        mitm_confdir: Path | None = None
         ccproxy_config_path = config_dir / "ccproxy.yaml"
         if ccproxy_config_path.exists():
             import yaml
 
             with ccproxy_config_path.open() as f:
                 cfg = yaml.safe_load(f) or {}
-            wg_port = cfg.get("ccproxy", {}).get("mitm", {}).get("wireguard_port", 51820)
+            mitm_section = cfg.get("ccproxy", {}).get("mitm", {})
+            wg_port = mitm_section.get("wireguard_port", 51820)
+            cert_dir = mitm_section.get("cert_dir")
+            if cert_dir:
+                mitm_confdir = Path(cert_dir).expanduser()
+
+        # Trust mitmproxy's CA so TLS interception works transparently
+        combined_bundle = _ensure_combined_ca_bundle(
+            config_dir, env.get("SSL_CERT_FILE"), confdir=mitm_confdir
+        )
+        if combined_bundle:
+            bundle = str(combined_bundle)
+            env["SSL_CERT_FILE"] = bundle
+            env["NODE_EXTRA_CA_CERTS"] = bundle
+            env["REQUESTS_CA_BUNDLE"] = bundle
+            env["CURL_CA_BUNDLE"] = bundle
 
         ctx = None
         try:
@@ -511,18 +541,29 @@ handler = {class_name}()
     handler_file.write_text(content)
 
 
-def _fetch_wireguard_client_conf(inspect_port: int, timeout: float = 15.0) -> str | None:
+def _fetch_wireguard_client_conf(
+    inspect_port: int, config_dir: Path, timeout: float = 15.0
+) -> str | None:
     """Poll mitmweb REST API for WireGuard client config after startup."""
     import urllib.request
+
+    token_file = config_dir / ".mitm-web-token"
+    web_token: str | None = None
+    if token_file.exists():
+        web_token = token_file.read_text().strip()
 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
             url = f"http://127.0.0.1:{inspect_port}/state"
+            if web_token:
+                url += f"?token={web_token}"
             with urllib.request.urlopen(url, timeout=2) as r:  # noqa: S310
                 data = json.loads(r.read())
-            servers = data.get("servers", [])
-            for srv in servers:
+            servers = data.get("servers", {})
+            # servers is a dict keyed by full_spec (e.g. "wireguard@51820")
+            srv_iter = servers.values() if isinstance(servers, dict) else servers
+            for srv in srv_iter:
                 wg_conf = srv.get("wireguard_conf")
                 if wg_conf:
                     return str(wg_conf)
@@ -615,7 +656,7 @@ def start_litellm(
             ports_to_check.append(reverse_port)
         ports_to_check.append(inspect_port)
         udp_ports_to_check.append(wireguard_port)
-    run_preflight_checks(config_dir, ports=ports_to_check, udp_ports=udp_ports_to_check)
+    run_preflight_checks(ports=ports_to_check, udp_ports=udp_ports_to_check)
 
     try:
         generate_handler_file(config_dir)
@@ -659,7 +700,9 @@ def start_litellm(
         env["HTTPS_PROXY"] = forward_proxy_url
         env["HTTP_PROXY"] = forward_proxy_url
 
-        combined_bundle = _ensure_combined_ca_bundle(config_dir, env.get("SSL_CERT_FILE"))
+        combined_bundle = _ensure_combined_ca_bundle(
+            config_dir, env.get("SSL_CERT_FILE"), confdir=Path(mitm_confdir) if mitm_confdir else None
+        )
         if combined_bundle:
             env["SSL_CERT_FILE"] = str(combined_bundle)
 
@@ -726,7 +769,7 @@ def start_litellm(
                 sys.exit(1)
 
             # Retrieve WireGuard client config from mitmweb for ccproxy run --inspect
-            wg_client_conf = _fetch_wireguard_client_conf(inspect_port)
+            wg_client_conf = _fetch_wireguard_client_conf(inspect_port, config_dir)
             if wg_client_conf:
                 (config_dir / ".mitm-wireguard-client.conf").write_text(wg_client_conf)
             else:

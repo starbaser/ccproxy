@@ -77,16 +77,18 @@ class NamespaceContext:
 
 
 def _rewrite_wg_endpoint(client_conf: str, gateway: str, wg_port: int) -> str:
-    """Rewrite the Endpoint in a WireGuard client config.
+    """Rewrite the Endpoint and strip wg-quick-only fields.
 
-    Replaces the original Endpoint (which points to the host's detected IP)
-    with the slirp4netns gateway address so the namespace can reach the
-    WireGuard server on the host.
+    Replaces the original Endpoint with the slirp4netns gateway address and
+    removes Address/DNS lines (wg-quick extensions not understood by `wg setconf`).
     """
+    # Strip wg-quick-only fields that `wg setconf` doesn't understand
+    conf = re.sub(r"^(?:Address|DNS)\s*=.*\n?", "", client_conf, flags=re.MULTILINE)
+    # Rewrite endpoint to the namespace-reachable gateway
     return re.sub(
         r"^Endpoint\s*=\s*.*$",
         f"Endpoint = {gateway}:{wg_port}",
-        client_conf,
+        conf,
         flags=re.MULTILINE,
     )
 
@@ -128,6 +130,8 @@ def create_namespace(wg_client_conf: str, wg_port: int) -> NamespaceContext:
             ["unshare", "--user", "--map-root-user", "--net", "--pid", "--fork",
              "sleep", "infinity"],
             start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
     except Exception:
         conf_path.unlink(missing_ok=True)
@@ -153,6 +157,8 @@ def create_namespace(wg_client_conf: str, wg_port: int) -> NamespaceContext:
         slirp_proc = subprocess.Popen(
             slirp_cmd,
             pass_fds=(ready_w, exit_r),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
 
         # Close the FDs that slirp4netns now owns
@@ -182,7 +188,7 @@ def create_namespace(wg_client_conf: str, wg_port: int) -> NamespaceContext:
             f"ip route add default dev wg0"
         )
         result = subprocess.run(
-            ["nsenter", "-t", str(ns_pid), "--net", "--user", "--",
+            ["nsenter", "-t", str(ns_pid), "--net", "--user", "--preserve-credentials", "--",
              "sh", "-c", wg_setup],
             capture_output=True,
             text=True,
@@ -225,7 +231,7 @@ def run_in_namespace(ctx: NamespaceContext, command: list[str], env: dict[str, s
     nsenter_cmd = [
         "nsenter",
         "-t", str(ctx.ns_pid),
-        "--net", "--user",
+        "--net", "--user", "--preserve-credentials",
         "--", *command,
     ]
     try:

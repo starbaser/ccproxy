@@ -295,7 +295,18 @@ def start_mitm(
     ]
 
     if web:
-        cmd += ["--web-port", str(inspect_port), "--web-host", "127.0.0.1"]
+        import secrets
+
+        web_token = secrets.token_hex(16)
+        (config_dir / ".mitm-web-token").write_text(web_token)
+        cmd += [
+            "--web-port",
+            str(inspect_port),
+            "--web-host",
+            "127.0.0.1",
+            "--set",
+            f"web_password={web_token}",
+        ]
 
     env = _build_env(
         config_dir,

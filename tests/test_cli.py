@@ -950,13 +950,14 @@ class TestMainFunction:
     def test_main_default_config_dir(self, tmp_path: Path) -> None:
         """Test main uses default config directory when not specified."""
         with (
+            patch.dict(os.environ, {}, clear=False),
             patch.object(Path, "home", return_value=tmp_path),
             patch("ccproxy.cli.start_litellm") as mock_litellm,
         ):
+            os.environ.pop("CCPROXY_CONFIG_DIR", None)
             cmd = Start()
             main(cmd)
 
-            # Check that litellm was called with the default config dir
             mock_litellm.assert_called_once_with(tmp_path / ".ccproxy", args=None, inspect=False)
 
     @patch("ccproxy.cli.view_logs")

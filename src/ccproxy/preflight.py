@@ -81,7 +81,7 @@ def _is_udp_port_in_use(port: int) -> int | None:
                     if len(fields) < 10:
                         continue
                     local_addr = fields[1]
-                    _, port_hex = local_addr.split(":")
+                    port_hex = local_addr.rsplit(":", 1)[-1]
                     if port_hex == hex_port:
                         bound_inodes.add(int(fields[9]))
         except OSError:
@@ -226,7 +226,6 @@ def kill_stale_processes(processes: list[tuple[int, str]]) -> int:
 
 
 def run_preflight_checks(
-    config_dir: Path,
     ports: list[int] | None = None,
     udp_ports: list[int] | None = None,
 ) -> None:

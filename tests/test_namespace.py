@@ -205,12 +205,13 @@ class TestRewriteWgEndpoint:
         assert "192.168.1.100" not in result
 
     def test_preserves_other_fields(self) -> None:
-        """All non-Endpoint fields are preserved exactly."""
+        """Non-Endpoint, non-wg-quick fields are preserved exactly."""
         result = _rewrite_wg_endpoint(SAMPLE_WG_CLIENT_CONF, "10.0.2.2", 51820)
         assert "PrivateKey = kHs2qYLCZkKnfuHxfCxPiKFBRqBBPgFBPQMOaTbBnWs=" in result
-        assert "Address = 10.0.0.1/32" in result
-        assert "DNS = 10.0.0.53" in result
         assert "AllowedIPs = 0.0.0.0/0" in result
+        # Address and DNS are wg-quick-only fields, stripped for `wg setconf`
+        assert "Address" not in result
+        assert "DNS" not in result
 
     def test_custom_port(self) -> None:
         """Non-default port is written correctly."""

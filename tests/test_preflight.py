@@ -157,7 +157,7 @@ class TestRunPreflightChecks:
             s.bind(("127.0.0.1", 0))
             free_port = s.getsockname()[1]
 
-        run_preflight_checks(tmp_path, ports=[free_port])
+        run_preflight_checks(ports=[free_port])
 
     def test_port_occupied_by_foreign_process(self, tmp_path):
         """Port held by non-ccproxy process → SystemExit."""
@@ -169,7 +169,7 @@ class TestRunPreflightChecks:
 
         try:
             with pytest.raises(SystemExit):
-                run_preflight_checks(tmp_path, ports=[port])
+                run_preflight_checks(ports=[port])
         finally:
             srv.close()
 
@@ -185,12 +185,12 @@ class TestRunPreflightChecks:
             patch("ccproxy.preflight._read_proc_cmdline", return_value=fake_cmdline),
             patch("ccproxy.preflight.kill_stale_processes", return_value=1),
         ):
-            run_preflight_checks(tmp_path, ports=[4000])
+            run_preflight_checks(ports=[4000])
 
     def test_mitm_checks_both_ports(self, tmp_path):
         """When mitm=True the caller passes both main_port and forward_port."""
         with patch("ccproxy.preflight.get_port_pid", return_value=(None, None)) as mock_gpp:
-            run_preflight_checks(tmp_path, ports=[4000, 8081])
+            run_preflight_checks(ports=[4000, 8081])
             assert mock_gpp.call_count == 2
             mock_gpp.assert_any_call(4000)
             mock_gpp.assert_any_call(8081)
@@ -198,7 +198,7 @@ class TestRunPreflightChecks:
     def test_no_mitm_checks_main_port_only(self, tmp_path):
         """When mitm=False the caller passes only main_port."""
         with patch("ccproxy.preflight.get_port_pid", return_value=(None, None)) as mock_gpp:
-            run_preflight_checks(tmp_path, ports=[4000])
+            run_preflight_checks(ports=[4000])
             assert mock_gpp.call_count == 1
             mock_gpp.assert_called_with(4000)
 
@@ -211,7 +211,7 @@ class TestRunPreflightChecks:
             patch("ccproxy.preflight.find_ccproxy_processes", return_value=[(999, other_cmdline)]) as mock_find,
             patch("ccproxy.preflight.kill_stale_processes") as mock_kill,
         ):
-            run_preflight_checks(tmp_path, ports=[4000])
+            run_preflight_checks(ports=[4000])
             # find_ccproxy_processes should NOT be called during preflight
             mock_find.assert_not_called()
             mock_kill.assert_not_called()
