@@ -57,7 +57,7 @@ class TestGetDatabaseUrl:
         config_file.write_text(
             """
 ccproxy:
-  inspect:
+  inspector:
     database_url: postgresql://config:789@host/db
 """
         )
@@ -72,7 +72,7 @@ ccproxy:
         config_file.write_text(
             """
 ccproxy:
-  inspect:
+  inspector:
     database_url: postgresql://${DB_USER}:${DB_PASS}@host/db
 """
         )
@@ -87,7 +87,7 @@ ccproxy:
         config_file.write_text(
             """
 ccproxy:
-  inspect:
+  inspector:
     database_url: postgresql://${DB_USER:-defaultuser}@host/db
 """
         )
@@ -122,7 +122,7 @@ ccproxy:
         config_file.write_text(
             """
 ccproxy:
-  inspect:
+  inspector:
     port: 8081
 """
         )
@@ -535,7 +535,7 @@ class TestGetGraphqlUrl:
         """Test GraphQL URL from ccproxy.yaml host/port config."""
         yaml_content = (
             "ccproxy:\n"
-            "  inspect:\n"
+            "  inspector:\n"
             "    graphql:\n"
             "      host: yaml-host\n"
             "      port: 9999\n"
@@ -549,7 +549,7 @@ class TestGetGraphqlUrl:
         """Test GraphQL URL with only host set (port defaults to 5435)."""
         yaml_content = (
             "ccproxy:\n"
-            "  inspect:\n"
+            "  inspector:\n"
             "    graphql:\n"
             "      host: custom-host\n"
         )

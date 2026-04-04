@@ -1,4 +1,4 @@
-"""Tests for ccproxy.mitm.namespace — network namespace confinement."""
+"""Tests for ccproxy.inspector.namespace — network namespace confinement."""
 
 import os
 import signal
@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, Mock, call, mock_open, patch
 
 import pytest
 
-from ccproxy.mitm.namespace import (
+from ccproxy.inspector.namespace import (
     NamespaceContext,
     _rewrite_wg_endpoint,
     _safe_close,
@@ -70,7 +70,7 @@ class TestCheckNamespaceCapabilities:
         """Unprivileged user namespaces disabled → reported as problem."""
         mock_which.return_value = "/usr/bin/tool"
 
-        with patch("ccproxy.mitm.namespace.Path") as mock_path_cls:
+        with patch("ccproxy.inspector.namespace.Path") as mock_path_cls:
             mock_path_instance = MagicMock()
             mock_path_instance.exists.return_value = True
             mock_path_instance.read_text.return_value = "0\n"
@@ -86,7 +86,7 @@ class TestCheckNamespaceCapabilities:
         """Unprivileged user namespaces enabled → no problem for userns."""
         mock_which.return_value = "/usr/bin/tool"
 
-        with patch("ccproxy.mitm.namespace.Path") as mock_path_cls:
+        with patch("ccproxy.inspector.namespace.Path") as mock_path_cls:
             mock_path_instance = MagicMock()
             mock_path_instance.exists.return_value = True
             mock_path_instance.read_text.return_value = "1\n"
@@ -107,7 +107,7 @@ class TestCheckNamespaceCapabilities:
 
         mock_which.side_effect = which_side_effect
 
-        with patch("ccproxy.mitm.namespace.Path") as mock_path_cls:
+        with patch("ccproxy.inspector.namespace.Path") as mock_path_cls:
             mock_path_cls.return_value.exists.return_value = False
             problems = check_namespace_capabilities()
 
@@ -117,7 +117,7 @@ class TestCheckNamespaceCapabilities:
     @patch("shutil.which", return_value=None)
     def test_all_tools_missing(self, mock_which: Mock) -> None:
         """All tools missing → one problem per tool."""
-        with patch("ccproxy.mitm.namespace.Path") as mock_path_cls:
+        with patch("ccproxy.inspector.namespace.Path") as mock_path_cls:
             mock_path_cls.return_value.exists.return_value = False
             problems = check_namespace_capabilities()
 
@@ -130,7 +130,7 @@ class TestCheckNamespaceCapabilities:
     @patch("shutil.which", return_value=None)
     def test_userns_disabled_plus_missing_tools(self, mock_which: Mock) -> None:
         """Both userns disabled AND tools missing → all problems reported."""
-        with patch("ccproxy.mitm.namespace.Path") as mock_path_cls:
+        with patch("ccproxy.inspector.namespace.Path") as mock_path_cls:
             mock_path_instance = MagicMock()
             mock_path_instance.exists.return_value = True
             mock_path_instance.read_text.return_value = "0\n"
@@ -144,7 +144,7 @@ class TestCheckNamespaceCapabilities:
     @patch("shutil.which", return_value="/usr/bin/tool")
     def test_userns_file_unreadable(self, mock_which: Mock) -> None:
         """OSError reading userns sysctl → silently ignored (not a problem)."""
-        with patch("ccproxy.mitm.namespace.Path") as mock_path_cls:
+        with patch("ccproxy.inspector.namespace.Path") as mock_path_cls:
             mock_path_instance = MagicMock()
             mock_path_instance.exists.return_value = True
             mock_path_instance.read_text.side_effect = OSError("permission denied")
@@ -164,7 +164,7 @@ class TestCheckNamespaceCapabilities:
 
         mock_which.side_effect = which_side_effect
 
-        with patch("ccproxy.mitm.namespace.Path") as mock_path_cls:
+        with patch("ccproxy.inspector.namespace.Path") as mock_path_cls:
             mock_path_cls.return_value.exists.return_value = False
             problems = check_namespace_capabilities()
 
@@ -181,7 +181,7 @@ class TestCheckNamespaceCapabilities:
 
         mock_which.side_effect = which_side_effect
 
-        with patch("ccproxy.mitm.namespace.Path") as mock_path_cls:
+        with patch("ccproxy.inspector.namespace.Path") as mock_path_cls:
             mock_path_cls.return_value.exists.return_value = False
             problems = check_namespace_capabilities()
 
@@ -247,12 +247,12 @@ class TestRewriteWgEndpoint:
 class TestCreateNamespace:
     """Test the namespace creation orchestration."""
 
-    @patch("ccproxy.mitm.namespace.subprocess.run")
-    @patch("ccproxy.mitm.namespace.subprocess.Popen")
-    @patch("ccproxy.mitm.namespace.os.pipe")
-    @patch("ccproxy.mitm.namespace.os.fdopen")
-    @patch("ccproxy.mitm.namespace.os.close")
-    @patch("ccproxy.mitm.namespace.tempfile.mkstemp")
+    @patch("ccproxy.inspector.namespace.subprocess.run")
+    @patch("ccproxy.inspector.namespace.subprocess.Popen")
+    @patch("ccproxy.inspector.namespace.os.pipe")
+    @patch("ccproxy.inspector.namespace.os.fdopen")
+    @patch("ccproxy.inspector.namespace.os.close")
+    @patch("ccproxy.inspector.namespace.tempfile.mkstemp")
     def test_successful_creation(
         self,
         mock_mkstemp: Mock,
@@ -320,10 +320,10 @@ class TestCreateNamespace:
         assert "-t" in nsenter_call
         assert "42" in nsenter_call  # ns_pid
 
-    @patch("ccproxy.mitm.namespace.subprocess.Popen")
-    @patch("ccproxy.mitm.namespace.tempfile.mkstemp")
-    @patch("ccproxy.mitm.namespace.os.fdopen")
-    @patch("ccproxy.mitm.namespace._safe_kill")
+    @patch("ccproxy.inspector.namespace.subprocess.Popen")
+    @patch("ccproxy.inspector.namespace.tempfile.mkstemp")
+    @patch("ccproxy.inspector.namespace.os.fdopen")
+    @patch("ccproxy.inspector.namespace._safe_kill")
     def test_unshare_failure_cleans_up(
         self,
         mock_kill: Mock,
@@ -347,14 +347,14 @@ class TestCreateNamespace:
         # Temp conf file should be cleaned up
         assert not conf_path.exists()
 
-    @patch("ccproxy.mitm.namespace.subprocess.run")
-    @patch("ccproxy.mitm.namespace.subprocess.Popen")
-    @patch("ccproxy.mitm.namespace.os.pipe")
-    @patch("ccproxy.mitm.namespace.os.fdopen")
-    @patch("ccproxy.mitm.namespace.os.close")
-    @patch("ccproxy.mitm.namespace.tempfile.mkstemp")
-    @patch("ccproxy.mitm.namespace._safe_kill")
-    @patch("ccproxy.mitm.namespace._safe_close")
+    @patch("ccproxy.inspector.namespace.subprocess.run")
+    @patch("ccproxy.inspector.namespace.subprocess.Popen")
+    @patch("ccproxy.inspector.namespace.os.pipe")
+    @patch("ccproxy.inspector.namespace.os.fdopen")
+    @patch("ccproxy.inspector.namespace.os.close")
+    @patch("ccproxy.inspector.namespace.tempfile.mkstemp")
+    @patch("ccproxy.inspector.namespace._safe_kill")
+    @patch("ccproxy.inspector.namespace._safe_close")
     def test_slirp_not_ready_cleans_up(
         self,
         mock_safe_close: Mock,
@@ -395,14 +395,14 @@ class TestCreateNamespace:
         # Sentinel should be killed on failure
         mock_safe_kill.assert_called_with(42)
 
-    @patch("ccproxy.mitm.namespace.subprocess.run")
-    @patch("ccproxy.mitm.namespace.subprocess.Popen")
-    @patch("ccproxy.mitm.namespace.os.pipe")
-    @patch("ccproxy.mitm.namespace.os.fdopen")
-    @patch("ccproxy.mitm.namespace.os.close")
-    @patch("ccproxy.mitm.namespace.tempfile.mkstemp")
-    @patch("ccproxy.mitm.namespace._safe_kill")
-    @patch("ccproxy.mitm.namespace._safe_close")
+    @patch("ccproxy.inspector.namespace.subprocess.run")
+    @patch("ccproxy.inspector.namespace.subprocess.Popen")
+    @patch("ccproxy.inspector.namespace.os.pipe")
+    @patch("ccproxy.inspector.namespace.os.fdopen")
+    @patch("ccproxy.inspector.namespace.os.close")
+    @patch("ccproxy.inspector.namespace.tempfile.mkstemp")
+    @patch("ccproxy.inspector.namespace._safe_kill")
+    @patch("ccproxy.inspector.namespace._safe_close")
     def test_wg_setup_failure_cleans_up(
         self,
         mock_safe_close: Mock,
@@ -458,7 +458,7 @@ class TestRunInNamespace:
 
     def test_returns_exit_code(self, mock_ctx: NamespaceContext) -> None:
         """Subprocess exit code is propagated."""
-        with patch("ccproxy.mitm.namespace.subprocess.Popen") as mock_popen:
+        with patch("ccproxy.inspector.namespace.subprocess.Popen") as mock_popen:
             proc = MagicMock()
             proc.wait.return_value = 42
             mock_popen.return_value = proc
@@ -469,7 +469,7 @@ class TestRunInNamespace:
 
     def test_nsenter_command_structure(self, mock_ctx: NamespaceContext) -> None:
         """nsenter is called with correct namespace PID and command."""
-        with patch("ccproxy.mitm.namespace.subprocess.Popen") as mock_popen:
+        with patch("ccproxy.inspector.namespace.subprocess.Popen") as mock_popen:
             proc = MagicMock()
             proc.wait.return_value = 0
             mock_popen.return_value = proc
@@ -490,7 +490,7 @@ class TestRunInNamespace:
 
     def test_keyboard_interrupt_terminates_process(self, mock_ctx: NamespaceContext) -> None:
         """KeyboardInterrupt → process is terminated, returns 130."""
-        with patch("ccproxy.mitm.namespace.subprocess.Popen") as mock_popen:
+        with patch("ccproxy.inspector.namespace.subprocess.Popen") as mock_popen:
             proc = MagicMock()
             proc.wait.side_effect = [KeyboardInterrupt, 130]
             mock_popen.return_value = proc
@@ -502,7 +502,7 @@ class TestRunInNamespace:
 
     def test_keyboard_interrupt_force_kill_on_timeout(self, mock_ctx: NamespaceContext) -> None:
         """Process doesn't terminate after SIGTERM → gets killed, returns 130."""
-        with patch("ccproxy.mitm.namespace.subprocess.Popen") as mock_popen:
+        with patch("ccproxy.inspector.namespace.subprocess.Popen") as mock_popen:
             proc = MagicMock()
             proc.wait.side_effect = [
                 KeyboardInterrupt,  # initial wait
@@ -518,7 +518,7 @@ class TestRunInNamespace:
 
     def test_zero_exit_code_on_success(self, mock_ctx: NamespaceContext) -> None:
         """Successful command returns 0."""
-        with patch("ccproxy.mitm.namespace.subprocess.Popen") as mock_popen:
+        with patch("ccproxy.inspector.namespace.subprocess.Popen") as mock_popen:
             proc = MagicMock()
             proc.wait.return_value = 0
             mock_popen.return_value = proc
@@ -529,7 +529,7 @@ class TestRunInNamespace:
 
     def test_nonzero_exit_code_propagated(self, mock_ctx: NamespaceContext) -> None:
         """Failed command exit code is returned as-is."""
-        with patch("ccproxy.mitm.namespace.subprocess.Popen") as mock_popen:
+        with patch("ccproxy.inspector.namespace.subprocess.Popen") as mock_popen:
             proc = MagicMock()
             proc.wait.return_value = 127
             mock_popen.return_value = proc
@@ -547,8 +547,8 @@ class TestRunInNamespace:
 class TestCleanupNamespace:
     """Test namespace resource cleanup."""
 
-    @patch("ccproxy.mitm.namespace._safe_kill")
-    @patch("ccproxy.mitm.namespace._safe_close")
+    @patch("ccproxy.inspector.namespace._safe_kill")
+    @patch("ccproxy.inspector.namespace._safe_close")
     def test_clean_shutdown(self, mock_close: Mock, mock_kill: Mock, mock_ctx: NamespaceContext) -> None:
         """Normal cleanup: close exit-fd, wait for slirp, kill sentinel, remove files."""
         mock_ctx.slirp_proc.wait.return_value = 0
@@ -564,8 +564,8 @@ class TestCleanupNamespace:
         # temp conf file removed
         assert not mock_ctx.wg_conf_path.exists()
 
-    @patch("ccproxy.mitm.namespace._safe_kill")
-    @patch("ccproxy.mitm.namespace._safe_close")
+    @patch("ccproxy.inspector.namespace._safe_kill")
+    @patch("ccproxy.inspector.namespace._safe_close")
     def test_slirp_timeout_force_kills(self, mock_close: Mock, mock_kill: Mock, mock_ctx: NamespaceContext) -> None:
         """slirp4netns doesn't exit after exit-fd close → force killed."""
         mock_ctx.slirp_proc.wait.side_effect = [
@@ -577,8 +577,8 @@ class TestCleanupNamespace:
 
         mock_ctx.slirp_proc.kill.assert_called_once()
 
-    @patch("ccproxy.mitm.namespace._safe_kill")
-    @patch("ccproxy.mitm.namespace._safe_close")
+    @patch("ccproxy.inspector.namespace._safe_kill")
+    @patch("ccproxy.inspector.namespace._safe_close")
     def test_api_socket_cleaned(self, mock_close: Mock, mock_kill: Mock, tmp_path: Path) -> None:
         """API socket file is removed if present."""
         conf_path = tmp_path / "wg.conf"
@@ -600,8 +600,8 @@ class TestCleanupNamespace:
         assert not socket_path.exists()
         assert not conf_path.exists()
 
-    @patch("ccproxy.mitm.namespace._safe_kill")
-    @patch("ccproxy.mitm.namespace._safe_close")
+    @patch("ccproxy.inspector.namespace._safe_kill")
+    @patch("ccproxy.inspector.namespace._safe_close")
     def test_exit_w_set_to_negative_after_close(
         self, mock_close: Mock, mock_kill: Mock, mock_ctx: NamespaceContext
     ) -> None:
@@ -675,7 +675,7 @@ class TestCliInspectHardFailure:
             tmp_path, ["echo", "hello"], inspect=True
         )
 
-    @patch("ccproxy.mitm.namespace.check_namespace_capabilities")
+    @patch("ccproxy.inspector.namespace.check_namespace_capabilities")
     def test_missing_prerequisites_exits_1(self, mock_check: Mock, tmp_path: Path, capsys) -> None:
         """Missing prerequisites → exit(1), not fallback to unconfined execution."""
         from ccproxy.cli import run_with_proxy
@@ -692,7 +692,7 @@ class TestCliInspectHardFailure:
         assert "slirp4netns" in captured.err
         assert "Cannot create network namespace" in captured.err
 
-    @patch("ccproxy.mitm.namespace.check_namespace_capabilities")
+    @patch("ccproxy.inspector.namespace.check_namespace_capabilities")
     def test_multiple_missing_prerequisites_all_reported(
         self, mock_check: Mock, tmp_path: Path, capsys
     ) -> None:
@@ -716,13 +716,13 @@ class TestCliInspectHardFailure:
         assert "wg" in captured.err
         assert "namespaces" in captured.err.lower()
 
-    @patch("ccproxy.mitm.namespace.check_namespace_capabilities", return_value=[])
+    @patch("ccproxy.inspector.namespace.check_namespace_capabilities", return_value=[])
     def test_missing_wg_state_file_exits_1(self, mock_check: Mock, tmp_path: Path, capsys) -> None:
         """Prerequisites present but no WG state file → clear error about starting --inspect."""
         from ccproxy.cli import run_with_proxy
 
         (tmp_path / "ccproxy.yaml").write_text("ccproxy: {}")
-        # No .mitm-wireguard-client.conf
+        # No .inspector-wireguard-client.conf
 
         with pytest.raises(SystemExit) as exc_info:
             run_with_proxy(tmp_path, ["echo", "hello"], inspect=True)
@@ -731,8 +731,8 @@ class TestCliInspectHardFailure:
         captured = capsys.readouterr()
         assert "ccproxy start --inspect" in captured.err
 
-    @patch("ccproxy.mitm.namespace.check_namespace_capabilities", return_value=[])
-    @patch("ccproxy.mitm.namespace.create_namespace")
+    @patch("ccproxy.inspector.namespace.check_namespace_capabilities", return_value=[])
+    @patch("ccproxy.inspector.namespace.create_namespace")
     def test_namespace_runtime_error_exits_1(
         self, mock_create: Mock, mock_check: Mock, tmp_path: Path, capsys
     ) -> None:
@@ -740,7 +740,7 @@ class TestCliInspectHardFailure:
         from ccproxy.cli import run_with_proxy
 
         (tmp_path / "ccproxy.yaml").write_text("ccproxy: {}")
-        (tmp_path / ".mitm-wireguard-client.conf").write_text(SAMPLE_WG_CLIENT_CONF)
+        (tmp_path / ".inspector-wireguard-client.conf").write_text(SAMPLE_WG_CLIENT_CONF)
 
         mock_create.side_effect = RuntimeError("ip link add failed: Operation not permitted")
 
@@ -751,10 +751,10 @@ class TestCliInspectHardFailure:
         captured = capsys.readouterr()
         assert "Namespace setup failed" in captured.err
 
-    @patch("ccproxy.mitm.namespace.check_namespace_capabilities", return_value=[])
-    @patch("ccproxy.mitm.namespace.cleanup_namespace")
-    @patch("ccproxy.mitm.namespace.run_in_namespace", return_value=0)
-    @patch("ccproxy.mitm.namespace.create_namespace")
+    @patch("ccproxy.inspector.namespace.check_namespace_capabilities", return_value=[])
+    @patch("ccproxy.inspector.namespace.cleanup_namespace")
+    @patch("ccproxy.inspector.namespace.run_in_namespace", return_value=0)
+    @patch("ccproxy.inspector.namespace.create_namespace")
     def test_cleanup_always_called(
         self,
         mock_create: Mock,
@@ -767,7 +767,7 @@ class TestCliInspectHardFailure:
         from ccproxy.cli import run_with_proxy
 
         (tmp_path / "ccproxy.yaml").write_text("ccproxy: {}")
-        (tmp_path / ".mitm-wireguard-client.conf").write_text(SAMPLE_WG_CLIENT_CONF)
+        (tmp_path / ".inspector-wireguard-client.conf").write_text(SAMPLE_WG_CLIENT_CONF)
 
         ctx = MagicMock()
         mock_create.return_value = ctx
@@ -778,9 +778,9 @@ class TestCliInspectHardFailure:
         assert exc_info.value.code == 0
         mock_cleanup.assert_called_once_with(ctx)
 
-    @patch("ccproxy.mitm.namespace.check_namespace_capabilities", return_value=[])
-    @patch("ccproxy.mitm.namespace.cleanup_namespace")
-    @patch("ccproxy.mitm.namespace.create_namespace")
+    @patch("ccproxy.inspector.namespace.check_namespace_capabilities", return_value=[])
+    @patch("ccproxy.inspector.namespace.cleanup_namespace")
+    @patch("ccproxy.inspector.namespace.create_namespace")
     def test_cleanup_called_on_error(
         self,
         mock_create: Mock,
@@ -792,7 +792,7 @@ class TestCliInspectHardFailure:
         from ccproxy.cli import run_with_proxy
 
         (tmp_path / "ccproxy.yaml").write_text("ccproxy: {}")
-        (tmp_path / ".mitm-wireguard-client.conf").write_text(SAMPLE_WG_CLIENT_CONF)
+        (tmp_path / ".inspector-wireguard-client.conf").write_text(SAMPLE_WG_CLIENT_CONF)
 
         mock_create.side_effect = RuntimeError("boom")
 

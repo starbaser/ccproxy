@@ -1,5 +1,7 @@
 """ccproxy CLI for managing the LiteLLM proxy server - Tyro implementation."""
 
+from __future__ import annotations
+
 import contextlib
 import json
 import logging
@@ -22,6 +24,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from ccproxy.config import InspectorConfig
 from ccproxy.utils import get_templates_dir
 
 logger = logging.getLogger(__name__)
@@ -44,8 +47,8 @@ def _read_proxy_settings(config_dir: Path) -> tuple[str, int]:
     if config_yaml.exists():
         try:
             with config_yaml.open() as f:
-                data = yaml.safe_load(f) or {}
-            general = data.get("general_settings", {})
+                data: dict[str, Any] = yaml.safe_load(f) or {}
+            general: dict[str, Any] = data.get("general_settings", {})
             if "host" in general:
                 host = general["host"]
                 host_set = True
@@ -61,7 +64,7 @@ def _read_proxy_settings(config_dir: Path) -> tuple[str, int]:
         try:
             with ccproxy_yaml.open() as f:
                 data = yaml.safe_load(f) or {}
-            litellm = data.get("litellm", {})
+            litellm: dict[str, Any] = data.get("litellm", {})
             if not host_set:
                 host = litellm.get("host", host)
             if not port_set:
@@ -156,12 +159,12 @@ class Status:
     """Check if LiteLLM proxy is running."""
 
     inspect: bool = False
-    """Check if MITM inspect stack is running."""
+    """Check if inspector stack (mitmweb) is running."""
 
 
 @attrs.define
 class DbSql:
-    """Execute SQL queries against the MITM traces database."""
+    """Execute SQL queries against the inspector traces database."""
 
     query: Annotated[str | None, tyro.conf.Positional] = None
     """SQL query to execute (inline)."""
@@ -178,7 +181,7 @@ class DbSql:
 
 @attrs.define
 class DbGql:
-    """Execute GraphQL queries against the MITM traces GraphQL API."""
+    """Execute GraphQL queries against the inspector traces GraphQL API."""
 
     query: Annotated[str | None, tyro.conf.Positional] = None
     """GraphQL query to execute (inline)."""
@@ -195,7 +198,7 @@ class DbGql:
 
 @attrs.define
 class DbPrompt:
-    """Convert a MITM trace to formatted markdown showing the conversation."""
+    """Convert a trace to formatted markdown showing the conversation."""
 
     trace_id: Annotated[str, tyro.conf.Positional]
     """Trace ID to convert."""
@@ -314,27 +317,27 @@ def _ensure_combined_ca_bundle(
     Returns:
         Path to combined bundle, or None if mitmproxy CA not found
     """
-    search_dirs = []
+    search_dirs: list[Path] = []
     if confdir:
         search_dirs.append(Path(confdir))
     search_dirs.append(Path.home() / ".mitmproxy")
 
-    mitm_ca = None
+    proxy_ca: Path | None = None
     for d in search_dirs:
         candidate = d / "mitmproxy-ca-cert.pem"
         if candidate.exists():
-            mitm_ca = candidate
+            proxy_ca = candidate
             break
 
-    if mitm_ca is None:
+    if proxy_ca is None:
         return None
 
     combined_bundle = config_dir / "combined-ca-bundle.pem"
     base_ca = base_ssl_cert or os.environ.get("SSL_CERT_FILE", "/etc/ssl/certs/ca-certificates.crt")
     try:
-        mitm_ca_data = mitm_ca.read_text()
+        proxy_ca_data = proxy_ca.read_text()
         base_ca_data = Path(base_ca).read_text() if Path(base_ca).exists() else ""
-        combined_bundle.write_text(mitm_ca_data + "\n" + base_ca_data)
+        combined_bundle.write_text(proxy_ca_data + "\n" + base_ca_data)
         return combined_bundle
     except OSError:
         return None
@@ -348,8 +351,8 @@ def run_with_proxy(
     """Run a command with ccproxy environment variables set.
 
     The main port (default 4000) is always the entry point:
-    - Without MITM: LiteLLM runs on port 4000
-    - With MITM: MITM runs on port 4000, forwards to LiteLLM on a random port
+    - Without --inspect: LiteLLM runs on port 4000
+    - With --inspect: mitmweb runs on port 4000, forwards to LiteLLM on a random port
 
     Args:
         config_dir: Configuration directory
@@ -369,9 +372,9 @@ def run_with_proxy(
     env = os.environ.copy()
 
     # Inspect mode: route subprocess traffic through a WireGuard namespace for transparent capture.
-    # No base URL env vars — the MITM addon forwards LLM API domain traffic to LiteLLM.
+    # No base URL env vars — the inspector addon forwards LLM API domain traffic to LiteLLM.
     if inspect:
-        from ccproxy.mitm.namespace import (
+        from ccproxy.inspector.namespace import (
             check_namespace_capabilities,
             cleanup_namespace,
             create_namespace,
@@ -388,7 +391,7 @@ def run_with_proxy(
                 file=sys.stderr,
             )
             sys.exit(1)
-        wg_conf_file = config_dir / ".mitm-wireguard-client.conf"
+        wg_conf_file = config_dir / ".inspector-wireguard-client.conf"
         if not wg_conf_file.exists():
             print(
                 "Error: No WireGuard configuration found. "
@@ -400,22 +403,22 @@ def run_with_proxy(
         wg_client_conf = wg_conf_file.read_text()
 
         wg_port = 51820
-        mitm_confdir: Path | None = None
+        inspector_confdir: Path | None = None
         ccproxy_config_path = config_dir / "ccproxy.yaml"
         if ccproxy_config_path.exists():
             import yaml
 
             with ccproxy_config_path.open() as f:
-                cfg = yaml.safe_load(f) or {}
-            inspect_section = cfg.get("ccproxy", {}).get("inspect", {})
+                cfg: dict[str, Any] = yaml.safe_load(f) or {}
+            inspect_section: dict[str, Any] = cfg.get("ccproxy", {}).get("inspector", {})
             wg_port = inspect_section.get("wireguard_port", 51820)
             cert_dir = inspect_section.get("cert_dir")
             if cert_dir:
-                mitm_confdir = Path(cert_dir).expanduser()
+                inspector_confdir = Path(cert_dir).expanduser()
 
         # Trust mitmproxy's CA so TLS interception works transparently
         combined_bundle = _ensure_combined_ca_bundle(
-            config_dir, env.get("SSL_CERT_FILE"), confdir=mitm_confdir
+            config_dir, env.get("SSL_CERT_FILE"), confdir=inspector_confdir
         )
         if combined_bundle:
             bundle = str(combined_bundle)
@@ -469,7 +472,7 @@ def generate_handler_file(config_dir: Path) -> None:
     if ccproxy_config_path.exists():
         try:
             with ccproxy_config_path.open() as f:
-                config = yaml.safe_load(f)
+                config: dict[str, Any] | None = yaml.safe_load(f)
                 if config and "ccproxy" in config and "handler" in config["ccproxy"]:
                     handler_import = config["ccproxy"]["handler"]
         except Exception:
@@ -531,15 +534,13 @@ handler = {class_name}()
 
 
 def _fetch_wireguard_client_conf(
-    inspect_port: int, config_dir: Path, timeout: float = 15.0
+    inspect_port: int, config_dir: Path, timeout: float = 15.0,
+    web_password: str | None = None,
 ) -> str | None:
     """Poll mitmweb REST API for WireGuard client config after startup."""
     import urllib.request
 
-    token_file = config_dir / ".mitm-web-token"
-    web_token: str | None = None
-    if token_file.exists():
-        web_token = token_file.read_text().strip()
+    web_token = web_password
 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -548,12 +549,12 @@ def _fetch_wireguard_client_conf(
             if web_token:
                 url += f"?token={web_token}"
             with urllib.request.urlopen(url, timeout=2) as r:  # noqa: S310
-                data = json.loads(r.read())
-            servers = data.get("servers", {})
+                data: dict[str, Any] = json.loads(r.read())
+            servers: dict[str, Any] = data.get("servers", {})
             # servers is a dict keyed by full_spec (e.g. "wireguard@51820")
             srv_iter = servers.values() if isinstance(servers, dict) else servers
             for srv in srv_iter:
-                wg_conf = srv.get("wireguard_conf")
+                wg_conf: Any = srv.get("wireguard_conf") if isinstance(srv, dict) else None
                 if wg_conf:
                     return str(wg_conf)
         except Exception:
@@ -602,7 +603,6 @@ def start_litellm(
         args: Additional arguments to pass to litellm command
         inspect: Start mitmproxy with browser-based flow inspection
     """
-    mitm = inspect
     from ccproxy.utils import find_available_port
 
     config_path = config_dir / "config.yaml"
@@ -612,39 +612,29 @@ def start_litellm(
         sys.exit(1)
 
     litellm_host, main_port = _read_proxy_settings(config_dir)
-    forward_port = 8081
-    reverse_port = None
-    inspect_port = 8083
-    mitm_confdir = None
-    wireguard_port = 51820
-    wireguard_conf_path: Path | None = None
+    forward_port = find_available_port()
 
     ccproxy_config_path = config_dir / "ccproxy.yaml"
-    ccproxy_config = None
+    ccproxy_config: dict[str, Any] | None = None
+    inspector_config: InspectorConfig | None = None
     if ccproxy_config_path.exists():
         with ccproxy_config_path.open() as f:
             ccproxy_config = yaml.safe_load(f)
             if ccproxy_config:
-                inspect_section = ccproxy_config.get("ccproxy", {}).get("inspect", {})
-                forward_port = inspect_section.get("forward_port", 8081)
-                reverse_port = inspect_section.get("reverse_port")
-                inspect_port = inspect_section.get("inspect_port", 8083)
-                mitm_confdir = inspect_section.get("cert_dir")
-                wireguard_port = inspect_section.get("wireguard_port", 51820)
-                wg_conf = inspect_section.get("wireguard_conf_path")
-                if wg_conf:
-                    wireguard_conf_path = Path(wg_conf)
+                inspector_data: dict[str, Any] = ccproxy_config.get("ccproxy", {}).get("inspector", {})
+                if inspector_data:
+                    inspector_config = InspectorConfig(**inspector_data)
+    if inspector_config is None:
+        inspector_config = InspectorConfig()
 
     from ccproxy.preflight import run_preflight_checks
 
     ports_to_check = [main_port]
     udp_ports_to_check: list[int] = []
-    if mitm:
+    if inspect:
         ports_to_check.append(forward_port)
-        if reverse_port:
-            ports_to_check.append(reverse_port)
-        ports_to_check.append(inspect_port)
-        udp_ports_to_check.append(wireguard_port)
+        ports_to_check.append(inspector_config.port)
+        udp_ports_to_check.append(inspector_config.wireguard_port)
     run_preflight_checks(ports=ports_to_check, udp_ports=udp_ports_to_check)
 
     try:
@@ -653,11 +643,8 @@ def start_litellm(
         print(f"Error generating handler file: {e}", file=sys.stderr)
         sys.exit(1)
 
-    if mitm:
-        if reverse_port:
-            litellm_port = main_port
-        else:
-            litellm_port = find_available_port()
+    if inspect:
+        litellm_port = find_available_port()
         litellm_port_file = config_dir / ".litellm_port"
         litellm_port_file.write_text(str(litellm_port))
     else:
@@ -689,7 +676,7 @@ def start_litellm(
         elif Path("/etc/ssl/certs/ca-certificates.crt").exists():
             env["SSL_CERT_FILE"] = "/etc/ssl/certs/ca-certificates.crt"
 
-    if mitm:
+    if inspect:
         forward_proxy_url = f"http://localhost:{forward_port}"
         env["HTTPS_PROXY"] = forward_proxy_url
         env["HTTP_PROXY"] = forward_proxy_url
@@ -721,7 +708,7 @@ def start_litellm(
     if args:
         litellm_cmd.extend(args)
 
-    mitm_proc: subprocess.Popen[bytes] | None = None
+    inspector_proc: subprocess.Popen[bytes] | None = None
 
     # SIGTERM handler: convert to KeyboardInterrupt for clean shutdown
     original_sigterm = signal.getsignal(signal.SIGTERM)
@@ -732,42 +719,41 @@ def start_litellm(
     signal.signal(signal.SIGTERM, _sigterm_handler)
 
     try:
-        if mitm:
-            from ccproxy.mitm import start_mitm
+        if inspect:
+            from ccproxy.inspector import start_inspector
 
-            reverse_listen_port = reverse_port or main_port
             print(
-                f"Starting MITM proxy: reverse@{reverse_listen_port} + forward@{forward_port} "
-                f"+ wireguard@{wireguard_port}, inspect UI@{inspect_port}"
+                f"Starting inspector: mitmweb reverse@{main_port} + regular@{forward_port} "
+                f"+ wireguard@{inspector_config.wireguard_port}, UI@{inspector_config.port}"
             )
-            mitm_proc = start_mitm(
+            inspector_proc = start_inspector(
                 config_dir,
-                reverse_port=reverse_listen_port,
-                forward_port=forward_port,
+                config=inspector_config,
                 litellm_port=litellm_port,
-                web=True,
-                inspect_port=inspect_port,
-                confdir=mitm_confdir,
-                wireguard_port=wireguard_port,
-                wireguard_conf_path=wireguard_conf_path,
+                reverse_port=main_port,
+                forward_port=forward_port,
             )
 
             if not _wait_for_port("127.0.0.1", forward_port, timeout=10):
-                print("Error: MITM proxy failed to start (port not ready)", file=sys.stderr)
+                print("Error: mitmweb failed to start (port not ready)", file=sys.stderr)
                 sys.exit(1)
 
             # Retrieve WireGuard client config from mitmweb for ccproxy run --inspect
-            wg_client_conf = _fetch_wireguard_client_conf(inspect_port, config_dir)
+            wg_client_conf = _fetch_wireguard_client_conf(
+                inspector_config.port, config_dir,
+                web_password=inspector_config.mitmproxy.web_password,
+            )
             if wg_client_conf:
-                (config_dir / ".mitm-wireguard-client.conf").write_text(wg_client_conf)
+                (config_dir / ".inspector-wireguard-client.conf").write_text(wg_client_conf)
             else:
                 logger.warning("Failed to retrieve WireGuard client config from mitmweb")
 
             # Build combined CA bundle now that mitmproxy has started and its CA cert exists
+            confdir_path = Path(inspector_config.mitmproxy.confdir) if inspector_config.mitmproxy.confdir else None
             combined_bundle = _ensure_combined_ca_bundle(
                 config_dir,
                 env.get("SSL_CERT_FILE"),
-                confdir=Path(mitm_confdir) if mitm_confdir else None,
+                confdir=confdir_path,
             )
             if combined_bundle:
                 bundle = str(combined_bundle)
@@ -796,8 +782,8 @@ def start_litellm(
         pass
     finally:
         signal.signal(signal.SIGTERM, original_sigterm)
-        if mitm_proc is not None:
-            _terminate_proc(mitm_proc)
+        if inspector_proc is not None:
+            _terminate_proc(inspector_proc)
 
 
 def view_logs(follow: bool = False, lines: int = 100) -> None:
@@ -864,7 +850,7 @@ def show_status(
         config_dir: Configuration directory to check
         json_output: Output status as JSON with boolean values
         check_proxy: Health check - require LiteLLM proxy running
-        check_inspect: Health check - require MITM inspect stack running
+        check_inspect: Health check - require inspector stack running
 
     When any check_* flag is True, exits 0 only if ALL specified services
     are healthy, otherwise exits 1. No output is produced in check mode.
@@ -898,38 +884,34 @@ def show_status(
     if litellm_config.exists():
         try:
             with litellm_config.open() as f:
-                config_data = yaml.safe_load(f)
+                config_data: dict[str, Any] = yaml.safe_load(f)
             if config_data:
-                litellm_settings = config_data.get("litellm_settings", {})
+                litellm_settings: dict[str, Any] = config_data.get("litellm_settings", {})
                 callbacks = litellm_settings.get("callbacks", [])
                 model_list = config_data.get("model_list", [])
         except (yaml.YAMLError, OSError):
             pass
 
     # Extract hooks and inspect config from ccproxy.yaml
-    hooks = []
-    inspect_config = {}
-    forward_port = 8081
+    hooks: list[Any] = []
+    inspect_config: dict[str, Any] = {}
     if ccproxy_config.exists():
         try:
             with ccproxy_config.open() as f:
-                ccproxy_data = yaml.safe_load(f)
+                ccproxy_data: dict[str, Any] = yaml.safe_load(f)
             if ccproxy_data:
-                ccproxy_section = ccproxy_data.get("ccproxy", {})
+                ccproxy_section: dict[str, Any] = ccproxy_data.get("ccproxy", {})
                 hooks = ccproxy_section.get("hooks", [])
-                inspect_config = ccproxy_section.get("inspect", {})
-                forward_port = inspect_config.get("forward_port", 8081)
-                reverse_port = inspect_config.get("reverse_port")
+                inspect_config = ccproxy_section.get("inspector", {})
         except (yaml.YAMLError, OSError):
             pass
 
     host, main_port = _read_proxy_settings(config_dir)
-    reverse_port = inspect_config.get("reverse_port")
-    proxy_url = f"http://{host}:{reverse_port or main_port}"
+    proxy_url = f"http://{host}:{main_port}"
 
     # Detect running state via TCP probes
-    proxy_running = _check_alive(host, reverse_port or main_port)
-    inspect_port = inspect_config.get("inspect_port", 8083)
+    proxy_running = _check_alive(host, main_port)
+    inspect_port = inspect_config.get("port", 8083)
     combined_running = _check_alive("127.0.0.1", inspect_port)
     litellm_actual_port = main_port
 
@@ -946,10 +928,9 @@ def show_status(
         "hooks": hooks,
         "model_list": model_list,
         "log": None,
-        "mitm": {
+        "inspector": {
             "running": combined_running,
-            "entry_port": reverse_port or main_port,
-            "forward_port": forward_port,
+            "entry_port": main_port,
             "inspect_port": inspect_port,
             "inspect_url": f"http://127.0.0.1:{inspect_port}" if combined_running else None,
             "litellm_port": litellm_actual_port,
@@ -984,23 +965,23 @@ def show_status(
             proxy_status = f"[dim]{url}[/dim] [red]false[/red]"
         table.add_row("proxy", proxy_status)
 
-        # MITM status — inspect stack
-        mitm_info = status_data["mitm"]
-        litellm_port = mitm_info["litellm_port"]
+        # Inspector status — inspect stack
+        inspector_info = status_data["inspector"]
+        litellm_port = inspector_info["litellm_port"]
 
-        mitm_parts = []
+        inspector_parts = []
 
-        if mitm_info["running"]:
-            entry_port = mitm_info["entry_port"]
+        if inspector_info["running"]:
+            entry_port = inspector_info["entry_port"]
             inspect_status = f"[green]inspect[/green]@[cyan]{entry_port}[/cyan] → litellm@[cyan]{litellm_port}[/cyan]"
-            if mitm_info.get("inspect_url"):
-                inspect_status += f"\n[green]ui[/green] → [cyan]{mitm_info['inspect_url']}[/cyan]"
-            mitm_parts.append(inspect_status)
+            if inspector_info.get("inspect_url"):
+                inspect_status += f"\n[green]ui[/green] → [cyan]{inspector_info['inspect_url']}[/cyan]"
+            inspector_parts.append(inspect_status)
         else:
-            mitm_parts.append("[dim]stopped[/dim]")
+            inspector_parts.append("[dim]stopped[/dim]")
 
-        mitm_display = "\n".join(mitm_parts)
-        table.add_row("mitm", mitm_display)
+        inspector_display = "\n".join(inspector_parts)
+        table.add_row("inspector", inspector_display)
 
         # Config files
         if status_data["config"]:
@@ -1061,14 +1042,15 @@ def show_status(
             model_lookup = {m.get("model_name", ""): m for m in status_data["model_list"]}
 
             for model in status_data["model_list"]:
-                model_name = model.get("model_name", "")
-                litellm_params = model.get("litellm_params", {})
-                provider_model = litellm_params.get("model", "")
-                api_base = litellm_params.get("api_base")
+                model_entry: dict[str, Any] = model if isinstance(model, dict) else {}
+                model_name: str = model_entry.get("model_name", "")
+                litellm_params: dict[str, Any] = model_entry.get("litellm_params", {})
+                provider_model: str = litellm_params.get("model", "")
+                api_base: str | None = litellm_params.get("api_base")
 
                 # Resolve API base from target model if this is an alias
                 if not api_base and provider_model in model_lookup:
-                    target = model_lookup[provider_model]
+                    target: dict[str, Any] = model_lookup[provider_model]
                     api_base = target.get("litellm_params", {}).get("api_base")
 
                 # Shorten API base to just the hostname
@@ -1100,7 +1082,7 @@ def get_database_url(config_dir: Path) -> str | None:
     Checks in order:
     1. CCPROXY_DATABASE_URL environment variable
     2. DATABASE_URL environment variable
-    3. ccproxy.yaml mitm.database_url config
+    3. ccproxy.yaml inspector.database_url config
 
     Args:
         config_dir: Configuration directory containing ccproxy.yaml
@@ -1114,10 +1096,10 @@ def get_database_url(config_dir: Path) -> str | None:
     ccproxy_yaml = config_dir / "ccproxy.yaml"
     if ccproxy_yaml.exists():
         with ccproxy_yaml.open() as f:
-            data = yaml.safe_load(f)
+            data: dict[str, Any] = yaml.safe_load(f)
         if data and "ccproxy" in data:
-            inspect = data["ccproxy"].get("inspect", {})
-            if url := inspect.get("database_url"):
+            inspector_section: dict[str, Any] = data["ccproxy"].get("inspector", {})
+            if url := inspector_section.get("database_url"):
                 return _expand_env_vars(url) if "${" in url else url
     return None
 
@@ -1125,7 +1107,7 @@ def get_database_url(config_dir: Path) -> str | None:
 def get_graphql_url(config_dir: Path) -> str:
     """Resolve GraphQL endpoint URL from environment or config.
 
-    Reads host/port from ccproxy.yaml mitm.graphql section (matching litellm's
+    Reads host/port from ccproxy.yaml inspector.graphql section (matching litellm's
     host/port convention) and composes the URL.
 
     Args:
@@ -1140,11 +1122,12 @@ def get_graphql_url(config_dir: Path) -> str:
     ccproxy_yaml = config_dir / "ccproxy.yaml"
     if ccproxy_yaml.exists():
         with ccproxy_yaml.open() as f:
-            data = yaml.safe_load(f)
+            data: dict[str, Any] = yaml.safe_load(f)
         if data and "ccproxy" in data:
-            graphql = data["ccproxy"].get("inspect", {}).get("graphql", {})
-            host = graphql.get("host", "localhost")
-            port = graphql.get("port", 5435)
+            inspector_section: dict[str, Any] = data["ccproxy"].get("inspector", {})
+            graphql: dict[str, Any] = inspector_section.get("graphql", {})
+            host: str = graphql.get("host", "localhost")
+            port: int = graphql.get("port", 5435)
             return f"http://{host}:{port}/graphql"
     return "http://localhost:5435/graphql"
 
@@ -1169,19 +1152,20 @@ async def execute_graphql(graphql_url: str, query: str) -> tuple[list[dict[str, 
             timeout=30.0,
         )
         resp.raise_for_status()
-        data = resp.json()
+        data: dict[str, Any] = resp.json()
 
     if errors := data.get("errors"):
         messages = "; ".join(e.get("message", str(e)) for e in errors)
         raise RuntimeError(f"GraphQL errors: {messages}")
 
-    result_data = data.get("data", {})
+    result_data: dict[str, Any] = data.get("data", {})
     if not result_data:
         return [], []
 
     # Flatten single-key response (PostGraphile patterns)
+    rows: list[dict[str, Any]]
     if len(result_data) == 1:
-        value = next(iter(result_data.values()))
+        value: Any = next(iter(result_data.values()))
         if isinstance(value, dict) and "nodes" in value:
             rows = value["nodes"]
         elif isinstance(value, list):
@@ -1330,7 +1314,7 @@ def handle_db_sql(config_dir: Path, cmd: DbSql) -> None:
     database_url = get_database_url(config_dir)
     if not database_url:
         console.print("[red]Error:[/red] No database_url configured")
-        console.print("Set in ccproxy.yaml under ccproxy.inspect.database_url")
+        console.print("Set in ccproxy.yaml under ccproxy.inspector.database_url")
         console.print("Or set CCPROXY_DATABASE_URL or DATABASE_URL environment variable")
         sys.exit(1)
 
@@ -1417,7 +1401,7 @@ async def fetch_trace(database_url: str, trace_id: str) -> dict[str, Any] | None
     Returns:
         Trace record as dict or None if not found
     """
-    import asyncpg
+    import asyncpg  # type: ignore[import-untyped]
 
     conn = await asyncpg.connect(database_url)
     try:
@@ -1642,7 +1626,7 @@ def format_trace_markdown(
     lines: list[str] = []
 
     # Title and metadata table
-    lines.append(f"# MITM Trace: {trace['trace_id']}")
+    lines.append(f"# Trace: {trace['trace_id']}")
     lines.append("")
 
     # Metadata table
@@ -1800,7 +1784,7 @@ def handle_db_prompt(config_dir: Path, cmd: DbPrompt) -> None:
     database_url = get_database_url(config_dir)
     if not database_url:
         console.print("[red]Error:[/red] No database_url configured")
-        console.print("Set in ccproxy.yaml under ccproxy.inspect.database_url")
+        console.print("Set in ccproxy.yaml under ccproxy.inspector.database_url")
         console.print("Or set CCPROXY_DATABASE_URL or DATABASE_URL environment variable")
         sys.exit(1)
 

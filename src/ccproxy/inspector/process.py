@@ -1,4 +1,4 @@
-"""Process management for mitmproxy traffic capture."""
+"""Process management for inspector traffic capture."""
 
 import logging
 import os
@@ -7,6 +7,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ def ensure_prisma_client(database_url: str) -> bool:
         logger.warning("Prisma schema not found, cannot auto-generate client")
         return False
 
-    logger.info("Auto-generating Prisma client for MITM storage...")
+    logger.info("Auto-generating Prisma client for inspector storage...")
     env = os.environ.copy()
     env["DATABASE_URL"] = database_url
 
@@ -101,7 +102,7 @@ def _check_port_alive(host: str, port: int, timeout: float = 0.5) -> bool:
         return False
 
 
-def _resolve_mitm_binary(web: bool = False) -> Path:
+def _resolve_mitmproxy_binary(web: bool = False) -> Path:
     """Resolve the mitmproxy binary path from the current Python environment.
 
     Args:
@@ -141,9 +142,33 @@ def _resolve_addon_script() -> Path:
     return script_path
 
 
-def _resolve_confdir(confdir: Path | None) -> str:
-    """Resolve mitmproxy confdir for CA certificate store."""
-    return str(Path(confdir).expanduser()) if confdir else str(Path.home() / ".mitmproxy")
+_WEB_FIELDS = {"web_host", "web_password", "web_open_browser"}
+
+
+def _build_mitmproxy_set_args(opts: "MitmproxyOptions") -> list[str]:
+    """Convert MitmproxyOptions fields to mitmproxy --set arguments.
+
+    Web UI fields (web_host, web_password, web_open_browser) are excluded —
+    they use dedicated CLI flags handled by the caller.
+    """
+    from ccproxy.inspector.mitmproxy_options import MitmproxyOptions  # noqa: F811
+
+    args: list[str] = []
+    for field_name in MitmproxyOptions.model_fields:
+        if field_name in _WEB_FIELDS:
+            continue
+        value = getattr(opts, field_name)
+        if value is None:
+            continue
+        if isinstance(value, list):
+            if value:
+                args += ["--set", f"{field_name}={','.join(value)}"]
+            continue
+        if isinstance(value, bool):
+            args += ["--set", f"{field_name}={'true' if value else 'false'}"]
+        else:
+            args += ["--set", f"{field_name}={value}"]
+    return args
 
 
 def _auto_generate_prisma(config_dir: Path | None = None) -> None:
@@ -167,9 +192,9 @@ def _build_env(
     env["CCPROXY_CONFIG_DIR"] = str(config_dir)
 
     if reverse_port is not None:
-        env["CCPROXY_MITM_REVERSE_PORT"] = str(reverse_port)
+        env["CCPROXY_INSPECTOR_REVERSE_PORT"] = str(reverse_port)
     if forward_port is not None:
-        env["CCPROXY_MITM_FORWARD_PORT"] = str(forward_port)
+        env["CCPROXY_INSPECTOR_FORWARD_PORT"] = str(forward_port)
     if litellm_port is not None:
         env["CCPROXY_LITELLM_PORT"] = str(litellm_port)
 
@@ -193,8 +218,8 @@ def _resolve_database_url(config_dir: Path) -> str | None:
         import yaml
 
         with config_path.open() as f:
-            data = yaml.safe_load(f)
-        url = data.get("ccproxy", {}).get("inspect", {}).get("database_url")
+            data: dict[str, Any] = yaml.safe_load(f)
+        url = data.get("ccproxy", {}).get("inspector", {}).get("database_url")
         if not url:
             return None
         # Expand ${VAR:-default} patterns
@@ -233,101 +258,87 @@ def _launch_process(
             env=env,
         )
         logger.info("Mitmproxy started with PID %d", process.pid)
-        _pipe_output(process, "mitm")
+        _pipe_output(process, "inspector")
         return process
     except FileNotFoundError:
         logger.error("mitmproxy command not found")
         sys.exit(1)
 
 
-def start_mitm(
+def start_inspector(
     config_dir: Path,
-    reverse_port: int = 4002,
-    forward_port: int = 4003,
-    litellm_port: int = 4001,
-    web: bool = False,
-    inspect_port: int = 8083,
-    confdir: Path | None = None,
-    wireguard_port: int = 51820,
-    wireguard_conf_path: Path | None = None,
+    config: "InspectorConfig",
+    litellm_port: int,
+    *,
+    reverse_port: int | None = None,
+    forward_port: int | None = None,
 ) -> subprocess.Popen[bytes]:
-    """Start the combined mitmproxy process (reverse + forward in one process).
+    """Start the mitmweb inspector process.
 
-    Uses mitmproxy multi-mode to serve both reverse and forward proxy
-    listeners from a single process with a unified addon pipeline.
+    Launches mitmweb with three --mode listeners: reverse (client-facing),
+    regular (LiteLLM outbound via HTTPS_PROXY), and wireguard (namespace
+    transparent capture).
 
     Args:
-        config_dir: Configuration directory for log files
-        reverse_port: Port for client-facing reverse proxy
-        forward_port: Port for LiteLLM-outbound forward proxy
-        litellm_port: Port where LiteLLM is running
-        web: Use mitmweb (browser UI) instead of mitmdump
-        inspect_port: Port for mitmweb web UI (only used when web=True)
-        confdir: mitmproxy confdir for CA certs (defaults to ~/.mitmproxy)
-        wireguard_port: Port for WireGuard transparent proxy listener
-        wireguard_conf_path: Optional path to WireGuard config file
+        config_dir: Runtime configuration directory
+        config: InspectorConfig with all inspector settings
+        litellm_port: Port where LiteLLM is running (runtime-derived)
+        reverse_port: Override for reverse listener port (defaults to config.port)
+        forward_port: Override for regular listener port (defaults to auto-assigned)
 
     Returns:
         The running subprocess as a Popen object
     """
+    from ccproxy.config import InspectorConfig  # noqa: F811
+
     _auto_generate_prisma(config_dir)
 
-    mitm_bin = _resolve_mitm_binary(web=web)
+    mitm_bin = _resolve_mitmproxy_binary(web=True)
     script_path = _resolve_addon_script()
-    mitm_confdir = _resolve_confdir(confdir)
+
+    rev_port = reverse_port or config.port
+    fwd_port = forward_port or 8081
+    wg_spec = (
+        f"wireguard:{config.wireguard_conf_path}"
+        if config.wireguard_conf_path
+        else "wireguard"
+    )
 
     cmd = [
         str(mitm_bin),
-        "--mode",
-        f"reverse:http://localhost:{litellm_port}@{reverse_port}",
-        "--mode",
-        f"regular@{forward_port}",
-        "--mode",
-        f"{'wireguard:' + str(wireguard_conf_path) if wireguard_conf_path else 'wireguard'}@{wireguard_port}",
-        "--set",
-        f"confdir={mitm_confdir}",
-        "--set",
-        "stream_large_bodies=1048576",
-        "--set",
-        "ssl_insecure=true",
-        "-s",
-        str(script_path),
+        "--mode", f"reverse:http://localhost:{litellm_port}@{rev_port}",
+        "--mode", f"regular@{fwd_port}",
+        "--mode", f"{wg_spec}@{config.wireguard_port}",
+        "-s", str(script_path),
+        *_build_mitmproxy_set_args(config.mitmproxy),
+        "--web-port", str(config.port),
+        "--web-host", config.mitmproxy.web_host,
     ]
 
-    if web:
-        import secrets
-
-        web_token = secrets.token_hex(16)
-        (config_dir / ".mitm-web-token").write_text(web_token)
-        cmd += [
-            "--web-port",
-            str(inspect_port),
-            "--web-host",
-            "127.0.0.1",
-            "--set",
-            f"web_password={web_token}",
-        ]
+    if config.mitmproxy.web_password is not None:
+        cmd += ["--set", f"web_password={config.mitmproxy.web_password}"]
 
     env = _build_env(
         config_dir,
-        reverse_port=reverse_port,
-        forward_port=forward_port,
+        reverse_port=rev_port,
+        forward_port=fwd_port,
         litellm_port=litellm_port,
     )
 
     description = (
-        f"mitmproxy combined mode: "
-        f"reverse@{reverse_port} → LiteLLM@{litellm_port}, "
-        f"forward@{forward_port}"
+        f"mitmweb: reverse@{rev_port} → LiteLLM@{litellm_port}, "
+        f"regular@{fwd_port}, wireguard@{config.wireguard_port}, "
+        f"UI@{config.port}"
     )
-    if web:
-        description += f", inspect UI@{inspect_port}"
 
     return _launch_process(cmd, env, description)
 
 
-def get_mitm_status() -> dict[str, dict[str, bool | str | None]]:
-    """Get the status of mitmproxy via TCP port probes.
+def get_inspector_status() -> dict[str, dict[str, bool | str | None]]:
+    """Get the status of the inspector process via TCP port probe.
+
+    Probes the mitmweb UI port (InspectorConfig.port) to determine
+    whether the inspector is running.
 
     Returns:
         Dictionary with status information
@@ -335,15 +346,10 @@ def get_mitm_status() -> dict[str, dict[str, bool | str | None]]:
     from ccproxy.config import get_config
 
     config = get_config()
-    mitm_cfg = getattr(config, "inspect", None)
+    inspector_cfg = getattr(config, "inspector", None)
+    port: int = getattr(inspector_cfg, "port", 8083)
 
-    reverse_port: int = getattr(mitm_cfg, "reverse_port", None) or 4002
-    forward_port: int = getattr(mitm_cfg, "forward_port", None) or 4003
-
-    running = _check_port_alive("127.0.0.1", reverse_port) or _check_port_alive(
-        "127.0.0.1", forward_port
-    )
-
+    running = _check_port_alive("127.0.0.1", port)
     status: dict[str, bool | str | None] = {"running": running}
 
-    return {"combined": status}
+    return {"inspector": status}

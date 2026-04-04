@@ -1,7 +1,7 @@
 """Pre-flight checks for ccproxy startup.
 
 Ensures a clean environment before launching processes:
-- Detects and kills orphaned ccproxy/mitmdump processes
+- Detects and kills orphaned ccproxy/mitmweb processes
 - Verifies required ports are available
 - Enforces single-instance constraint
 """
@@ -19,7 +19,8 @@ logger = logging.getLogger(__name__)
 # Patterns that identify ccproxy-managed processes via /proc/*/cmdline
 _CCPROXY_PATTERNS = [
     ("litellm", ".ccproxy/config.yaml"),
-    ("mitmdump", "ccproxy/mitm/script.py"),
+    ("mitmweb", "ccproxy/inspector/script.py"),
+    ("mitmdump", "ccproxy/inspector/script.py"),
 ]
 
 

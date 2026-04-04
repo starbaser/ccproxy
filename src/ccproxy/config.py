@@ -47,6 +47,8 @@ import yaml
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from ccproxy.inspector.mitmproxy_options import MitmproxyOptions
+
 logger = logging.getLogger(__name__)
 
 
@@ -86,31 +88,34 @@ class OAuthSource(BaseModel):
         return self
 
 
-class InspectConfig(BaseModel):
-    """Configuration for inspect mode traffic capture.
+class OtelConfig(BaseModel):
+    """OpenTelemetry configuration for span export."""
 
-    Internal fields (forward_port, reverse_port, upstream_proxy) are auto-derived
-    from LiteLLM's port config. Override only in devShell/deployment configs for
-    port deconfliction.
-    """
+    enabled: bool = False
+    """Enable OpenTelemetry span emission from the inspector."""
 
-    forward_port: int = 8081
-    """Internal: port for the forward proxy (LiteLLM outbound to providers)."""
+    endpoint: str = "http://localhost:4317"
+    """OTLP gRPC endpoint URL for span export (Jaeger or OTel Collector)."""
 
-    reverse_port: int | None = None
-    """Internal: port for the reverse proxy (client-facing)."""
+    service_name: str = "ccproxy"
+    """OTel resource service.name attribute."""
 
-    upstream_proxy: str = "http://localhost:4000"
-    """Internal: upstream proxy URL (derived from LiteLLM port)."""
+
+class InspectorConfig(BaseModel):
+    """Configuration for the inspector (traffic capture via mitmproxy)."""
+
+    port: int = 8083
+    """mitmweb UI port. Also serves as process-alive sentinel and
+    WireGuard config API endpoint."""
 
     max_body_size: int = 0
     """Maximum request/response body size to capture (bytes). 0 = unlimited."""
 
     capture_bodies: bool = True
-    """Whether to capture request/response bodies"""
+    """Whether to capture request/response bodies."""
 
     excluded_hosts: list[str] = Field(default_factory=list)
-    """List of hosts to exclude from capture"""
+    """Hosts to exclude from trace capture (checked by inspector addon)."""
 
     forward_domains: list[str] = Field(default_factory=lambda: [
         "api.anthropic.com",
@@ -119,34 +124,41 @@ class InspectConfig(BaseModel):
         "openrouter.ai",
         "api.z.ai",
     ])
-    """LLM API domains to forward from WireGuard to LiteLLM in inspect mode."""
+    """LLM API domains to forward from WireGuard to LiteLLM."""
 
     debug: bool = False
-    """Enable debug logging (includes request body logging)"""
+    """Enable debug logging (includes request body logging)."""
 
     cert_dir: Path | None = None
-    """Optional directory for SSL certificates"""
+    """mitmproxy CA certificate store directory. Populates mitmproxy.confdir
+    via model validator when set."""
 
     database_url: str | None = None
-    """PostgreSQL connection URL for MITM traces. Falls back to CCPROXY_DATABASE_URL or DATABASE_URL env vars."""
-
-    inspect_port: int = 8083
-    """Port for mitmweb browser-based flow inspector UI. Only used with --inspect flag."""
-
-    otel_enabled: bool = False
-    """Enable OpenTelemetry span emission from MITM addon."""
-
-    otel_endpoint: str = "http://localhost:4317"
-    """OTLP gRPC endpoint URL for span export (Jaeger or OTel Collector)."""
-
-    otel_service_name: str = "ccproxy-mitm"
-    """OTel resource service.name attribute."""
+    """PostgreSQL connection URL for inspector traces (deprecated — migrating to OTel).
+    Falls back to CCPROXY_DATABASE_URL or DATABASE_URL env vars."""
 
     wireguard_port: int = 51820
     """WireGuard listen port. Active when --inspect is used."""
 
     wireguard_conf_path: Path | None = None
     """Path to WireGuard configuration file."""
+
+    provider_map: dict[str, str] = Field(default_factory=lambda: {
+        "api.anthropic.com": "anthropic",
+        "api.openai.com": "openai",
+        "generativelanguage.googleapis.com": "google",
+        "openrouter.ai": "openrouter",
+    })
+    """Hostname → OTel gen_ai.system attribute mapping for provider identification."""
+
+    mitmproxy: MitmproxyOptions = Field(default_factory=MitmproxyOptions)
+    """mitmproxy option overrides passed via --set flags."""
+
+    @model_validator(mode="after")
+    def _sync_cert_dir_to_confdir(self) -> "InspectorConfig":
+        if self.cert_dir is not None and self.mitmproxy.confdir is None:
+            self.mitmproxy.confdir = str(self.cert_dir.expanduser())
+        return self
 
 
 class RuleConfig:
@@ -197,8 +209,9 @@ class CCProxyConfig(BaseSettings):
     # Handler import path (e.g., "ccproxy.handler:CCProxyHandler")
     handler: str = "ccproxy.handler:CCProxyHandler"
 
-    # Mitmproxy configuration
-    inspect: InspectConfig = Field(default_factory=InspectConfig)
+    inspector: InspectorConfig = Field(default_factory=InspectorConfig)
+
+    otel: OtelConfig = Field(default_factory=OtelConfig)
 
     # OAuth token sources - dict mapping provider name to shell command or OAuthSource
     # Example: {"anthropic": "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"}
@@ -507,9 +520,9 @@ class CCProxyConfig(BaseSettings):
 
         if yaml_path.exists():
             with yaml_path.open() as f:
-                data = yaml.safe_load(f) or {}
+                data: dict[str, Any] = yaml.safe_load(f) or {}
 
-                ccproxy_data = data.get("ccproxy", {})
+                ccproxy_data: dict[str, Any] = data.get("ccproxy", {})
 
                 if "debug" in ccproxy_data:
                     instance.debug = ccproxy_data["debug"]
@@ -521,12 +534,15 @@ class CCProxyConfig(BaseSettings):
                     instance.oauth_ttl = ccproxy_data["oauth_ttl"]
                 if "oauth_refresh_buffer" in ccproxy_data:
                     instance.oauth_refresh_buffer = ccproxy_data["oauth_refresh_buffer"]
-                if "inspect" in ccproxy_data:
-                    inspect_data = ccproxy_data["inspect"]
-                    # Propagate top-level debug flag if not explicitly set in inspect config
-                    if "debug" not in inspect_data and instance.debug:
-                        inspect_data = {**inspect_data, "debug": instance.debug}
-                    instance.inspect = InspectConfig(**inspect_data)
+                inspector_data = ccproxy_data.get("inspector")
+                if inspector_data:
+                    if "debug" not in inspector_data and instance.debug:
+                        inspector_data = {**inspector_data, "debug": instance.debug}
+                    instance.inspector = InspectorConfig(**inspector_data)
+                # Migrate OTel fields from legacy inspector section
+                otel_data = ccproxy_data.get("otel")
+                if otel_data:
+                    instance.otel = OtelConfig(**otel_data)
 
                 # Backwards compatibility: migrate deprecated 'credentials' field
                 if "credentials" in ccproxy_data:

@@ -1,6 +1,6 @@
-"""OpenTelemetry span emission for MITM traffic capture.
+"""OpenTelemetry span emission for inspector traffic capture.
 
-Provides a MitmTracer that emits OTel spans for each HTTP flow, with
+Provides an InspectorTracer that emits OTel spans for each HTTP flow, with
 graceful degradation when OTel packages are not installed.
 
 Three operational modes:
@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from mitmproxy import http
 
-    from ccproxy.mitm.addon import ProxyDirection
+    from ccproxy.inspector.addon import ProxyDirection
 
 logger = logging.getLogger(__name__)
 
@@ -37,13 +37,8 @@ _PROVIDER_MAP = {
 }
 
 
-def _infer_provider(host: str) -> str:
-    """Map request hostname to LLM provider name."""
-    return _PROVIDER_MAP.get(host, host)
-
-
-class MitmTracer:
-    """Wraps OTel span lifecycle for MITM addon flows.
+class InspectorTracer:
+    """Wraps OTel span lifecycle for inspector addon flows.
 
     Handles tracer initialization, span creation per-flow, and attribute
     mapping. When disabled or when OTel packages are absent, all methods
@@ -54,10 +49,12 @@ class MitmTracer:
         self,
         enabled: bool = False,
         otlp_endpoint: str = "http://localhost:4317",
-        service_name: str = "ccproxy-mitm",
+        service_name: str = "ccproxy",
+        provider_map: dict[str, str] | None = None,
     ) -> None:
         self._tracer: Any = None
         self._enabled = enabled
+        self._provider_map = provider_map if provider_map is not None else _PROVIDER_MAP
 
         if not enabled:
             return
@@ -113,7 +110,7 @@ class MitmTracer:
             # LLM-specific attributes
             path = request.path
             if "/messages" in path or "/completions" in path:
-                span.set_attribute("gen_ai.system", _infer_provider(host))
+                span.set_attribute("gen_ai.system", self._provider_map.get(host, host))
                 span.set_attribute("gen_ai.operation.name", "chat")
 
             flow.metadata[_SPAN_KEY] = span

@@ -9,14 +9,14 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import UTC, datetime
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any, cast
-from urllib.parse import urlsplit
 
-from mitmproxy import http
+from mitmproxy import http  # type: ignore[import-untyped]
 
-from ccproxy.config import InspectConfig
+from ccproxy.config import InspectorConfig
 
 
 class ProxyDirection(IntEnum):
@@ -27,14 +27,14 @@ class ProxyDirection(IntEnum):
     concepts — inspect mode activates all three modes as a single unit.
     """
 
-    REVERSE = 0  # Client -> LiteLLM (inbound, reverse proxy listener)
-    FORWARD = 1  # LiteLLM -> Provider (outbound, regular/forward proxy listener)
+    REVERSE = 0  # Client → LiteLLM (reverse mode listener)
+    FORWARD = 1  # LiteLLM → Provider (regular mode listener)
     WIREGUARD = 2  # WireGuard tunnel traffic (transparent namespace capture)
 
 
 if TYPE_CHECKING:
-    from ccproxy.mitm.storage import TraceStorage
-    from ccproxy.mitm.telemetry import MitmTracer
+    from ccproxy.inspector.storage import TraceStorage
+    from ccproxy.inspector.telemetry import InspectorTracer
 
 logger = logging.getLogger(__name__)
 
@@ -55,13 +55,13 @@ def _get_mode_types() -> tuple[type, type]:
     return _ReverseMode, _RegularMode
 
 
-class CCProxyMitmAddon:
-    """Mitmproxy addon that captures all HTTP/HTTPS traffic and stores in PostgreSQL."""
+class InspectorAddon:
+    """Inspector addon for HTTP/HTTPS traffic capture and tracing."""
 
     def __init__(
         self,
         storage: TraceStorage | None,
-        config: InspectConfig,
+        config: InspectorConfig,
         traffic_source: str | None = None,
     ) -> None:
         """Initialize the addon.
@@ -74,15 +74,15 @@ class CCProxyMitmAddon:
         self.storage = storage
         self.config = config
         self.traffic_source = traffic_source
-        self.tracer: MitmTracer | None = None
+        self.tracer: InspectorTracer | None = None
         self._WireGuardMode: type | None = None
         self._forward_domains: set[str] = set(config.forward_domains)
 
-    def set_tracer(self, tracer: MitmTracer) -> None:
+    def set_tracer(self, tracer: InspectorTracer) -> None:
         """Set the OTel tracer for span emission.
 
         Args:
-            tracer: Initialized MitmTracer instance
+            tracer: Initialized InspectorTracer instance
         """
         self.tracer = tracer
 
@@ -90,7 +90,7 @@ class CCProxyMitmAddon:
         """Detect traffic direction from which listener accepted this flow.
 
         Uses mitmproxy's multi-mode `flow.client_conn.proxy_mode` to determine
-        whether the flow arrived on the reverse or forward proxy listener.
+        which mitmproxy --mode listener accepted this flow.
 
         Args:
             flow: HTTP flow object
@@ -199,12 +199,12 @@ class CCProxyMitmAddon:
         """
         if direction != ProxyDirection.WIREGUARD or host not in self._forward_domains:
             return
-        upstream = urlsplit(self.config.upstream_proxy)
+        litellm_port = int(os.environ.get("CCPROXY_LITELLM_PORT", "4000"))
         flow.request.headers["X-Forwarded-Host"] = host
-        flow.request.host = upstream.hostname or "localhost"
-        flow.request.port = upstream.port or 4000
+        flow.request.host = "localhost"
+        flow.request.port = litellm_port
         flow.request.scheme = "http"
-        logger.info("Forwarding %s → %s:%d", host, flow.request.host, flow.request.port)
+        logger.info("Forwarding %s → localhost:%d", host, litellm_port)
 
     async def request(self, flow: http.HTTPFlow) -> None:
         """Process request: capture trace data and forward WireGuard LLM traffic.

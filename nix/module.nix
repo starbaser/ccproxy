@@ -86,6 +86,7 @@ in
         ];
       };
       Install.WantedBy = [ "default.target" ];
+      Unit."X-Restart-Triggers" = [ ccproxyYaml litellmConfigYaml ];
     };
   };
 }

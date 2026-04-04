@@ -20,8 +20,8 @@
     ];
     default_model_passthrough = true;
     rules = [ ];
-    inspect = {
-      inspect_port = 8083;
+    inspector = {
+      port = 8083;
       wireguard_port = 51820;
       database_url = "postgresql://ccproxy:\${CCPROXY_DB_PASSWORD:-test}@127.0.0.1:5433/ccproxy_mitm";
       capture_bodies = true;

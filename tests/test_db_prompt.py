@@ -380,7 +380,7 @@ class TestFormatTraceMarkdown:
         """Test formatting simple user/assistant exchange."""
         md = format_trace_markdown(sample_trace, sample_request, sample_response)
 
-        assert "# MITM Trace: abc-123-def" in md
+        assert "# Trace: abc-123-def" in md
         assert "claude-sonnet-4-5-20250929" in md
         assert "| Mode | 1 |" in md
         assert "## System Message" in md
@@ -615,7 +615,7 @@ class TestHandleDbPromptIntegration:
                 handle_db_prompt(config_dir, cmd)
 
             captured = capsys.readouterr()
-            assert "# MITM Trace" in captured.out
+            assert "# Trace" in captured.out
             assert "### User" in captured.out
             assert "### Assistant" in captured.out
             assert "Hello" in captured.out
@@ -647,7 +647,7 @@ class TestHandleDbPromptIntegration:
 
             assert output_file.exists()
             content = output_file.read_text()
-            assert "# MITM Trace" in content
+            assert "# Trace" in content
             assert "### User" in content
             assert "### Assistant" in content
 

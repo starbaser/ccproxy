@@ -15,7 +15,7 @@ This is distinct from the basic MITM approach (`HTTP_PROXY` injection) which onl
 | Mode | Purpose |
 |------|---------|
 | `reverse@<port>` | Captures inbound client → LiteLLM traffic |
-| `regular@<forward_port>` | Captures LiteLLM → provider outbound traffic (via `HTTPS_PROXY`) |
+| `regular@<port>` | Captures LiteLLM → provider outbound traffic (via `HTTPS_PROXY`) |
 | `wireguard@<wireguard_port>` | WireGuard server used as the tunnel endpoint for namespace-confined processes |
 
 All three activate together. There is no partial-mode configuration — `--inspect` is the WireGuard stack or nothing.
@@ -96,13 +96,13 @@ All are standard on NixOS with the mainline kernel.
 ccproxy start --inspect
 ```
 
-This starts mitmweb (reverse + regular + wireguard modes) as a child process, then blocks on LiteLLM. After mitmweb is ready, the WireGuard client configuration is fetched from mitmweb's REST API and written to `{config_dir}/.mitm-wireguard-client.conf` for use by `ccproxy run --inspect`.
+This starts mitmweb (reverse + regular + wireguard modes) as a child process, then blocks on LiteLLM. After mitmweb is ready, the WireGuard client configuration is fetched from mitmweb's REST API and written to `{config_dir}/.inspector-wireguard-client.conf` for use by `ccproxy run --inspect`.
 
 Ports opened:
 
 | Port | Role |
 |------|------|
-| `4000` (default) | Reverse proxy entry point (or MITM if `reverse_port` unset) |
+| `4000` (default) | Reverse proxy entry point |
 | `8081` (default) | Forward proxy for LiteLLM outbound traffic |
 | `8083` (default) | mitmweb inspect UI |
 | `51820` (default) | WireGuard UDP endpoint |
@@ -132,7 +132,7 @@ ccproxy run -i -- curl https://httpbin.org/get
 ### What happens
 
 1. Prerequisite check — exits with error if any tool is missing
-2. Reads `{config_dir}/.mitm-wireguard-client.conf` — exits with error if not present
+2. Reads `{config_dir}/.inspector-wireguard-client.conf` — exits with error if not present
 3. Rewrites the WireGuard `Endpoint` to `10.0.2.2:{wireguard_port}` (the slirp4netns gateway)
 4. Creates a user+net namespace via `unshare --user --map-root-user --net --pid --fork sleep infinity`
 5. Starts slirp4netns with `--ready-fd` and `--exit-fd` for synchronised lifecycle
@@ -145,7 +145,7 @@ The confined process receives no `HTTP_PROXY` or `HTTPS_PROXY` environment varia
 
 ### Verifying capture
 
-Open the mitmweb UI at `http://localhost:8083` (default `inspect_port`). Traffic from the confined process appears in the flow list in real time. Filter by host or path to isolate provider API calls.
+Open the mitmweb UI at `http://localhost:8083` (default `port`). Traffic from the confined process appears in the flow list in real time. Filter by host or path to isolate provider API calls.
 
 ---
 
@@ -178,11 +178,11 @@ The namespace default route is replaced from `via 10.0.2.2` (slirp) to `dev wg0`
 
 ## Configuration
 
-These fields live under `ccproxy.inspect` in `ccproxy.yaml`:
+These fields live under `ccproxy.inspector` in `ccproxy.yaml`:
 
 ```yaml
 ccproxy:
-  inspect:
+  inspector:
     wireguard_port: 51820          # UDP port mitmweb WireGuard server binds to
     wireguard_conf_path: null      # Path to write WG conf; null = mitmproxy default (~/.mitmproxy/wireguard.conf)
 ```
@@ -216,7 +216,7 @@ Called in a `finally` block regardless of how the confined process exits:
 
 ### `ccproxy start` shutdown
 
-When `ccproxy start --inspect` receives SIGTERM or Ctrl+C, the `finally` block in `start_litellm` calls `_terminate_proc(mitm_proc)`, which sends SIGTERM to mitmweb and waits 5 seconds before escalating to SIGKILL. The `.mitm-wireguard-client.conf` state file is not removed on shutdown — `ccproxy run --inspect` will read a stale config if the server is restarted with different WireGuard keys. Start a fresh `ccproxy start --inspect` after any key rotation.
+When `ccproxy start --inspect` receives SIGTERM or Ctrl+C, the `finally` block in `start_litellm` calls `_terminate_proc(mitm_proc)`, which sends SIGTERM to mitmweb and waits 5 seconds before escalating to SIGKILL. The `.inspector-wireguard-client.conf` state file is not removed on shutdown — `ccproxy run --inspect` will read a stale config if the server is restarted with different WireGuard keys. Start a fresh `ccproxy start --inspect` after any key rotation.
 
 ---
 
@@ -267,7 +267,7 @@ Or add `pkgs.slirp4netns` to the devShell packages in `flake.nix`.
 
 ### `Error: No WireGuard configuration found. Start ccproxy with --inspect first`
 
-`ccproxy run --inspect` requires a running `ccproxy start --inspect` instance. Start the server first, then run the confined command. The state file `{config_dir}/.mitm-wireguard-client.conf` is written by `start_litellm` after mitmweb becomes ready.
+`ccproxy run --inspect` requires a running `ccproxy start --inspect` instance. Start the server first, then run the confined command. The state file `{config_dir}/.inspector-wireguard-client.conf` is written by `start_litellm` after mitmweb becomes ready.
 
 ### `Error: Namespace setup failed: slirp4netns failed to become ready`
 
@@ -285,13 +285,13 @@ The `nsenter` + `ip`/`wg` command sequence failed inside the namespace. The full
 
 - Confirm the confined process is connecting to a remote host (not localhost — loopback bypasses the WireGuard tunnel)
 - Check that the confined process trusts mitmweb's CA certificate (`~/.mitmproxy/mitmproxy-ca-cert.pem`)
-- Verify the WireGuard endpoint rewrite succeeded: the state file should contain `Endpoint = 10.0.2.2:51820`
+- Verify the WireGuard endpoint rewrite succeeded: the `.inspector-wireguard-client.conf` state file should contain `Endpoint = 10.0.2.2:51820`
 - Check mitmweb logs for WireGuard handshake errors
 
 ### `Failed to retrieve WireGuard client config from mitmweb`
 
 This warning appears in `ccproxy start --inspect` output when the mitmweb REST API (`GET /state`) does not return a `wireguard_conf` field within 15 seconds. Possible causes:
 - mitmweb version does not support WireGuard mode (requires mitmproxy 10.3+)
-- mitmweb started but WireGuard mode failed to initialise (check mitmweb logs at `{config_dir}/.mitm.log`)
+- mitmweb started but WireGuard mode failed to initialise (check mitmweb logs at `{config_dir}/.inspector.log`)
 
 Without the state file, `ccproxy run --inspect` will refuse to start.

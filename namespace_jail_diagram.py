@@ -27,7 +27,7 @@ srcery_colors = {
 }
 
 theme = Theme(srcery_colors)
-console = Console(theme=theme, style="on black", width=120)
+console = Console(theme=theme, style="on black", width=120, force_terminal=True)
 
 DIAGRAM = """
 
@@ -35,16 +35,17 @@ DIAGRAM = """
 
     [white]Host[/]
     [bright_black]┌───────────────────────────────────────────────────────────────────────────────────┐[/]
-    [bright_black]│[/]                                                                                   [bright_black]│[/]
-    [bright_black]│[/]  [blue]┌────────────┐[/]    [white]reverse[/]     [green]┌─────────┐[/]      [white]HTTPS_PROXY[/]       [blue]┌───────────┐[/]   [bright_black]│[/]
-    [bright_black]│[/]  [blue]│[/] [bright_white]mitmweb[/]    [blue]│[/][yellow]◀──────────────▶[/][green]│[/] [bright_white]LiteLLM[/] [green]│[/][yellow]◀──────────────────────▶[/][blue]│[/] [bright_white]m[/]         [blue]│[/]   [bright_black]│[/]
-    [bright_black]│[/]  [blue]│[/]            [blue]│[/]    [orange]@:4000[/]      [green]└─────────┘[/]      [orange]@:8081[/]            [blue]│[/] [bright_white]i[/]         [blue]│[/]   [bright_black]│[/]
-    [bright_black]│[/]  [blue]│[/] [white]WG srv[/]     [blue]│[/]                                                   [blue]│[/] [bright_white]t[/]         [blue]│[/]   [bright_black]│[/]
-    [bright_black]│[/]  [blue]│[/] [orange]@:51820[/]    [blue]│[/]    [white]regular (outbound to providers)[/]                [blue]│[/] [bright_white]m[/]         [blue]│[/]   [bright_black]│[/]
-    [bright_black]│[/]  [blue]│[/]            [blue]│[/][yellow]◀─────────────────────────────────────────────────▶[/][blue]│[/] [bright_white]w[/]         [blue]│[/]   [bright_black]│[/]
-    [bright_black]│[/]  [blue]└────────────┘[/]                                                   [blue]│[/] [bright_white]e[/]         [blue]│[/]   [bright_black]│[/]
-    [bright_black]│[/]       [yellow]▲[/]                                                           [blue]│[/] [bright_white]b[/]         [blue]│[/]   [bright_black]│[/]
-    [bright_black]│[/]       [yellow]│[/] [white]WireGuard UDP (via host network)[/]                          [blue]└───────────┘[/]   [bright_black]│[/]
+    [bright_black]│[/]         [yellow]▲[/] [white]regular (outbound to providers)[/]                                         [bright_black]│[/]
+    [bright_black]│[/]         [yellow]│[/]                                                                         [bright_black]│[/]
+    [bright_black]│[/]  [blue]┌──────[/][yellow]┴[/][blue]─────┐[/]    [white]reverse[/]     [green]┌─────────┐[/]                                        [bright_black]│[/]
+    [bright_black]│[/]  [blue]│[/] [bright_white]mitmweb[/]    [blue]│[/][yellow]◀──────────────▶[/][green]│[/] [bright_white]LiteLLM[/] [green]│[/]                                        [bright_black]│[/]
+    [bright_black]│[/]  [blue]│[/]            [blue]│[/]    [orange]@:4000[/]      [green]└────[/][yellow]┬[/][green]────┘[/]                                        [bright_black]│[/]
+    [bright_black]│[/]  [blue]│[/]            [blue]│[/][yellow]◀────────────────────┘[/] [white]HTTPS_PROXY[/] [orange]@:8081[/]                          [bright_black]│[/]
+    [bright_black]│[/]  [blue]│[/] [white]WG srv[/]     [blue]│[/]                                                                   [bright_black]│[/]
+    [bright_black]│[/]  [blue]│[/] [orange]@:51820[/]    [blue]│[/]                                                                   [bright_black]│[/]
+    [bright_black]│[/]  [blue]└────────────┘[/]                                                                   [bright_black]│[/]
+    [bright_black]│[/]       [yellow]▲[/]                                                                           [bright_black]│[/]
+    [bright_black]│[/]       [yellow]│[/] [white]WireGuard UDP (via host network)[/]                                          [bright_black]│[/]
     [bright_black]│[/]       [yellow]▼[/]                                                                           [bright_black]│[/]
     [bright_black]│[/]  [magenta]┌─────────────────────────────────────────────────────────────┐[/]                  [bright_black]│[/]
     [bright_black]│[/]  [magenta]│[/] [bright_white]slirp4netns (bridges namespace ◀▶ host)[/]                     [magenta]│[/]                  [bright_black]│[/]

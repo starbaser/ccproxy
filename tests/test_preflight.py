@@ -25,8 +25,8 @@ class TestIsCcproxyProcess:
         cmdline = "/usr/bin/python /usr/bin/litellm --config /home/user/.ccproxy/config.yaml --port 4000"
         assert _is_ccproxy_process(cmdline) is True
 
-    def test_mitmdump_with_script(self):
-        cmdline = "/usr/bin/mitmdump --listen-port 4000 -s /home/user/ccproxy/mitm/script.py"
+    def test_mitmweb_with_script(self):
+        cmdline = "/usr/bin/mitmweb --listen-port 4000 -s /home/user/ccproxy/inspector/script.py"
         assert _is_ccproxy_process(cmdline) is True
 
     def test_unrelated_litellm(self):
@@ -188,7 +188,7 @@ class TestRunPreflightChecks:
             run_preflight_checks(ports=[4000])
 
     def test_mitm_checks_both_ports(self, tmp_path):
-        """When mitm=True the caller passes both main_port and forward_port."""
+        """When inspect=True the caller passes both main_port and forward_port."""
         with patch("ccproxy.preflight.get_port_pid", return_value=(None, None)) as mock_gpp:
             run_preflight_checks(ports=[4000, 8081])
             assert mock_gpp.call_count == 2
@@ -196,7 +196,7 @@ class TestRunPreflightChecks:
             mock_gpp.assert_any_call(8081)
 
     def test_no_mitm_checks_main_port_only(self, tmp_path):
-        """When mitm=False the caller passes only main_port."""
+        """When inspect=False the caller passes only main_port."""
         with patch("ccproxy.preflight.get_port_pid", return_value=(None, None)) as mock_gpp:
             run_preflight_checks(ports=[4000])
             assert mock_gpp.call_count == 1

@@ -579,8 +579,8 @@ litellm:
         assert env["OPENAI_API_BASE"] == "http://10.0.0.1:9999"
 
     @patch("subprocess.run")
-    def test_run_with_mitm_running(self, mock_run: Mock, tmp_path: Path) -> None:
-        """Test run with MITM - client still connects to main port (transparent proxy)."""
+    def test_run_with_inspect_running(self, mock_run: Mock, tmp_path: Path) -> None:
+        """Test run with inspect - client still connects to main port (transparent proxy)."""
         config_file = tmp_path / "ccproxy.yaml"
         config_file.write_text("""
 litellm:
@@ -599,17 +599,17 @@ ccproxy:
         assert exc_info.value.code == 0
 
         # New architecture: client always connects to main port (4000)
-        # MITM is transparent - sits on main port and forwards to LiteLLM
+        # Inspector is transparent - sits on main port and forwards to LiteLLM
         call_args = mock_run.call_args
         env = call_args[1]["env"]
-        # No HTTPS_PROXY/HTTP_PROXY set on client (MITM handles this transparently)
+        # No HTTPS_PROXY/HTTP_PROXY set on client (inspector handles this transparently)
         assert "HTTPS_PROXY" not in env or env.get("HTTPS_PROXY") == os.environ.get("HTTPS_PROXY")
         # All API URLs point to main port
         assert env["OPENAI_API_BASE"] == "http://127.0.0.1:4000"
         assert env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:4000"
 
     @patch("subprocess.run")
-    def test_run_with_mitm_not_running(self, mock_run: Mock, tmp_path: Path) -> None:
+    def test_run_with_inspect_not_running(self, mock_run: Mock, tmp_path: Path) -> None:
         """Test run without inspect routes directly to LiteLLM."""
         config_file = tmp_path / "ccproxy.yaml"
         config_file.write_text("""

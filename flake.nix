@@ -104,10 +104,7 @@
 
         devConfig = mkConfig {
           settings = defaultSettings.settings // {
-            mitm = defaultSettings.settings.mitm // {
-              forward_port = 4003;
-              reverse_port = 4002;
-              upstream_proxy = "http://localhost:4001";
+            inspector = defaultSettings.settings.inspector // {
               cert_dir = "./.ccproxy";
             };
           };

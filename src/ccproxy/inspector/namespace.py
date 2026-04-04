@@ -18,7 +18,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from ccproxy.mitm.process import _pipe_output
+from ccproxy.inspector.process import _pipe_output
 
 logger = logging.getLogger(__name__)
 
