@@ -49,10 +49,8 @@ uv run pytest -k "test_token_count" # Run tests matching pattern
 # Install configuration files
 ccproxy install [--force]
 
-# Start/stop proxy server
-ccproxy start [--detach] [--mitm]
-ccproxy stop
-ccproxy restart [--detach] [--mitm]
+# Start proxy server (foreground, use process-compose/systemd for supervision)
+ccproxy start [--inspect/-i]
 
 # View logs and status
 ccproxy logs [-f] [-n LINES]
@@ -60,6 +58,9 @@ ccproxy status [--json]
 
 # Run command with proxy environment
 ccproxy run <command> [args...]
+
+# Run command in WireGuard namespace jail (all traffic captured transparently)
+ccproxy run --inspect -- <command> [args...]
 
 # Query MITM traces database (SQL)
 ccproxy db sql "SELECT COUNT(*) FROM \"CCProxy_HttpTraces\""
@@ -73,7 +74,7 @@ ccproxy db gql --json "{ allCcproxyHttpTraces { nodes { traceId } } }"
 ccproxy db gql -f query.graphql
 ```
 
-**MITM Mode**: The `--mitm` flag enables the MITM proxy layer which intercepts HTTP traffic for header/body modification. Required for OAuth sentinel key with native Anthropic SDK.
+**Inspect Mode**: `--inspect` enables the full MITM stack (mitmweb with reverse + forward + WireGuard modes). `ccproxy run --inspect` confines the subprocess in a rootless network namespace routed through the WireGuard tunnel for transparent traffic capture. See `docs/inspect.md` for architecture details.
 
 ## Architecture
 
@@ -117,7 +118,8 @@ Request → CCProxyHandler → Hook Pipeline → Response
   - `inject_claude_code_identity` - Injects required system message for OAuth
   - `inject_mcp_notifications` - Injects buffered MCP terminal events as synthetic tool_use/tool_result pairs before the final user message
 - **mitm/addon.py**: MITM proxy addon for HTTP traffic capture and tracing. Stores request/response data in PostgreSQL via `TraceStorage`.
-- **cli.py**: Tyro-based CLI interface (~900 lines) for managing the proxy server.
+- **mitm/namespace.py**: Network namespace confinement for `ccproxy run --inspect`. Creates user+net namespace with slirp4netns bridge and WireGuard client routing through mitmweb's WireGuard server. Requires `slirp4netns`, `wg`, `unshare`, `nsenter`, `ip` (all rootless on Linux 5.6+ with `unprivileged_userns_clone=1`).
+- **cli.py**: Tyro-based CLI interface for managing the proxy server. Foreground-only (no `--detach`/`stop`/`restart`). Status detection via TCP health probes.
 - **utils.py**: Template discovery and debug utilities (`dt()`, `dv()`, `d()`, `p()`).
 
 ### Rule System
@@ -181,7 +183,8 @@ The test suite uses pytest with comprehensive fixtures (18 test files, 90% cover
 - **Health checks**: LiteLLM's `/health` endpoint performs real API calls to each provider. `_inject_health_check_auth()` patches `_update_litellm_params_for_health_check` to inject OAuth credentials (api_key, extra_headers) before `acompletion()` — required because LiteLLM validates API keys before `async_pre_call_hook` runs. The pipeline then runs with forced passthrough (rule_evaluator skips classification, model_router forces passthrough via `ccproxy_is_health_check` metadata flag) so hooks like `forward_oauth`, `add_beta_headers`, and `inject_claude_code_identity` enhance the request. Health probes use `max_tokens=1` to minimize cost.
 - **Hook error isolation**: Errors in one hook don't block others from executing.
 - **Lazy model loading**: Models loaded from LiteLLM proxy on first request, not at startup.
-- **MITM proxy**: Two-layer architecture with configurable ports. Reverse proxy (client-facing, default shares `litellm.port`; set `mitm.reverse_port` for a dedicated port) and forward proxy (`mitm.forward_port`, default 8081, outbound to providers). When `reverse_port` is set, LiteLLM keeps its configured port and the reverse proxy listens separately; otherwise the reverse proxy takes over the main port and LiteLLM gets a random port. Enables HTTP traffic capture and tracing. OAuth is handled entirely by pipeline hooks + `_patch_anthropic_oauth_headers()` monkey-patch; MITM is not required for OAuth.
+- **MITM proxy**: Three-mode architecture activated by `--inspect`. Reverse proxy (client-facing, `mitm.reverse_port`), forward proxy (`mitm.forward_port`, outbound via HTTPS_PROXY), and WireGuard transparent proxy (`mitm.wireguard_port`, default 51820). When `reverse_port` is set, LiteLLM keeps its configured port and the reverse proxy listens separately; otherwise the reverse proxy takes over the main port and LiteLLM gets a random port. Without `--inspect`, no MITM at all. OAuth is handled entirely by pipeline hooks + `_patch_anthropic_oauth_headers()` monkey-patch; MITM is not required for OAuth.
+- **Namespace confinement**: `ccproxy run --inspect` creates a rootless user+net namespace via `unshare`, bridges it to the host via `slirp4netns` (gateway `10.0.2.2`, namespace IP `10.0.2.100`), and routes all traffic through a WireGuard client (`10.0.0.1/32`) pointing at mitmweb's WireGuard server. Uses `--ready-fd`/`--exit-fd` pipes for clean lifecycle management. Hard-fails if prerequisites are missing (no fallback to unconfined execution). Combined CA bundle injected via `SSL_CERT_FILE`/`CURL_CA_BUNDLE`/`NODE_EXTRA_CA_CERTS` for transparent TLS interception.
 - **MITM database**: PostgreSQL for HTTP trace storage. Database URL set via `CCPROXY_DATABASE_URL` env var or in `ccproxy.yaml` under `ccproxy.mitm.database_url`. Uses the `ccproxy-db` container.
 - **GraphQL API**: PostGraphile v4 on port 5435 auto-introspects the Prisma schema to provide a GraphQL query API for MITM traces. Config via `ccproxy.mitm.graphql.host`/`port` scalars (matching litellm convention). PostGraphile camelCases column names: `trace_id` → `traceId`, `CCProxy_HttpTraces` → `allCcproxyHttpTraces`. GraphiQL IDE at `http://localhost:5435/graphiql`.
 - **Docker containers**: Three containers managed via `compose.yaml`:
@@ -189,7 +192,7 @@ The test suite uses pytest with comprehensive fixtures (18 test files, 90% cover
   - `litellm-db` (port 5434) - LiteLLM's internal database (`litellm` database)
   - `ccproxy-graphql` (port 5435) - PostGraphile v4 GraphQL API for MITM traces
   - When "too many database connections" errors occur, restart **both** DB containers: `docker restart ccproxy-db litellm-db`
-- **Proxy direction tracking**: MITM traces include `proxy_direction` field (0=reverse, 1=forward) to distinguish client→LiteLLM vs LiteLLM→provider traffic.
+- **Proxy direction tracking**: MITM traces include `proxy_direction` field (0=reverse, 1=forward, 2=wireguard) to distinguish client→LiteLLM, LiteLLM→provider, and namespace→tunnel traffic.
 - **Session tracking**: MITM addon extracts `session_id` from Claude Code's `metadata.user_id` field to link related requests across proxy layers.
 
 ## Dev Instance
@@ -201,6 +204,8 @@ The Nix devShell configures a local dev instance via `mkConfig` with dedicated p
 | LiteLLM | 4001 | 4000 |
 | MITM reverse proxy | 4002 | shares 4000 |
 | MITM forward proxy | 4003 | 8081 |
+| WireGuard | 51820 | 51820 |
+| Inspect UI (mitmweb) | 8083 | 8083 |
 
 Entering the devShell (`direnv` / `nix develop`) automatically:
 - Creates `.ccproxy/` and symlinks Nix-generated `ccproxy.yaml` and `config.yaml`
@@ -256,8 +261,8 @@ Source changes in the devShell are reflected immediately. Restart the proxy to p
 ```bash
 just down && just up
 
-# Or manually:
-ccproxy stop && ccproxy start --detach
+# Or manually (foreground):
+ccproxy start [--inspect]
 
 # Run tests
 just test
@@ -289,7 +294,7 @@ DATABASE_URL="postgresql://ccproxy:test@localhost:5433/ccproxy_mitm" uv run pris
 nix build
 
 # 4. Restart proxy
-ccproxy stop && ccproxy start --detach --mitm
+ccproxy start --inspect
 ```
 
 ### Prisma Build-Time Generation (Nix)
