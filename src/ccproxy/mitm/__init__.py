@@ -5,19 +5,15 @@ from typing import Any
 from ccproxy.mitm.process import (
     ProxyMode,
     get_mitm_status,
-    is_running,
     start_mitm,
     start_shadow_mitm,
-    stop_mitm,
 )
 
 __all__ = [
     "ProxyMode",
     "get_mitm_status",
-    "is_running",
     "start_mitm",
     "start_shadow_mitm",
-    "stop_mitm",
 ]
 
 

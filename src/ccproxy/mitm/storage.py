@@ -4,7 +4,7 @@ import asyncio
 import logging
 from typing import Any
 
-from prisma import Prisma
+from prisma import Prisma  # type: ignore[attr-defined]
 from prisma.fields import Base64, Json
 
 logger = logging.getLogger(__name__)
@@ -19,7 +19,7 @@ def _convert_for_prisma(data: dict[str, Any]) -> dict[str, Any]:
     Returns:
         Dict with Prisma-compatible types (Json, Base64)
     """
-    result = {}
+    result: dict[str, Any] = {}
     for key, value in data.items():
         if isinstance(value, dict):
             result[key] = Json(value)

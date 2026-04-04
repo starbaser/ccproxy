@@ -11,7 +11,7 @@ import json
 import logging
 from datetime import UTC, datetime
 from enum import IntEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from mitmproxy import http
 
@@ -23,6 +23,7 @@ class ProxyDirection(IntEnum):
 
     REVERSE = 0  # Client -> LiteLLM (inbound)
     FORWARD = 1  # LiteLLM -> Provider (outbound)
+    WIREGUARD = 2  # WireGuard tunnel traffic
 
 
 if TYPE_CHECKING:
@@ -68,6 +69,7 @@ class CCProxyMitmAddon:
         self.config = config
         self.traffic_source = traffic_source
         self.tracer: MitmTracer | None = None
+        self._WireGuardMode: type | None = None
 
     def set_tracer(self, tracer: MitmTracer) -> None:
         """Set the OTel tracer for span emission.
@@ -89,7 +91,7 @@ class CCProxyMitmAddon:
         Returns:
             ProxyDirection or None if the flow's mode is unsupported
         """
-        if not hasattr(flow, "client_conn") or flow.client_conn is None:  # type: ignore[comparison-overlap]
+        if not hasattr(flow, "client_conn") or flow.client_conn is None:
             return None  # Synthetic/replayed flows
 
         reverse_mode, regular_mode = _get_mode_types()
@@ -99,6 +101,11 @@ class CCProxyMitmAddon:
             return ProxyDirection.REVERSE
         if isinstance(mode, regular_mode):
             return ProxyDirection.FORWARD
+        if self._WireGuardMode is None:
+            from mitmproxy.proxy.mode_specs import WireGuardMode
+            self._WireGuardMode = WireGuardMode
+        if isinstance(mode, self._WireGuardMode):
+            return ProxyDirection.WIREGUARD
         return None
 
     def _truncate_body(self, body: bytes | None) -> bytes | None:
@@ -155,7 +162,7 @@ class CCProxyMitmAddon:
         if not isinstance(metadata, dict):
             return None
 
-        user_id = metadata.get("user_id", "")
+        user_id: str = metadata.get("user_id", "")
         if not user_id:
             return None
 
@@ -164,7 +171,7 @@ class CCProxyMitmAddon:
             try:
                 user_id_obj = json.loads(user_id)
                 if isinstance(user_id_obj, dict) and user_id_obj.get("session_id"):
-                    return user_id_obj["session_id"]
+                    return cast(str, user_id_obj["session_id"])
             except (json.JSONDecodeError, TypeError):
                 pass
 
@@ -200,7 +207,7 @@ class CCProxyMitmAddon:
             path = request.path
             session_id = self._extract_session_id(request)
 
-            trace_data = {
+            trace_data: dict[str, Any] = {
                 "trace_id": flow.id,
                 "proxy_direction": direction.value,
                 "session_id": session_id,

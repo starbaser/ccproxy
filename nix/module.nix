@@ -23,10 +23,10 @@ in
       description = "The ccproxy package.";
     };
 
-    mitm = lib.mkOption {
+    inspect = lib.mkOption {
       type = lib.types.bool;
       default = false;
-      description = "Enable MITM proxy mode (--mitm flag).";
+      description = "Enable inspect mode (--inspect flag).";
     };
 
     configDir = lib.mkOption {
@@ -75,10 +75,8 @@ in
         After = [ "default.target" ];
       };
       Service = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-        ExecStart = "${cfg.package}/bin/ccproxy start${lib.optionalString cfg.mitm " --mitm"} --detach";
-        ExecStop = "${cfg.package}/bin/ccproxy stop";
+        Type = "simple";
+        ExecStart = "${cfg.package}/bin/ccproxy start${lib.optionalString cfg.inspect " --inspect"}";
         Restart = "on-failure";
         RestartSec = "5s";
         Environment = [

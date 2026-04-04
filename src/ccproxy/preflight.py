@@ -65,6 +65,41 @@ def _find_inode_pids() -> dict[int, int]:
     return inode_to_pid
 
 
+def _is_udp_port_in_use(port: int) -> int | None:
+    """Check if a UDP port is in use by reading /proc/net/udp.
+
+    Returns the PID using the port, or None if the port is free.
+    """
+    hex_port = f"{port:04X}"
+    bound_inodes: set[int] = set()
+
+    for udp_path in ("/proc/net/udp", "/proc/net/udp6"):
+        try:
+            with Path(udp_path).open() as f:
+                for line in f:
+                    fields = line.split()
+                    if len(fields) < 10:
+                        continue
+                    local_addr = fields[1]
+                    _, port_hex = local_addr.split(":")
+                    if port_hex == hex_port:
+                        bound_inodes.add(int(fields[9]))
+        except OSError:
+            continue
+
+    if not bound_inodes:
+        return None
+
+    inode_to_pid = _find_inode_pids()
+    for inode in bound_inodes:
+        pid = inode_to_pid.get(inode)
+        if pid is not None:
+            return pid
+
+    # Inode found but couldn't resolve to PID (permission issue)
+    return -1
+
+
 def get_port_pid(port: int, host: str = "127.0.0.1") -> tuple[int | None, str | None]:
     """Find which process is listening on a port.
 
@@ -190,36 +225,24 @@ def kill_stale_processes(processes: list[tuple[int, str]]) -> int:
     return killed
 
 
-def run_preflight_checks(config_dir: Path, ports: list[int]) -> None:
+def run_preflight_checks(
+    config_dir: Path,
+    ports: list[int] | None = None,
+    udp_ports: list[int] | None = None,
+) -> None:
     """Run pre-flight checks before starting ccproxy.
 
-    Phase 1: Reject if PID files indicate a running instance.
-    Phase 2: Verify required ports are free; kill stale ccproxy processes
-             found on those ports. Only targets processes on the specific
-             configured ports — other ccproxy instances are left alone.
+    Verifies required TCP and UDP ports are free; kills stale ccproxy processes
+    found on those TCP ports. Only targets processes on the specific configured
+    ports — other ccproxy instances are left alone.
 
     Raises:
         SystemExit: On unrecoverable conflicts.
     """
-    from ccproxy.mitm.process import ProxyMode, get_pid_file
-    from ccproxy.process import is_process_running
-
     logger.debug("Running pre-flight checks...")
 
-    # Phase 1: PID file check — bail if a managed instance is alive
-    pid_files = {
-        "LiteLLM": config_dir / "litellm.lock",
-        "MITM reverse": get_pid_file(config_dir, ProxyMode.REVERSE),
-        "MITM forward": get_pid_file(config_dir, ProxyMode.FORWARD),
-    }
-    for label, pf in pid_files.items():
-        running, pid = is_process_running(pf)
-        if running:
-            print(f"Error: {label} is already running (PID {pid}). Stop it first with: ccproxy stop")
-            raise SystemExit(1)
-
-    # Phase 2: Port availability — kill stale ccproxy processes on configured ports
-    for port in ports:
+    # TCP port availability — kill stale ccproxy processes on configured ports
+    for port in ports or []:
         pid, snippet = get_port_pid(port)
         if pid is None:
             logger.debug(f"Port {port} is available")
@@ -245,5 +268,23 @@ def run_preflight_checks(config_dir: Path, ports: list[int]) -> None:
             print(f"Error: Port {port} is occupied by another process (PID {pid}: {name})")
             print(f"Stop it first, e.g.: kill {pid}")
             raise SystemExit(1)
+
+    # UDP port availability
+    for port in udp_ports or []:
+        pid = _is_udp_port_in_use(port)
+        if pid is None:
+            logger.debug(f"UDP port {port} is available")
+            continue
+
+        if pid == -1:
+            print(f"Error: UDP port {port} is already in use (could not identify process)")
+            raise SystemExit(1)
+
+        cmdline = _read_proc_cmdline(pid)
+        snippet = (cmdline[:80] + "...") if cmdline and len(cmdline) > 80 else cmdline
+        name = snippet or "unknown"
+        print(f"Error: UDP port {port} is occupied by another process (PID {pid}: {name})")
+        print(f"Stop it first, e.g.: kill {pid}")
+        raise SystemExit(1)
 
     logger.debug("Pre-flight checks passed")

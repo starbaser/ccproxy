@@ -13,7 +13,7 @@ import sys
 import time
 from builtins import print as builtin_print
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 import attrs
 import tyro
@@ -23,7 +23,6 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from ccproxy.process import is_process_running, write_pid
 from ccproxy.utils import get_templates_dir
 
 logger = logging.getLogger(__name__)
@@ -101,9 +100,6 @@ class Start:
     args: Annotated[list[str] | None, tyro.conf.Positional] = None
     """Additional arguments to pass to litellm command."""
 
-    detach: Annotated[bool, tyro.conf.arg(aliases=["-d"])] = False
-    """Run in background and save PID to litellm.lock."""
-
     inspect: Annotated[bool, tyro.conf.arg(aliases=["-i"])] = False
     """Start mitmproxy for traffic capture with browser-based flow inspection."""
 
@@ -120,29 +116,10 @@ class Install:
 class Run:
     """Run a command with ccproxy environment.
 
-    Usage: ccproxy run [--shadow [HOST:PORT]] -- <command> [args...]"""
+    Usage: ccproxy run [--shadow [HOST:PORT]] [--inspect] -- <command> [args...]"""
 
     command: Annotated[list[str], tyro.conf.Positional] = attrs.Factory(list)
     """Command and arguments to execute with proxy settings."""
-
-
-@attrs.define
-class Stop:
-    """Stop the LiteLLM proxy server."""
-
-
-@attrs.define
-class Restart:
-    """Restart the LiteLLM proxy server (stop then start).
-
-    MITM state is preserved automatically from the running configuration.
-    """
-
-    args: Annotated[list[str] | None, tyro.conf.Positional] = None
-    """Additional arguments to pass to litellm command."""
-
-    detach: Annotated[bool, tyro.conf.arg(aliases=["-d"])] = False
-    """Run in background and save PID to litellm.lock."""
 
 
 LogSource = Literal["litellm", "mitm", "forward", "combined", "all"]
@@ -265,8 +242,6 @@ Command = (
     Annotated[Start, tyro.conf.subcommand(name="start")]
     | Annotated[Install, tyro.conf.subcommand(name="install")]
     | Annotated[Run, tyro.conf.subcommand(name="run")]
-    | Annotated[Stop, tyro.conf.subcommand(name="stop")]
-    | Annotated[Restart, tyro.conf.subcommand(name="restart")]
     | Annotated[Logs, tyro.conf.subcommand(name="logs")]
     | Annotated[Status, tyro.conf.subcommand(name="status")]
     | Annotated[DbSql, tyro.conf.subcommand(name="db-sql")]
@@ -386,6 +361,7 @@ def run_with_proxy(
     config_dir: Path,
     command: list[str],
     shadow: str | None = None,
+    inspect: bool = False,
 ) -> None:
     """Run a command with ccproxy environment variables set.
 
@@ -397,6 +373,7 @@ def run_with_proxy(
         config_dir: Configuration directory
         command: Command and arguments to execute
         shadow: Shadow proxy bind address ([host:]port) or None to disable
+        inspect: Route subprocess traffic through a WireGuard namespace for transparent capture
     """
     # Load config to get proxy settings
     ccproxy_config_path = config_dir / "ccproxy.yaml"
@@ -415,18 +392,67 @@ def run_with_proxy(
     env["OPENAI_BASE_URL"] = proxy_url
     env["ANTHROPIC_BASE_URL"] = proxy_url
 
+    # Inspect mode: route subprocess traffic through a WireGuard namespace for transparent capture
+    if inspect:
+        from ccproxy.mitm.namespace import (
+            check_namespace_capabilities,
+            cleanup_namespace,
+            create_namespace,
+            run_in_namespace,
+        )
+
+        problems = check_namespace_capabilities()
+        if problems:
+            for p in problems:
+                print(f"Error: {p}", file=sys.stderr)
+            print(
+                "\nCannot create network namespace for --inspect mode. "
+                "All prerequisites above must be satisfied.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        wg_conf_file = config_dir / ".mitm-wireguard-client.conf"
+        if not wg_conf_file.exists():
+            print(
+                "Error: No WireGuard configuration found. "
+                "Start ccproxy with --inspect first: ccproxy start --inspect",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        wg_client_conf = wg_conf_file.read_text()
+
+        wg_port = 51820
+        ccproxy_config_path = config_dir / "ccproxy.yaml"
+        if ccproxy_config_path.exists():
+            import yaml
+
+            with ccproxy_config_path.open() as f:
+                cfg = yaml.safe_load(f) or {}
+            wg_port = cfg.get("ccproxy", {}).get("mitm", {}).get("wireguard_port", 51820)
+
+        ctx = None
+        try:
+            ctx = create_namespace(wg_client_conf, wg_port)
+            exit_code = run_in_namespace(ctx, command, env)
+            sys.exit(exit_code)
+        except RuntimeError as e:
+            print(f"Error: Namespace setup failed: {e}", file=sys.stderr)
+            sys.exit(1)
+        finally:
+            if ctx:
+                cleanup_namespace(ctx)
+        return
+
     # Shadow mode: route all non-localhost HTTP through a dedicated forward proxy
-    shadow_started = False
+    shadow_proc = None
     if shadow is not None:
-        from ccproxy.mitm.process import ProxyMode, is_running, start_shadow_mitm
+        from ccproxy.mitm.process import start_shadow_mitm
 
         shadow_host, shadow_port = _parse_shadow_bind(shadow)
 
-        running, _ = is_running(config_dir, ProxyMode.SHADOW)
-        if not running:
-            logger.info("Starting shadow proxy on %s:%d...", shadow_host, shadow_port)
-            start_shadow_mitm(config_dir, port=shadow_port, detach=True)
-            shadow_started = True
+        logger.info("Starting shadow proxy on %s:%d...", shadow_host, shadow_port)
+        shadow_proc = start_shadow_mitm(config_dir, port=shadow_port)
 
         shadow_proxy_url = f"http://{shadow_host}:{shadow_port}"
         env["HTTP_PROXY"] = shadow_proxy_url
@@ -458,10 +484,9 @@ def run_with_proxy(
     except KeyboardInterrupt:
         sys.exit(130)  # Standard exit code for Ctrl+C
     finally:
-        if shadow_started:
-            from ccproxy.mitm.process import ProxyMode, stop_mitm
-
-            stop_mitm(config_dir, mode=ProxyMode.SHADOW)
+        if shadow_proc is not None:
+            shadow_proc.terminate()
+            shadow_proc.wait()
 
 
 def generate_handler_file(config_dir: Path) -> None:
@@ -540,38 +565,84 @@ handler = {class_name}()
     handler_file.write_text(content)
 
 
+def _fetch_wireguard_client_conf(inspect_port: int, timeout: float = 15.0) -> str | None:
+    """Poll mitmweb REST API for WireGuard client config after startup."""
+    import urllib.request
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            url = f"http://127.0.0.1:{inspect_port}/state"
+            with urllib.request.urlopen(url, timeout=2) as r:  # noqa: S310
+                data = json.loads(r.read())
+            servers = data.get("servers", [])
+            for srv in servers:
+                wg_conf = srv.get("wireguard_conf")
+                if wg_conf:
+                    return str(wg_conf)
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return None
+
+
+def _wait_for_port(host: str, port: int, timeout: float = 10.0) -> bool:
+    """Wait for a TCP port to become available."""
+    import socket
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=0.5):
+                return True
+        except OSError:
+            time.sleep(0.2)
+    return False
+
+
+def _terminate_proc(proc: subprocess.Popen[bytes], timeout: float = 5.0) -> None:
+    """Terminate a subprocess gracefully, escalating to SIGKILL if needed."""
+    if proc.poll() is not None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=2)
+
+
 def start_litellm(
     config_dir: Path,
     args: list[str] | None = None,
-    detach: bool = False,
     inspect: bool = False,
 ) -> None:
     """Start the LiteLLM proxy server with ccproxy configuration.
 
+    Runs in the foreground. Use process-compose or systemd for supervision.
+
     Args:
         config_dir: Configuration directory containing config files
         args: Additional arguments to pass to litellm command
-        detach: Run in background mode with PID tracking
         inspect: Start mitmproxy with browser-based flow inspection
     """
     mitm = inspect
     from ccproxy.utils import find_available_port
 
-    # Check if config exists
     config_path = config_dir / "config.yaml"
     if not config_path.exists():
         print(f"Error: Configuration not found at {config_path}", file=sys.stderr)
         print("Run 'ccproxy install' first to set up configuration.", file=sys.stderr)
         sys.exit(1)
 
-    # Read proxy host/port from config.yaml general_settings
     litellm_host, main_port = _read_proxy_settings(config_dir)
-    forward_port = 8081  # Forward proxy port for provider API calls
-    reverse_port = None  # Reverse proxy port (None = take over main_port)
-    inspect_port = 8083  # mitmweb inspector UI port
-    mitm_confdir = None  # mitmproxy confdir for CA certs (None = ~/.mitmproxy default)
+    forward_port = 8081
+    reverse_port = None
+    inspect_port = 8083
+    mitm_confdir = None
+    wireguard_port = 51820
+    wireguard_conf_path: Path | None = None
 
-    # Load ccproxy.yaml for MITM port config
     ccproxy_config_path = config_dir / "ccproxy.yaml"
     ccproxy_config = None
     if ccproxy_config_path.exists():
@@ -583,64 +654,52 @@ def start_litellm(
                 reverse_port = mitm_section.get("reverse_port")
                 inspect_port = mitm_section.get("inspect_port", 8083)
                 mitm_confdir = mitm_section.get("cert_dir")
+                wireguard_port = mitm_section.get("wireguard_port", 51820)
+                wg_conf = mitm_section.get("wireguard_conf_path")
+                if wg_conf:
+                    wireguard_conf_path = Path(wg_conf)
 
-    # Pre-flight: kill orphans, verify ports are free
     from ccproxy.preflight import run_preflight_checks
 
     ports_to_check = [main_port]
+    udp_ports_to_check: list[int] = []
     if mitm:
         ports_to_check.append(forward_port)
         if reverse_port:
             ports_to_check.append(reverse_port)
         ports_to_check.append(inspect_port)
-    run_preflight_checks(config_dir, ports=ports_to_check)
+        udp_ports_to_check.append(wireguard_port)
+    run_preflight_checks(config_dir, ports=ports_to_check, udp_ports=udp_ports_to_check)
 
-    # Generate the handler file before starting LiteLLM
     try:
         generate_handler_file(config_dir)
     except Exception as e:
         print(f"Error generating handler file: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Determine LiteLLM's actual port
-    # When MITM enabled with reverse_port: LiteLLM keeps main_port, reverse proxy on reverse_port
-    # When MITM enabled without reverse_port: MITM takes main_port, LiteLLM gets random port
-    # When MITM disabled: LiteLLM runs on main_port directly
     if mitm:
         if reverse_port:
             litellm_port = main_port
         else:
             litellm_port = find_available_port()
-        # Write LiteLLM port to state file for status/other tools
         litellm_port_file = config_dir / ".litellm_port"
         litellm_port_file.write_text(str(litellm_port))
     else:
         litellm_port = main_port
-        # Remove port file if it exists (not using MITM)
         litellm_port_file = config_dir / ".litellm_port"
         if litellm_port_file.exists():
             litellm_port_file.unlink()
 
-    # Set environment variable for ccproxy configuration location
     env = os.environ.copy()
     env["CCPROXY_CONFIG_DIR"] = str(config_dir.absolute())
 
-    # Apply environment variables from ccproxy.yaml litellm.environment
-    # Set in both os.environ (for MITM inheritance) and env dict (for LiteLLM subprocess)
     if ccproxy_config_path.exists() and ccproxy_config:
         litellm_env = ccproxy_config.get("litellm", {}).get("environment", {})
         for key, value in litellm_env.items():
-            # Expand ${VAR} and ${VAR:-default} patterns
             expanded = _expand_env_vars(str(value))
             env[key] = expanded
             os.environ[key] = expanded
 
-    # Ensure SSL_CERT_FILE is set for the litellm subprocess.
-    # aiohttp creates a module-level SSL context at import time via ssl.create_default_context(),
-    # and litellm has fallback code paths that create bare ClientSession() without explicit SSL
-    # context. On NixOS (and other non-standard layouts), the compiled-in OpenSSL default path
-    # (/etc/ssl/cert.pem) doesn't exist. Setting SSL_CERT_FILE before subprocess launch ensures
-    # all code paths find valid CA certificates.
     if "SSL_CERT_FILE" not in env:
         try:
             import certifi
@@ -649,10 +708,6 @@ def start_litellm(
         except ImportError:
             pass
 
-    # When MITM is enabled, route LiteLLM's outbound traffic through forward proxy.
-    # mitmproxy intercepts TLS (MITM), so litellm sees mitmproxy-signed certs.
-    # Build a combined CA bundle with mitmproxy's CA + system/certifi CAs so the
-    # SSL context trusts both the proxy-issued certs and real upstream certs.
     if mitm:
         forward_proxy_url = f"http://localhost:{forward_port}"
         env["HTTPS_PROXY"] = forward_proxy_url
@@ -662,7 +717,6 @@ def start_litellm(
         if combined_bundle:
             env["SSL_CERT_FILE"] = str(combined_bundle)
 
-    # Build litellm command using the bundled version from the same venv
     venv_bin = Path(sys.executable).parent
     litellm_path = venv_bin / "litellm"
 
@@ -677,7 +731,7 @@ def start_litellm(
         )
         sys.exit(1)
 
-    cmd = [
+    litellm_cmd = [
         str(litellm_path),
         "--config",
         str(config_path),
@@ -687,161 +741,68 @@ def start_litellm(
         str(litellm_port),
     ]
 
-    # Add any additional arguments
     if args:
-        cmd.extend(args)
+        litellm_cmd.extend(args)
 
-    # Start combined MITM proxy (reverse + forward in one mitmweb process)
-    if mitm:
-        import time
+    mitm_proc: subprocess.Popen[bytes] | None = None
 
-        from ccproxy.mitm import ProxyMode, start_mitm
-        from ccproxy.mitm.process import is_running as mitm_is_running
+    # SIGTERM handler: convert to KeyboardInterrupt for clean shutdown
+    original_sigterm = signal.getsignal(signal.SIGTERM)
 
-        reverse_listen_port = reverse_port or main_port
-        print(
-            f"Starting MITM proxy: reverse@{reverse_listen_port} + forward@{forward_port}, "
-            f"inspect UI@{inspect_port}"
-        )
-        start_mitm(
-            config_dir,
-            reverse_port=reverse_listen_port,
-            forward_port=forward_port,
-            litellm_port=litellm_port,
-            web=True,
-            inspect_port=inspect_port,
-            detach=True,
-            confdir=mitm_confdir,
-        )
+    def _sigterm_handler(signum: int, frame: object) -> None:
+        raise KeyboardInterrupt
 
-        # Verify combined process started
-        time.sleep(0.5)
-        combined_running, _ = mitm_is_running(config_dir, ProxyMode.COMBINED)
-        if not combined_running:
-            print("Error: MITM proxy failed to start", file=sys.stderr)
-            sys.exit(1)
+    signal.signal(signal.SIGTERM, _sigterm_handler)
 
-    if detach:
-        # Run in background mode
-        pid_file = config_dir / "litellm.lock"
-        log_file = config_dir / "litellm.log"
-
-        # Check if already running
-        running, pid = is_process_running(pid_file)
-        if running:
-            console = Console()
-            console.print(f"[dim]Proxy already running (PID {pid}), attaching to logs...[/dim]")
-            view_logs(config_dir, source="all", follow=True)
-            sys.exit(0)
-
-        # Start process in background
-        try:
-            with log_file.open("w") as log:
-                # S603: Command construction is safe - we control the litellm path
-                process = subprocess.Popen(  # noqa: S603
-                    cmd,
-                    stdout=log,
-                    stderr=subprocess.STDOUT,
-                    start_new_session=True,  # Detach from parent process group
-                    env=env,
-                )
-
-            # Save PID
-            write_pid(pid_file, process.pid)
-
-            print("LiteLLM started in background")
-            print(f"Log file: {log_file}")
-            sys.exit(0)
-
-        except FileNotFoundError:
-            print("Error: litellm command not found.", file=sys.stderr)
-            print(
-                "Please ensure LiteLLM is installed: pip install litellm",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-    else:
-        # Execute litellm command in foreground
-        try:
-            # S603: Command construction is safe - we control the litellm path
-            result = subprocess.run(cmd, env=env)  # noqa: S603
-            sys.exit(result.returncode)
-        except FileNotFoundError:
-            print("Error: litellm command not found.", file=sys.stderr)
-            print(
-                "Please ensure LiteLLM is installed: pip install litellm",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        except KeyboardInterrupt:
-            sys.exit(130)
-
-
-def stop_litellm(config_dir: Path) -> bool:
-    """Stop the background LiteLLM proxy server.
-
-    Args:
-        config_dir: Configuration directory containing the PID file
-
-    Returns:
-        True if server was stopped successfully, False otherwise
-    """
-    # Stop MITM if running (combined process + shadow + legacy)
-    from ccproxy.mitm import stop_mitm
-    from ccproxy.mitm.process import ProxyMode
-    from ccproxy.mitm.process import is_running as mitm_is_running
-    from ccproxy.process import read_pid
-
-    combined_running, _ = mitm_is_running(config_dir, ProxyMode.COMBINED)
-    shadow_running, _ = mitm_is_running(config_dir, ProxyMode.SHADOW)
-    if combined_running or shadow_running:
-        print("Stopping MITM proxies...")
-        stop_mitm(config_dir)  # Stops combined + shadow + legacy
-
-    pid_file = config_dir / "litellm.lock"
-
-    # Check if PID file exists
-    if not pid_file.exists():
-        print("No LiteLLM server is running (PID file not found)", file=sys.stderr)
-        return False
-
-    # Read PID to display in messages
-    pid = read_pid(pid_file)
-    if pid is None:
-        print("Error reading PID file", file=sys.stderr)
-        return False
-
-    # Check if process is running
-    running, _ = is_process_running(pid_file)
-    if not running:
-        print(f"LiteLLM server was not running (stale PID: {pid})")
-        return False
-
-    # Attempt to stop the process
-    print(f"Stopping LiteLLM server (PID: {pid})...")
-
-    # Stop the process and capture whether force kill was needed
-    # We need to replicate stop_process logic to know which method was used
     try:
-        os.kill(pid, signal.SIGTERM)
-        time.sleep(0.5)
+        if mitm:
+            from ccproxy.mitm import start_mitm
 
-        # Check if still running
-        try:
-            os.kill(pid, 0)
-            # Still running, force kill
-            os.kill(pid, signal.SIGKILL)
-            print(f"Force killed LiteLLM server (PID: {pid})")
-        except ProcessLookupError:
-            print(f"LiteLLM server stopped successfully (PID: {pid})")
+            reverse_listen_port = reverse_port or main_port
+            print(
+                f"Starting MITM proxy: reverse@{reverse_listen_port} + forward@{forward_port} "
+                f"+ wireguard@{wireguard_port}, inspect UI@{inspect_port}"
+            )
+            mitm_proc = start_mitm(
+                config_dir,
+                reverse_port=reverse_listen_port,
+                forward_port=forward_port,
+                litellm_port=litellm_port,
+                web=True,
+                inspect_port=inspect_port,
+                confdir=mitm_confdir,
+                wireguard_port=wireguard_port,
+                wireguard_conf_path=wireguard_conf_path,
+            )
 
-        # Remove PID file
-        pid_file.unlink()
-        return True
+            if not _wait_for_port("127.0.0.1", forward_port, timeout=10):
+                print("Error: MITM proxy failed to start (port not ready)", file=sys.stderr)
+                sys.exit(1)
 
-    except OSError as e:
-        print(f"Error stopping process: {e}", file=sys.stderr)
-        return False
+            # Retrieve WireGuard client config from mitmweb for ccproxy run --inspect
+            wg_client_conf = _fetch_wireguard_client_conf(inspect_port)
+            if wg_client_conf:
+                (config_dir / ".mitm-wireguard-client.conf").write_text(wg_client_conf)
+            else:
+                logger.warning("Failed to retrieve WireGuard client config from mitmweb")
+
+        # S603: Command construction is safe - we control the litellm path
+        result = subprocess.run(litellm_cmd, env=env)  # noqa: S603
+        sys.exit(result.returncode)
+
+    except FileNotFoundError:
+        print("Error: litellm command not found.", file=sys.stderr)
+        print(
+            "Please ensure LiteLLM is installed: pip install litellm",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        signal.signal(signal.SIGTERM, original_sigterm)
+        if mitm_proc is not None:
+            _terminate_proc(mitm_proc)
 
 
 def get_log_paths(config_dir: Path, source: LogSource) -> list[tuple[str, Path]]:
@@ -1028,14 +989,16 @@ def show_status(
     When any check_* flag is True, exits 0 only if ALL specified services
     are healthy, otherwise exits 1. No output is produced in check mode.
     """
-    from ccproxy.mitm import ProxyMode
-    from ccproxy.mitm.process import is_running as mitm_is_running
+    import socket
 
-    # Check LiteLLM proxy status
-    pid_file = config_dir / "litellm.lock"
+    def _check_alive(check_host: str, check_port: int, timeout: float = 0.5) -> bool:
+        try:
+            with socket.create_connection((check_host, check_port), timeout=timeout):
+                return True
+        except OSError:
+            return False
+
     log_file = config_dir / "litellm.log"
-
-    proxy_running, _ = is_process_running(pid_file)
 
     # Check configuration files
     ccproxy_config = config_dir / "ccproxy.yaml"
@@ -1082,26 +1045,22 @@ def show_status(
         except (yaml.YAMLError, OSError):
             pass
 
-    # Read proxy host/port from config.yaml general_settings
     host, main_port = _read_proxy_settings(config_dir)
     reverse_port = mitm_config.get("reverse_port")
     proxy_url = f"http://{host}:{reverse_port or main_port}"
 
-    # Check MITM status
-    combined_running, combined_pid = mitm_is_running(config_dir, ProxyMode.COMBINED)
-    shadow_running, shadow_pid = mitm_is_running(config_dir, ProxyMode.SHADOW)
-    mitm_enabled = mitm_config.get("enabled", False)
+    # Detect running state via TCP probes
+    proxy_running = _check_alive(host, reverse_port or main_port)
     inspect_port = mitm_config.get("inspect_port", 8083)
-    litellm_actual_port = main_port  # Default: LiteLLM on main port
+    combined_running = _check_alive("127.0.0.1", inspect_port)
+    litellm_actual_port = main_port
 
-    # Read actual LiteLLM port from state file (when MITM is running)
     litellm_port_file = config_dir / ".litellm_port"
     if litellm_port_file.exists():
         with contextlib.suppress(ValueError, OSError):
             litellm_actual_port = int(litellm_port_file.read_text().strip())
 
-    # Build status data
-    status_data = {
+    status_data: dict[str, Any] = {
         "proxy": proxy_running,
         "url": proxy_url,
         "config": config_paths,
@@ -1110,30 +1069,20 @@ def show_status(
         "model_list": model_list,
         "log": str(log_file) if log_file.exists() else None,
         "mitm": {
-            "enabled": mitm_enabled,
             "combined": {
                 "running": combined_running,
-                "pid": combined_pid,
                 "reverse_port": reverse_port or main_port,
                 "forward_port": forward_port,
                 "inspect_port": inspect_port,
                 "inspect_url": f"http://127.0.0.1:{inspect_port}" if combined_running else None,
             },
-            # Backward compat: both reflect combined process state
             "reverse": {
                 "running": combined_running,
-                "pid": combined_pid,
                 "port": reverse_port or main_port,
             },
             "forward": {
                 "running": combined_running,
-                "pid": combined_pid,
                 "port": forward_port,
-            },
-            "shadow": {
-                "running": shadow_running,
-                "pid": shadow_pid,
-                "port": 8082,
             },
             "litellm_port": litellm_actual_port,
         },
@@ -1183,22 +1132,11 @@ def show_status(
                 f"[green]reverse[/green]@[cyan]{rev_port}[/cyan] → litellm@[cyan]{litellm_port}[/cyan]  "
                 f"[green]forward[/green]@[cyan]{fwd_port}[/cyan] → providers"
             )
-            if combined_info["pid"]:
-                combined_status += f"  [dim](pid: {combined_info['pid']})[/dim]"
             if combined_info.get("inspect_url"):
                 combined_status += f"\n[green]inspect[/green] → [cyan]{combined_info['inspect_url']}[/cyan]"
             mitm_parts.append(combined_status)
         else:
             mitm_parts.append("[dim]stopped[/dim]")
-
-        # Shadow proxy status
-        shadow_info = mitm_info["shadow"]
-        if shadow_info["running"]:
-            shadow_port = shadow_info["port"]
-            shadow_status = f"[green]shadow[/green] on [cyan]{shadow_port}[/cyan] → all HTTP capture"
-            if shadow_info["pid"]:
-                shadow_status += f" [dim](pid: {shadow_info['pid']})[/dim]"
-            mitm_parts.append(shadow_status)
 
         mitm_display = "\n".join(mitm_parts)
         table.add_row("mitm", mitm_display)
@@ -1350,7 +1288,7 @@ def get_graphql_url(config_dir: Path) -> str:
     return "http://localhost:5435/graphql"
 
 
-async def execute_graphql(graphql_url: str, query: str) -> tuple[list[dict], list[str]]:
+async def execute_graphql(graphql_url: str, query: str) -> tuple[list[dict[str, Any]], list[str]]:
     """Execute a GraphQL query against PostGraphile and return results.
 
     Args:
@@ -1362,7 +1300,7 @@ async def execute_graphql(graphql_url: str, query: str) -> tuple[list[dict], lis
     """
     import httpx
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient() as client:  # type: ignore[attr-defined]
         resp = await client.post(
             graphql_url,
             json={"query": query},
@@ -1400,7 +1338,7 @@ async def execute_graphql(graphql_url: str, query: str) -> tuple[list[dict], lis
     return rows, columns
 
 
-async def execute_sql(database_url: str, query: str) -> tuple[list[dict], list[str]]:
+async def execute_sql(database_url: str, query: str) -> tuple[list[dict[str, Any]], list[str]]:
     """Execute SQL query and return results.
 
     Args:
@@ -1410,7 +1348,7 @@ async def execute_sql(database_url: str, query: str) -> tuple[list[dict], list[s
     Returns:
         Tuple of (rows as list of dicts, column names)
     """
-    import asyncpg
+    import asyncpg  # type: ignore[import-untyped]
 
     conn = await asyncpg.connect(database_url)
     try:
@@ -1442,7 +1380,7 @@ def resolve_query_input(cmd: DbSql | DbGql) -> str | None:
     return None
 
 
-def format_table(rows: list[dict], columns: list[str], console: Console) -> None:
+def format_table(rows: list[dict[str, Any]], columns: list[str], console: Console) -> None:
     """Format query results as Rich table with styling.
 
     Args:
@@ -1467,7 +1405,7 @@ def format_table(rows: list[dict], columns: list[str], console: Console) -> None
     console.print(table)
 
 
-def format_json_output(rows: list[dict], _console: Console) -> None:
+def format_json_output(rows: list[dict[str, Any]], _console: Console) -> None:
     """Format query results as JSON output.
 
     Args:
@@ -1476,7 +1414,7 @@ def format_json_output(rows: list[dict], _console: Console) -> None:
     """
     import json as json_module
 
-    def serialize_value(obj):
+    def serialize_value(obj: object) -> str:
         """Custom serializer for database values.
 
         Handles bytes objects (bytea fields) by decoding them as UTF-8 strings.
@@ -1490,7 +1428,7 @@ def format_json_output(rows: list[dict], _console: Console) -> None:
     builtin_print(json_str)
 
 
-def format_csv_output(rows: list[dict], columns: list[str]) -> None:
+def format_csv_output(rows: list[dict[str, Any]], columns: list[str]) -> None:
     """Format query results as CSV to stdout.
 
     Args:
@@ -1608,7 +1546,7 @@ def handle_db_gql(config_dir: Path, cmd: DbGql) -> None:
 # === Database Prompt Command Handlers ===
 
 
-async def fetch_trace(database_url: str, trace_id: str) -> dict | None:
+async def fetch_trace(database_url: str, trace_id: str) -> dict[str, Any] | None:
     """Fetch a single trace by ID.
 
     Args:
@@ -1631,7 +1569,7 @@ async def fetch_trace(database_url: str, trace_id: str) -> dict | None:
         await conn.close()
 
 
-def parse_anthropic_request(body: bytes | None) -> dict:
+def parse_anthropic_request(body: bytes | None) -> dict[str, Any]:
     """Parse Anthropic Messages API request body.
 
     Args:
@@ -1661,7 +1599,7 @@ def parse_anthropic_request(body: bytes | None) -> dict:
     }
 
 
-def parse_streaming_response(text: str) -> dict:
+def parse_streaming_response(text: str) -> dict[str, Any]:
     """Parse SSE streaming response into consolidated content.
 
     Args:
@@ -1670,8 +1608,8 @@ def parse_streaming_response(text: str) -> dict:
     Returns:
         Consolidated response content
     """
-    content_blocks: list[dict] = []
-    usage: dict | None = None
+    content_blocks: list[dict[str, Any]] = []
+    usage: dict[str, Any] | None = None
     stop_reason: str | None = None
     model: str | None = None
 
@@ -1718,7 +1656,7 @@ def parse_streaming_response(text: str) -> dict:
     }
 
 
-def parse_anthropic_response(body: bytes | None, content_type: str | None) -> dict:
+def parse_anthropic_response(body: bytes | None, content_type: str | None) -> dict[str, Any]:
     """Parse Anthropic Messages API response body.
 
     Handles both streaming (text/event-stream) and non-streaming responses.
@@ -1756,7 +1694,7 @@ def parse_anthropic_response(body: bytes | None, content_type: str | None) -> di
     }
 
 
-def format_content_block(block: dict) -> list[str]:
+def format_content_block(block: dict[str, Any]) -> list[str]:
     """Format a single content block.
 
     Args:
@@ -1824,9 +1762,9 @@ def format_content_block(block: dict) -> list[str]:
 
 
 def format_trace_markdown(
-    trace: dict,
-    request: dict,
-    response: dict,
+    trace: dict[str, Any],
+    request: dict[str, Any],
+    response: dict[str, Any],
     include_headers: bool = False,
 ) -> str:
     """Format trace data as markdown document.
@@ -2088,7 +2026,7 @@ def main(
 
     # Handle each command type
     if isinstance(cmd, Start):
-        start_litellm(config_dir, args=cmd.args, detach=cmd.detach, inspect=cmd.inspect)
+        start_litellm(config_dir, args=cmd.args, inspect=cmd.inspect)
 
     elif isinstance(cmd, Install):
         install_config(config_dir, force=cmd.force)
@@ -2098,7 +2036,7 @@ def main(
         # Extract --shadow/-s and --help/-h manually from the command list.
         args = list(cmd.command)
         if not args or args == ["-h"] or args == ["--help"]:
-            print("usage: ccproxy run [--shadow [HOST:PORT]] -- <command> [args...]")
+            print("usage: ccproxy run [--shadow [HOST:PORT]] [--inspect] -- <command> [args...]")
             print()
             print("Run a command with ccproxy environment.")
             print()
@@ -2108,11 +2046,15 @@ def main(
             print("                      proxy for capture. Optionally specify bind address")
             print("                      (default: 127.0.0.1:8082). API calls still flow")
             print("                      through the primary proxy via ANTHROPIC_BASE_URL.")
+            print("  --inspect, -i       Route subprocess traffic through a WireGuard namespace")
+            print("                      for transparent capture. Requires ccproxy start --inspect")
+            print("                      and Linux unprivileged user namespaces.")
             print("  command ...         Command and arguments to execute with proxy settings")
             sys.exit(0 if not args else 0)
 
-        # Extract --shadow / -s [HOST:PORT] from args
+        # Extract --shadow / -s [HOST:PORT] and --inspect / -i from args
         shadow = None
+        inspect = False
         filtered: list[str] = []
         i = 0
         while i < len(args):
@@ -2124,6 +2066,9 @@ def main(
                 else:
                     shadow = ""
                     i += 1
+            elif args[i] in ("--inspect", "-i"):
+                inspect = True
+                i += 1
             elif args[i] == "--":
                 filtered.extend(args[i + 1 :])
                 break
@@ -2134,33 +2079,7 @@ def main(
         if not filtered:
             print("Error: No command specified to run", file=sys.stderr)
             sys.exit(1)
-        run_with_proxy(config_dir, filtered, shadow=shadow)
-
-    elif isinstance(cmd, Stop):
-        success = stop_litellm(config_dir)
-        sys.exit(0 if success else 1)
-
-    elif isinstance(cmd, Restart):
-        # Check if MITM was running before stopping
-        from ccproxy.mitm import ProxyMode
-        from ccproxy.mitm.process import is_running as mitm_is_running
-
-        mitm_was_running, _ = mitm_is_running(config_dir, ProxyMode.COMBINED)
-
-        # Stop the server first
-        pid_file = config_dir / "litellm.lock"
-        if pid_file.exists():
-            print("Stopping LiteLLM server...")
-            stop_litellm(config_dir)
-        else:
-            print("No server running, starting fresh...")
-
-        # Wait for clean shutdown
-        time.sleep(1)
-
-        # Start the server with same MITM state
-        print("Starting LiteLLM server...")
-        start_litellm(config_dir, args=cmd.args, detach=cmd.detach, inspect=mitm_was_running)
+        run_with_proxy(config_dir, filtered, shadow=shadow, inspect=inspect)
 
     elif isinstance(cmd, Logs):
         view_logs(config_dir, source=cmd.source, follow=cmd.follow, lines=cmd.lines)

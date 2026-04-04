@@ -14,14 +14,12 @@ from ccproxy.cli import (
     Run,
     Start,
     Status,
-    Stop,
     generate_handler_file,
     install_config,
     main,
     run_with_proxy,
     show_status,
     start_litellm,
-    stop_litellm,
     view_logs,
 )
 
@@ -98,128 +96,14 @@ class TestStartProxy:
 
     @patch("subprocess.run")
     def test_litellm_keyboard_interrupt(self, mock_run: Mock, tmp_path: Path) -> None:
-        """Test litellm with keyboard interrupt."""
+        """Test litellm with keyboard interrupt — returns normally after cleanup."""
         config_file = tmp_path / "config.yaml"
         config_file.write_text("litellm: config")
 
         mock_run.side_effect = KeyboardInterrupt()
 
-        with pytest.raises(SystemExit) as exc_info:
-            start_litellm(tmp_path)
-
-        assert exc_info.value.code == 130
-
-    @patch("subprocess.Popen")
-    def test_litellm_detach_success(self, mock_popen: Mock, tmp_path: Path, capsys) -> None:
-        """Test successful litellm execution in detached mode."""
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text("litellm: config")
-
-        mock_process = Mock()
-        mock_process.pid = 12345
-        mock_popen.return_value = mock_process
-
-        with pytest.raises(SystemExit) as exc_info:
-            start_litellm(tmp_path, detach=True)
-
-        assert exc_info.value.code == 0
-
-        # Check PID file was created
-        pid_file = tmp_path / "litellm.lock"
-        assert pid_file.exists()
-        assert pid_file.read_text() == "12345"
-
-        # Check output
-        captured = capsys.readouterr()
-        assert "LiteLLM started in background" in captured.out
-        assert "Log file:" in captured.out
-        # Path may be wrapped in output, so check without newlines
-        output_flat = captured.out.replace("\n", "")
-        assert "litellm.log" in output_flat
-
-    @patch("os.kill")
-    def test_litellm_detach_already_running(self, mock_kill: Mock, tmp_path: Path, capsys) -> None:
-        """Test litellm detach when already running - preflight rejects start."""
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text("litellm: config")
-
-        # Create existing PID file
-        pid_file = tmp_path / "litellm.lock"
-        pid_file.write_text("67890")
-
-        # Mock process is still running
-        mock_kill.return_value = None
-
-        with pytest.raises(SystemExit) as exc_info:
-            start_litellm(tmp_path, detach=True)
-
-        # Preflight detects running instance and exits with error
-        assert exc_info.value.code == 1
-        captured = capsys.readouterr()
-        assert "already running" in captured.out
-        assert "ccproxy stop" in captured.out
-
-    @patch("subprocess.Popen")
-    @patch("os.kill")
-    def test_litellm_detach_stale_pid(self, mock_kill: Mock, mock_popen: Mock, tmp_path: Path) -> None:
-        """Test litellm detach with stale PID file."""
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text("litellm: config")
-
-        # Create existing PID file
-        pid_file = tmp_path / "litellm.lock"
-        pid_file.write_text("67890")
-
-        # Mock process is not running (raises ProcessLookupError)
-        mock_kill.side_effect = ProcessLookupError()
-
-        mock_process = Mock()
-        mock_process.pid = 12345
-        mock_popen.return_value = mock_process
-
-        with pytest.raises(SystemExit) as exc_info:
-            start_litellm(tmp_path, detach=True)
-
-        assert exc_info.value.code == 0
-
-        # Check PID file was updated
-        assert pid_file.read_text() == "12345"
-
-    @patch("subprocess.Popen")
-    @patch("os.kill")
-    def test_litellm_detach_invalid_pid_file(self, _mock_kill: Mock, mock_popen: Mock, tmp_path: Path) -> None:
-        """Test litellm detach with invalid PID file content."""
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text("litellm: config")
-
-        # Create PID file with invalid content
-        pid_file = tmp_path / "litellm.lock"
-        pid_file.write_text("not-a-number")
-
-        mock_process = Mock()
-        mock_process.pid = 12345
-        mock_popen.return_value = mock_process
-
-        with pytest.raises(SystemExit) as exc_info:
-            start_litellm(tmp_path, detach=True)
-
-        assert exc_info.value.code == 0
-        # Check PID file was updated with new PID
-        assert pid_file.read_text() == "12345"
-
-    @patch("subprocess.Popen")
-    def test_litellm_detach_file_not_found(self, mock_popen: Mock, tmp_path: Path) -> None:
-        """Test litellm detach when command is not found."""
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text("litellm: config")
-
-        # Mock FileNotFoundError (command not found)
-        mock_popen.side_effect = FileNotFoundError("Command not found")
-
-        with pytest.raises(SystemExit) as exc_info:
-            start_litellm(tmp_path, detach=True)
-
-        assert exc_info.value.code == 1
+        # KeyboardInterrupt is caught, function returns normally after cleanup
+        start_litellm(tmp_path)
 
 
 class TestInstallConfig:
@@ -645,9 +529,8 @@ class TestRunWithProxy:
         assert "Configuration not found" in captured.err
         assert "Run 'ccproxy install' first" in captured.err
 
-    @patch("ccproxy.mitm.process.is_running")
     @patch("subprocess.run")
-    def test_run_with_proxy_success(self, mock_run: Mock, mock_mitm_running: Mock, tmp_path: Path) -> None:
+    def test_run_with_proxy_success(self, mock_run: Mock, tmp_path: Path) -> None:
         """Test successful command execution with proxy environment."""
         config_file = tmp_path / "ccproxy.yaml"
         config_file.write_text("""
@@ -657,7 +540,6 @@ litellm:
 """)
 
         mock_run.return_value = Mock(returncode=0)
-        mock_mitm_running.return_value = (False, None)
 
         with pytest.raises(SystemExit) as exc_info:
             run_with_proxy(tmp_path, ["echo", "test"])
@@ -670,9 +552,8 @@ litellm:
         assert env["OPENAI_API_BASE"] == "http://192.168.1.1:8888"
         assert env["ANTHROPIC_BASE_URL"] == "http://192.168.1.1:8888"
 
-    @patch("ccproxy.mitm.process.is_running")
     @patch("subprocess.run")
-    def test_run_with_env_override(self, mock_run: Mock, mock_mitm_running: Mock, tmp_path: Path) -> None:
+    def test_run_with_env_override(self, mock_run: Mock, tmp_path: Path) -> None:
         """Test run with environment variable overrides."""
         config_file = tmp_path / "ccproxy.yaml"
         config_file.write_text("""
@@ -682,7 +563,6 @@ litellm:
 """)
 
         mock_run.return_value = Mock(returncode=0)
-        mock_mitm_running.return_value = (False, None)
 
         with (
             patch.dict(os.environ, {"HOST": "10.0.0.1", "PORT": "9999"}),
@@ -695,9 +575,8 @@ litellm:
         env = call_args[1]["env"]
         assert env["OPENAI_API_BASE"] == "http://10.0.0.1:9999"
 
-    @patch("ccproxy.mitm.process.is_running")
     @patch("subprocess.run")
-    def test_run_with_mitm_running(self, mock_run: Mock, mock_mitm_running: Mock, tmp_path: Path) -> None:
+    def test_run_with_mitm_running(self, mock_run: Mock, tmp_path: Path) -> None:
         """Test run with MITM - client still connects to main port (transparent proxy)."""
         config_file = tmp_path / "ccproxy.yaml"
         config_file.write_text("""
@@ -710,7 +589,6 @@ ccproxy:
 """)
 
         mock_run.return_value = Mock(returncode=0)
-        mock_mitm_running.return_value = (True, 12345)
 
         with pytest.raises(SystemExit) as exc_info:
             run_with_proxy(tmp_path, ["echo", "test"])
@@ -727,10 +605,9 @@ ccproxy:
         assert env["OPENAI_API_BASE"] == "http://127.0.0.1:4000"
         assert env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:4000"
 
-    @patch("ccproxy.mitm.process.is_running")
     @patch("subprocess.run")
-    def test_run_with_mitm_not_running(self, mock_run: Mock, mock_mitm_running: Mock, tmp_path: Path) -> None:
-        """Test run with mitmproxy not running routes directly to LiteLLM."""
+    def test_run_with_mitm_not_running(self, mock_run: Mock, tmp_path: Path) -> None:
+        """Test run without shadow proxy routes directly to LiteLLM."""
         config_file = tmp_path / "ccproxy.yaml"
         config_file.write_text("""
 litellm:
@@ -742,7 +619,6 @@ ccproxy:
 """)
 
         mock_run.return_value = Mock(returncode=0)
-        mock_mitm_running.return_value = (False, None)
 
         with pytest.raises(SystemExit) as exc_info:
             run_with_proxy(tmp_path, ["echo", "test"])
@@ -754,7 +630,7 @@ ccproxy:
         env = call_args[1]["env"]
         assert env["OPENAI_API_BASE"] == "http://127.0.0.1:4000"
         assert env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:4000"
-        # HTTP_PROXY should not be set when mitm is not running
+        # HTTP_PROXY should not be set when shadow proxy is not requested
         assert "HTTPS_PROXY" not in env or env.get("HTTPS_PROXY") == os.environ.get("HTTPS_PROXY")
         assert "HTTP_PROXY" not in env or env.get("HTTP_PROXY") == os.environ.get("HTTP_PROXY")
 
@@ -785,94 +661,6 @@ ccproxy:
             run_with_proxy(tmp_path, ["echo", "test"])
 
         assert exc_info.value.code == 130  # Standard exit code for Ctrl+C
-
-
-class TestStopLiteLLM:
-    """Test suite for stop_litellm function."""
-
-    def test_stop_no_pid_file(self, tmp_path: Path, capsys) -> None:
-        """Test stop when PID file doesn't exist."""
-        result = stop_litellm(tmp_path)
-
-        assert result is False
-        captured = capsys.readouterr()
-        assert "No LiteLLM server is running (PID file not found)" in captured.err
-
-    @patch("os.kill")
-    @patch("time.sleep")
-    def test_stop_successful(self, _mock_sleep: Mock, mock_kill: Mock, tmp_path: Path, capsys) -> None:
-        """Test successful stop of running process."""
-        pid_file = tmp_path / "litellm.lock"
-        pid_file.write_text("12345")
-
-        # First call: check if running (returns None)
-        # Second call: send SIGTERM (returns None)
-        # Third call: check if still running (raises ProcessLookupError - stopped)
-        mock_kill.side_effect = [None, None, ProcessLookupError()]
-
-        result = stop_litellm(tmp_path)
-
-        assert result is True
-        assert not pid_file.exists()  # PID file should be removed
-
-        captured = capsys.readouterr()
-        assert "Stopping LiteLLM server (PID: 12345)" in captured.out
-        assert "LiteLLM server stopped successfully (PID: 12345)" in captured.out
-
-        # Verify kill calls
-        assert mock_kill.call_count == 3
-        mock_kill.assert_any_call(12345, 0)  # Check if running
-        mock_kill.assert_any_call(12345, 15)  # SIGTERM
-
-    @patch("os.kill")
-    @patch("time.sleep")
-    def test_stop_force_kill(self, _mock_sleep: Mock, mock_kill: Mock, tmp_path: Path, capsys) -> None:
-        """Test force kill when process doesn't respond to SIGTERM."""
-        pid_file = tmp_path / "litellm.lock"
-        pid_file.write_text("12345")
-
-        # Process keeps running after SIGTERM
-        mock_kill.side_effect = [None, None, None, None]
-
-        result = stop_litellm(tmp_path)
-
-        assert result is True
-        assert not pid_file.exists()
-
-        captured = capsys.readouterr()
-        assert "Force killed LiteLLM server (PID: 12345)" in captured.out
-
-        # Verify kill calls
-        assert mock_kill.call_count == 4
-        mock_kill.assert_any_call(12345, 9)  # SIGKILL
-
-    @patch("os.kill")
-    def test_stop_stale_pid(self, mock_kill: Mock, tmp_path: Path, capsys) -> None:
-        """Test stop with stale PID file."""
-        pid_file = tmp_path / "litellm.lock"
-        pid_file.write_text("12345")
-
-        # Process not running
-        mock_kill.side_effect = ProcessLookupError()
-
-        result = stop_litellm(tmp_path)
-
-        assert result is False
-        assert not pid_file.exists()  # Stale PID file should be removed
-
-        captured = capsys.readouterr()
-        assert "LiteLLM server was not running (stale PID: 12345)" in captured.out
-
-    def test_stop_invalid_pid_file(self, tmp_path: Path, capsys) -> None:
-        """Test stop with invalid PID file content."""
-        pid_file = tmp_path / "litellm.lock"
-        pid_file.write_text("invalid-pid")
-
-        result = stop_litellm(tmp_path)
-
-        assert result is False
-        captured = capsys.readouterr()
-        assert "Error reading PID file" in captured.err
 
 
 class TestViewLogs:
@@ -988,8 +776,8 @@ class TestViewLogs:
 class TestShowStatus:
     """Test suite for show_status function."""
 
-    @patch("os.kill")
-    def test_status_json_proxy_running(self, mock_kill: Mock, tmp_path: Path, capsys) -> None:
+    @patch("socket.create_connection")
+    def test_status_json_proxy_running(self, mock_conn: Mock, tmp_path: Path, capsys) -> None:
         """Test status JSON output with proxy running."""
         # Create config files
         ccproxy_config = tmp_path / "ccproxy.yaml"
@@ -1009,12 +797,9 @@ litellm_settings:
         log_file = tmp_path / "litellm.log"
         log_file.write_text("log content")
 
-        # Create PID file
-        pid_file = tmp_path / "litellm.lock"
-        pid_file.write_text("12345")
-
-        # Mock process is running
-        mock_kill.return_value = None
+        # Mock TCP probe: proxy is reachable
+        mock_conn.return_value.__enter__ = Mock(return_value=Mock())
+        mock_conn.return_value.__exit__ = Mock(return_value=False)
 
         show_status(tmp_path, json_output=True)
 
@@ -1058,24 +843,16 @@ litellm_settings:
         assert status["callbacks"] == []
         assert status["log"] is None
 
-    @patch("os.kill")
-    def test_status_json_with_stale_pid(self, mock_kill: Mock, tmp_path: Path, capsys) -> None:
-        """Test status JSON output with stale PID file."""
-        # Create PID file
-        pid_file = tmp_path / "litellm.lock"
-        pid_file.write_text("12345")
-
-        # Mock process is not running
-        mock_kill.side_effect = ProcessLookupError()
-
+    def test_status_json_proxy_not_reachable(self, tmp_path: Path, capsys) -> None:
+        """Test status JSON output when proxy port is not reachable."""
         show_status(tmp_path, json_output=True)
 
         captured = capsys.readouterr()
         status = json.loads(captured.out)
         assert status["proxy"] is False
 
-    @patch("os.kill")
-    def test_status_rich_output_proxy_running(self, mock_kill: Mock, tmp_path: Path, capsys) -> None:
+    @patch("socket.create_connection")
+    def test_status_rich_output_proxy_running(self, mock_conn: Mock, tmp_path: Path, capsys) -> None:
         """Test status rich output with proxy running."""
         # Create config files
         ccproxy_config = tmp_path / "ccproxy.yaml"
@@ -1091,12 +868,9 @@ litellm_settings:
         log_file = tmp_path / "litellm.log"
         log_file.write_text("log content")
 
-        # Create PID file
-        pid_file = tmp_path / "litellm.lock"
-        pid_file.write_text("12345")
-
-        # Mock process is running
-        mock_kill.return_value = None
+        # Mock TCP probe: proxy is reachable
+        mock_conn.return_value.__enter__ = Mock(return_value=Mock())
+        mock_conn.return_value.__exit__ = Mock(return_value=False)
 
         show_status(tmp_path, json_output=False)
 
@@ -1136,7 +910,7 @@ class TestMainFunction:
         cmd = Start(args=["--debug", "--port", "8080"])
         main(cmd, config_dir=tmp_path)
 
-        mock_litellm.assert_called_once_with(tmp_path, args=["--debug", "--port", "8080"], detach=False, inspect=False)
+        mock_litellm.assert_called_once_with(tmp_path, args=["--debug", "--port", "8080"], inspect=False)
 
     @patch("ccproxy.cli.start_litellm")
     def test_main_litellm_no_args(self, mock_litellm: Mock, tmp_path: Path) -> None:
@@ -1144,15 +918,7 @@ class TestMainFunction:
         cmd = Start()
         main(cmd, config_dir=tmp_path)
 
-        mock_litellm.assert_called_once_with(tmp_path, args=None, detach=False, inspect=False)
-
-    @patch("ccproxy.cli.start_litellm")
-    def test_main_litellm_detach(self, mock_litellm: Mock, tmp_path: Path) -> None:
-        """Test main with litellm command in detach mode."""
-        cmd = Start(detach=True)
-        main(cmd, config_dir=tmp_path)
-
-        mock_litellm.assert_called_once_with(tmp_path, args=None, detach=True, inspect=False)
+        mock_litellm.assert_called_once_with(tmp_path, args=None, inspect=False)
 
     @patch("ccproxy.cli.install_config")
     def test_main_install_command(self, mock_install: Mock, tmp_path: Path) -> None:
@@ -1168,7 +934,7 @@ class TestMainFunction:
         cmd = Run(command=["echo", "hello", "world"])
         main(cmd, config_dir=tmp_path)
 
-        mock_run.assert_called_once_with(tmp_path, ["echo", "hello", "world"], shadow=None)
+        mock_run.assert_called_once_with(tmp_path, ["echo", "hello", "world"], shadow=None, inspect=False)
 
     def test_main_run_no_args(self, tmp_path: Path, capsys) -> None:
         """Test main run command without arguments shows help."""
@@ -1191,19 +957,7 @@ class TestMainFunction:
             main(cmd)
 
             # Check that litellm was called with the default config dir
-            mock_litellm.assert_called_once_with(tmp_path / ".ccproxy", args=None, detach=False, inspect=False)
-
-    @patch("ccproxy.cli.stop_litellm")
-    def test_main_stop_command(self, mock_stop: Mock, tmp_path: Path) -> None:
-        """Test main with stop command."""
-        cmd = Stop()
-        mock_stop.return_value = True  # Simulate successful stop
-
-        with pytest.raises(SystemExit) as exc_info:
-            main(cmd, config_dir=tmp_path)
-
-        assert exc_info.value.code == 0
-        mock_stop.assert_called_once_with(tmp_path)
+            mock_litellm.assert_called_once_with(tmp_path / ".ccproxy", args=None, inspect=False)
 
     @patch("ccproxy.cli.view_logs")
     def test_main_logs_command(self, mock_logs: Mock, tmp_path: Path) -> None:

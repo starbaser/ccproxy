@@ -35,6 +35,7 @@
       excluded_hosts = [ ];
       cert_dir = "~/.ccproxy";
       debug = false;
+      wireguard_port = 51820;
     };
   };
 

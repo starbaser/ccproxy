@@ -159,24 +159,6 @@ class TestRunPreflightChecks:
 
         run_preflight_checks(tmp_path, ports=[free_port])
 
-    def test_already_running_via_pidfile(self, tmp_path):
-        """PID file with alive process → SystemExit."""
-        from ccproxy.process import write_pid
-
-        pid_file = tmp_path / "litellm.lock"
-        write_pid(pid_file, os.getpid())
-
-        with pytest.raises(SystemExit):
-            run_preflight_checks(tmp_path, ports=[])
-
-    def test_stale_pidfile_cleaned(self, tmp_path):
-        """PID file with dead process should be cleaned, not block start."""
-        pid_file = tmp_path / "litellm.lock"
-        pid_file.write_text("999999999")  # Unlikely to be alive
-
-        # Should NOT raise — stale PID file gets cleaned by is_process_running
-        run_preflight_checks(tmp_path, ports=[])
-
     def test_port_occupied_by_foreign_process(self, tmp_path):
         """Port held by non-ccproxy process → SystemExit."""
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

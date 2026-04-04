@@ -73,6 +73,8 @@ ccproxy:
     otel_enabled: false
     otel_endpoint: "http://localhost:4317"
     otel_service_name: "ccproxy-mitm"
+    wireguard_port: 51820
+    wireguard_conf_path: null
 
 litellm:
   host: 127.0.0.1

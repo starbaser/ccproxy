@@ -2,14 +2,11 @@
 
 import logging
 import os
+import socket
 import subprocess
 import sys
 from enum import Enum
 from pathlib import Path
-
-from ccproxy.process import is_process_running as shared_is_process_running
-from ccproxy.process import stop_process as shared_stop_process
-from ccproxy.process import write_pid
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +26,7 @@ def ensure_prisma_client(database_url: str) -> bool:
     """
     # Try importing and instantiating Prisma - if it works, client is ready
     try:
-        from prisma import Prisma
+        from prisma import Prisma  # type: ignore[attr-defined]
 
         Prisma()
         return True
@@ -86,39 +83,11 @@ def ensure_prisma_client(database_url: str) -> bool:
 class ProxyMode(Enum):
     """Mitmproxy operating mode."""
 
-    REVERSE = "reverse"
-    """Logical label for reverse proxy direction (legacy PID cleanup)"""
-
-    FORWARD = "forward"
-    """Logical label for forward proxy direction (legacy PID cleanup)"""
-
     SHADOW = "shadow"
     """Shadow forward proxy — captures all HTTP from ccproxy run --shadow subprocess"""
 
     COMBINED = "combined"
     """Merged reverse+forward in a single multi-mode process"""
-
-
-def get_pid_file(config_dir: Path, mode: ProxyMode = ProxyMode.COMBINED) -> Path:
-    """Get the path to the mitmproxy PID file for a specific mode.
-
-    Args:
-        config_dir: Configuration directory
-        mode: Proxy mode
-
-    Returns:
-        Path to PID lock file
-    """
-    match mode:
-        case ProxyMode.COMBINED:
-            return config_dir / ".mitm-combined.lock"
-        case ProxyMode.SHADOW:
-            return config_dir / ".mitm-shadow.lock"
-        # Legacy paths — kept for migration cleanup
-        case ProxyMode.REVERSE:
-            return config_dir / ".mitm.lock"
-        case ProxyMode.FORWARD:
-            return config_dir / ".mitm-forward.lock"
 
 
 def get_log_file(config_dir: Path, mode: ProxyMode = ProxyMode.COMBINED) -> Path:
@@ -136,25 +105,14 @@ def get_log_file(config_dir: Path, mode: ProxyMode = ProxyMode.COMBINED) -> Path
             return config_dir / "mitm-combined.log"
         case ProxyMode.SHADOW:
             return config_dir / "mitm-shadow.log"
-        # Legacy paths
-        case ProxyMode.REVERSE:
-            return config_dir / "mitm.log"
-        case ProxyMode.FORWARD:
-            return config_dir / "mitm-forward.log"
 
 
-def is_running(config_dir: Path, mode: ProxyMode = ProxyMode.COMBINED) -> tuple[bool, int | None]:
-    """Check if mitmproxy is currently running for a specific mode.
-
-    Args:
-        config_dir: Configuration directory
-        mode: Proxy mode to check
-
-    Returns:
-        Tuple of (is_running, pid or None)
-    """
-    pid_file = get_pid_file(config_dir, mode)
-    return shared_is_process_running(pid_file)
+def _check_port_alive(host: str, port: int, timeout: float = 0.5) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
 
 
 def _resolve_mitm_binary(web: bool = False) -> Path:
@@ -274,52 +232,37 @@ def _resolve_database_url(config_dir: Path) -> str | None:
 def _launch_process(
     cmd: list[str],
     env: dict[str, str],
-    pid_file: Path,
     log_file: Path,
-    detach: bool,
     description: str,
-) -> None:
-    """Launch a mitmproxy subprocess.
+) -> subprocess.Popen[bytes]:
+    """Launch a mitmproxy subprocess and return the Popen object.
 
     Args:
         cmd: Command and arguments
         env: Environment variables
-        pid_file: PID file path for background process tracking
-        log_file: Log file path for background process output
-        detach: Run in background mode
+        log_file: Log file path for subprocess output
         description: Human-readable description for log messages
+
+    Returns:
+        The running subprocess as a Popen object
     """
-    if detach:
-        logger.info("Starting %s", description)
-        logger.info("Log file: %s", log_file)
+    logger.info("Starting %s", description)
+    logger.info("Log file: %s", log_file)
 
-        try:
-            with log_file.open("w") as log:
-                process = subprocess.Popen(  # noqa: S603
-                    cmd,
-                    stdout=log,
-                    stderr=subprocess.STDOUT,
-                    start_new_session=True,
-                    env=env,
-                )
-
-            write_pid(pid_file, process.pid)
-            logger.info("Mitmproxy started with PID %d", process.pid)
-
-        except FileNotFoundError:
-            logger.error("mitmproxy command not found")
-            sys.exit(1)
-    else:
-        logger.info("Starting %s", description)
-
-        try:
-            result = subprocess.run(cmd, env=env)  # noqa: S603
-            sys.exit(result.returncode)
-        except FileNotFoundError:
-            logger.error("mitmproxy command not found")
-            sys.exit(1)
-        except KeyboardInterrupt:
-            sys.exit(130)
+    try:
+        log = log_file.open("w")
+        process = subprocess.Popen(  # noqa: S603
+            cmd,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            start_new_session=False,
+            env=env,
+        )
+        logger.info("Mitmproxy started with PID %d", process.pid)
+        return process
+    except FileNotFoundError:
+        logger.error("mitmproxy command not found")
+        sys.exit(1)
 
 
 def start_mitm(
@@ -329,32 +272,31 @@ def start_mitm(
     litellm_port: int = 4001,
     web: bool = False,
     inspect_port: int = 8083,
-    detach: bool = False,
     confdir: Path | None = None,
-) -> None:
+    wireguard_port: int = 51820,
+    wireguard_conf_path: Path | None = None,
+) -> subprocess.Popen[bytes]:
     """Start the combined mitmproxy process (reverse + forward in one process).
 
     Uses mitmproxy multi-mode to serve both reverse and forward proxy
     listeners from a single process with a unified addon pipeline.
 
     Args:
-        config_dir: Configuration directory for PID and log files
+        config_dir: Configuration directory for log files
         reverse_port: Port for client-facing reverse proxy
         forward_port: Port for LiteLLM-outbound forward proxy
         litellm_port: Port where LiteLLM is running
         web: Use mitmweb (browser UI) instead of mitmdump
         inspect_port: Port for mitmweb web UI (only used when web=True)
-        detach: Run in background mode
         confdir: mitmproxy confdir for CA certs (defaults to ~/.mitmproxy)
-    """
-    running, pid = is_running(config_dir, ProxyMode.COMBINED)
-    if running:
-        logger.error(f"Mitmproxy (combined) is already running with PID {pid}")
-        sys.exit(1)
+        wireguard_port: Port for WireGuard transparent proxy listener
+        wireguard_conf_path: Optional path to WireGuard config file
 
+    Returns:
+        The running subprocess as a Popen object
+    """
     _auto_generate_prisma(config_dir)
 
-    pid_file = get_pid_file(config_dir, ProxyMode.COMBINED)
     log_file = get_log_file(config_dir, ProxyMode.COMBINED)
     mitm_bin = _resolve_mitm_binary(web=web)
     script_path = _resolve_addon_script()
@@ -366,6 +308,8 @@ def start_mitm(
         f"reverse:http://localhost:{litellm_port}@{reverse_port}",
         "--mode",
         f"regular@{forward_port}",
+        "--mode",
+        f"{'wireguard:' + str(wireguard_conf_path) if wireguard_conf_path else 'wireguard'}@{wireguard_port}",
         "--set",
         f"confdir={mitm_confdir}",
         "--set",
@@ -393,34 +337,29 @@ def start_mitm(
     if web:
         description += f", inspect UI@{inspect_port}"
 
-    _launch_process(cmd, env, pid_file, log_file, detach, description)
+    return _launch_process(cmd, env, log_file, description)
 
 
 def start_shadow_mitm(
     config_dir: Path,
     port: int = 8082,
-    detach: bool = False,
     confdir: Path | None = None,
-) -> None:
+) -> subprocess.Popen[bytes]:
     """Start a shadow mitmproxy process for subprocess HTTP capture.
 
     Shadow mode captures all HTTP traffic from a `ccproxy run --shadow` subprocess
     as a standalone forward proxy.
 
     Args:
-        config_dir: Configuration directory for PID and log files
+        config_dir: Configuration directory for log files
         port: Port for the shadow forward proxy
-        detach: Run in background mode
         confdir: mitmproxy confdir for CA certs (defaults to ~/.mitmproxy)
-    """
-    running, pid = is_running(config_dir, ProxyMode.SHADOW)
-    if running:
-        logger.error(f"Mitmproxy (shadow) is already running with PID {pid}")
-        sys.exit(1)
 
+    Returns:
+        The running subprocess as a Popen object
+    """
     _auto_generate_prisma(config_dir)
 
-    pid_file = get_pid_file(config_dir, ProxyMode.SHADOW)
     log_file = get_log_file(config_dir, ProxyMode.SHADOW)
     mitm_bin = _resolve_mitm_binary(web=False)
     script_path = _resolve_addon_script()
@@ -445,69 +384,11 @@ def start_shadow_mitm(
         shadow_port=port,
     )
 
-    _launch_process(
-        cmd,
-        env,
-        pid_file,
-        log_file,
-        detach,
-        f"mitmproxy shadow mode on port {port}",
-    )
+    return _launch_process(cmd, env, log_file, f"mitmproxy shadow mode on port {port}")
 
 
-def stop_mitm(config_dir: Path, mode: ProxyMode | None = None) -> bool:
-    """Stop the mitmproxy traffic capture proxy.
-
-    Args:
-        config_dir: Configuration directory containing the PID file
-        mode: Specific proxy mode to stop, or None to stop all modes
-
-    Returns:
-        True if at least one proxy was stopped successfully, False otherwise
-    """
-    if mode is not None:
-        # REVERSE or FORWARD requested → stop the COMBINED process (they share it)
-        if mode in (ProxyMode.REVERSE, ProxyMode.FORWARD):
-            logger.info("Stopping combined mitmproxy process (serves both reverse and forward)")
-            mode = ProxyMode.COMBINED
-
-        pid_file = get_pid_file(config_dir, mode)
-
-        if not pid_file.exists():
-            logger.error(f"No mitmproxy ({mode.value}) server is running (PID file not found)")
-            return False
-
-        return shared_stop_process(pid_file)
-
-    # Stop all modes: combined, shadow, and any legacy processes
-    stopped_any = False
-
-    for proxy_mode in (ProxyMode.COMBINED, ProxyMode.SHADOW):
-        pid_file = get_pid_file(config_dir, proxy_mode)
-        if pid_file.exists():
-            logger.info(f"Stopping mitmproxy ({proxy_mode.value})...")
-            if shared_stop_process(pid_file):
-                stopped_any = True
-
-    # Clean up any pre-refactoring processes still running
-    for legacy_mode in (ProxyMode.REVERSE, ProxyMode.FORWARD):
-        legacy_pid_file = get_pid_file(config_dir, legacy_mode)
-        if legacy_pid_file.exists():
-            logger.info(f"Stopping legacy mitmproxy ({legacy_mode.value})...")
-            if shared_stop_process(legacy_pid_file):
-                stopped_any = True
-
-    if not stopped_any:
-        logger.error("No mitmproxy servers are running")
-
-    return stopped_any
-
-
-def get_mitm_status(config_dir: Path) -> dict[str, dict[str, bool | int | str | None]]:
-    """Get the status of all mitmproxy servers.
-
-    Returns combined process status under both "reverse" and "forward" keys
-    for backward compatibility, plus the canonical "combined" key.
+def get_mitm_status(config_dir: Path) -> dict[str, dict[str, bool | str | None]]:
+    """Get the status of all mitmproxy servers via TCP port probes.
 
     Args:
         config_dir: Configuration directory
@@ -515,26 +396,31 @@ def get_mitm_status(config_dir: Path) -> dict[str, dict[str, bool | int | str | 
     Returns:
         Dictionary with status information for each logical mode
     """
-    combined_running, combined_pid = is_running(config_dir, ProxyMode.COMBINED)
-    shadow_running, shadow_pid = is_running(config_dir, ProxyMode.SHADOW)
+    from ccproxy.config import get_config
 
-    def _mode_status(running: bool, pid: int | None, mode: ProxyMode) -> dict[str, bool | int | str | None]:
-        status: dict[str, bool | int | str | None] = {
-            "running": running,
-            "pid": pid,
-        }
+    config = get_config()
+    mitm_cfg = getattr(config, "mitm", None)
+
+    reverse_port: int = getattr(mitm_cfg, "reverse_port", None) or 4002
+    forward_port: int = getattr(mitm_cfg, "forward_port", None) or 4003
+
+    combined_running = _check_port_alive("127.0.0.1", reverse_port) or _check_port_alive(
+        "127.0.0.1", forward_port
+    )
+
+    def _mode_status(running: bool, mode: ProxyMode) -> dict[str, bool | str | None]:
+        status: dict[str, bool | str | None] = {"running": running}
         if running:
-            status["pid_file"] = str(get_pid_file(config_dir, mode))
             log = get_log_file(config_dir, mode)
             status["log_file"] = str(log) if log.exists() else None
         return status
 
-    combined_status = _mode_status(combined_running, combined_pid, ProxyMode.COMBINED)
+    combined_status = _mode_status(combined_running, ProxyMode.COMBINED)
 
     return {
         "combined": combined_status,
         # Backward compat: both reflect the combined process state
         "reverse": {**combined_status, "mode": "combined"},
         "forward": {**combined_status, "mode": "combined"},
-        "shadow": _mode_status(shadow_running, shadow_pid, ProxyMode.SHADOW),
+        "shadow": _mode_status(False, ProxyMode.SHADOW),
     }

@@ -131,6 +131,12 @@ class MitmConfig(BaseModel):
     otel_service_name: str = "ccproxy-mitm"
     """OTel resource service.name attribute."""
 
+    wireguard_port: int = 51820
+    """WireGuard listen port. Active when --inspect is used."""
+
+    wireguard_conf_path: Path | None = None
+    """Path to WireGuard configuration file."""
+
 
 class RuleConfig:
     """Configuration for a single classification rule."""
@@ -314,7 +320,7 @@ class CCProxyConfig(BaseSettings):
         """Execute a shell command to retrieve an OAuth token."""
         try:
             result = subprocess.run(  # noqa: S602
-                source.command,
+                source.command or "",
                 shell=True,
                 capture_output=True,
                 text=True,
