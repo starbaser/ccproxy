@@ -87,19 +87,21 @@ class OAuthSource(BaseModel):
 
 
 class InspectConfig(BaseModel):
-    """Configuration for mitmproxy traffic capture."""
+    """Configuration for inspect mode traffic capture.
 
-    enabled: bool = False
-    """Enable mitmproxy traffic capture"""
+    Internal fields (forward_port, reverse_port, upstream_proxy) are auto-derived
+    from LiteLLM's port config. Override only in devShell/deployment configs for
+    port deconfliction.
+    """
 
     forward_port: int = 8081
-    """Port for the MITM forward proxy (LiteLLM outbound to providers)"""
+    """Internal: port for the forward proxy (LiteLLM outbound to providers)."""
 
     reverse_port: int | None = None
-    """Port for the MITM reverse proxy (client-facing). When set, LiteLLM stays on its configured port and the reverse proxy listens here instead of taking over the main port."""
+    """Internal: port for the reverse proxy (client-facing)."""
 
     upstream_proxy: str = "http://localhost:4000"
-    """Upstream proxy server URL (typically LiteLLM)"""
+    """Internal: upstream proxy URL (derived from LiteLLM port)."""
 
     max_body_size: int = 0
     """Maximum request/response body size to capture (bytes). 0 = unlimited."""

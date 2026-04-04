@@ -21,21 +21,18 @@
     default_model_passthrough = true;
     rules = [ ];
     inspect = {
-      enabled = false;
-      forward_port = 8081;
-      # reverse_port — when set, reverse proxy uses this port; LiteLLM keeps its own port
-      upstream_proxy = "http://localhost:4000";
+      inspect_port = 8083;
+      wireguard_port = 51820;
       database_url = "postgresql://ccproxy:\${CCPROXY_DB_PASSWORD:-test}@127.0.0.1:5433/ccproxy_mitm";
-      graphql = {
-        host = "localhost";
-        port = 5435;
-      };
       capture_bodies = true;
       max_body_size = 0;
       excluded_hosts = [ ];
       cert_dir = "~/.ccproxy";
       debug = false;
-      wireguard_port = 51820;
+      graphql = {
+        host = "localhost";
+        port = 5435;
+      };
     };
   };
 

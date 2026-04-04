@@ -53,21 +53,14 @@ ccproxy:
 
   rules: []
 
-  # Inspect proxy settings (enable with --inspect flag)
+  # Inspect mode settings (enable with --inspect flag)
   inspect:
-    enabled: false
-    forward_port: 8081
-    # reverse_port: 4002  # When set, reverse proxy uses this port; LiteLLM keeps its own port
-    inspect_port: 8083   # mitmweb browser UI port
-    upstream_proxy: "http://localhost:4000"
+    inspect_port: 8083
+    wireguard_port: 51820
     database_url: "postgresql://ccproxy:${CCPROXY_DB_PASSWORD:-test}@127.0.0.1:5433/ccproxy_mitm"
-    graphql:
-      host: localhost
-      port: 5435
     capture_bodies: true
-    max_body_size: 0  # 0 = unlimited (live example: 10485760 for 10MB)
+    max_body_size: 0  # 0 = unlimited
     excluded_hosts: []
-    # LLM API domains to intercept from WireGuard and forward to LiteLLM
     forward_domains:
       - api.anthropic.com
       - api.openai.com
@@ -76,12 +69,9 @@ ccproxy:
       - api.z.ai
     cert_dir: ~/.ccproxy
     debug: false
-    # OpenTelemetry span emission
-    otel_enabled: false
-    otel_endpoint: "http://localhost:4317"
-    otel_service_name: "ccproxy-mitm"
-    wireguard_port: 51820
-    wireguard_conf_path: null
+    graphql:
+      host: localhost
+      port: 5435
 
 litellm:
   host: 127.0.0.1
