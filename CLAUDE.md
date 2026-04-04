@@ -62,21 +62,6 @@ ccproxy run <command> [args...]
 # Run command in WireGuard namespace jail (all traffic captured transparently)
 ccproxy run --inspect -- <command> [args...]
 
-# Query inspector traces database (SQL)
-ccproxy db sql "SELECT COUNT(*) FROM \"CCProxy_HttpTraces\""
-ccproxy db sql --file query.sql
-ccproxy db sql "SELECT * FROM ..." --json
-ccproxy db sql "SELECT * FROM ..." --csv
-
-# Query inspector traces database (GraphQL via PostGraphile)
-ccproxy db gql "{ allCcproxyHttpTraces(first: 5) { nodes { traceId host statusCode } } }"
-ccproxy db gql --json "{ allCcproxyHttpTraces { nodes { traceId } } }"
-ccproxy db gql -f query.graphql
-
-# Convert a trace to formatted markdown (conversation view)
-ccproxy db-prompt <trace-id>
-ccproxy db-prompt <trace-id> --output trace.md
-ccproxy db-prompt <trace-id> -H   # include HTTP headers
 ```
 
 **Inspect Mode**: `--inspect` enables the full inspector stack (mitmweb with WireGuard mode). `ccproxy run --inspect` confines the subprocess in a rootless network namespace routed through the WireGuard tunnel for transparent traffic capture. See `docs/inspect.md` for architecture details.
@@ -122,11 +107,10 @@ Request → CCProxyHandler → Hook Pipeline → Response
   - `verbose_mode` - Strips `redact-thinking-*` beta header to enable full thinking block output
   - `inject_claude_code_identity` - Injects required system message for OAuth
   - `inject_mcp_notifications` - Injects buffered MCP terminal events as synthetic tool_use/tool_result pairs before the final user message
-- **inspector/addon.py**: Inspector addon for HTTP traffic capture and tracing. Stores request/response data in PostgreSQL via `TraceStorage`.
+- **inspector/addon.py**: Inspector addon for HTTP traffic capture with OTel span emission. Detects traffic direction per-flow and forwards WireGuard LLM API traffic to LiteLLM.
 - **inspector/namespace.py**: Network namespace confinement for `ccproxy run --inspect`. Creates user+net namespace with slirp4netns bridge and WireGuard client routing through mitmweb's WireGuard server. Requires `slirp4netns`, `wg`, `unshare`, `nsenter`, `ip` (all rootless on Linux 5.6+ with `unprivileged_userns_clone=1`).
-- **inspector/process.py**: Process management for launching and supervising mitmproxy (mitmdump/mitmweb). Handles Prisma client initialization and port readiness checks.
-- **inspector/script.py**: Mitmproxy addon script loaded via `-s` flag. Runs in the mitmproxy process; delegates to `InspectorAddon` for per-flow trace capture. Supports WireGuard transparent proxy mode with direction detection.
-- **inspector/storage.py**: Database storage layer for inspector traces. Wraps Prisma client to persist HTTP flow data to PostgreSQL with type coercion for Prisma compatibility.
+- **inspector/process.py**: Process management for launching and supervising mitmproxy (mitmweb). Auto-assigns a free UDP port for the WireGuard listener.
+- **inspector/script.py**: Mitmproxy addon script loaded via `-s` flag. Runs in the mitmproxy process; delegates to `InspectorAddon` for per-flow capture and OTel span emission. Loads `OtelConfig` from `ccproxy.yaml` via `CCPROXY_CONFIG_DIR`.
 - **inspector/telemetry.py**: OpenTelemetry span emission for inspector flows. Three-mode degradation: real OTLP export, no-op tracer, or stub — depending on package availability and config. OTel config lives under top-level `ccproxy.otel`.
 - **cli.py**: Tyro-based CLI interface for managing the proxy server. Foreground-only (no `--detach`/`stop`/`restart`). Status detection via TCP health probes.
 - **constants.py**: Shared constants — `ANTHROPIC_BETA_HEADERS`, `OAUTH_SENTINEL_PREFIX`, `SENSITIVE_PATTERNS`, and `CLAUDE_CODE_SYSTEM_PREFIX`.
@@ -204,16 +188,12 @@ The test suite uses pytest with comprehensive fixtures (18 test files, 90% cover
 - **Health checks**: LiteLLM's `/health` endpoint performs real API calls to each provider. `_inject_health_check_auth()` patches `_update_litellm_params_for_health_check` to inject OAuth credentials (api_key, extra_headers) before `acompletion()` — required because LiteLLM validates API keys before `async_pre_call_hook` runs. The pipeline then runs with forced passthrough (rule_evaluator skips classification, model_router forces passthrough via `ccproxy_is_health_check` metadata flag) so hooks like `forward_oauth`, `add_beta_headers`, and `inject_claude_code_identity` enhance the request. Health probes use `max_tokens=1` to minimize cost.
 - **Hook error isolation**: Errors in one hook don't block others from executing.
 - **Lazy model loading**: Models loaded from LiteLLM proxy on first request, not at startup.
-- **Inspector**: WireGuard transparent proxy architecture activated by `--inspect`. mitmweb listens on the WireGuard port (default 51820) and intercepts all namespace traffic. Without `--inspect`, the inspector is not started. OAuth is handled entirely by pipeline hooks + `_patch_anthropic_oauth_headers()` monkey-patch; the inspector is not required for OAuth.
+- **Inspector**: WireGuard transparent proxy architecture activated by `--inspect`. mitmweb binds an auto-assigned UDP port for its WireGuard server and intercepts all namespace traffic. Without `--inspect`, the inspector is not started. OAuth is handled entirely by pipeline hooks + `_patch_anthropic_oauth_headers()` monkey-patch; the inspector is not required for OAuth.
 - **SSL certificate handling**: `SSL_CERT_FILE` is validated on startup — if the path doesn't exist (e.g., stale venv after Python upgrade), falls back to `certifi.where()` then `/etc/ssl/certs/ca-certificates.crt`. In `--inspect` mode, the combined CA bundle (mitmproxy CA + system CAs) is built **after** mitmproxy starts to ensure the CA cert exists. All four cert env vars are set for LiteLLM: `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`.
-- **Namespace confinement**: `ccproxy run --inspect` creates a rootless user+net namespace via `unshare`, bridges it to the host via `slirp4netns` (gateway `10.0.2.2`, namespace IP `10.0.2.100`), and routes all traffic through a WireGuard client (`10.0.0.1/32`) pointing at mitmweb's WireGuard server. Uses `--ready-fd`/`--exit-fd` pipes for clean lifecycle management. Hard-fails if prerequisites are missing (no fallback to unconfined execution). Combined CA bundle injected via all four cert env vars for transparent TLS interception.
-- **Trace database**: PostgreSQL for HTTP trace storage. Database URL set via `CCPROXY_DATABASE_URL` env var or in `ccproxy.yaml` under `ccproxy.inspector.database_url`. Uses the `ccproxy-db` container.
-- **GraphQL API**: PostGraphile v4 on port 5435 auto-introspects the Prisma schema to provide a GraphQL query API for inspector traces. Config via `ccproxy.inspector.graphql.host`/`port` scalars (matching litellm convention). PostGraphile camelCases column names: `trace_id` → `traceId`, `CCProxy_HttpTraces` → `allCcproxyHttpTraces`. GraphiQL IDE at `http://localhost:5435/graphiql`.
-- **Docker containers**: Three containers managed via `compose.yaml`:
-  - `ccproxy-db` (port 5433) - inspector trace storage (`ccproxy_mitm` database)
+- **Namespace confinement**: `ccproxy run --inspect` creates a rootless user+net namespace via `unshare`, bridges it to the host via `slirp4netns` (gateway `10.0.2.2`, namespace IP `10.0.2.100`), and routes all traffic through a WireGuard client (`10.0.0.1/32`) pointing at mitmweb's WireGuard server. The WireGuard port is parsed from mitmweb's client config (auto-assigned at startup). Uses `--ready-fd`/`--exit-fd` pipes for clean lifecycle management. Hard-fails if prerequisites are missing (no fallback to unconfined execution). Combined CA bundle injected via all four cert env vars for transparent TLS interception.
+- **Docker containers**: Two containers managed via `compose.yaml`:
   - `litellm-db` (port 5434) - LiteLLM's internal database (`litellm` database)
-  - `ccproxy-graphql` (port 5435) - PostGraphile v4 GraphQL API for inspector traces
-  - When "too many database connections" errors occur, restart **both** DB containers: `docker restart ccproxy-db litellm-db`
+  - `ccproxy-jaeger` (ports 4317/4318/16686) - Jaeger for OTel trace collection and visualization
 - **Proxy direction tracking**: Inspector traces include `proxy_direction` field (0=reverse, 1=forward, 2=wireguard) to distinguish client→LiteLLM, LiteLLM→provider, and namespace→tunnel traffic.
 - **Session tracking**: Inspector addon extracts `session_id` from Claude Code's `metadata.user_id` field to link related requests across proxy layers.
 
@@ -224,7 +204,6 @@ The Nix devShell configures a local dev instance via `mkConfig` with dedicated p
 | Component | Dev Port | Production Default |
 |-----------|----------|--------------------|
 | LiteLLM | 4001 | 4000 |
-| WireGuard (inspector) | 51820 | 51820 |
 | Inspect UI (mitmweb) | 8083 | 8083 |
 
 Entering the devShell (`direnv` / `nix develop`) automatically:
@@ -248,7 +227,6 @@ Key dependencies include:
 - **anthropic** - Anthropic API client
 - **rich** - Terminal output formatting
 - **langfuse** - Observability integration
-- **prisma** - Database ORM
 - **structlog** - Structured logging
 
 ## Development Workflow
@@ -298,38 +276,6 @@ LiteLLM imports `ccproxy.handler:CCProxyHandler` at runtime from the auto-genera
 Solution: Install together so they share the same environment.
 
 The handler file is automatically regenerated on every `ccproxy start` based on the `handler` configuration in `ccproxy.yaml`.
-
-### Prisma Schema Changes
-
-When modifying `prisma/schema.prisma` (e.g., adding fields to `CCProxy_HttpTraces`), you must:
-
-```bash
-# 1. Push schema changes to database
-DATABASE_URL="postgresql://ccproxy:test@localhost:5433/ccproxy_mitm" uv run prisma db push
-
-# 2. Regenerate Prisma client for the devShell .venv
-DATABASE_URL="postgresql://ccproxy:test@localhost:5433/ccproxy_mitm" uv run prisma generate --schema prisma/schema.prisma
-
-# 3. Rebuild the Nix package (regenerates the build-time client)
-nix build
-
-# 4. Restart proxy
-ccproxy start --inspect
-```
-
-### Prisma Build-Time Generation (Nix)
-
-The Nix package generates the Prisma client at **build time** via `nix/prisma-cli/default.nix`. This is necessary because `prisma generate` writes into `site-packages/prisma/` which is read-only in the Nix store.
-
-The build derivation:
-1. Pre-fetches the Prisma CLI npm packages (v5.17.0) via `importNpmLock` using SRI hashes in `nix/prisma-cli/package-lock.json`
-2. Copies the base `prisma` site-package to a writable staging area
-3. Runs `prisma generate` with stub engine binaries (real engine resolved at runtime)
-4. Outputs the generated package; the wrapper prepends `PYTHONPATH` so it shadows the base wheel
-
-At runtime, `ensure_prisma_client()` succeeds immediately since the generated `client.py` is already importable. The query engine binary is fetched lazily into `~/.cache/prisma-python/` on first database connection.
-
-When updating `prisma-client-py` version, also update `nix/prisma-cli/package.json` and `package-lock.json` to match the new Prisma CLI version.
 
 ## Marketplace Plugin Sync
 

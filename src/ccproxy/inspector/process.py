@@ -18,6 +18,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _find_free_udp_port() -> int:
+    """Find an available UDP port by binding to port 0."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.bind(("", 0))
+        return s.getsockname()[1]
+
+
 
 def _pipe_output(proc: subprocess.Popen[bytes], tag: str) -> threading.Thread:
     """Forward subprocess stdout to stderr with a [tag] prefix."""
@@ -199,12 +206,13 @@ def start_inspector(
         if config.wireguard_conf_path
         else "wireguard"
     )
+    wg_port = _find_free_udp_port()
 
     cmd = [
         str(mitm_bin),
         "--mode", f"reverse:http://localhost:{litellm_port}@{rev_port}",
         "--mode", f"regular@{fwd_port}",
-        "--mode", f"{wg_spec}@{config.wireguard_port}",
+        "--mode", f"{wg_spec}@{wg_port}",
         "-s", str(script_path),
         *_build_mitmproxy_set_args(config.mitmproxy),
         "--web-port", str(config.port),
@@ -223,7 +231,7 @@ def start_inspector(
 
     description = (
         f"mitmweb: reverse@{rev_port} → LiteLLM@{litellm_port}, "
-        f"regular@{fwd_port}, wireguard@{config.wireguard_port}, "
+        f"regular@{fwd_port}, wireguard@{wg_port}, "
         f"UI@{config.port}"
     )
 

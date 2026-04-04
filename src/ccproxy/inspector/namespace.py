@@ -78,24 +78,28 @@ class NamespaceContext:
     """slirp4netns API socket path (for cleanup)."""
 
 
-def _rewrite_wg_endpoint(client_conf: str, gateway: str, wg_port: int) -> str:
+def _rewrite_wg_endpoint(client_conf: str, gateway: str) -> str:
     """Rewrite the Endpoint and strip wg-quick-only fields.
 
-    Replaces the original Endpoint with the slirp4netns gateway address and
-    removes Address/DNS lines (wg-quick extensions not understood by `wg setconf`).
+    Replaces the Endpoint host with the slirp4netns gateway address (preserving
+    the port mitmweb chose) and removes Address/DNS lines (wg-quick extensions
+    not understood by `wg setconf`).
     """
     # Strip wg-quick-only fields that `wg setconf` doesn't understand
     conf = re.sub(r"^(?:Address|DNS)\s*=.*\n?", "", client_conf, flags=re.MULTILINE)
-    # Rewrite endpoint to the namespace-reachable gateway
+    # Rewrite endpoint host to the namespace-reachable gateway, keep the port
+    def _replace_endpoint(m: re.Match[str]) -> str:
+        port = m.group(1)
+        return f"Endpoint = {gateway}:{port}"
     return re.sub(
-        r"^Endpoint\s*=\s*.*$",
-        f"Endpoint = {gateway}:{wg_port}",
+        r"^Endpoint\s*=\s*\S+:(\d+)\s*$",
+        _replace_endpoint,
         conf,
         flags=re.MULTILINE,
     )
 
 
-def create_namespace(wg_client_conf: str, wg_port: int) -> NamespaceContext:
+def create_namespace(wg_client_conf: str) -> NamespaceContext:
     """Create a user+net namespace with WireGuard routing through mitmproxy.
 
     Network topology (slirp4netns --configure):
@@ -104,8 +108,8 @@ def create_namespace(wg_client_conf: str, wg_port: int) -> NamespaceContext:
       - DNS forwarder: 10.0.2.3
 
     Args:
-        wg_client_conf: WireGuard client config INI from mitmweb
-        wg_port: WireGuard server port on the host
+        wg_client_conf: WireGuard client config INI from mitmweb (contains
+            the server endpoint with the auto-assigned port)
 
     Returns:
         NamespaceContext with all resources for cleanup
@@ -115,8 +119,8 @@ def create_namespace(wg_client_conf: str, wg_port: int) -> NamespaceContext:
     """
     gateway = "10.0.2.2"
 
-    # Write modified client config with namespace-reachable endpoint
-    modified_conf = _rewrite_wg_endpoint(wg_client_conf, gateway, wg_port)
+    # Rewrite endpoint host to the slirp4netns gateway (port preserved from config)
+    modified_conf = _rewrite_wg_endpoint(wg_client_conf, gateway)
     conf_fd, conf_path_str = tempfile.mkstemp(suffix=".conf", prefix="ccproxy-wg-")
     conf_path = Path(conf_path_str)
     try:
@@ -200,7 +204,7 @@ def create_namespace(wg_client_conf: str, wg_port: int) -> NamespaceContext:
             stderr = result.stderr.strip()
             raise RuntimeError(f"WireGuard setup failed in namespace: {stderr}")
 
-        logger.info("Namespace created: WireGuard tunnel active via %s:%d", gateway, wg_port)
+        logger.info("Namespace created: WireGuard tunnel active via %s", gateway)
 
         return NamespaceContext(
             ns_pid=ns_pid,

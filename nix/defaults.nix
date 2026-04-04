@@ -27,7 +27,6 @@
     };
     inspector = {
       port = 8083;
-      wireguard_port = 51820;
       capture_bodies = true;
       cert_dir = "~/.ccproxy";
       debug = false;

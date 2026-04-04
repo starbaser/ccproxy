@@ -199,14 +199,14 @@ class TestRewriteWgEndpoint:
     """Verify WireGuard client config endpoint rewriting for namespace routing."""
 
     def test_rewrites_endpoint(self) -> None:
-        """Standard endpoint is replaced with the slirp4netns gateway."""
-        result = _rewrite_wg_endpoint(SAMPLE_WG_CLIENT_CONF, "10.0.2.2", 51820)
+        """Standard endpoint is replaced with the slirp4netns gateway, port preserved from config."""
+        result = _rewrite_wg_endpoint(SAMPLE_WG_CLIENT_CONF, "10.0.2.2")
         assert "Endpoint = 10.0.2.2:51820" in result
         assert "192.168.1.100" not in result
 
     def test_preserves_other_fields(self) -> None:
         """Non-Endpoint, non-wg-quick fields are preserved exactly."""
-        result = _rewrite_wg_endpoint(SAMPLE_WG_CLIENT_CONF, "10.0.2.2", 51820)
+        result = _rewrite_wg_endpoint(SAMPLE_WG_CLIENT_CONF, "10.0.2.2")
         assert "PrivateKey = kHs2qYLCZkKnfuHxfCxPiKFBRqBBPgFBPQMOaTbBnWs=" in result
         assert "AllowedIPs = 0.0.0.0/0" in result
         # Address and DNS are wg-quick-only fields, stripped for `wg setconf`
@@ -214,27 +214,28 @@ class TestRewriteWgEndpoint:
         assert "DNS" not in result
 
     def test_custom_port(self) -> None:
-        """Non-default port is written correctly."""
-        result = _rewrite_wg_endpoint(SAMPLE_WG_CLIENT_CONF, "10.0.2.2", 9999)
+        """Port from the config Endpoint line is preserved in the rewritten endpoint."""
+        conf = "Endpoint = 192.168.1.100:9999\n"
+        result = _rewrite_wg_endpoint(conf, "10.0.2.2")
         assert "Endpoint = 10.0.2.2:9999" in result
 
     def test_endpoint_with_extra_whitespace(self) -> None:
-        """Endpoint with irregular spacing is still matched and replaced."""
+        """Endpoint with irregular spacing is still matched and replaced, port preserved."""
         conf = "Endpoint  =  10.20.30.40:12345\n"
-        result = _rewrite_wg_endpoint(conf, "10.0.2.2", 51820)
-        assert "Endpoint = 10.0.2.2:51820" in result
+        result = _rewrite_wg_endpoint(conf, "10.0.2.2")
+        assert "Endpoint = 10.0.2.2:12345" in result
         assert "10.20.30.40" not in result
 
     def test_no_endpoint_line(self) -> None:
         """Config without Endpoint line → no change, no error."""
         conf = "[Interface]\nPrivateKey = abc\n"
-        result = _rewrite_wg_endpoint(conf, "10.0.2.2", 51820)
+        result = _rewrite_wg_endpoint(conf, "10.0.2.2")
         assert result == conf
 
     def test_ipv6_endpoint_replaced(self) -> None:
-        """IPv6 endpoint is replaced with the IPv4 gateway."""
+        """IPv6 endpoint host is replaced with the IPv4 gateway, port preserved."""
         conf = "Endpoint = [::1]:51820\n"
-        result = _rewrite_wg_endpoint(conf, "10.0.2.2", 51820)
+        result = _rewrite_wg_endpoint(conf, "10.0.2.2")
         assert "Endpoint = 10.0.2.2:51820" in result
         assert "::1" not in result
 
@@ -295,7 +296,7 @@ class TestCreateNamespace:
         # WG setup nsenter succeeds
         mock_run.return_value = MagicMock(returncode=0, stderr="")
 
-        ctx = create_namespace(SAMPLE_WG_CLIENT_CONF, 51820)
+        ctx = create_namespace(SAMPLE_WG_CLIENT_CONF)
 
         assert ctx.ns_pid == 42
         assert ctx.slirp_proc == slirp_proc
@@ -342,7 +343,7 @@ class TestCreateNamespace:
         mock_popen.side_effect = FileNotFoundError("unshare not found")
 
         with pytest.raises(RuntimeError, match="Failed to create network namespace"):
-            create_namespace(SAMPLE_WG_CLIENT_CONF, 51820)
+            create_namespace(SAMPLE_WG_CLIENT_CONF)
 
         # Temp conf file should be cleaned up
         assert not conf_path.exists()
@@ -390,7 +391,7 @@ class TestCreateNamespace:
         mock_fdopen.side_effect = [write_ctx, ready_ctx]
 
         with pytest.raises(RuntimeError, match="slirp4netns failed to become ready"):
-            create_namespace(SAMPLE_WG_CLIENT_CONF, 51820)
+            create_namespace(SAMPLE_WG_CLIENT_CONF)
 
         # Sentinel should be killed on failure
         mock_safe_kill.assert_called_with(42)
@@ -443,7 +444,7 @@ class TestCreateNamespace:
         )
 
         with pytest.raises(RuntimeError, match="WireGuard setup failed"):
-            create_namespace(SAMPLE_WG_CLIENT_CONF, 51820)
+            create_namespace(SAMPLE_WG_CLIENT_CONF)
 
         mock_safe_kill.assert_called_with(42)
 

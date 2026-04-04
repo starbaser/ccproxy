@@ -56,11 +56,7 @@ ccproxy:
   # Inspector settings (enable with --inspect flag)
   inspector:
     port: 8083
-    wireguard_port: 51820
-    database_url: "postgresql://ccproxy:${CCPROXY_DB_PASSWORD:-test}@127.0.0.1:5433/ccproxy_mitm"
     capture_bodies: true
-    max_body_size: 0  # 0 = unlimited
-    excluded_hosts: []
     forward_domains:
       - api.anthropic.com
       - api.openai.com

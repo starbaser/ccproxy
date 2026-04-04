@@ -348,7 +348,6 @@ def run_with_proxy(
 
         wg_client_conf = wg_conf_file.read_text()
 
-        wg_port = 51820
         inspector_confdir: Path | None = None
         ccproxy_config_path = config_dir / "ccproxy.yaml"
         if ccproxy_config_path.exists():
@@ -357,7 +356,6 @@ def run_with_proxy(
             with ccproxy_config_path.open() as f:
                 cfg: dict[str, Any] = yaml.safe_load(f) or {}
             inspect_section: dict[str, Any] = cfg.get("ccproxy", {}).get("inspector", {})
-            wg_port = inspect_section.get("wireguard_port", 51820)
             cert_dir = inspect_section.get("cert_dir")
             if cert_dir:
                 inspector_confdir = Path(cert_dir).expanduser()
@@ -375,7 +373,7 @@ def run_with_proxy(
 
         ctx = None
         try:
-            ctx = create_namespace(wg_client_conf, wg_port)
+            ctx = create_namespace(wg_client_conf)
             exit_code = run_in_namespace(ctx, command, env)
             sys.exit(exit_code)
         except RuntimeError as e:
@@ -576,12 +574,10 @@ def start_litellm(
     from ccproxy.preflight import run_preflight_checks
 
     ports_to_check = [main_port]
-    udp_ports_to_check: list[int] = []
     if inspect:
         ports_to_check.append(forward_port)
         ports_to_check.append(inspector_config.port)
-        udp_ports_to_check.append(inspector_config.wireguard_port)
-    run_preflight_checks(ports=ports_to_check, udp_ports=udp_ports_to_check)
+    run_preflight_checks(ports=ports_to_check)
 
     try:
         generate_handler_file(config_dir)
@@ -670,7 +666,7 @@ def start_litellm(
 
             print(
                 f"Starting inspector: mitmweb reverse@{main_port} + regular@{forward_port} "
-                f"+ wireguard@{inspector_config.wireguard_port}, UI@{inspector_config.port}"
+                f"+ wireguard (auto-port), UI@{inspector_config.port}"
             )
             inspector_proc = start_inspector(
                 config_dir,

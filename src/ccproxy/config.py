@@ -134,8 +134,6 @@ class InspectorConfig(BaseModel):
     via model validator when set."""
 
 
-    wireguard_port: int = 51820
-    """WireGuard listen port. Active when --inspect is used."""
 
     wireguard_conf_path: Path | None = None
     """Path to WireGuard configuration file."""
