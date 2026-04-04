@@ -54,7 +54,7 @@ services:
 
   # Jaeger for OpenTelemetry trace collection and visualization
   ccproxy-jaeger:
-    image: jaegertracing/all-in-one:1.62
+    image: jaegertracing/all-in-one:latest
     restart: unless-stopped
     container_name: ccproxy-jaeger
     environment:

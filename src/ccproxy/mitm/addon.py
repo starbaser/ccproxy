@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 
 from mitmproxy import http
 
-from ccproxy.config import MitmConfig
+from ccproxy.config import InspectConfig
 
 
 class ProxyDirection(IntEnum):
@@ -61,7 +61,7 @@ class CCProxyMitmAddon:
     def __init__(
         self,
         storage: TraceStorage | None,
-        config: MitmConfig,
+        config: InspectConfig,
         traffic_source: str | None = None,
     ) -> None:
         """Initialize the addon.

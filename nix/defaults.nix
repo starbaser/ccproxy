@@ -20,7 +20,7 @@
     ];
     default_model_passthrough = true;
     rules = [ ];
-    mitm = {
+    inspect = {
       enabled = false;
       forward_port = 8081;
       # reverse_port — when set, reverse proxy uses this port; LiteLLM keeps its own port

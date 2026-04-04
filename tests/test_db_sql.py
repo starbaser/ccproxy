@@ -57,7 +57,7 @@ class TestGetDatabaseUrl:
         config_file.write_text(
             """
 ccproxy:
-  mitm:
+  inspect:
     database_url: postgresql://config:789@host/db
 """
         )
@@ -72,7 +72,7 @@ ccproxy:
         config_file.write_text(
             """
 ccproxy:
-  mitm:
+  inspect:
     database_url: postgresql://${DB_USER}:${DB_PASS}@host/db
 """
         )
@@ -87,7 +87,7 @@ ccproxy:
         config_file.write_text(
             """
 ccproxy:
-  mitm:
+  inspect:
     database_url: postgresql://${DB_USER:-defaultuser}@host/db
 """
         )
@@ -102,8 +102,8 @@ ccproxy:
             result = get_database_url(tmp_path)
         assert result is None
 
-    def test_config_without_mitm_section(self, tmp_path: Path) -> None:
-        """Test returns None when ccproxy.yaml has no mitm section."""
+    def test_config_without_inspect_section(self, tmp_path: Path) -> None:
+        """Test returns None when ccproxy.yaml has no inspect section."""
         config_file = tmp_path / "ccproxy.yaml"
         config_file.write_text(
             """
@@ -117,12 +117,12 @@ ccproxy:
         assert result is None
 
     def test_config_without_database_url(self, tmp_path: Path) -> None:
-        """Test returns None when mitm section has no database_url."""
+        """Test returns None when inspect section has no database_url."""
         config_file = tmp_path / "ccproxy.yaml"
         config_file.write_text(
             """
 ccproxy:
-  mitm:
+  inspect:
     port: 8081
 """
         )
@@ -535,7 +535,7 @@ class TestGetGraphqlUrl:
         """Test GraphQL URL from ccproxy.yaml host/port config."""
         yaml_content = (
             "ccproxy:\n"
-            "  mitm:\n"
+            "  inspect:\n"
             "    graphql:\n"
             "      host: yaml-host\n"
             "      port: 9999\n"
@@ -549,7 +549,7 @@ class TestGetGraphqlUrl:
         """Test GraphQL URL with only host set (port defaults to 5435)."""
         yaml_content = (
             "ccproxy:\n"
-            "  mitm:\n"
+            "  inspect:\n"
             "    graphql:\n"
             "      host: custom-host\n"
         )

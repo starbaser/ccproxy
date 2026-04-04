@@ -36,8 +36,9 @@ class TestStartProxy:
         assert "Configuration not found" in captured.err
         assert "Run 'ccproxy install' first" in captured.err
 
+    @patch("ccproxy.preflight.run_preflight_checks")
     @patch("subprocess.run")
-    def test_start_proxy_success(self, mock_run: Mock, tmp_path: Path) -> None:
+    def test_start_proxy_success(self, mock_run: Mock, mock_preflight: Mock, tmp_path: Path) -> None:
         """Test successful litellm execution."""
         config_file = tmp_path / "config.yaml"
         config_file.write_text("litellm: config")
@@ -55,8 +56,9 @@ class TestStartProxy:
         assert call_args[1:5] == ["--config", str(config_file), "--host", "127.0.0.1"]
         assert "--port" in call_args
 
+    @patch("ccproxy.preflight.run_preflight_checks")
     @patch("subprocess.run")
-    def test_litellm_with_args(self, mock_run: Mock, tmp_path: Path) -> None:
+    def test_litellm_with_args(self, mock_run: Mock, mock_preflight: Mock, tmp_path: Path) -> None:
         """Test litellm with additional arguments."""
         config_file = tmp_path / "config.yaml"
         config_file.write_text("litellm: config")
@@ -77,8 +79,9 @@ class TestStartProxy:
         # User port should override default
         assert call_args[-2:] == ["--port", "8080"]
 
+    @patch("ccproxy.preflight.run_preflight_checks")
     @patch("subprocess.run")
-    def test_litellm_command_not_found(self, mock_run: Mock, tmp_path: Path, capsys) -> None:
+    def test_litellm_command_not_found(self, mock_run: Mock, mock_preflight: Mock, tmp_path: Path, capsys) -> None:
         """Test litellm when command is not found."""
         config_file = tmp_path / "config.yaml"
         config_file.write_text("litellm: config")
@@ -93,8 +96,9 @@ class TestStartProxy:
         assert "litellm command not found" in captured.err
         assert "pip install litellm" in captured.err
 
+    @patch("ccproxy.preflight.run_preflight_checks")
     @patch("subprocess.run")
-    def test_litellm_keyboard_interrupt(self, mock_run: Mock, tmp_path: Path) -> None:
+    def test_litellm_keyboard_interrupt(self, mock_run: Mock, mock_preflight: Mock, tmp_path: Path) -> None:
         """Test litellm with keyboard interrupt — returns normally after cleanup."""
         config_file = tmp_path / "config.yaml"
         config_file.write_text("litellm: config")
@@ -583,7 +587,7 @@ litellm:
   host: 127.0.0.1
   port: 4000
 ccproxy:
-  mitm:
+  inspect:
     port: 8081
 """)
 
@@ -613,7 +617,7 @@ litellm:
   host: 127.0.0.1
   port: 4000
 ccproxy:
-  mitm:
+  inspect:
     port: 8081
 """)
 
@@ -788,7 +792,8 @@ litellm_settings:
         assert status["callbacks"] == ["ccproxy.handler", "langfuse"]
         assert status["log"] is None
 
-    def test_status_json_proxy_stopped(self, tmp_path: Path, capsys) -> None:
+    @patch("socket.create_connection", side_effect=OSError)
+    def test_status_json_proxy_stopped(self, mock_conn: Mock, tmp_path: Path, capsys) -> None:
         """Test status JSON output with proxy stopped."""
         # Create only config files
         ccproxy_config = tmp_path / "ccproxy.yaml"
@@ -808,7 +813,8 @@ litellm_settings:
         assert status["callbacks"] == []
         assert status["log"] is None
 
-    def test_status_json_no_config(self, tmp_path: Path, capsys) -> None:
+    @patch("socket.create_connection", side_effect=OSError)
+    def test_status_json_no_config(self, mock_conn: Mock, tmp_path: Path, capsys) -> None:
         """Test status JSON output with no config files."""
         show_status(tmp_path, json_output=True)
 
@@ -819,7 +825,8 @@ litellm_settings:
         assert status["callbacks"] == []
         assert status["log"] is None
 
-    def test_status_json_proxy_not_reachable(self, tmp_path: Path, capsys) -> None:
+    @patch("socket.create_connection", side_effect=OSError)
+    def test_status_json_proxy_not_reachable(self, mock_conn: Mock, tmp_path: Path, capsys) -> None:
         """Test status JSON output when proxy port is not reachable."""
         show_status(tmp_path, json_output=True)
 

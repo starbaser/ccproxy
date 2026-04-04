@@ -194,7 +194,7 @@ def _resolve_database_url(config_dir: Path) -> str | None:
 
         with config_path.open() as f:
             data = yaml.safe_load(f)
-        url = data.get("ccproxy", {}).get("mitm", {}).get("database_url")
+        url = data.get("ccproxy", {}).get("inspect", {}).get("database_url")
         if not url:
             return None
         # Expand ${VAR:-default} patterns
@@ -335,7 +335,7 @@ def get_mitm_status() -> dict[str, dict[str, bool | str | None]]:
     from ccproxy.config import get_config
 
     config = get_config()
-    mitm_cfg = getattr(config, "mitm", None)
+    mitm_cfg = getattr(config, "inspect", None)
 
     reverse_port: int = getattr(mitm_cfg, "reverse_port", None) or 4002
     forward_port: int = getattr(mitm_cfg, "forward_port", None) or 4003

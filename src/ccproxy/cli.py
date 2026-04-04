@@ -407,9 +407,9 @@ def run_with_proxy(
 
             with ccproxy_config_path.open() as f:
                 cfg = yaml.safe_load(f) or {}
-            mitm_section = cfg.get("ccproxy", {}).get("mitm", {})
-            wg_port = mitm_section.get("wireguard_port", 51820)
-            cert_dir = mitm_section.get("cert_dir")
+            inspect_section = cfg.get("ccproxy", {}).get("inspect", {})
+            wg_port = inspect_section.get("wireguard_port", 51820)
+            cert_dir = inspect_section.get("cert_dir")
             if cert_dir:
                 mitm_confdir = Path(cert_dir).expanduser()
 
@@ -625,13 +625,13 @@ def start_litellm(
         with ccproxy_config_path.open() as f:
             ccproxy_config = yaml.safe_load(f)
             if ccproxy_config:
-                mitm_section = ccproxy_config.get("ccproxy", {}).get("mitm", {})
-                forward_port = mitm_section.get("forward_port", 8081)
-                reverse_port = mitm_section.get("reverse_port")
-                inspect_port = mitm_section.get("inspect_port", 8083)
-                mitm_confdir = mitm_section.get("cert_dir")
-                wireguard_port = mitm_section.get("wireguard_port", 51820)
-                wg_conf = mitm_section.get("wireguard_conf_path")
+                inspect_section = ccproxy_config.get("ccproxy", {}).get("inspect", {})
+                forward_port = inspect_section.get("forward_port", 8081)
+                reverse_port = inspect_section.get("reverse_port")
+                inspect_port = inspect_section.get("inspect_port", 8083)
+                mitm_confdir = inspect_section.get("cert_dir")
+                wireguard_port = inspect_section.get("wireguard_port", 51820)
+                wg_conf = inspect_section.get("wireguard_conf_path")
                 if wg_conf:
                     wireguard_conf_path = Path(wg_conf)
 
@@ -889,9 +889,9 @@ def show_status(
         except (yaml.YAMLError, OSError):
             pass
 
-    # Extract hooks and MITM config from ccproxy.yaml
+    # Extract hooks and inspect config from ccproxy.yaml
     hooks = []
-    mitm_config = {}
+    inspect_config = {}
     forward_port = 8081
     if ccproxy_config.exists():
         try:
@@ -900,19 +900,19 @@ def show_status(
             if ccproxy_data:
                 ccproxy_section = ccproxy_data.get("ccproxy", {})
                 hooks = ccproxy_section.get("hooks", [])
-                mitm_config = ccproxy_section.get("mitm", {})
-                forward_port = mitm_config.get("forward_port", 8081)
-                reverse_port = mitm_config.get("reverse_port")
+                inspect_config = ccproxy_section.get("inspect", {})
+                forward_port = inspect_config.get("forward_port", 8081)
+                reverse_port = inspect_config.get("reverse_port")
         except (yaml.YAMLError, OSError):
             pass
 
     host, main_port = _read_proxy_settings(config_dir)
-    reverse_port = mitm_config.get("reverse_port")
+    reverse_port = inspect_config.get("reverse_port")
     proxy_url = f"http://{host}:{reverse_port or main_port}"
 
     # Detect running state via TCP probes
     proxy_running = _check_alive(host, reverse_port or main_port)
-    inspect_port = mitm_config.get("inspect_port", 8083)
+    inspect_port = inspect_config.get("inspect_port", 8083)
     combined_running = _check_alive("127.0.0.1", inspect_port)
     litellm_actual_port = main_port
 
@@ -1099,8 +1099,8 @@ def get_database_url(config_dir: Path) -> str | None:
         with ccproxy_yaml.open() as f:
             data = yaml.safe_load(f)
         if data and "ccproxy" in data:
-            mitm = data["ccproxy"].get("mitm", {})
-            if url := mitm.get("database_url"):
+            inspect = data["ccproxy"].get("inspect", {})
+            if url := inspect.get("database_url"):
                 return _expand_env_vars(url) if "${" in url else url
     return None
 
@@ -1125,7 +1125,7 @@ def get_graphql_url(config_dir: Path) -> str:
         with ccproxy_yaml.open() as f:
             data = yaml.safe_load(f)
         if data and "ccproxy" in data:
-            graphql = data["ccproxy"].get("mitm", {}).get("graphql", {})
+            graphql = data["ccproxy"].get("inspect", {}).get("graphql", {})
             host = graphql.get("host", "localhost")
             port = graphql.get("port", 5435)
             return f"http://{host}:{port}/graphql"
@@ -1313,7 +1313,7 @@ def handle_db_sql(config_dir: Path, cmd: DbSql) -> None:
     database_url = get_database_url(config_dir)
     if not database_url:
         console.print("[red]Error:[/red] No database_url configured")
-        console.print("Set in ccproxy.yaml under ccproxy.mitm.database_url")
+        console.print("Set in ccproxy.yaml under ccproxy.inspect.database_url")
         console.print("Or set CCPROXY_DATABASE_URL or DATABASE_URL environment variable")
         sys.exit(1)
 
@@ -1783,7 +1783,7 @@ def handle_db_prompt(config_dir: Path, cmd: DbPrompt) -> None:
     database_url = get_database_url(config_dir)
     if not database_url:
         console.print("[red]Error:[/red] No database_url configured")
-        console.print("Set in ccproxy.yaml under ccproxy.mitm.database_url")
+        console.print("Set in ccproxy.yaml under ccproxy.inspect.database_url")
         console.print("Or set CCPROXY_DATABASE_URL or DATABASE_URL environment variable")
         sys.exit(1)
 

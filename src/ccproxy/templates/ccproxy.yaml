@@ -53,8 +53,8 @@ ccproxy:
 
   rules: []
 
-  # MITM proxy settings (enable with --inspect flag)
-  mitm:
+  # Inspect proxy settings (enable with --inspect flag)
+  inspect:
     enabled: false
     forward_port: 8081
     # reverse_port: 4002  # When set, reverse proxy uses this port; LiteLLM keeps its own port

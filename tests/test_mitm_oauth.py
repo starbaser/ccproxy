@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from ccproxy.config import MitmConfig
+from ccproxy.config import InspectConfig
 from ccproxy.mitm.addon import CCProxyMitmAddon, ProxyDirection
 
 
@@ -65,7 +65,7 @@ class TestRequestMethod:
     @pytest.mark.asyncio
     async def test_request_works_without_storage(self, mock_flow: MagicMock) -> None:
         """request() should return early without storage configured."""
-        config = MitmConfig()
+        config = InspectConfig()
         addon = CCProxyMitmAddon(storage=None, config=config)
 
         mock_flow.request.pretty_host = "api.anthropic.com"
@@ -92,7 +92,7 @@ class TestProxyModeDetection:
     @pytest.mark.asyncio
     async def test_reverse_proxy_captures_traffic(self, mock_storage: AsyncMock) -> None:
         """Reverse listener flow should be captured with REVERSE mode identifier."""
-        config = MitmConfig()
+        config = InspectConfig()
         addon = CCProxyMitmAddon(storage=mock_storage, config=config)
 
         flow = _make_mock_flow(reverse=True)
@@ -109,7 +109,7 @@ class TestProxyModeDetection:
     @pytest.mark.asyncio
     async def test_forward_proxy_captures_traffic(self, mock_storage: AsyncMock) -> None:
         """Regular listener flow should be captured with FORWARD mode identifier."""
-        config = MitmConfig()
+        config = InspectConfig()
         addon = CCProxyMitmAddon(storage=mock_storage, config=config)
 
         flow = _make_mock_flow(reverse=False)
@@ -126,7 +126,7 @@ class TestProxyModeDetection:
     @pytest.mark.asyncio
     async def test_forward_proxy_captures_langfuse(self, mock_storage: AsyncMock) -> None:
         """Regular listener should capture Langfuse API calls."""
-        config = MitmConfig()
+        config = InspectConfig()
         addon = CCProxyMitmAddon(storage=mock_storage, config=config)
 
         flow = _make_mock_flow(reverse=False)
@@ -143,7 +143,7 @@ class TestProxyModeDetection:
     @pytest.mark.asyncio
     async def test_proxy_direction_stored_correctly(self, mock_storage: AsyncMock) -> None:
         """ProxyDirection integer should be stored in trace data based on per-flow proxy_mode."""
-        config = MitmConfig()
+        config = InspectConfig()
         addon = CCProxyMitmAddon(storage=mock_storage, config=config)
 
         # Test REVERSE direction
@@ -186,7 +186,7 @@ class TestWireGuardForwarding:
     @pytest.mark.asyncio
     async def test_forwards_anthropic_to_litellm(self, mock_storage: AsyncMock) -> None:
         """WireGuard flow to api.anthropic.com should be forwarded to LiteLLM."""
-        config = MitmConfig(upstream_proxy="http://localhost:4001")
+        config = InspectConfig(upstream_proxy="http://localhost:4001")
         addon = CCProxyMitmAddon(storage=mock_storage, config=config)
 
         flow = _make_wg_flow(host="api.anthropic.com")
@@ -200,7 +200,7 @@ class TestWireGuardForwarding:
     @pytest.mark.asyncio
     async def test_forwards_openai_to_litellm(self, mock_storage: AsyncMock) -> None:
         """WireGuard flow to api.openai.com should be forwarded to LiteLLM."""
-        config = MitmConfig(upstream_proxy="http://localhost:4001")
+        config = InspectConfig(upstream_proxy="http://localhost:4001")
         addon = CCProxyMitmAddon(storage=mock_storage, config=config)
 
         flow = _make_wg_flow(host="api.openai.com")
@@ -213,7 +213,7 @@ class TestWireGuardForwarding:
     @pytest.mark.asyncio
     async def test_non_llm_domain_passes_through(self, mock_storage: AsyncMock) -> None:
         """WireGuard flow to non-LLM domains should not be forwarded."""
-        config = MitmConfig(upstream_proxy="http://localhost:4001")
+        config = InspectConfig(upstream_proxy="http://localhost:4001")
         addon = CCProxyMitmAddon(storage=mock_storage, config=config)
 
         flow = _make_wg_flow(host="github.com", path="/api/v3/repos")
@@ -226,7 +226,7 @@ class TestWireGuardForwarding:
     @pytest.mark.asyncio
     async def test_reverse_flow_not_forwarded(self, mock_storage: AsyncMock) -> None:
         """Reverse proxy flows should never be forwarded, even for LLM domains."""
-        config = MitmConfig(upstream_proxy="http://localhost:4001")
+        config = InspectConfig(upstream_proxy="http://localhost:4001")
         addon = CCProxyMitmAddon(storage=mock_storage, config=config)
 
         flow = _make_mock_flow(reverse=True)
@@ -245,7 +245,7 @@ class TestWireGuardForwarding:
     @pytest.mark.asyncio
     async def test_custom_forward_domains(self, mock_storage: AsyncMock) -> None:
         """Custom forward_domains in config should be respected."""
-        config = MitmConfig(
+        config = InspectConfig(
             upstream_proxy="http://localhost:4001",
             forward_domains=["custom-llm.example.com"],
         )
@@ -264,7 +264,7 @@ class TestWireGuardForwarding:
     @pytest.mark.asyncio
     async def test_trace_captures_original_host(self, mock_storage: AsyncMock) -> None:
         """Trace should record the original host, not the rewritten one."""
-        config = MitmConfig(upstream_proxy="http://localhost:4001")
+        config = InspectConfig(upstream_proxy="http://localhost:4001")
         addon = CCProxyMitmAddon(storage=mock_storage, config=config)
 
         flow = _make_wg_flow(host="api.anthropic.com")
@@ -276,7 +276,7 @@ class TestWireGuardForwarding:
     @pytest.mark.asyncio
     async def test_forwarding_works_without_storage(self) -> None:
         """Forwarding should still rewrite the request even without storage."""
-        config = MitmConfig(upstream_proxy="http://localhost:4001")
+        config = InspectConfig(upstream_proxy="http://localhost:4001")
         addon = CCProxyMitmAddon(storage=None, config=config)
 
         flow = _make_wg_flow(host="api.anthropic.com")

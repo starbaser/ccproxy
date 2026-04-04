@@ -178,11 +178,11 @@ The namespace default route is replaced from `via 10.0.2.2` (slirp) to `dev wg0`
 
 ## Configuration
 
-These fields live under `ccproxy.mitm` in `ccproxy.yaml`:
+These fields live under `ccproxy.inspect` in `ccproxy.yaml`:
 
 ```yaml
 ccproxy:
-  mitm:
+  inspect:
     wireguard_port: 51820          # UDP port mitmweb WireGuard server binds to
     wireguard_conf_path: null      # Path to write WG conf; null = mitmproxy default (~/.mitmproxy/wireguard.conf)
 ```

@@ -17,7 +17,7 @@ import logging
 import os
 from typing import TYPE_CHECKING, Any
 
-from ccproxy.config import MitmConfig
+from ccproxy.config import InspectConfig
 from ccproxy.mitm.addon import CCProxyMitmAddon
 
 if TYPE_CHECKING:
@@ -35,7 +35,7 @@ class CCProxyScript:
     """Mitmproxy addon script that wraps CCProxyMitmAddon."""
 
     def __init__(self) -> None:
-        self.config: MitmConfig | None = None
+        self.config: InspectConfig | None = None
         self.storage: TraceStorage | None = None
         self.addon: CCProxyMitmAddon | None = None
         self.traffic_source: str | None = None
@@ -62,7 +62,7 @@ class CCProxyScript:
             forward_port,
         )
 
-        self.config = MitmConfig(
+        self.config = InspectConfig(
             upstream_proxy=f"http://localhost:{litellm_port}",
             max_body_size=int(os.environ.get("CCPROXY_MITM_MAX_BODY_SIZE", "0")),
             debug=os.environ.get("CCPROXY_DEBUG", "false").lower() in ("true", "1", "yes"),

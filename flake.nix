@@ -115,11 +115,16 @@
             port = 4001;
           };
         };
+        inspectDeps = pkgs.lib.makeBinPath [
+          pkgs.slirp4netns
+          pkgs.wireguard-tools
+          pkgs.iproute2
+        ];
       in {
         packages = {
           default = pkgs.writeShellScriptBin "ccproxy" ''
             export PYTHONPATH="${prismaGenerated}/lib/python${python.pythonVersion}/site-packages''${PYTHONPATH:+:$PYTHONPATH}"
-            export PATH="${venv}/bin:$PATH"
+            export PATH="${venv}/bin:${inspectDeps}:$PATH"
             exec ${venv}/bin/ccproxy "$@"
           '';
         };

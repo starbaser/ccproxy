@@ -86,7 +86,7 @@ class OAuthSource(BaseModel):
         return self
 
 
-class MitmConfig(BaseModel):
+class InspectConfig(BaseModel):
     """Configuration for mitmproxy traffic capture."""
 
     enabled: bool = False
@@ -196,7 +196,7 @@ class CCProxyConfig(BaseSettings):
     handler: str = "ccproxy.handler:CCProxyHandler"
 
     # Mitmproxy configuration
-    mitm: MitmConfig = Field(default_factory=MitmConfig)
+    inspect: InspectConfig = Field(default_factory=InspectConfig)
 
     # OAuth token sources - dict mapping provider name to shell command or OAuthSource
     # Example: {"anthropic": "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"}
@@ -519,12 +519,12 @@ class CCProxyConfig(BaseSettings):
                     instance.oauth_ttl = ccproxy_data["oauth_ttl"]
                 if "oauth_refresh_buffer" in ccproxy_data:
                     instance.oauth_refresh_buffer = ccproxy_data["oauth_refresh_buffer"]
-                if "mitm" in ccproxy_data:
-                    mitm_data = ccproxy_data["mitm"]
-                    # Propagate top-level debug flag if not explicitly set in mitm config
-                    if "debug" not in mitm_data and instance.debug:
-                        mitm_data = {**mitm_data, "debug": instance.debug}
-                    instance.mitm = MitmConfig(**mitm_data)
+                if "inspect" in ccproxy_data:
+                    inspect_data = ccproxy_data["inspect"]
+                    # Propagate top-level debug flag if not explicitly set in inspect config
+                    if "debug" not in inspect_data and instance.debug:
+                        inspect_data = {**inspect_data, "debug": instance.debug}
+                    instance.inspect = InspectConfig(**inspect_data)
 
                 # Backwards compatibility: migrate deprecated 'credentials' field
                 if "credentials" in ccproxy_data:
