@@ -132,6 +132,9 @@
               git
               just
               process-compose
+              slirp4netns
+              wireguard-tools
+              iproute2
             ];
 
             shellHook = ''
