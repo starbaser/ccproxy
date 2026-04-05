@@ -13,6 +13,9 @@ ccproxy:
       destinations:
         - "api.anthropic.com"
 
+    gemini:
+      command: "jq -r '.access_token' ~/.gemini/oauth_creds.json"
+
     # File-based token (reads file contents directly, mutually exclusive with command)
     # openrouter:
     #   file: "~/.config/ccproxy/openrouter-key"
@@ -25,11 +28,6 @@ ccproxy:
     #   destinations:
     #     - "z.ai"
     #   auth_header: x-api-key  # send token as this header instead of Authorization: Bearer
-
-    # Extended form with custom User-Agent only
-    # gemini:
-    #   command: "jq -r '.access_token' ~/.gemini/oauth_creds.json"
-    #   user_agent: "MyApp/1.0.0"
 
   # Pipeline hooks — executed in DAG order. List order breaks ties.
   hooks:

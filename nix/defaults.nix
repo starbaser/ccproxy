@@ -9,6 +9,9 @@
         command = "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json";
         destinations = [ "api.anthropic.com" ];
       };
+      gemini = {
+        command = "jq -r '.access_token' ~/.gemini/oauth_creds.json";
+      };
     };
     hooks = [
       "ccproxy.hooks.rule_evaluator"
