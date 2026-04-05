@@ -5,6 +5,7 @@ from ccproxy.config import CCProxyConfig
 from ccproxy.rules import MatchModelRule, MatchToolRule, ThinkingRule, TokenCountRule
 
 
+# TODO consider obliterating
 class TestEdgeCases:
     """Test edge cases and boundary conditions."""
 
@@ -13,6 +14,7 @@ class TestEdgeCases:
         rule = TokenCountRule(threshold=100)
         config = CCProxyConfig()
 
+        # TODO: USES A REAL TOKENIZER BTW
         # Messages with mixed string and dict items
         request = {
             "messages": [
@@ -42,6 +44,7 @@ class TestEdgeCases:
         result = rule.evaluate(request, config)
         assert result is False
 
+        # TODO shit test
     def test_messages_with_numeric_content(self) -> None:
         """Test handling of numeric content in messages."""
         rule = TokenCountRule(threshold=100)
