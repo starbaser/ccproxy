@@ -695,6 +695,17 @@ def start_litellm(
             else:
                 logger.warning("Failed to retrieve WireGuard client config from mitmweb")
 
+            web_url = f"http://{inspector_config.mitmproxy.web_host}:{inspector_config.port}/?token={web_token}"
+            print(f"Inspector UI: {web_url}")
+            try:
+                subprocess.Popen(  # noqa: S603
+                    ["xdg-open", web_url],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except FileNotFoundError:
+                logger.debug("xdg-open not found; open the inspector URL manually")
+
             # Build combined CA bundle now that mitmproxy has started and its CA cert exists
             confdir_path = Path(inspector_config.mitmproxy.confdir) if inspector_config.mitmproxy.confdir else None
             combined_bundle = _ensure_combined_ca_bundle(
