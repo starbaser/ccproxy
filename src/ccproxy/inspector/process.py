@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import secrets
 import socket
 import subprocess
 import sys
@@ -178,7 +179,7 @@ def start_inspector(
     *,
     reverse_port: int | None = None,
     forward_port: int | None = None,
-) -> subprocess.Popen[bytes]:
+) -> tuple[subprocess.Popen[bytes], str]:
     """Start the mitmweb inspector process.
 
     Launches mitmweb with three --mode listeners: reverse (client-facing),
@@ -193,7 +194,7 @@ def start_inspector(
         forward_port: Override for regular listener port (defaults to auto-assigned)
 
     Returns:
-        The running subprocess as a Popen object
+        Tuple of (running subprocess, web API auth token)
     """
 
     mitm_bin = _resolve_mitmproxy_binary(web=True)
@@ -219,8 +220,8 @@ def start_inspector(
         "--web-host", config.mitmproxy.web_host,
     ]
 
-    if config.mitmproxy.web_password is not None:
-        cmd += ["--set", f"web_password={config.mitmproxy.web_password}"]
+    web_token = config.mitmproxy.web_password or secrets.token_hex(16)
+    cmd += ["--set", f"web_password={web_token}"]
 
     env = _build_env(
         config_dir,
@@ -235,7 +236,7 @@ def start_inspector(
         f"UI@{config.port}"
     )
 
-    return _launch_process(cmd, env, description)
+    return _launch_process(cmd, env, description), web_token
 
 
 def get_inspector_status() -> dict[str, dict[str, bool | str | None]]:

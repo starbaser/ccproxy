@@ -668,7 +668,7 @@ def start_litellm(
                 f"Starting inspector: mitmweb reverse@{main_port} + regular@{forward_port} "
                 f"+ wireguard (auto-port), UI@{inspector_config.port}"
             )
-            inspector_proc = start_inspector(
+            inspector_proc, web_token = start_inspector(
                 config_dir,
                 config=inspector_config,
                 litellm_port=litellm_port,
@@ -683,7 +683,7 @@ def start_litellm(
             # Retrieve WireGuard client config from mitmweb for ccproxy run --inspect
             wg_client_conf = _fetch_wireguard_client_conf(
                 inspector_config.port, config_dir,
-                web_password=inspector_config.mitmproxy.web_password,
+                web_password=web_token,
             )
             if wg_client_conf:
                 (config_dir / ".inspector-wireguard-client.conf").write_text(wg_client_conf)
