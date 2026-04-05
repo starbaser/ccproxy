@@ -5,6 +5,7 @@ Forwards OAuth Bearer tokens to LLM providers with proper header handling.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -147,15 +148,13 @@ def _detect_provider(
         return dest_provider
 
     # 3. Try LiteLLM's provider detection
-    try:
+    with contextlib.suppress(Exception):
         _, provider_name, _, _ = get_llm_provider(
             model=routed_model,
             custom_llm_provider=custom_provider,
             api_base=api_base,
         )
         return provider_name
-    except Exception:
-        pass
 
     # 4. Fallback to model name-based detection
     model_lower = routed_model.lower()

@@ -154,7 +154,7 @@ def test_multiple_task_ids_same_session():
     ctx = make_ctx(messages=[user_msg("go")], session_id="sess-1")
     result = inject_mcp_notifications(ctx, {})
 
-    # 2 tasks × 2 messages each + 1 original = 5
+    # 2 tasks x 2 messages each + 1 original = 5
     assert len(result.messages) == 5
     assert result.messages[-1] == user_msg("go")
 
@@ -168,7 +168,7 @@ def test_multiple_task_ids_same_session():
 def test_insertion_before_final_user_message():
     prior = [assistant_msg("prev"), user_msg("earlier"), assistant_msg("ok")]
     final = user_msg("final")
-    messages = prior + [final]
+    messages = [*prior, final]
 
     buf = get_buffer()
     buf.append("task-1", "sess-1", {"type": "exit", "code": 0})

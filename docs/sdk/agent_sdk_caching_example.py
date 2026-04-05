@@ -36,9 +36,11 @@ Environment Variables:
 
 import asyncio
 import os
+from pathlib import Path
+
 from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
+from rich.table import Table
 
 # Configure ccproxy with OAuth sentinel key
 os.environ["ANTHROPIC_BASE_URL"] = "http://localhost:4000"
@@ -47,11 +49,11 @@ os.environ["ANTHROPIC_API_KEY"] = "sk-ant-oat-ccproxy-anthropic"
 # Note: claude_agent_sdk must be installed in the same environment
 # Install with: uv add claude-agent-sdk
 from claude_agent_sdk import (  # type: ignore[import-not-found]
-    query,
-    ClaudeAgentOptions,
     AssistantMessage,
+    ClaudeAgentOptions,
     ResultMessage,
     TextBlock,
+    query,
 )
 
 console = Console()
@@ -127,7 +129,7 @@ async def main() -> None:
     options = ClaudeAgentOptions(
         allowed_tools=["Read", "Glob"],
         permission_mode="default",  # Require permission for file operations
-        cwd=os.getcwd(),
+        cwd=str(Path.cwd()),
     )
 
     console.print(
@@ -155,7 +157,7 @@ async def main() -> None:
                         assistant_texts.append(block.text)
 
             elif isinstance(message, ResultMessage):
-                console.print(f"\n[bold blue]Result Message:[/bold blue]")
+                console.print("\n[bold blue]Result Message:[/bold blue]")
                 console.print(f"  Subtype: {message.subtype}")
                 console.print(f"  Duration: {message.duration_ms}ms (API: {message.duration_api_ms}ms)")
                 console.print(f"  Turns: {message.num_turns}")

@@ -1,7 +1,7 @@
 """Utility functions for ccproxy."""
 
 import inspect
-import random
+import secrets
 import socket
 from pathlib import Path
 from typing import Any
@@ -73,7 +73,7 @@ def find_available_port(start: int = 49152, end: int = 65535) -> int:
         RuntimeError: If no available port found after 100 attempts
     """
     for _ in range(100):
-        port = random.randint(start, end)
+        port = secrets.randbelow(end - start + 1) + start
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             try:
                 s.bind(("127.0.0.1", port))

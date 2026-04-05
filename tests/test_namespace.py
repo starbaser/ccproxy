@@ -1,13 +1,12 @@
 """Tests for ccproxy.inspector.namespace — network namespace confinement."""
 
 import json
-import os
 import signal
 import socket
 import subprocess
 import threading
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, call, mock_open, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 

@@ -230,7 +230,7 @@ class TestConfigSingleton:
 
             assert config1 is config2
             assert config1.debug is True
-            
+
         finally:
             clear_config_instance()
 

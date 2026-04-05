@@ -70,6 +70,7 @@ poetry.lock
 .envrc
 dumps
 langfuse/
+!stubs/langfuse/
 handoff.md
 
 # ML artifacts

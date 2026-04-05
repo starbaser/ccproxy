@@ -1,5 +1,11 @@
 {
   repositories = {
+    "anthropic/anthropic-sdk-python" = {
+      url = "https://github.com/anthropics/anthropic-sdk-python";
+      kits = {
+        src = { include = [ "src/" ]; chunk_by = "symbols"; };
+      };
+    };
     litellm = {
       url = "https://github.com/BerriAI/litellm";
       kits = {

@@ -35,14 +35,14 @@ class TestOAuthSource:
 
     def test_oauth_source_file_with_user_agent(self) -> None:
         """Test OAuthSource with file and user_agent."""
-        source = OAuthSource(file="/tmp/token", user_agent="MyApp/1.0.0")
-        assert source.file == "/tmp/token"
+        source = OAuthSource(file="/run/test/oauth-token", user_agent="MyApp/1.0.0")
+        assert source.file == "/run/test/oauth-token"
         assert source.user_agent == "MyApp/1.0.0"
 
     def test_oauth_source_mutual_exclusivity(self) -> None:
         """Test that command and file cannot both be specified."""
         with pytest.raises(ValueError, match="mutually exclusive"):
-            OAuthSource(command="echo 'token'", file="/tmp/token")
+            OAuthSource(command="echo 'token'", file="/run/test/oauth-token")
 
     def test_oauth_source_neither_raises(self) -> None:
         """Test that at least one of command or file must be specified."""

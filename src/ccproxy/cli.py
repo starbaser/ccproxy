@@ -488,7 +488,7 @@ def _fetch_wireguard_client_conf(
 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        try:
+        with contextlib.suppress(Exception):
             url = f"http://127.0.0.1:{inspect_port}/state"
             if web_token:
                 url += f"?token={web_token}"
@@ -501,8 +501,6 @@ def _fetch_wireguard_client_conf(
                 wg_conf: Any = srv.get("wireguard_conf") if isinstance(srv, dict) else None
                 if wg_conf:
                     return str(wg_conf)
-        except Exception:
-            pass
         time.sleep(0.5)
     return None
 
@@ -699,7 +697,7 @@ def start_litellm(
             print(f"Inspector UI: {web_url}")
             try:
                 subprocess.Popen(  # noqa: S603
-                    ["xdg-open", web_url],
+                    ["xdg-open", web_url],  # noqa: S607
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )

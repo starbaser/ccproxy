@@ -95,7 +95,7 @@ Request → CCProxyHandler → Hook Pipeline → Response
   - `MatchToolRule` - Matches by tool name in request
   - `TokenCountRule` - Evaluates based on token count threshold
 - **router.py**: Manages model configurations from LiteLLM proxy server. Lazy-loads models on first request.
-- **config.py**: Configuration management using Pydantic with multi-level discovery (env var → LiteLLM runtime → ~/.ccproxy/).
+- **config.py**: Configuration management using Pydantic with multi-level discovery (env var → LiteLLM runtime → ~/.ccproxy/). Contains all config models including `MitmproxyOptions` (typed facade over mitmproxy's OptManager).
 - **hooks/**: Built-in pipeline hooks using `@hook` decorator with DAG-based ordering. Hooks support optional params via `hook:` + `params:` YAML format in `ccproxy.yaml`:
   - `rule_evaluator` - Evaluates rules and stores routing decision (skips classification for health checks)
   - `model_router` - Routes to appropriate model (forces passthrough for health checks)
@@ -173,6 +173,18 @@ The test suite uses pytest with comprehensive fixtures (18 test files, 90% cover
 - Tests organized to mirror source structure (`test_<module>.py`)
 - Parametrized tests for rule evaluation scenarios
 - Integration tests verify end-to-end behavior
+
+## Type Stubs (`stubs/`)
+
+Several dependencies lack `py.typed` markers or have incomplete type information. Hand-written stubs in `stubs/` (on `mypy_path`) provide strict-mode coverage:
+
+- **`mitmproxy/`** — Full stub hierarchy: `flow.Error`/`Flow`, `http.HTTPFlow`/`Request`/`Response`/`Headers`, `connection.Client`, `proxy/mode_specs.ProxyMode` + all concrete subclasses (`RegularMode`, `ReverseMode`, `WireGuardMode`, etc.), `addonmanager.Loader`.
+- **`opentelemetry/`** — Optional OTel API/SDK stubs (package not installed in dev env): `trace`, `sdk.resources`, `sdk.trace`, `sdk.trace.export`, `exporter.otlp.proto.grpc.trace_exporter`.
+- **`langfuse/__init__.pyi`** — `Langfuse` class stub (installed but re-export chain not mypy-resolvable).
+- **`litellm/__init__.pyi`** — `AuthenticationError`, `_LiteLLMUtils`/`utils`, `acompletion`.
+- **`psutil/`**, **`rich/`**, **`httpx/`**, **`tyro/`**, **`tiktoken.pyi`**, **`pydantic_settings.pyi`** — supplemental stubs for strict-mode gaps.
+
+Two `setattr` calls in `handler.py` carry `# noqa: B010` to satisfy mypy (`method-assign` / `attr-defined`) while suppressing ruff B010 — direct assignment would break strict type checking.
 
 ## Important Implementation Notes
 

@@ -100,7 +100,7 @@ fi
         # Use the absolute path to the mock so PATH lookup is bypassed.
         # This avoids picking up system wrappers (e.g. NixOS claude shims) that
         # would intercept a bare "claude" argument before the mock is reached.
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603
             ["uv", "run", "ccproxy", "run", "--", str(mock_claude), "-p", "Hello"],
             env=env,
             cwd=test_config_dir,
@@ -251,7 +251,7 @@ fi
         env.pop("CLAUDECODE", None)  # Allow nested launch in test context
 
         # Start ccproxy in background with explicit config dir
-        start_result = subprocess.run(
+        start_result = subprocess.run(  # noqa: S603
             ["uv", "run", "ccproxy", "--config-dir", config_dir_str, "start", "--detach"],
             env=env,
             capture_output=True,
@@ -266,7 +266,7 @@ fi
 
             # Run claude with a simple prompt - locked down config for testing
             try:
-                result = subprocess.run(
+                result = subprocess.run(  # noqa: S603
                     [
                         "uv",
                         "run",
@@ -295,23 +295,23 @@ fi
                 # Print logs even on timeout
                 log_file = config_dir / "litellm.log"
                 if log_file.exists():
-                    print(f"\n=== Proxy Logs on Timeout ===")
+                    print("\n=== Proxy Logs on Timeout ===")
                     print(log_file.read_text()[-15000:])
-                raise AssertionError(f"Claude command timed out after 60s. stdout={e.stdout}, stderr={e.stderr}")
+                raise AssertionError(f"Claude command timed out after 60s. stdout={e.stdout}, stderr={e.stderr}") from e
 
             # Always print Claude output for debugging
-            print(f"\n=== Claude CLI Output ===")
+            print("\n=== Claude CLI Output ===")
             print(f"Return code: {result.returncode}")
             print(f"STDOUT:\n{result.stdout}")
             print(f"STDERR:\n{result.stderr}")
-            print(f"=========================\n")
+            print("=========================\n")
 
             # Print proxy logs if available
             log_file = config_dir / "litellm.log"
             if log_file.exists():
-                print(f"\n=== Proxy Logs (last 50 lines) ===")
+                print("\n=== Proxy Logs (last 50 lines) ===")
                 print(log_file.read_text()[-10000:])  # Last ~10KB
-                print(f"==================================\n")
+                print("==================================\n")
 
             # Check for success or acceptable API errors (rate limit proves connectivity)
             if result.returncode != 0:
@@ -328,7 +328,7 @@ fi
 
         finally:
             # Always attempt graceful stop first
-            subprocess.run(
+            subprocess.run(  # noqa: S603
                 ["uv", "run", "ccproxy", "--config-dir", config_dir_str, "stop"],
                 env=env,
                 capture_output=True,
@@ -461,7 +461,7 @@ fi
         env["CCPROXY_TEST_MODE"] = "1"
 
         # Start ccproxy
-        start_result = subprocess.run(
+        start_result = subprocess.run(  # noqa: S603
             ["uv", "run", "ccproxy", "--config-dir", config_dir_str, "start", "--detach"],
             env=env,
             capture_output=True,
@@ -490,17 +490,17 @@ fi
                 timeout=30,
             )
 
-            print(f"\n=== OAuth E2E Response ===")
+            print("\n=== OAuth E2E Response ===")
             print(f"Status: {response.status_code}")
             print(f"Body: {response.text[:2000]}")
-            print(f"==========================\n")
+            print("==========================\n")
 
             # Print proxy logs
             log_file = config_dir / "litellm.log"
             if log_file.exists():
-                print(f"\n=== Proxy Logs (last 5KB) ===")
+                print("\n=== Proxy Logs (last 5KB) ===")
                 print(log_file.read_text()[-5000:])
-                print(f"=============================\n")
+                print("=============================\n")
 
             # These non-200 statuses prove the pipeline worked (request reached Anthropic)
             if response.status_code == 429:
@@ -515,7 +515,7 @@ fi
             assert len(body["choices"]) > 0, f"Empty choices in response: {body}"
 
         finally:
-            subprocess.run(
+            subprocess.run(  # noqa: S603
                 ["uv", "run", "ccproxy", "--config-dir", config_dir_str, "stop"],
                 env=env,
                 capture_output=True,

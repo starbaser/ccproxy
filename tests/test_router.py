@@ -384,7 +384,6 @@ class TestModelRouter:
             router = ModelRouter()
 
         # Monkey patch the method to directly test the inside-lock condition
-        original_method = router._ensure_models_loaded
 
         # We need to manually construct the scenario where:
         # 1. _models_loaded = False (so we pass the first check and enter the method)

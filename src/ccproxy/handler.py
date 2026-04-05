@@ -38,13 +38,13 @@ class RequestData(TypedDict, total=False):
 class CCProxyHandler(CustomLogger):
     """Main module of ccproxy, an instance of CCProxyHandler is instantiated in the LiteLLM callback python script"""
 
-    _oauth_refresh_task: asyncio.Task | None = None  # Background refresh task
+    _oauth_refresh_task: asyncio.Task[None] | None = None  # Background refresh task
 
     def __init__(self) -> None:
         super().__init__()
         self.classifier = RequestClassifier()
         self.router = get_router()
-        self._langfuse_client = None
+        self._langfuse_client: Any = None
         self._pipeline: PipelineExecutor | None = None
 
         config = get_config()
@@ -72,7 +72,7 @@ class CCProxyHandler(CustomLogger):
 
     _routes_registered: bool = False  # Class-level flag to prevent duplicate registration
     _health_check_patched: bool = False
-    _mcp_cleanup_task: asyncio.Task | None = None
+    _mcp_cleanup_task: asyncio.Task[None] | None = None
 
     @staticmethod
     def _patch_health_check() -> None:
@@ -90,7 +90,7 @@ class CCProxyHandler(CustomLogger):
 
             _original = hc_module._update_litellm_params_for_health_check
 
-            def _patched(model_info: dict, litellm_params: dict) -> dict:
+            def _patched(model_info: dict[str, Any], litellm_params: dict[str, Any]) -> dict[str, Any]:
                 result = _original(model_info, litellm_params)
                 _inject_health_check_auth(result, litellm_params)
                 return result
@@ -126,8 +126,15 @@ class CCProxyHandler(CustomLogger):
             _original_validate = AnthropicModelInfo.validate_environment
 
             def _patched_validate(
-                self, headers, model, messages, optional_params, litellm_params, api_key=None, api_base=None
-            ):
+                self: Any,
+                headers: dict[str, Any],
+                model: str,
+                messages: list[Any],
+                optional_params: dict[str, Any],
+                litellm_params: dict[str, Any],
+                api_key: str | None = None,
+                api_base: str | None = None,
+            ) -> dict[str, Any]:
                 # Check if caller explicitly set x-api-key to empty (OAuth mode)
                 oauth_mode = "x-api-key" in headers and headers["x-api-key"] == ""
                 if oauth_mode and not api_key:
@@ -147,7 +154,7 @@ class CCProxyHandler(CustomLogger):
                     logger.debug("Removed x-api-key from Anthropic headers (OAuth mode)")
                 return result
 
-            AnthropicModelInfo.validate_environment = _patched_validate
+            setattr(AnthropicModelInfo, "validate_environment", _patched_validate)  # noqa: B010
             CCProxyHandler._anthropic_oauth_patched = True
             logger.debug("Patched Anthropic validate_environment for OAuth header support")
         except Exception as e:
@@ -166,7 +173,7 @@ class CCProxyHandler(CustomLogger):
         registry = get_registry()
 
         # Track params and priority from config hooks list
-        hook_params_map: dict[str, dict] = {}
+        hook_params_map: dict[str, dict[str, Any]] = {}
         hook_priority_map: dict[str, int] = {}
 
         for idx, entry in enumerate(config.hooks):
@@ -248,7 +255,7 @@ class CCProxyHandler(CustomLogger):
 
             from ccproxy.mcp.routes import router as mcp_router
 
-            existing_routes = [r.path for r in app.routes]
+            existing_routes = [getattr(r, "path", "") for r in app.routes]
 
             if "/mcp/notify" not in existing_routes:
                 # Insert before LiteLLM's app.mount("/mcp") catch-all so our
@@ -259,7 +266,7 @@ class CCProxyHandler(CustomLogger):
 
                 for route in reversed(list(mcp_router.routes)):
                     route_copy = copy.copy(route)
-                    route_copy.path = mcp_router.prefix + route.path
+                    setattr(route_copy, "path", mcp_router.prefix + getattr(route, "path", ""))  # noqa: B010
                     app.routes.insert(0, route_copy)
                 logger.debug("Registered MCP notification routes (prepended)")
 
@@ -270,7 +277,7 @@ class CCProxyHandler(CustomLogger):
             logger.debug(f"Could not register custom routes: {e}")
 
     @property
-    def langfuse(self):
+    def langfuse(self) -> Any:
         """Lazy-loaded Langfuse client."""
         if self._langfuse_client is None:
             try:
@@ -308,7 +315,7 @@ class CCProxyHandler(CustomLogger):
         exc_str = str(exception).lower()
         return "401" in exc_str or "unauthorized" in exc_str or "authentication" in exc_str
 
-    def _extract_provider_from_metadata(self, kwargs: dict) -> str | None:
+    def _extract_provider_from_metadata(self, kwargs: dict[str, Any]) -> str | None:
         """Extract provider name from request metadata.
 
         Args:
@@ -328,7 +335,7 @@ class CCProxyHandler(CustomLogger):
             return "gemini"
         return None
 
-    def _extract_provider_from_request_data(self, request_data: dict) -> str | None:
+    def _extract_provider_from_request_data(self, request_data: dict[str, Any]) -> str | None:
         """Extract provider name from request data using tiered detection strategies."""
         config = get_config()
         metadata = request_data.get("metadata", {})
@@ -768,7 +775,7 @@ class CCProxyHandler(CustomLogger):
 
     async def async_post_call_failure_hook(
         self,
-        request_data: dict,
+        request_data: dict[str, Any],
         original_exception: Exception,
         user_api_key_dict: Any,
         traceback_str: str | None = None,
@@ -921,7 +928,7 @@ class CCProxyHandler(CustomLogger):
         )
 
 
-def _inject_health_check_auth(result: dict, litellm_params: dict) -> None:
+def _inject_health_check_auth(result: dict[str, Any], litellm_params: dict[str, Any]) -> None:
     """Inject OAuth credentials into health check params for real provider validation.
 
     Sets api_key and extra_headers BEFORE litellm.acompletion() is called, since

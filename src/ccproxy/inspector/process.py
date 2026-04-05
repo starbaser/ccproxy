@@ -13,8 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ccproxy.config import InspectorConfig
-    from ccproxy.inspector.mitmproxy_options import MitmproxyOptions
+    from ccproxy.config import InspectorConfig, MitmproxyOptions
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +22,7 @@ def _find_free_udp_port() -> int:
     """Find an available UDP port by binding to port 0."""
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
         s.bind(("", 0))
-        return s.getsockname()[1]
+        return int(s.getsockname()[1])
 
 
 
@@ -97,7 +96,7 @@ def _build_mitmproxy_set_args(opts: MitmproxyOptions) -> list[str]:
     Web UI fields (web_host, web_password, web_open_browser) are excluded —
     they use dedicated CLI flags handled by the caller.
     """
-    from ccproxy.inspector.mitmproxy_options import MitmproxyOptions
+    from ccproxy.config import MitmproxyOptions
 
     args: list[str] = []
     for field_name in MitmproxyOptions.model_fields:

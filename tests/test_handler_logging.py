@@ -100,7 +100,7 @@ class TestHandlerLoggingHookMethods:
             mock_get_router.return_value = mock_router
 
             # Create handler - should log pipeline initialization
-            handler = CCProxyHandler()
+            CCProxyHandler()
 
             # Verify debug logging occurred for pipeline initialization
             # Pipeline logs: "Pipeline initialized with %d hooks: %s"

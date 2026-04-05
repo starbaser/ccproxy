@@ -10,9 +10,10 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any
 
 import yaml
+from mitmproxy import http
+from mitmproxy.addonmanager import Loader
 
 from ccproxy.config import InspectorConfig, OtelConfig
 from ccproxy.inspector.addon import InspectorAddon
@@ -35,7 +36,7 @@ class InspectorScript:
         self._initialized = False
         self._otel_config: OtelConfig | None = None
 
-    def load(self, _loader: Any) -> None:
+    def load(self, _loader: Loader) -> None:
         """Called when addon is loaded by mitmproxy."""
         logger.info("Loading ccproxy inspector addon...")
 
@@ -114,17 +115,17 @@ class InspectorScript:
 
         logger.info("Inspector addon shutdown complete")
 
-    async def request(self, flow: Any) -> None:
+    async def request(self, flow: http.HTTPFlow) -> None:
         """Handle HTTP request."""
         if self.addon:
             await self.addon.request(flow)
 
-    async def response(self, flow: Any) -> None:
+    async def response(self, flow: http.HTTPFlow) -> None:
         """Handle HTTP response."""
         if self.addon:
             await self.addon.response(flow)
 
-    async def error(self, flow: Any) -> None:
+    async def error(self, flow: http.HTTPFlow) -> None:
         """Handle flow error."""
         if self.addon:
             await self.addon.error(flow)

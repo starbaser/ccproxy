@@ -8,6 +8,7 @@ Requires: unshare, nsenter, slirp4netns, ip, wg (all rootless on Linux 5.6+
 with unprivileged_userns_clone=1).
 """
 
+import contextlib
 import dataclasses
 import json
 import logging
@@ -247,15 +248,15 @@ def create_namespace(wg_client_conf: str) -> NamespaceContext:
     # Start sentinel process in a new user+net namespace
     try:
         sentinel = subprocess.Popen(
-            ["unshare", "--user", "--map-root-user", "--net", "--pid", "--fork",
+            ["unshare", "--user", "--map-root-user", "--net", "--pid", "--fork",  # noqa: S607
              "sleep", "infinity"],
             start_new_session=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-    except Exception:
+    except Exception as exc:
         conf_path.unlink(missing_ok=True)
-        raise RuntimeError("Failed to create network namespace (unshare)")
+        raise RuntimeError("Failed to create network namespace (unshare)") from exc
 
     ns_pid = sentinel.pid
     api_socket_path = Path(tempfile.gettempdir()) / f"ccproxy-slirp-{ns_pid}.sock"
@@ -276,7 +277,7 @@ def create_namespace(wg_client_conf: str) -> NamespaceContext:
             str(ns_pid),
             "tap0",
         ]
-        slirp_proc = subprocess.Popen(
+        slirp_proc = subprocess.Popen(  # noqa: S603
             slirp_cmd,
             pass_fds=(ready_w, exit_r),
             stdout=subprocess.PIPE,
@@ -310,8 +311,8 @@ def create_namespace(wg_client_conf: str) -> NamespaceContext:
             f"ip route del default && "
             f"ip route add default dev wg0"
         )
-        result = subprocess.run(
-            ["nsenter", "-t", str(ns_pid), "--net", "--user", "--preserve-credentials", "--",
+        result = subprocess.run(  # noqa: S603
+            ["nsenter", "-t", str(ns_pid), "--net", "--user", "--preserve-credentials", "--",  # noqa: S607
              "sh", "-c", wg_setup],
             capture_output=True,
             text=True,
@@ -328,8 +329,8 @@ def create_namespace(wg_client_conf: str) -> NamespaceContext:
                 "iptables -t nat -A PREROUTING -i tap0 -p tcp "
                 "-j DNAT --to-destination 127.0.0.1"
             )
-            dnat_result = subprocess.run(
-                ["nsenter", "-t", str(ns_pid), "--net", "--user",
+            dnat_result = subprocess.run(  # noqa: S603
+                ["nsenter", "-t", str(ns_pid), "--net", "--user",  # noqa: S607
                  "--preserve-credentials", "--", "sh", "-c", dnat_cmd],
                 capture_output=True,
                 text=True,
@@ -389,7 +390,7 @@ def run_in_namespace(ctx: NamespaceContext, command: list[str], env: dict[str, s
         "--", *command,
     ]
     try:
-        proc = subprocess.Popen(nsenter_cmd, env=env)
+        proc = subprocess.Popen(nsenter_cmd, env=env)  # noqa: S603
         return proc.wait()
     except KeyboardInterrupt:
         proc.terminate()
@@ -432,10 +433,8 @@ def cleanup_namespace(ctx: NamespaceContext) -> None:
 def _safe_close(fd: int) -> None:
     """Close a file descriptor, ignoring errors."""
     if fd >= 0:
-        try:
+        with contextlib.suppress(OSError):
             os.close(fd)
-        except OSError:
-            pass
 
 
 def _safe_kill(pid: int) -> None:

@@ -108,8 +108,9 @@ mypy_path = "stubs"
 module = [
   "litellm.*",
   "langfuse.*",
-  "mitmproxy.*",
   "tiktoken.*",
+  "opentelemetry",
+  "opentelemetry.*",
 ]
 ignore_missing_imports = true
 

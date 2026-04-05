@@ -85,9 +85,9 @@ class TestOAuthTokenRefresh:
         # Set an old token
         config._oat_values["anthropic"] = ("old-token", time.time() - 4000)
 
-        new_token = config.refresh_oauth_token("anthropic")
+        result = config.refresh_oauth_token("anthropic")
 
-        assert new_token == "new-token"
+        assert result == "new-token"
         assert config.get_oauth_token("anthropic") == "new-token"
         # Timestamp should be updated
         _, timestamp = config._oat_values["anthropic"]
@@ -137,9 +137,9 @@ class TestOAuthTokenRefresh:
         config._oat_values["gemini"] = ("old-token", time.time() - 4000)
         config._oat_user_agents["gemini"] = "CustomAgent/1.0"
 
-        new_token = config.refresh_oauth_token("gemini")
+        result = config.refresh_oauth_token("gemini")
 
-        assert new_token == "gemini-token"
+        assert result == "gemini-token"
         assert config.get_oauth_user_agent("gemini") == "CustomAgent/1.0"
 
 
