@@ -577,7 +577,7 @@ def start_litellm(
     if inspect:
         ports_to_check.append(forward_port)
         ports_to_check.append(inspector_config.port)
-    run_preflight_checks(ports=ports_to_check)
+    run_preflight_checks(ports=ports_to_check, config_dir=config_dir)
 
     try:
         generate_handler_file(config_dir)
@@ -651,6 +651,7 @@ def start_litellm(
         litellm_cmd.extend(args)
 
     inspector_proc: subprocess.Popen[bytes] | None = None
+    wg_keypair_path = config_dir / f"wireguard.{os.getpid()}.conf"
 
     # SIGTERM handler: convert to KeyboardInterrupt for clean shutdown
     original_sigterm = signal.getsignal(signal.SIGTERM)
@@ -664,6 +665,9 @@ def start_litellm(
         if inspect:
             from ccproxy.inspector import start_inspector
 
+            # Remove stale WG client conf — always re-fetched from mitmweb after startup
+            (config_dir / ".inspector-wireguard-client.conf").unlink(missing_ok=True)
+
             print(
                 f"Starting inspector: mitmweb reverse@{main_port} + regular@{forward_port} "
                 f"+ wireguard (auto-port), UI@{inspector_config.port}"
@@ -672,6 +676,7 @@ def start_litellm(
                 config_dir,
                 config=inspector_config,
                 litellm_port=litellm_port,
+                wireguard_conf_path=wg_keypair_path,
                 reverse_port=main_port,
                 forward_port=forward_port,
             )
@@ -726,6 +731,7 @@ def start_litellm(
         signal.signal(signal.SIGTERM, original_sigterm)
         if inspector_proc is not None:
             _terminate_proc(inspector_proc)
+        wg_keypair_path.unlink(missing_ok=True)
 
 
 def view_logs(follow: bool = False, lines: int = 100) -> None:

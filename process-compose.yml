@@ -2,7 +2,7 @@ version: "0.5"
 
 processes:
   ccproxy:
-    command: "uv run ccproxy start"
+    command: "ccproxy start --inspect"
     readiness_probe:
       exec:
         command: "curl -sf --max-time 5 http://127.0.0.1:4001/health/liveliness > /dev/null"

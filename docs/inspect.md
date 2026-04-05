@@ -180,16 +180,7 @@ The namespace default route is replaced from `via 10.0.2.2` (slirp) to `dev wg0`
 
 These fields live under `ccproxy.inspector` in `ccproxy.yaml`:
 
-```yaml
-ccproxy:
-  inspector:
-    wireguard_port: 51820          # UDP port mitmweb WireGuard server binds to
-    wireguard_conf_path: null      # Path to write WG conf; null = mitmproxy default (~/.mitmproxy/wireguard.conf)
-```
-
-`wireguard_port` must be free as a UDP port at startup. Preflight checks scan `/proc/net/udp` for conflicts.
-
-`wireguard_conf_path` controls where mitmproxy stores its WireGuard keypair. When `null`, mitmproxy uses its default location. Set an explicit path to isolate keypairs across multiple ccproxy instances (e.g., dev vs. production).
+The WireGuard keypair is auto-managed at `{config_dir}/wireguard.{pid}.conf` (PID-tagged for multi-instance isolation). Each `ccproxy start --inspect` gets its own WG server identity. Stale keypair files from dead processes are cleaned during preflight. The mitmproxy CA (in `cert_dir`/`confdir`) is shared across instances so clients only need to trust one CA.
 
 ---
 
@@ -216,7 +207,7 @@ Called in a `finally` block regardless of how the confined process exits:
 
 ### `ccproxy start` shutdown
 
-When `ccproxy start --inspect` receives SIGTERM or Ctrl+C, the `finally` block in `start_litellm` calls `_terminate_proc(mitm_proc)`, which sends SIGTERM to mitmweb and waits 5 seconds before escalating to SIGKILL. The `.inspector-wireguard-client.conf` state file is not removed on shutdown — `ccproxy run --inspect` will read a stale config if the server is restarted with different WireGuard keys. Start a fresh `ccproxy start --inspect` after any key rotation.
+When `ccproxy start --inspect` receives SIGTERM or Ctrl+C, the `finally` block in `start_litellm` calls `_terminate_proc(mitm_proc)`, which sends SIGTERM to mitmweb and waits 5 seconds before escalating to SIGKILL. The PID-tagged WireGuard keypair file (`wireguard.{pid}.conf`) is removed on shutdown. The `.inspector-wireguard-client.conf` state file is deleted at the start of each `ccproxy start --inspect` and re-fetched from mitmweb after startup, preventing stale client configs from persisting across restarts. Preflight checks also clean orphaned `wireguard.*.conf` files for dead PIDs.
 
 ---
 

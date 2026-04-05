@@ -177,6 +177,7 @@ def start_inspector(
     config: InspectorConfig,
     litellm_port: int,
     *,
+    wireguard_conf_path: Path,
     reverse_port: int | None = None,
     forward_port: int | None = None,
 ) -> tuple[subprocess.Popen[bytes], str]:
@@ -202,11 +203,7 @@ def start_inspector(
 
     rev_port = reverse_port or config.port
     fwd_port = forward_port or 8081
-    wg_spec = (
-        f"wireguard:{config.wireguard_conf_path}"
-        if config.wireguard_conf_path
-        else "wireguard"
-    )
+    wg_spec = f"wireguard:{wireguard_conf_path}"
     wg_port = _find_free_udp_port()
 
     cmd = [

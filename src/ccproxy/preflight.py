@@ -226,9 +226,22 @@ def kill_stale_processes(processes: list[tuple[int, str]]) -> int:
     return killed
 
 
+def _cleanup_stale_wireguard_confs(config_dir: Path) -> None:
+    """Remove wireguard.{pid}.conf files whose owning process no longer exists."""
+    for wg_file in config_dir.glob("wireguard.*.conf"):
+        stem = wg_file.stem
+        parts = stem.split(".")
+        if len(parts) == 2 and parts[1].isdigit():
+            pid = int(parts[1])
+            if not Path(f"/proc/{pid}").exists():
+                logger.info("Removing stale WireGuard keypair: %s (PID %d dead)", wg_file.name, pid)
+                wg_file.unlink(missing_ok=True)
+
+
 def run_preflight_checks(
     ports: list[int] | None = None,
     udp_ports: list[int] | None = None,
+    config_dir: Path | None = None,
 ) -> None:
     """Run pre-flight checks before starting ccproxy.
 
@@ -240,6 +253,9 @@ def run_preflight_checks(
         SystemExit: On unrecoverable conflicts.
     """
     logger.debug("Running pre-flight checks...")
+
+    if config_dir is not None:
+        _cleanup_stale_wireguard_confs(config_dir)
 
     # TCP port availability — kill stale ccproxy processes on configured ports
     for port in ports or []:

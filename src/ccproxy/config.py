@@ -133,11 +133,6 @@ class InspectorConfig(BaseModel):
     """mitmproxy CA certificate store directory. Populates mitmproxy.confdir
     via model validator when set."""
 
-
-
-    wireguard_conf_path: Path | None = None
-    """Path to WireGuard configuration file."""
-
     provider_map: dict[str, str] = Field(default_factory=lambda: {
         "api.anthropic.com": "anthropic",
         "api.openai.com": "openai",
