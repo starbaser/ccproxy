@@ -111,6 +111,7 @@
           pkgs.slirp4netns
           pkgs.wireguard-tools
           pkgs.iproute2
+          pkgs.iptables
         ];
       in {
         packages = {
@@ -134,6 +135,7 @@
               slirp4netns
               wireguard-tools
               iproute2
+              iptables
             ];
 
             shellHook = ''

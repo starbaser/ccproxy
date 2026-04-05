@@ -9,13 +9,16 @@ with unprivileged_userns_clone=1).
 """
 
 import dataclasses
+import json
 import logging
 import os
 import re
 import shutil
 import signal
+import socket
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
 
 from ccproxy.inspector.process import _pipe_output
@@ -76,6 +79,117 @@ class NamespaceContext:
 
     api_socket: Path | None = None
     """slirp4netns API socket path (for cleanup)."""
+
+    port_forwarder: "PortForwarder | None" = None
+    """Background thread forwarding namespace listen ports to the host."""
+
+
+def _parse_proc_net_tcp(path: Path) -> set[int]:
+    """Return TCP LISTEN ports on localhost or wildcard from a /proc/net/tcp file.
+
+    The sentinel PID's /proc/{pid}/net/tcp exposes the namespace's socket table.
+    """
+    ports: set[int] = set()
+    try:
+        content = path.read_text()
+    except OSError:
+        return ports
+
+    for line in content.splitlines()[1:]:
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        state = parts[3]
+        if state != "0A":  # LISTEN
+            continue
+        host_hex, port_hex = parts[1].split(":")
+        if host_hex not in ("0100007F", "00000000"):  # localhost, wildcard
+            continue
+        port = int(port_hex, 16)
+        if port < 1024:
+            continue
+        ports.add(port)
+
+    return ports
+
+
+def _slirp_add_hostfwd(api_socket: Path, port: int) -> bool:
+    """Forward host 127.0.0.1:port → namespace 10.0.2.100:port via slirp4netns API."""
+    request = json.dumps({
+        "execute": "add_hostfwd",
+        "arguments": {
+            "proto": "tcp",
+            "host_addr": "127.0.0.1",
+            "host_port": port,
+            "guest_addr": "10.0.2.100",
+            "guest_port": port,
+        },
+    }).encode()
+
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.settimeout(2.0)
+            s.connect(str(api_socket))
+            s.sendall(request + b"\n")
+            data = b""
+            while b"\n" not in data:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+    except OSError as e:
+        logger.warning("slirp4netns API unavailable for port %d: %s", port, e)
+        return False
+
+    try:
+        response = json.loads(data.strip())
+    except json.JSONDecodeError:
+        logger.warning("slirp4netns returned malformed JSON for port %d", port)
+        return False
+
+    if "error" in response:
+        logger.warning(
+            "slirp4netns refused hostfwd for port %d: %s",
+            port,
+            response["error"].get("desc", response["error"]),
+        )
+        return False
+
+    logger.info("Port forwarding active: host 127.0.0.1:%d → namespace 127.0.0.1:%d", port, port)
+    return True
+
+
+class PortForwarder:
+    """Monitors namespace TCP sockets and forwards new LISTEN ports to the host."""
+
+    def __init__(self, ns_pid: int, api_socket: Path, poll_interval: float = 0.5) -> None:
+        self._proc_tcp_path = Path(f"/proc/{ns_pid}/net/tcp")
+        self._api_socket = api_socket
+        self._poll_interval = poll_interval
+        self._stop_event = threading.Event()
+        self._attempted: set[int] = set()
+        self._thread = threading.Thread(target=self._run, daemon=True, name="port-forwarder")
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+
+    def _run(self) -> None:
+        logger.debug("PortForwarder started")
+        while not self._stop_event.wait(self._poll_interval):
+            try:
+                self._poll()
+            except Exception:
+                logger.debug("PortForwarder poll error", exc_info=True)
+        logger.debug("PortForwarder stopped")
+
+    def _poll(self) -> None:
+        current = _parse_proc_net_tcp(self._proc_tcp_path)
+        for port in current - self._attempted:
+            self._attempted.add(port)
+            _slirp_add_hostfwd(self._api_socket, port)
 
 
 def _rewrite_wg_endpoint(client_conf: str, gateway: str) -> str:
@@ -144,6 +258,7 @@ def create_namespace(wg_client_conf: str) -> NamespaceContext:
         raise RuntimeError("Failed to create network namespace (unshare)")
 
     ns_pid = sentinel.pid
+    api_socket_path = Path(tempfile.gettempdir()) / f"ccproxy-slirp-{ns_pid}.sock"
 
     # Create pipes for slirp4netns lifecycle management
     ready_r, ready_w = os.pipe()
@@ -157,6 +272,7 @@ def create_namespace(wg_client_conf: str) -> NamespaceContext:
             "--mtu=65520",
             f"--ready-fd={ready_w}",
             f"--exit-fd={exit_r}",
+            f"--api-socket={api_socket_path}",
             str(ns_pid),
             "tap0",
         ]
@@ -206,11 +322,41 @@ def create_namespace(wg_client_conf: str) -> NamespaceContext:
 
         logger.info("Namespace created: WireGuard tunnel active via %s", gateway)
 
+        # Set up iptables DNAT so slirp4netns hostfwd traffic reaches localhost servers
+        if shutil.which("iptables"):
+            dnat_cmd = (
+                "iptables -t nat -A PREROUTING -i tap0 -p tcp "
+                "-j DNAT --to-destination 127.0.0.1"
+            )
+            dnat_result = subprocess.run(
+                ["nsenter", "-t", str(ns_pid), "--net", "--user",
+                 "--preserve-credentials", "--", "sh", "-c", dnat_cmd],
+                capture_output=True,
+                text=True,
+            )
+            if dnat_result.returncode != 0:
+                logger.warning(
+                    "iptables DNAT setup failed (port forwarding disabled): %s",
+                    dnat_result.stderr.strip(),
+                )
+            else:
+                logger.debug("iptables DNAT rule installed on tap0")
+        else:
+            logger.warning(
+                "iptables not found — OAuth callback port forwarding unavailable"
+            )
+
+        # Start port monitor to dynamically forward namespace listen ports to host
+        forwarder = PortForwarder(ns_pid=ns_pid, api_socket=api_socket_path)
+        forwarder.start()
+
         return NamespaceContext(
             ns_pid=ns_pid,
             slirp_proc=slirp_proc,
             exit_w=exit_w,
             wg_conf_path=conf_path,
+            api_socket=api_socket_path,
+            port_forwarder=forwarder,
         )
 
     except Exception:
@@ -221,6 +367,7 @@ def create_namespace(wg_client_conf: str) -> NamespaceContext:
         _safe_close(ready_w)
         _safe_kill(ns_pid)
         conf_path.unlink(missing_ok=True)
+        api_socket_path.unlink(missing_ok=True)
         raise
 
 
@@ -259,6 +406,9 @@ def cleanup_namespace(ctx: NamespaceContext) -> None:
     Uses exit-fd for clean slirp4netns shutdown (preferred over SIGTERM
     which leaves the API socket file behind).
     """
+    if ctx.port_forwarder is not None:
+        ctx.port_forwarder.stop()
+
     # Close exit-fd pipe → slirp4netns detects HUP, exits cleanly
     _safe_close(ctx.exit_w)
     ctx.exit_w = -1

@@ -1,8 +1,11 @@
 """Tests for ccproxy.inspector.namespace — network namespace confinement."""
 
+import json
 import os
 import signal
+import socket
 import subprocess
+import threading
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, call, mock_open, patch
 
@@ -10,9 +13,12 @@ import pytest
 
 from ccproxy.inspector.namespace import (
     NamespaceContext,
+    PortForwarder,
+    _parse_proc_net_tcp,
     _rewrite_wg_endpoint,
     _safe_close,
     _safe_kill,
+    _slirp_add_hostfwd,
     check_namespace_capabilities,
     cleanup_namespace,
     create_namespace,
@@ -248,6 +254,8 @@ class TestRewriteWgEndpoint:
 class TestCreateNamespace:
     """Test the namespace creation orchestration."""
 
+    @patch("ccproxy.inspector.namespace.PortForwarder")
+    @patch("ccproxy.inspector.namespace.shutil.which")
     @patch("ccproxy.inspector.namespace.subprocess.run")
     @patch("ccproxy.inspector.namespace.subprocess.Popen")
     @patch("ccproxy.inspector.namespace.os.pipe")
@@ -262,9 +270,12 @@ class TestCreateNamespace:
         mock_pipe: Mock,
         mock_popen: Mock,
         mock_run: Mock,
+        mock_which: Mock,
+        mock_forwarder_cls: Mock,
         tmp_path: Path,
     ) -> None:
         """Happy path: all steps succeed → returns NamespaceContext."""
+        mock_which.return_value = "/usr/bin/iptables"
         conf_path = tmp_path / "wg.conf"
         mock_mkstemp.return_value = (10, str(conf_path))
 
@@ -293,8 +304,9 @@ class TestCreateNamespace:
             ready_fdopen_ctx,
         ]
 
-        # WG setup nsenter succeeds
+        # WG setup + iptables DNAT both succeed
         mock_run.return_value = MagicMock(returncode=0, stderr="")
+        mock_forwarder_cls.return_value = MagicMock()
 
         ctx = create_namespace(SAMPLE_WG_CLIENT_CONF)
 
@@ -313,10 +325,11 @@ class TestCreateNamespace:
         assert "slirp4netns" in slirp_cmd[0]
         assert "--configure" in slirp_cmd
         assert "--mtu=65520" in slirp_cmd
+        assert any("--api-socket=" in arg for arg in slirp_cmd)
 
-        # Verify nsenter WireGuard setup was called
-        mock_run.assert_called_once()
-        nsenter_call = mock_run.call_args[0][0]
+        # Verify nsenter WireGuard setup was called (first subprocess.run call)
+        assert mock_run.call_count >= 1
+        nsenter_call = mock_run.call_args_list[0][0][0]
         assert "nsenter" in nsenter_call[0]
         assert "-t" in nsenter_call
         assert "42" in nsenter_call  # ns_pid
@@ -814,3 +827,410 @@ class TestCliInspectHardFailure:
             with pytest.raises(SystemExit) as exc_info:
                 run_with_proxy(tmp_path, ["echo", "hello"], inspect=False)
             assert exc_info.value.code == 0
+
+
+# =============================================================================
+# _parse_proc_net_tcp — /proc/net/tcp parser
+# =============================================================================
+
+
+PROC_NET_TCP_HEADER = (
+    "  sl  local_address rem_address   st tx_queue rx_queue "
+    "tr tm->when retrnsmt   uid  timeout inode\n"
+)
+
+
+def _tcp_line(idx: int, local: str, remote: str, state: str) -> str:
+    """Build a /proc/net/tcp line with the given fields."""
+    return (
+        f"  {idx:3d}: {local} {remote} {state} "
+        "00000000:00000000 00:00000000 00000000  1000        0 12345 1 "
+        "0000000000000000 100 0 0 10 0\n"
+    )
+
+
+class TestParseProcNetTcp:
+    """Test /proc/net/tcp parsing for LISTEN sockets."""
+
+    def test_listen_on_localhost(self, tmp_path: Path) -> None:
+        f = tmp_path / "tcp"
+        f.write_text(
+            PROC_NET_TCP_HEADER
+            + _tcp_line(0, "0100007F:816B", "00000000:0000", "0A")
+        )
+        assert _parse_proc_net_tcp(f) == {33131}
+
+    def test_listen_on_wildcard(self, tmp_path: Path) -> None:
+        f = tmp_path / "tcp"
+        f.write_text(
+            PROC_NET_TCP_HEADER
+            + _tcp_line(0, "00000000:1F90", "00000000:0000", "0A")
+        )
+        assert _parse_proc_net_tcp(f) == {8080}
+
+    def test_ignores_established(self, tmp_path: Path) -> None:
+        f = tmp_path / "tcp"
+        f.write_text(
+            PROC_NET_TCP_HEADER
+            + _tcp_line(0, "0100007F:1F90", "0100007F:ABCD", "01")
+        )
+        assert _parse_proc_net_tcp(f) == set()
+
+    def test_ignores_non_localhost(self, tmp_path: Path) -> None:
+        f = tmp_path / "tcp"
+        # 10.0.2.100 = 6402000A in LE hex
+        f.write_text(
+            PROC_NET_TCP_HEADER
+            + _tcp_line(0, "6402000A:1F90", "00000000:0000", "0A")
+        )
+        assert _parse_proc_net_tcp(f) == set()
+
+    def test_skips_ports_below_1024(self, tmp_path: Path) -> None:
+        f = tmp_path / "tcp"
+        f.write_text(
+            PROC_NET_TCP_HEADER
+            + _tcp_line(0, "0100007F:0050", "00000000:0000", "0A")  # port 80
+        )
+        assert _parse_proc_net_tcp(f) == set()
+
+    def test_multiple_listeners(self, tmp_path: Path) -> None:
+        f = tmp_path / "tcp"
+        f.write_text(
+            PROC_NET_TCP_HEADER
+            + _tcp_line(0, "0100007F:1F90", "00000000:0000", "0A")
+            + _tcp_line(1, "00000000:1F91", "00000000:0000", "0A")
+        )
+        assert _parse_proc_net_tcp(f) == {8080, 8081}
+
+    def test_missing_file(self, tmp_path: Path) -> None:
+        assert _parse_proc_net_tcp(tmp_path / "nonexistent") == set()
+
+
+# =============================================================================
+# _slirp_add_hostfwd — slirp4netns API socket client
+# =============================================================================
+
+
+def _mock_slirp_server(sock_path: Path, response: bytes, ready: threading.Event) -> None:
+    """Run a single-connection Unix socket server that sends a canned response."""
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    srv.bind(str(sock_path))
+    srv.listen(1)
+    srv.settimeout(5)
+    ready.set()
+    try:
+        conn, _ = srv.accept()
+        conn.recv(4096)
+        conn.sendall(response)
+        conn.close()
+    finally:
+        srv.close()
+
+
+class TestSlirpAddHostfwd:
+    """Test slirp4netns API socket communication."""
+
+    def test_success(self, tmp_path: Path) -> None:
+        sock_path = tmp_path / "api.sock"
+        ready = threading.Event()
+        response = json.dumps({"return": {"id": 1}}).encode() + b"\n"
+        t = threading.Thread(target=_mock_slirp_server, args=(sock_path, response, ready))
+        t.start()
+        ready.wait()
+        assert _slirp_add_hostfwd(sock_path, 8080) is True
+        t.join()
+
+    def test_error_response(self, tmp_path: Path) -> None:
+        sock_path = tmp_path / "api.sock"
+        ready = threading.Event()
+        response = json.dumps({"error": {"code": -1, "desc": "bind failed"}}).encode() + b"\n"
+        t = threading.Thread(target=_mock_slirp_server, args=(sock_path, response, ready))
+        t.start()
+        ready.wait()
+        assert _slirp_add_hostfwd(sock_path, 8080) is False
+        t.join()
+
+    def test_socket_missing(self, tmp_path: Path) -> None:
+        assert _slirp_add_hostfwd(tmp_path / "no.sock", 8080) is False
+
+    def test_malformed_json(self, tmp_path: Path) -> None:
+        sock_path = tmp_path / "api.sock"
+        ready = threading.Event()
+        t = threading.Thread(target=_mock_slirp_server, args=(sock_path, b"not json\n", ready))
+        t.start()
+        ready.wait()
+        assert _slirp_add_hostfwd(sock_path, 8080) is False
+        t.join()
+
+
+# =============================================================================
+# PortForwarder — background port monitoring thread
+# =============================================================================
+
+
+class TestPortForwarder:
+    """Test the port monitoring daemon thread."""
+
+    def test_daemon_thread(self, tmp_path: Path) -> None:
+        fwd = PortForwarder(ns_pid=1, api_socket=tmp_path / "api.sock")
+        assert fwd._thread.daemon is True
+        assert fwd._thread.name == "port-forwarder"
+
+    @patch("ccproxy.inspector.namespace._slirp_add_hostfwd", return_value=True)
+    @patch("ccproxy.inspector.namespace._parse_proc_net_tcp", return_value={8080})
+    def test_forwards_new_port(self, mock_parse: Mock, mock_fwd: Mock, tmp_path: Path) -> None:
+        fwd = PortForwarder(ns_pid=1, api_socket=tmp_path / "api.sock", poll_interval=0.01)
+        fwd.start()
+        # Give the thread time to poll
+        fwd._stop_event.wait(0.1)
+        fwd.stop()
+        mock_fwd.assert_called_with(tmp_path / "api.sock", 8080)
+
+    @patch("ccproxy.inspector.namespace._slirp_add_hostfwd", return_value=False)
+    @patch("ccproxy.inspector.namespace._parse_proc_net_tcp", return_value={8080})
+    def test_no_retry_on_failure(self, mock_parse: Mock, mock_fwd: Mock, tmp_path: Path) -> None:
+        fwd = PortForwarder(ns_pid=1, api_socket=tmp_path / "api.sock", poll_interval=0.01)
+        fwd.start()
+        fwd._stop_event.wait(0.15)
+        fwd.stop()
+        # Should only be called once despite multiple polls
+        mock_fwd.assert_called_once_with(tmp_path / "api.sock", 8080)
+
+    @patch("ccproxy.inspector.namespace._slirp_add_hostfwd", return_value=True)
+    @patch("ccproxy.inspector.namespace._parse_proc_net_tcp", return_value={8080})
+    def test_no_retry_on_success(self, mock_parse: Mock, mock_fwd: Mock, tmp_path: Path) -> None:
+        fwd = PortForwarder(ns_pid=1, api_socket=tmp_path / "api.sock", poll_interval=0.01)
+        fwd.start()
+        fwd._stop_event.wait(0.15)
+        fwd.stop()
+        mock_fwd.assert_called_once()
+
+    @patch("ccproxy.inspector.namespace._slirp_add_hostfwd")
+    @patch("ccproxy.inspector.namespace._parse_proc_net_tcp", side_effect=OSError("gone"))
+    def test_survives_parse_error(self, mock_parse: Mock, mock_fwd: Mock, tmp_path: Path) -> None:
+        fwd = PortForwarder(ns_pid=1, api_socket=tmp_path / "api.sock", poll_interval=0.01)
+        fwd.start()
+        fwd._stop_event.wait(0.1)
+        fwd.stop()
+        # Thread survived — no exception propagated
+        assert not fwd._thread.is_alive() or fwd._stop_event.is_set()
+
+    def test_stop_is_fast(self, tmp_path: Path) -> None:
+        fwd = PortForwarder(ns_pid=1, api_socket=tmp_path / "api.sock", poll_interval=10.0)
+        fwd.start()
+        import time
+        start = time.monotonic()
+        fwd.stop()
+        fwd._thread.join(timeout=1)
+        elapsed = time.monotonic() - start
+        assert elapsed < 1.0
+
+
+# =============================================================================
+# create_namespace / cleanup_namespace — port forwarding integration
+# =============================================================================
+
+
+class TestCreateNamespacePortForwarding:
+    """Test port forwarding integration in create_namespace."""
+
+    @patch("ccproxy.inspector.namespace.subprocess.run")
+    @patch("ccproxy.inspector.namespace.subprocess.Popen")
+    @patch("ccproxy.inspector.namespace.os.pipe")
+    @patch("ccproxy.inspector.namespace.os.fdopen")
+    @patch("ccproxy.inspector.namespace.os.close")
+    @patch("ccproxy.inspector.namespace.tempfile.mkstemp")
+    @patch("ccproxy.inspector.namespace.shutil.which")
+    @patch("ccproxy.inspector.namespace.PortForwarder")
+    def test_api_socket_in_slirp_cmd(
+        self,
+        mock_forwarder_cls: Mock,
+        mock_which: Mock,
+        mock_mkstemp: Mock,
+        mock_close: Mock,
+        mock_fdopen: Mock,
+        mock_pipe: Mock,
+        mock_popen: Mock,
+        mock_run: Mock,
+        tmp_path: Path,
+    ) -> None:
+        """slirp4netns command includes --api-socket flag."""
+        mock_which.return_value = "/usr/bin/iptables"
+        conf_path = tmp_path / "wg.conf"
+        mock_mkstemp.return_value = (10, str(conf_path))
+        mock_pipe.side_effect = [(100, 101), (200, 201)]
+
+        sentinel_proc = MagicMock(pid=42)
+        slirp_proc = MagicMock(pid=43)
+        mock_popen.side_effect = [sentinel_proc, slirp_proc]
+
+        write_ctx = MagicMock()
+        write_ctx.__enter__ = Mock(return_value=MagicMock())
+        write_ctx.__exit__ = Mock(return_value=False)
+        ready_file = MagicMock()
+        ready_file.read.return_value = "1"
+        ready_ctx = MagicMock()
+        ready_ctx.__enter__ = Mock(return_value=ready_file)
+        ready_ctx.__exit__ = Mock(return_value=False)
+        mock_fdopen.side_effect = [write_ctx, ready_ctx]
+
+        # Both WG setup and iptables DNAT succeed
+        mock_run.return_value = MagicMock(returncode=0, stderr="")
+
+        mock_forwarder = MagicMock()
+        mock_forwarder_cls.return_value = mock_forwarder
+
+        ctx = create_namespace(SAMPLE_WG_CLIENT_CONF)
+
+        # Verify --api-socket in slirp command
+        slirp_call = mock_popen.call_args_list[1]
+        slirp_cmd = slirp_call[0][0]
+        assert any("--api-socket=" in arg for arg in slirp_cmd)
+
+        # Verify api_socket is set on context
+        assert ctx.api_socket is not None
+
+        # Verify PortForwarder was created and started
+        mock_forwarder_cls.assert_called_once()
+        mock_forwarder.start.assert_called_once()
+        assert ctx.port_forwarder == mock_forwarder
+
+    @patch("ccproxy.inspector.namespace.subprocess.run")
+    @patch("ccproxy.inspector.namespace.subprocess.Popen")
+    @patch("ccproxy.inspector.namespace.os.pipe")
+    @patch("ccproxy.inspector.namespace.os.fdopen")
+    @patch("ccproxy.inspector.namespace.os.close")
+    @patch("ccproxy.inspector.namespace.tempfile.mkstemp")
+    @patch("ccproxy.inspector.namespace.shutil.which")
+    @patch("ccproxy.inspector.namespace.PortForwarder")
+    def test_iptables_dnat_called(
+        self,
+        mock_forwarder_cls: Mock,
+        mock_which: Mock,
+        mock_mkstemp: Mock,
+        mock_close: Mock,
+        mock_fdopen: Mock,
+        mock_pipe: Mock,
+        mock_popen: Mock,
+        mock_run: Mock,
+        tmp_path: Path,
+    ) -> None:
+        """iptables DNAT rule is set up when iptables is available."""
+        mock_which.return_value = "/usr/bin/iptables"
+        conf_path = tmp_path / "wg.conf"
+        mock_mkstemp.return_value = (10, str(conf_path))
+        mock_pipe.side_effect = [(100, 101), (200, 201)]
+
+        sentinel_proc = MagicMock(pid=42)
+        slirp_proc = MagicMock(pid=43)
+        mock_popen.side_effect = [sentinel_proc, slirp_proc]
+
+        write_ctx = MagicMock()
+        write_ctx.__enter__ = Mock(return_value=MagicMock())
+        write_ctx.__exit__ = Mock(return_value=False)
+        ready_file = MagicMock()
+        ready_file.read.return_value = "1"
+        ready_ctx = MagicMock()
+        ready_ctx.__enter__ = Mock(return_value=ready_file)
+        ready_ctx.__exit__ = Mock(return_value=False)
+        mock_fdopen.side_effect = [write_ctx, ready_ctx]
+
+        mock_run.return_value = MagicMock(returncode=0, stderr="")
+        mock_forwarder_cls.return_value = MagicMock()
+
+        create_namespace(SAMPLE_WG_CLIENT_CONF)
+
+        # Two nsenter calls: WG setup + iptables DNAT
+        assert mock_run.call_count == 2
+        dnat_call = mock_run.call_args_list[1]
+        dnat_cmd_args = dnat_call[0][0]
+        assert "nsenter" in dnat_cmd_args[0]
+        # The shell command should contain iptables DNAT
+        sh_cmd = dnat_cmd_args[-1]
+        assert "iptables" in sh_cmd
+        assert "DNAT" in sh_cmd
+
+    @patch("ccproxy.inspector.namespace.subprocess.run")
+    @patch("ccproxy.inspector.namespace.subprocess.Popen")
+    @patch("ccproxy.inspector.namespace.os.pipe")
+    @patch("ccproxy.inspector.namespace.os.fdopen")
+    @patch("ccproxy.inspector.namespace.os.close")
+    @patch("ccproxy.inspector.namespace.tempfile.mkstemp")
+    @patch("ccproxy.inspector.namespace.shutil.which", return_value=None)
+    @patch("ccproxy.inspector.namespace.PortForwarder")
+    def test_iptables_missing_warns_not_fails(
+        self,
+        mock_forwarder_cls: Mock,
+        mock_which: Mock,
+        mock_mkstemp: Mock,
+        mock_close: Mock,
+        mock_fdopen: Mock,
+        mock_pipe: Mock,
+        mock_popen: Mock,
+        mock_run: Mock,
+        tmp_path: Path,
+    ) -> None:
+        """Missing iptables logs warning but create_namespace still succeeds."""
+        conf_path = tmp_path / "wg.conf"
+        mock_mkstemp.return_value = (10, str(conf_path))
+        mock_pipe.side_effect = [(100, 101), (200, 201)]
+
+        sentinel_proc = MagicMock(pid=42)
+        slirp_proc = MagicMock(pid=43)
+        mock_popen.side_effect = [sentinel_proc, slirp_proc]
+
+        write_ctx = MagicMock()
+        write_ctx.__enter__ = Mock(return_value=MagicMock())
+        write_ctx.__exit__ = Mock(return_value=False)
+        ready_file = MagicMock()
+        ready_file.read.return_value = "1"
+        ready_ctx = MagicMock()
+        ready_ctx.__enter__ = Mock(return_value=ready_file)
+        ready_ctx.__exit__ = Mock(return_value=False)
+        mock_fdopen.side_effect = [write_ctx, ready_ctx]
+
+        # Only WG setup call (no iptables call since iptables missing)
+        mock_run.return_value = MagicMock(returncode=0, stderr="")
+        mock_forwarder_cls.return_value = MagicMock()
+
+        ctx = create_namespace(SAMPLE_WG_CLIENT_CONF)
+
+        # Should succeed despite missing iptables
+        assert ctx.ns_pid == 42
+        # Only WG setup nsenter call, no iptables call
+        mock_run.assert_called_once()
+
+
+class TestCleanupNamespacePortForwarder:
+    """Test that cleanup_namespace stops the port forwarder."""
+
+    @patch("ccproxy.inspector.namespace._safe_kill")
+    @patch("ccproxy.inspector.namespace._safe_close")
+    def test_port_forwarder_stopped(
+        self, mock_close: Mock, mock_kill: Mock, tmp_path: Path
+    ) -> None:
+        conf_path = tmp_path / "wg.conf"
+        conf_path.write_text("test")
+        mock_forwarder = MagicMock()
+
+        ctx = NamespaceContext(
+            ns_pid=99999,
+            slirp_proc=MagicMock(spec=subprocess.Popen),
+            exit_w=999,
+            wg_conf_path=conf_path,
+            port_forwarder=mock_forwarder,
+        )
+        ctx.slirp_proc.wait.return_value = 0
+
+        cleanup_namespace(ctx)
+
+        mock_forwarder.stop.assert_called_once()
+
+    @patch("ccproxy.inspector.namespace._safe_kill")
+    @patch("ccproxy.inspector.namespace._safe_close")
+    def test_no_forwarder_ok(
+        self, mock_close: Mock, mock_kill: Mock, mock_ctx: NamespaceContext
+    ) -> None:
+        """Cleanup succeeds when port_forwarder is None."""
+        mock_ctx.slirp_proc.wait.return_value = 0
+        cleanup_namespace(mock_ctx)  # should not raise
