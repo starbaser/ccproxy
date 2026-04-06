@@ -6,6 +6,9 @@
         src = { include = [ "src/" ]; chunk_by = "symbols"; };
       };
     };
+    "bridge/gemini-claude" = {
+      url = "https://github.com/weijiafu14/gemini-claude-bridge";
+    };
     litellm = {
       url = "https://github.com/BerriAI/litellm";
       kits = {

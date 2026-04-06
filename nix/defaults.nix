@@ -21,6 +21,9 @@
       "ccproxy.hooks.add_beta_headers"
       "ccproxy.hooks.inject_claude_code_identity"
     ];
+    patches = [
+      "ccproxy.patches.passthrough"
+    ];
     default_model_passthrough = true;
     rules = [ ];
     otel = {

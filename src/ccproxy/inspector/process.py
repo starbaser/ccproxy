@@ -216,6 +216,9 @@ def start_inspector(
         "--web-host", config.mitmproxy.web_host,
     ]
 
+    if not config.mitmproxy.web_open_browser:
+        cmd.append("--no-web-open-browser")
+
     web_token = config.mitmproxy.web_password or secrets.token_hex(16)
     cmd += ["--set", f"web_password={web_token}"]
 

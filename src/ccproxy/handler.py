@@ -70,6 +70,12 @@ class CCProxyHandler(CustomLogger):
         # Patch Anthropic header construction for OAuth compatibility
         self._patch_anthropic_oauth_headers()
 
+        # Load and apply configurable patches
+        from ccproxy.patches import load_patches
+
+        for patch in load_patches(config.patches):
+            patch(self)
+
     _routes_registered: bool = False  # Class-level flag to prevent duplicate registration
     _health_check_patched: bool = False
     _mcp_cleanup_task: asyncio.Task[None] | None = None
@@ -433,6 +439,12 @@ class CCProxyHandler(CustomLogger):
         # Start background tasks if not already running
         await self._start_oauth_refresh_task()
         await self._start_mcp_cleanup_task()
+
+        # Pass-through endpoints (/gemini/, /anthropic/) bypass the pipeline entirely.
+        # Context.to_litellm_data() injects OpenAI-format fields (messages, model) that
+        # corrupt native API bodies forwarded to upstream providers.
+        if kwargs.get("call_type") == "pass_through_endpoint":
+            return data
 
         # Skip custom routing for LiteLLM internal health checks
         # Health checks need to validate actual configured models, not routed ones

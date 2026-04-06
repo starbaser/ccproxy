@@ -119,6 +119,8 @@ Request → CCProxyHandler → Hook Pipeline → Response
 - **mcp/routes.py**: FastAPI routes for MCP notification ingestion (`POST /mcp/notify`). Accepts events from mcptty and writes them to the buffer.
 - **preflight.py**: Pre-flight checks before proxy startup — kills orphaned ccproxy/mitmdump processes, verifies port availability, and enforces single-instance constraint.
 - **utils.py**: Template discovery and debug utilities (`dt()`, `dv()`, `d()`, `p()`).
+- **patches/**: Configurable monkey-patches for LiteLLM internals, loaded at startup via `load_patches()`. Each module exports `apply(handler)`. Declared in `ccproxy.yaml` under `patches:` (list of module paths). Existing hardcoded patches (`_patch_health_check`, `_patch_anthropic_oauth_headers`) remain on the handler; this system is for new patches.
+  - `passthrough` - Patches `PassthroughEndpointRouter.get_credentials` to fall back to ccproxy's `oat_sources` OAuth token cache. Provider-agnostic — any provider with an `oat_sources` entry gains pass-through credential support for LiteLLM's native API pass-through routes (`/gemini/`, `/anthropic/`, etc.).
 - **pipeline/**: Hook pipeline subsystem:
   - `context.py` - Typed `Context` dataclass wrapping LiteLLM's request data dict for hook access
   - `dag.py` - DAG-based dependency ordering via Kahn's algorithm; resolves hook execution order from `reads`/`writes` declarations
@@ -155,7 +157,7 @@ Custom rules can be created by implementing the ClassificationRule interface and
 ### Configuration Files
 
 - `~/.ccproxy/config.yaml` - LiteLLM proxy configuration with model definitions
-- `~/.ccproxy/ccproxy.yaml` - ccproxy-specific configuration (rules, hooks, debug settings, handler path)
+- `~/.ccproxy/ccproxy.yaml` - ccproxy-specific configuration (rules, hooks, patches, debug settings, handler path)
 - `~/.ccproxy/ccproxy.py` - Auto-generated handler file (created on `ccproxy start` based on `handler` config)
 
 **Config Discovery Precedence:**
@@ -192,6 +194,7 @@ Two `setattr` calls in `handler.py` carry `# noqa: B010` to satisfy mypy (`metho
 - **Token counting**: Uses tiktoken with fallback to character-based estimation for non-OpenAI models.
 - **OAuth token forwarding**: Handled specially for Claude CLI requests. Supports custom User-Agent per provider.
 - **OAuth sentinel key**: SDK clients can use `sk-ant-oat-ccproxy-{provider}` as API key to trigger OAuth token substitution from `oat_sources` config. OAuth works without the inspector via pipeline hooks; the inspector provides a redundant header safety net.
+- **Pass-through OAuth**: LiteLLM's native API pass-through routes (`/gemini/`, `/anthropic/`, etc.) bypass the hook pipeline entirely. The `passthrough` patch bridges `oat_sources` tokens into `PassthroughEndpointRouter.get_credentials()` as a fallback after env var lookup. Provider-agnostic.
 - **OAuth token refresh**: Automatic refresh with two triggers:
   - TTL-based: Background task checks every 30 minutes, refreshes at 90% of `oauth_ttl` (default 8h)
   - 401-triggered: Immediate refresh when API returns authentication error

@@ -251,6 +251,7 @@ class CCProxyConfig(BaseSettings):
     # Extended: {"gemini": {"command": "jq -r '.token' ~/.gemini/creds.json", "user_agent": "MyApp/1.0"}}
     oat_sources: dict[str, str | OAuthSource] = Field(default_factory=dict)
 
+    # TODO probably should remove oauth refrsh?
     # OAuth TTL in seconds (default 8 hours)
     oauth_ttl: int = 28800
 
@@ -265,6 +266,9 @@ class CCProxyConfig(BaseSettings):
 
     # Hook configurations (function import paths or dict with params)
     hooks: list[str | dict[str, Any]] = Field(default_factory=list)
+
+    # Patch modules applied at startup (module import paths with apply() function)
+    patches: list[str] = Field(default_factory=list, validation_alias="ccproxy_patches")
 
     # Rule configurations
     rules: list[RuleConfig] = Field(default_factory=list)
@@ -600,6 +604,10 @@ class CCProxyConfig(BaseSettings):
                 hooks_data = ccproxy_data.get("hooks", [])
                 if hooks_data:
                     instance.hooks = hooks_data
+
+                patches_data = ccproxy_data.get("patches", [])
+                if patches_data:
+                    instance.patches = patches_data
 
                 rules_data = ccproxy_data.get("rules", [])
                 instance.rules = []
