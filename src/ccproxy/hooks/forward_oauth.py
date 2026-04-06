@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from litellm.litellm_core_utils.get_llm_provider_logic import get_llm_provider
 
 from ccproxy.config import get_config
-from ccproxy.constants import OAUTH_SENTINEL_PREFIX
+from ccproxy.constants import OAUTH_SENTINEL_PREFIX, OAuthConfigError
 from ccproxy.pipeline.hook import hook
 
 if TYPE_CHECKING:
@@ -185,12 +185,12 @@ def _handle_sentinel_key(auth_header: str) -> str:
             extra={"event": "oauth_sentinel_substitution", "provider": sentinel_provider},
         )
         return f"Bearer {oauth_token}"
-    else:
-        logger.warning(
-            "Sentinel key for provider '%s' but no OAuth token configured in oat_sources",
-            sentinel_provider,
-        )
-        return ""
+
+    raise OAuthConfigError(
+        f"Sentinel key used for provider '{sentinel_provider}' "
+        f"but no matching entry in oat_sources. "
+        f"Add an 'oat_sources.{sentinel_provider}' block to ccproxy.yaml."
+    )
 
 
 def _setup_provider_headers(ctx: Context, provider_name: str, auth_header: str) -> None:

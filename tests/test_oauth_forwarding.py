@@ -362,3 +362,52 @@ async def test_oauth_forwarding_default_bearer_clears_api_key():
 
     clear_config_instance()
     clear_router()
+
+
+@pytest.mark.asyncio
+async def test_sentinel_key_missing_oat_sources_raises():
+    """Sentinel key for unconfigured provider raises ValueError immediately."""
+    mock_proxy_server = MagicMock()
+    mock_proxy_server.llm_router = MagicMock()
+    mock_proxy_server.llm_router.model_list = [
+        {
+            "model_name": "default",
+            "litellm_params": {
+                "model": "gemini/gemini-3-pro-preview",
+                "api_base": "https://generativelanguage.googleapis.com",
+            },
+        },
+    ]
+
+    mock_module = MagicMock()
+    mock_module.proxy_server = mock_proxy_server
+
+    from ccproxy.config import CCProxyConfig, set_config_instance
+
+    config = CCProxyConfig(
+        debug=False,
+        default_model_passthrough=False,
+        hooks=["ccproxy.hooks.rule_evaluator", "ccproxy.hooks.model_router", "ccproxy.hooks.forward_oauth"],
+        rules=[],
+        oat_sources={},  # no gemini entry
+    )
+    set_config_instance(config)
+
+    with patch.dict("sys.modules", {"litellm.proxy": mock_module}):
+        clear_router()
+        handler = CCProxyHandler()
+
+        data = {
+            "model": "default",
+            "messages": [{"role": "user", "content": "test"}],
+            "metadata": {},
+            "provider_specific_header": {"extra_headers": {}},
+            "proxy_server_request": {"headers": {}},
+            "secret_fields": {"raw_headers": {"authorization": "Bearer sk-ant-oat-ccproxy-gemini"}},
+        }
+
+        with pytest.raises(ValueError, match="oat_sources"):
+            await handler.async_pre_call_hook(data, {})
+
+    clear_config_instance()
+    clear_router()

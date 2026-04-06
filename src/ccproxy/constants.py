@@ -1,4 +1,12 @@
-"""Shared constants for ccproxy."""
+"""Shared constants and base exceptions for ccproxy."""
+
+
+class OAuthConfigError(ValueError):
+    """Raised when OAuth configuration is missing or invalid.
+
+    Always fatal — propagates through the hook pipeline rather than being
+    swallowed by error isolation.
+    """
 
 # Beta headers required for Claude Code impersonation (Claude Max OAuth support)
 # - oauth-2025-04-20: Enable OAuth Bearer token authentication

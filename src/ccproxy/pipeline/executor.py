@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from ccproxy.constants import OAuthConfigError
 from ccproxy.pipeline.context import Context
 from ccproxy.pipeline.dag import HookDAG
 from ccproxy.pipeline.overrides import (
@@ -129,6 +130,9 @@ class PipelineExecutor:
             logger.debug("Executing hook '%s'", hook_name)
             return spec.execute(ctx, params)
 
+        except OAuthConfigError:
+            # Fatal: missing/invalid OAuth config must not be silently swallowed
+            raise
         except Exception as e:
             # Error isolation: log and continue
             logger.error(
