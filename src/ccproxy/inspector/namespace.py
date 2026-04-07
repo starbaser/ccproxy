@@ -372,6 +372,132 @@ def create_namespace(wg_client_conf: str) -> NamespaceContext:
         raise
 
 
+def create_gateway_namespace(wg_client_conf: str, main_port: int) -> NamespaceContext:
+    """Create a user+net namespace for LiteLLM with gateway WireGuard routing.
+
+    Like create_namespace(), but designed for confining LiteLLM rather than
+    CLI clients. Differences:
+    - Adds a fixed slirp4netns --port-map for main_port so external HTTP clients
+      can reach LiteLLM via the host's main_port.
+    - The dynamic PortForwarder is not started (LiteLLM's port is known upfront).
+    - WireGuard routes ALL outbound traffic through mitmweb's gateway listener
+      so LiteLLM's provider calls are captured transparently.
+
+    Args:
+        wg_client_conf: WireGuard client config INI from mitmweb (gateway listener)
+        main_port: The port LiteLLM will bind to, forwarded from host to namespace
+
+    Returns:
+        NamespaceContext with all resources for cleanup
+
+    Raises:
+        RuntimeError: If namespace setup fails at any step
+    """
+    gateway = "10.0.2.2"
+
+    modified_conf = _rewrite_wg_endpoint(wg_client_conf, gateway)
+    conf_fd, conf_path_str = tempfile.mkstemp(suffix=".conf", prefix="ccproxy-wg-gw-")
+    conf_path = Path(conf_path_str)
+    try:
+        with os.fdopen(conf_fd, "w") as f:
+            f.write(modified_conf)
+    except Exception:
+        conf_path.unlink(missing_ok=True)
+        raise
+
+    try:
+        sentinel = subprocess.Popen(
+            ["unshare", "--user", "--map-root-user", "--net", "--pid", "--fork",  # noqa: S607
+             "sleep", "infinity"],
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception as exc:
+        conf_path.unlink(missing_ok=True)
+        raise RuntimeError("Failed to create gateway network namespace (unshare)") from exc
+
+    ns_pid = sentinel.pid
+    api_socket_path = Path(tempfile.gettempdir()) / f"ccproxy-slirp-gw-{ns_pid}.sock"
+
+    ready_r, ready_w = os.pipe()
+    exit_r, exit_w = os.pipe()
+
+    try:
+        slirp_cmd = [
+            "slirp4netns",
+            "--configure",
+            "--mtu=65520",
+            f"--ready-fd={ready_w}",
+            f"--exit-fd={exit_r}",
+            f"--api-socket={api_socket_path}",
+            f"--port-map={main_port}:{main_port}/tcp",
+            str(ns_pid),
+            "tap0",
+        ]
+        slirp_proc = subprocess.Popen(  # noqa: S603
+            slirp_cmd,
+            pass_fds=(ready_w, exit_r),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        from ccproxy.inspector.process import _pipe_output
+        _pipe_output(slirp_proc, "slirp4netns-gw")
+
+        os.close(ready_w)
+        ready_w = -1
+        os.close(exit_r)
+        exit_r = -1
+
+        with os.fdopen(ready_r, "r") as ready_file:
+            ready_data = ready_file.read()
+        ready_r = -1
+
+        if not ready_data.strip():
+            raise RuntimeError("slirp4netns (gateway) failed to become ready")
+
+        logger.debug("slirp4netns (gateway) ready, configuring WireGuard in namespace")
+
+        wg_setup = (
+            f"ip link add wg0 type wireguard && "
+            f"wg setconf wg0 {conf_path} && "
+            f"ip addr add 10.0.0.1/32 dev wg0 && "
+            f"ip link set wg0 up && "
+            f"ip route del default && "
+            f"ip route add default dev wg0"
+        )
+        result = subprocess.run(  # noqa: S603
+            ["nsenter", "-t", str(ns_pid), "--net", "--user", "--preserve-credentials", "--",  # noqa: S607
+             "sh", "-c", wg_setup],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            stderr = result.stderr.strip()
+            raise RuntimeError(f"WireGuard setup failed in gateway namespace: {stderr}")
+
+        logger.info("Gateway namespace created: WireGuard tunnel active via %s", gateway)
+
+        return NamespaceContext(
+            ns_pid=ns_pid,
+            slirp_proc=slirp_proc,
+            exit_w=exit_w,
+            wg_conf_path=conf_path,
+            api_socket=api_socket_path,
+            port_forwarder=None,
+        )
+
+    except Exception:
+        _safe_close(exit_w)
+        _safe_close(exit_r)
+        _safe_close(ready_r)
+        _safe_close(ready_w)
+        _safe_kill(ns_pid)
+        conf_path.unlink(missing_ok=True)
+        api_socket_path.unlink(missing_ok=True)
+        raise
+
+
 def run_in_namespace(ctx: NamespaceContext, command: list[str], env: dict[str, str]) -> int:
     """Run a command inside the confined namespace.
 

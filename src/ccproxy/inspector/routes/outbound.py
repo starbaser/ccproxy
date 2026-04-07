@@ -20,9 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 def _is_outbound(flow: HTTPFlow) -> bool:
-    from mitmproxy.proxy.mode_specs import RegularMode
-
-    return isinstance(flow.client_conn.proxy_mode, RegularMode)
+    return flow.metadata.get("ccproxy.direction") == "outbound"
 
 
 def register_outbound_routes(router: InspectorRouter) -> None:

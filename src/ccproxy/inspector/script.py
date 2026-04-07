@@ -58,6 +58,8 @@ class InspectorScript:
         self.traffic_source: str | None = None
         self._initialized = False
         self._otel_config: OtelConfig | None = None
+        self._wg_cli_port: int | None = None
+        self._wg_gateway_port: int | None = None
 
     def load(self, _loader: Loader) -> None:
         """Called when addon is loaded by mitmproxy."""
@@ -66,19 +68,25 @@ class InspectorScript:
         self.traffic_source = os.environ.get("CCPROXY_TRAFFIC_SOURCE") or None
 
         reverse_port = int(os.environ.get("CCPROXY_INSPECTOR_REVERSE_PORT", "4002"))
-        forward_port = int(os.environ.get("CCPROXY_INSPECTOR_FORWARD_PORT", "4003"))
         litellm_port = int(os.environ.get("CCPROXY_LITELLM_PORT", "4001"))
+        wg_cli_port_str = os.environ.get("CCPROXY_INSPECTOR_WG_CLI_PORT")
+        wg_gateway_port_str = os.environ.get("CCPROXY_INSPECTOR_WG_GATEWAY_PORT")
+        wg_cli_port = int(wg_cli_port_str) if wg_cli_port_str else None
+        wg_gateway_port = int(wg_gateway_port_str) if wg_gateway_port_str else None
         logger.info(
-            "Inspector: reverse@%d → LiteLLM@%d, regular@%d",
+            "Inspector: reverse@%d → LiteLLM@%d, wg-cli@%s, wg-gateway@%s",
             reverse_port,
             litellm_port,
-            forward_port,
+            wg_cli_port or "unset",
+            wg_gateway_port or "unset",
         )
 
         self.config = InspectorConfig(
             max_body_size=int(os.environ.get("CCPROXY_INSPECTOR_MAX_BODY_SIZE", "0")),
             debug=os.environ.get("CCPROXY_DEBUG", "false").lower() in ("true", "1", "yes"),
         )
+        self._wg_cli_port = wg_cli_port
+        self._wg_gateway_port = wg_gateway_port
 
         # Load OTel config from ccproxy.yaml
         config_dir = os.environ.get("CCPROXY_CONFIG_DIR") or str(Path.home() / ".ccproxy")
@@ -101,6 +109,8 @@ class InspectorScript:
         self.addon = InspectorAddon(
             config=self.config,
             traffic_source=self.traffic_source,
+            wg_cli_port=self._wg_cli_port,
+            wg_gateway_port=self._wg_gateway_port,
         )
 
         # Initialize OTel tracer

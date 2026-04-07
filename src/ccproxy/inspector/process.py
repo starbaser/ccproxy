@@ -121,8 +121,9 @@ def _build_env(
     config_dir: Path,
     *,
     reverse_port: int | None = None,
-    forward_port: int | None = None,
     litellm_port: int | None = None,
+    wg_cli_port: int | None = None,
+    wg_gateway_port: int | None = None,
 ) -> dict[str, str]:
     """Build environment variables for the mitmweb subprocess."""
     env = os.environ.copy()
@@ -130,10 +131,12 @@ def _build_env(
 
     if reverse_port is not None:
         env["CCPROXY_INSPECTOR_REVERSE_PORT"] = str(reverse_port)
-    if forward_port is not None:
-        env["CCPROXY_INSPECTOR_FORWARD_PORT"] = str(forward_port)
     if litellm_port is not None:
         env["CCPROXY_LITELLM_PORT"] = str(litellm_port)
+    if wg_cli_port is not None:
+        env["CCPROXY_INSPECTOR_WG_CLI_PORT"] = str(wg_cli_port)
+    if wg_gateway_port is not None:
+        env["CCPROXY_INSPECTOR_WG_GATEWAY_PORT"] = str(wg_gateway_port)
 
     return env
 
@@ -176,40 +179,40 @@ def start_inspector(
     config: InspectorConfig,
     litellm_port: int,
     *,
-    wireguard_conf_path: Path,
+    wg_cli_conf_path: Path,
+    wg_gateway_conf_path: Path,
     reverse_port: int | None = None,
-    forward_port: int | None = None,
-) -> tuple[subprocess.Popen[bytes], str]:
+) -> tuple[subprocess.Popen[bytes], str, int, int]:
     """Start the mitmweb inspector process.
 
-    Launches mitmweb with three --mode listeners: reverse (client-facing),
-    regular (LiteLLM outbound via HTTPS_PROXY), and wireguard (namespace
-    transparent capture).
+    Launches mitmweb with three --mode listeners: reverse (external HTTP
+    client-facing), and two wireguard listeners — one for CLI clients (port A)
+    and one for LiteLLM's outbound traffic (port B / gateway).
 
     Args:
         config_dir: Runtime configuration directory
         config: InspectorConfig with all inspector settings
         litellm_port: Port where LiteLLM is running (runtime-derived)
+        wg_cli_conf_path: Keypair file path for the CLI namespace WireGuard listener
+        wg_gateway_conf_path: Keypair file path for the LiteLLM gateway WireGuard listener
         reverse_port: Override for reverse listener port (defaults to config.port)
-        forward_port: Override for regular listener port (defaults to auto-assigned)
 
     Returns:
-        Tuple of (running subprocess, web API auth token)
+        Tuple of (running subprocess, web API auth token, wg_cli_port, wg_gateway_port)
     """
 
     mitm_bin = _resolve_mitmproxy_binary(web=True)
     script_path = _resolve_addon_script()
 
     rev_port = reverse_port or config.port
-    fwd_port = forward_port or 8081
-    wg_spec = f"wireguard:{wireguard_conf_path}"
-    wg_port = _find_free_udp_port()
+    wg_cli_port = _find_free_udp_port()
+    wg_gateway_port = _find_free_udp_port()
 
     cmd = [
         str(mitm_bin),
         "--mode", f"reverse:http://localhost:{litellm_port}@{rev_port}",
-        "--mode", f"regular@{fwd_port}",
-        "--mode", f"{wg_spec}@{wg_port}",
+        "--mode", f"wireguard:{wg_cli_conf_path}@{wg_cli_port}",
+        "--mode", f"wireguard:{wg_gateway_conf_path}@{wg_gateway_port}",
         "-s", str(script_path),
         *_build_mitmproxy_set_args(config.mitmproxy),
         "--web-port", str(config.port),
@@ -225,17 +228,18 @@ def start_inspector(
     env = _build_env(
         config_dir,
         reverse_port=rev_port,
-        forward_port=fwd_port,
         litellm_port=litellm_port,
+        wg_cli_port=wg_cli_port,
+        wg_gateway_port=wg_gateway_port,
     )
 
     description = (
         f"mitmweb: reverse@{rev_port} → LiteLLM@{litellm_port}, "
-        f"regular@{fwd_port}, wireguard@{wg_port}, "
+        f"wg-cli@{wg_cli_port}, wg-gateway@{wg_gateway_port}, "
         f"UI@{config.port}"
     )
 
-    return _launch_process(cmd, env, description), web_token
+    return _launch_process(cmd, env, description), web_token, wg_cli_port, wg_gateway_port
 
 
 def get_inspector_status() -> dict[str, dict[str, bool | str | None]]:

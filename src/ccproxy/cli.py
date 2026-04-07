@@ -480,8 +480,13 @@ handler = {class_name}()
 def _fetch_wireguard_client_conf(
     inspect_port: int, config_dir: Path, timeout: float = 15.0,
     web_password: str | None = None,
+    wg_port: int | None = None,
 ) -> str | None:
-    """Poll mitmweb REST API for WireGuard client config after startup."""
+    """Poll mitmweb REST API for a WireGuard client config after startup.
+
+    When wg_port is given, only returns the config for that specific WireGuard
+    listener UDP port. Otherwise returns the first WireGuard config found.
+    """
     import urllib.request
 
     web_token = web_password
@@ -495,12 +500,22 @@ def _fetch_wireguard_client_conf(
             with urllib.request.urlopen(url, timeout=2) as r:  # noqa: S310
                 data: dict[str, Any] = json.loads(r.read())
             servers: dict[str, Any] = data.get("servers", {})
-            # servers is a dict keyed by full_spec (e.g. "wireguard@51820")
-            srv_iter = servers.values() if isinstance(servers, dict) else servers
-            for srv in srv_iter:
-                wg_conf: Any = srv.get("wireguard_conf") if isinstance(srv, dict) else None
-                if wg_conf:
-                    return str(wg_conf)
+            srv_iter: Any = servers.items() if isinstance(servers, dict) else []
+            for spec, srv in srv_iter:
+                if not isinstance(srv, dict):
+                    continue
+                wg_conf: Any = srv.get("wireguard_conf")
+                if not wg_conf:
+                    continue
+                if wg_port is not None:
+                    # spec is like "wireguard@51820" or "wireguard:/path@51820"
+                    try:
+                        spec_port = int(str(spec).rsplit("@", 1)[-1])
+                    except (ValueError, IndexError):
+                        continue
+                    if spec_port != wg_port:
+                        continue
+                return str(wg_conf)
         time.sleep(0.5)
     return None
 
@@ -554,7 +569,6 @@ def start_litellm(
         sys.exit(1)
 
     litellm_host, main_port = _read_proxy_settings(config_dir)
-    forward_port = find_available_port()
 
     ccproxy_config_path = config_dir / "ccproxy.yaml"
     ccproxy_config: dict[str, Any] | None = None
@@ -573,7 +587,6 @@ def start_litellm(
 
     ports_to_check = [main_port]
     if inspect:
-        ports_to_check.append(forward_port)
         ports_to_check.append(inspector_config.port)
     run_preflight_checks(ports=ports_to_check, config_dir=config_dir)
 
@@ -616,11 +629,6 @@ def start_litellm(
         elif Path("/etc/ssl/certs/ca-certificates.crt").exists():
             env["SSL_CERT_FILE"] = "/etc/ssl/certs/ca-certificates.crt"
 
-    if inspect:
-        forward_proxy_url = f"http://localhost:{forward_port}"
-        env["HTTPS_PROXY"] = forward_proxy_url
-        env["HTTP_PROXY"] = forward_proxy_url
-
     venv_bin = Path(sys.executable).parent
     litellm_path = venv_bin / "litellm"
 
@@ -649,7 +657,9 @@ def start_litellm(
         litellm_cmd.extend(args)
 
     inspector_proc: subprocess.Popen[bytes] | None = None
-    wg_keypair_path = config_dir / f"wireguard.{os.getpid()}.conf"
+    pid = os.getpid()
+    wg_cli_keypair_path = config_dir / f"wireguard-cli.{pid}.conf"
+    wg_gateway_keypair_path = config_dir / f"wireguard-gateway.{pid}.conf"
 
     # SIGTERM handler: convert to KeyboardInterrupt for clean shutdown
     original_sigterm = signal.getsignal(signal.SIGTERM)
@@ -659,58 +669,68 @@ def start_litellm(
 
     signal.signal(signal.SIGTERM, _sigterm_handler)
 
+    gateway_ctx = None
+
     try:
         if inspect:
             from ccproxy.inspector import start_inspector
+            from ccproxy.inspector.namespace import (
+                check_namespace_capabilities,
+                create_gateway_namespace,
+                run_in_namespace,
+            )
+
+            problems = check_namespace_capabilities()
+            if problems:
+                for p in problems:
+                    print(f"Error: {p}", file=sys.stderr)
+                print(
+                    "\nCannot create network namespace for --inspect mode. "
+                    "All prerequisites above must be satisfied.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
 
             # Remove stale WG client conf — always re-fetched from mitmweb after startup
             (config_dir / ".inspector-wireguard-client.conf").unlink(missing_ok=True)
 
             print(
-                f"Starting inspector: mitmweb reverse@{main_port} + regular@{forward_port} "
-                f"+ wireguard (auto-port), UI@{inspector_config.port}"
+                f"Starting inspector: mitmweb reverse@{main_port} "
+                f"+ wg-cli (auto-port) + wg-gateway (auto-port), UI@{inspector_config.port}"
             )
-            inspector_proc, web_token = start_inspector(
+            inspector_proc, web_token, wg_cli_port, wg_gateway_port = start_inspector(
                 config_dir,
                 config=inspector_config,
                 litellm_port=litellm_port,
-                wireguard_conf_path=wg_keypair_path,
+                wg_cli_conf_path=wg_cli_keypair_path,
+                wg_gateway_conf_path=wg_gateway_keypair_path,
                 reverse_port=main_port,
-                forward_port=forward_port,
             )
 
-            if not _wait_for_port("127.0.0.1", forward_port, timeout=10):
-                print("Error: mitmweb failed to start (port not ready)", file=sys.stderr)
+            if not _wait_for_port("127.0.0.1", inspector_config.port, timeout=15):
+                print("Error: mitmweb failed to start (UI port not ready)", file=sys.stderr)
                 sys.exit(1)
 
-            # Retrieve WireGuard client config from mitmweb for ccproxy run --inspect
-            wg_client_conf = _fetch_wireguard_client_conf(
+            # Retrieve CLI WireGuard client config from mitmweb for ccproxy run --inspect
+            wg_cli_conf = _fetch_wireguard_client_conf(
                 inspector_config.port, config_dir,
                 web_password=web_token,
+                wg_port=wg_cli_port,
             )
-            if wg_client_conf:
-                (config_dir / ".inspector-wireguard-client.conf").write_text(wg_client_conf)
+            if wg_cli_conf:
+                (config_dir / ".inspector-wireguard-client.conf").write_text(wg_cli_conf)
             else:
-                logger.warning("Failed to retrieve WireGuard client config from mitmweb")
+                logger.warning("Failed to retrieve CLI WireGuard client config from mitmweb")
 
-            # Export WireGuard keys for Wireshark decryption
-            from ccproxy.inspector.wg_keylog import write_wg_keylog
-
-            wg_keylog_path = config_dir / "wg.keylog"
-            if write_wg_keylog(wg_keypair_path, wg_keylog_path):
-                print(f"WireGuard keylog: {wg_keylog_path}")
-                print(f"  Wireshark: -o wg.keylog_file:{wg_keylog_path}")
-
-            web_url = f"http://{inspector_config.mitmproxy.web_host}:{inspector_config.port}/?token={web_token}"
-            print(f"Inspector UI: {web_url}")
-            try:
-                subprocess.Popen(  # noqa: S603
-                    ["xdg-open", web_url],  # noqa: S607
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-            except FileNotFoundError:
-                logger.debug("xdg-open not found; open the inspector URL manually")
+            # Retrieve gateway WireGuard client config and create LiteLLM namespace
+            wg_gateway_conf = _fetch_wireguard_client_conf(
+                inspector_config.port, config_dir,
+                web_password=web_token,
+                wg_port=wg_gateway_port,
+            )
+            if not wg_gateway_conf:
+                print("Error: Failed to retrieve gateway WireGuard config from mitmweb", file=sys.stderr)
+                sys.exit(1)
 
             # Build combined CA bundle now that mitmproxy has started and its CA cert exists
             confdir_path = Path(inspector_config.mitmproxy.confdir) if inspector_config.mitmproxy.confdir else None
@@ -728,8 +748,42 @@ def start_litellm(
             else:
                 logger.warning(
                     "mitmproxy CA certificate not found — "
-                    "LiteLLM may fail SSL verification through the forward proxy"
+                    "LiteLLM may fail SSL verification inside the gateway namespace"
                 )
+
+            # Export WireGuard keys for Wireshark decryption (both tunnels)
+            wg_keylog_path = config_dir / "wg.keylog"
+            keylog_lines: list[str] = []
+            for kp_path in (wg_cli_keypair_path, wg_gateway_keypair_path):
+                if kp_path.exists():
+                    try:
+                        kp_data = json.loads(kp_path.read_text())
+                        for key_field in ("server_key", "client_key"):
+                            key_val = kp_data.get(key_field)
+                            if key_val:
+                                keylog_lines.append(f"LOCAL_STATIC_PRIVATE_KEY = {key_val}")
+                    except (ValueError, OSError):
+                        pass
+            if keylog_lines:
+                wg_keylog_path.write_text("\n".join(keylog_lines) + "\n")
+                print(f"WireGuard keylog: {wg_keylog_path}")
+                print(f"  Wireshark: -o wg.keylog_file:{wg_keylog_path}")
+
+            web_url = f"http://{inspector_config.mitmproxy.web_host}:{inspector_config.port}/?token={web_token}"
+            print(f"Inspector UI: {web_url}")
+            try:
+                subprocess.Popen(  # noqa: S603
+                    ["xdg-open", web_url],  # noqa: S607
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except FileNotFoundError:
+                logger.debug("xdg-open not found; open the inspector URL manually")
+
+            # Create gateway namespace and run LiteLLM inside it
+            gateway_ctx = create_gateway_namespace(wg_gateway_conf, main_port)
+            exit_code = run_in_namespace(gateway_ctx, litellm_cmd, env)
+            sys.exit(exit_code)
 
         # S603: Command construction is safe - we control the litellm path
         result = subprocess.run(litellm_cmd, env=env)  # noqa: S603
@@ -746,9 +800,13 @@ def start_litellm(
         pass
     finally:
         signal.signal(signal.SIGTERM, original_sigterm)
+        if gateway_ctx is not None:
+            from ccproxy.inspector.namespace import cleanup_namespace as _cleanup_ns
+            _cleanup_ns(gateway_ctx)
         if inspector_proc is not None:
             _terminate_proc(inspector_proc)
-        wg_keypair_path.unlink(missing_ok=True)
+        wg_cli_keypair_path.unlink(missing_ok=True)
+        wg_gateway_keypair_path.unlink(missing_ok=True)
 
 
 def view_logs(follow: bool = False, lines: int = 100) -> None:

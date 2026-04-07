@@ -26,9 +26,10 @@ class ProxyDirection(IntEnum):
     concepts — inspect mode activates all three modes as a single unit.
     """
 
-    REVERSE = 0  # Client → LiteLLM (reverse mode listener)
-    FORWARD = 1  # LiteLLM → Provider (regular mode listener)
-    WIREGUARD = 2  # WireGuard tunnel traffic (transparent namespace capture)
+    REVERSE = 0         # External HTTP client → LiteLLM (reverse mode listener)
+    FORWARD = 1         # Reserved (was RegularMode / HTTPS_PROXY leg; no longer used)
+    WIREGUARD_CLI = 2   # CLI client namespace → mitmweb → LiteLLM (WireGuard port A)
+    WIREGUARD_GW = 3    # LiteLLM namespace → mitmweb → provider (WireGuard port B)
 
 
 if TYPE_CHECKING:
@@ -38,19 +39,16 @@ logger = logging.getLogger(__name__)
 
 # Cached mode type references (avoid repeated imports per-flow)
 _ReverseMode: type | None = None
-_RegularMode: type | None = None
 
 
-def _get_mode_types() -> tuple[type, type]:
-    """Lazily resolve mitmproxy mode_specs types."""
-    global _ReverseMode, _RegularMode
+def _get_reverse_mode_type() -> type:
+    """Lazily resolve mitmproxy ReverseMode type."""
+    global _ReverseMode
     if _ReverseMode is None:
-        from mitmproxy.proxy.mode_specs import RegularMode, ReverseMode
-
+        from mitmproxy.proxy.mode_specs import ReverseMode
         _ReverseMode = ReverseMode
-        _RegularMode = RegularMode
-    assert _ReverseMode is not None and _RegularMode is not None
-    return _ReverseMode, _RegularMode
+    assert _ReverseMode is not None
+    return _ReverseMode
 
 
 class InspectorAddon:
@@ -60,18 +58,24 @@ class InspectorAddon:
         self,
         config: InspectorConfig,
         traffic_source: str | None = None,
+        wg_cli_port: int | None = None,
+        wg_gateway_port: int | None = None,
     ) -> None:
         """Initialize the addon.
 
         Args:
             config: Mitmproxy configuration
             traffic_source: Source label for traces (e.g. "shadow", "litellm")
+            wg_cli_port: UDP port of the CLI-namespace WireGuard listener (INBOUND)
+            wg_gateway_port: UDP port of the LiteLLM-namespace WireGuard listener (OUTBOUND)
         """
         self.config = config
         self.traffic_source = traffic_source
         self.tracer: InspectorTracer | None = None
         self._WireGuardMode: type | None = None
         self._forward_domains: set[str] = set(config.forward_domains)
+        self._wg_cli_port = wg_cli_port
+        self._wg_gateway_port = wg_gateway_port
 
     def set_tracer(self, tracer: InspectorTracer) -> None:
         """Set the OTel tracer for span emission.
@@ -81,11 +85,30 @@ class InspectorAddon:
         """
         self.tracer = tracer
 
+    def _get_wg_listen_port(self, mode: Any) -> int | None:
+        """Extract the UDP listening port from a WireGuardMode instance."""
+        try:
+            # WireGuardMode.listen_port or WireGuardMode.port
+            for attr in ("listen_port", "port"):
+                val = getattr(mode, attr, None)
+                if isinstance(val, int):
+                    return val
+            # Fallback: parse from full_spec string (e.g. "wireguard@51820")
+            full_spec: str = getattr(mode, "full_spec", "") or ""
+            if "@" in full_spec:
+                return int(full_spec.split("@")[-1])
+        except (AttributeError, ValueError):
+            pass
+        return None
+
     def _get_direction(self, flow: http.HTTPFlow) -> ProxyDirection | None:
         """Detect traffic direction from which listener accepted this flow.
 
         Uses mitmproxy's multi-mode `flow.client_conn.proxy_mode` to determine
         which mitmproxy --mode listener accepted this flow.
+
+        For WireGuard listeners, distinguishes CLI (port A) from gateway (port B)
+        using the configured wg_cli_port and wg_gateway_port.
 
         Args:
             flow: HTTP flow object
@@ -96,18 +119,26 @@ class InspectorAddon:
         if not hasattr(flow, "client_conn") or flow.client_conn is None:
             return None  # Synthetic/replayed flows
 
-        reverse_mode, regular_mode = _get_mode_types()
+        reverse_mode = _get_reverse_mode_type()
         mode = flow.client_conn.proxy_mode
 
         if isinstance(mode, reverse_mode):
             return ProxyDirection.REVERSE
-        if isinstance(mode, regular_mode):
-            return ProxyDirection.FORWARD
+
         if self._WireGuardMode is None:
             from mitmproxy.proxy.mode_specs import WireGuardMode
             self._WireGuardMode = WireGuardMode
+
         if isinstance(mode, self._WireGuardMode):
-            return ProxyDirection.WIREGUARD
+            listen_port = self._get_wg_listen_port(mode)
+            if listen_port is not None:
+                if listen_port == self._wg_gateway_port:
+                    return ProxyDirection.WIREGUARD_GW
+                # CLI port or any unrecognised WG port treated as INBOUND
+                return ProxyDirection.WIREGUARD_CLI
+            # Port indeterminate — default to CLI (inbound)
+            return ProxyDirection.WIREGUARD_CLI
+
         return None
 
     def _truncate_body(self, body: bytes | None) -> bytes | None:
@@ -186,13 +217,16 @@ class InspectorAddon:
         return None
 
     def _maybe_forward(self, flow: http.HTTPFlow, direction: ProxyDirection, host: str) -> None:
-        """Forward WireGuard LLM API traffic to LiteLLM.
+        """Forward CLI WireGuard LLM API traffic to LiteLLM.
 
         Rewrites the request target so mitmproxy connects to LiteLLM instead
-        of the original API domain. Only applies to WireGuard flows whose host
-        is in the configured forward_domains list.
+        of the original API domain. Only applies to WIREGUARD_CLI flows whose
+        host is in the configured forward_domains list.
+
+        WIREGUARD_GW flows (LiteLLM's outbound) are NOT forwarded — they pass
+        through to the real provider to avoid an infinite loop.
         """
-        if direction != ProxyDirection.WIREGUARD or host not in self._forward_domains:
+        if direction != ProxyDirection.WIREGUARD_CLI or host not in self._forward_domains:
             return
         litellm_port = int(os.environ.get("CCPROXY_LITELLM_PORT", "4000"))
         flow.request.headers["X-Forwarded-Host"] = host
@@ -210,6 +244,12 @@ class InspectorAddon:
         direction = self._get_direction(flow)
         if direction is None:
             return
+
+        # Tag flow metadata with direction string for route guard use
+        if direction == ProxyDirection.WIREGUARD_GW:
+            flow.metadata["ccproxy.direction"] = "outbound"
+        elif direction in (ProxyDirection.REVERSE, ProxyDirection.WIREGUARD_CLI):
+            flow.metadata["ccproxy.direction"] = "inbound"
 
         host = flow.request.pretty_host
         self._maybe_forward(flow, direction, host)
