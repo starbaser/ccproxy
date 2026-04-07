@@ -37,6 +37,11 @@ def forward_oauth(ctx: Context, params: dict[str, Any]) -> Context:
     Bearer token. For Anthropic-type APIs, also clears x-api-key (required
     for OAuth auth) and sets custom User-Agent if configured.
     """
+    # Skip if mitmproxy inbound route already handled OAuth
+    if ctx.headers.get("x-ccproxy-oauth-injected"):
+        logger.debug("forward_oauth: skipped — OAuth already injected by mitmproxy layer")
+        return ctx
+
     routed_model = ctx.ccproxy_litellm_model
     if not routed_model:
         logger.warning("forward_oauth: No routed_model in metadata, skipping")

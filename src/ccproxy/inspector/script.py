@@ -23,7 +23,7 @@ from mitmproxy.addonmanager import Loader
 
 from ccproxy.config import InspectorConfig, OtelConfig
 from ccproxy.inspector.addon import InspectorAddon
-from ccproxy.inspector.routing import InspectorRouter, RouteType
+from ccproxy.inspector.routing import InspectorRouter
 
 # Configure logging
 logging.basicConfig(
@@ -33,41 +33,19 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def _is_inbound(flow: http.HTTPFlow) -> bool:
-    """Any flow heading to LiteLLM — CLI (WireGuard) or HTTP (reverse)."""
-    from mitmproxy.proxy.mode_specs import ReverseMode, WireGuardMode
-
-    return isinstance(flow.client_conn.proxy_mode, (WireGuardMode, ReverseMode))
-
-
-def _is_outbound(flow: http.HTTPFlow) -> bool:
-    """Any flow from LiteLLM to provider (via forward proxy)."""
-    from mitmproxy.proxy.mode_specs import RegularMode
-
-    return isinstance(flow.client_conn.proxy_mode, RegularMode)
-
-
 def _make_inbound_router() -> InspectorRouter:
     router = InspectorRouter(name="ccproxy_inbound", request_passthrough=True, response_passthrough=True)
+    from ccproxy.inspector.routes.inbound import register_inbound_routes
 
-    @router.route("/{path:.*}", rtype=RouteType.REQUEST)  # type: ignore[untyped-decorator]
-    def tag_inbound(flow: http.HTTPFlow, **kwargs: object) -> None:
-        if not _is_inbound(flow):
-            return
-        flow.metadata["ccproxy.direction"] = "inbound"
-
+    register_inbound_routes(router)
     return router
 
 
 def _make_outbound_router() -> InspectorRouter:
     router = InspectorRouter(name="ccproxy_outbound", request_passthrough=True, response_passthrough=True)
+    from ccproxy.inspector.routes.outbound import register_outbound_routes
 
-    @router.route("/{path:.*}", rtype=RouteType.REQUEST)  # type: ignore[untyped-decorator]
-    def tag_outbound(flow: http.HTTPFlow, **kwargs: object) -> None:
-        if not _is_outbound(flow):
-            return
-        flow.metadata["ccproxy.direction"] = "outbound"
-
+    register_outbound_routes(router)
     return router
 
 
