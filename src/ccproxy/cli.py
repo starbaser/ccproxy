@@ -693,6 +693,14 @@ def start_litellm(
             else:
                 logger.warning("Failed to retrieve WireGuard client config from mitmweb")
 
+            # Export WireGuard keys for Wireshark decryption
+            from ccproxy.inspector.wg_keylog import write_wg_keylog
+
+            wg_keylog_path = config_dir / "wg.keylog"
+            if write_wg_keylog(wg_keypair_path, wg_keylog_path):
+                print(f"WireGuard keylog: {wg_keylog_path}")
+                print(f"  Wireshark: -o wg.keylog_file:{wg_keylog_path}")
+
             web_url = f"http://{inspector_config.mitmproxy.web_host}:{inspector_config.port}/?token={web_token}"
             print(f"Inspector UI: {web_url}")
             try:

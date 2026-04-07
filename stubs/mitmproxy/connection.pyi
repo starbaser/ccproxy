@@ -17,3 +17,14 @@ class Client(Connection):
     sockname: Address
     proxy_mode: ProxyMode
     timestamp_start: float
+    ip_address: tuple[str, int] | None
+
+
+class Server(Connection):
+    address: Address | None
+    peername: Address | None
+    sockname: Address | None
+    ip_address: tuple[str, int] | None
+    timestamp_start: float | None
+    timestamp_end: float | None
+    def __init__(self, address: Address | None = ...) -> None: ...

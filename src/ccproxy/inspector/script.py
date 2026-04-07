@@ -3,6 +3,12 @@
 Loaded by mitmweb when ccproxy starts with --inspect. Captures HTTP/HTTPS
 traffic via the InspectorAddon with OTel span emission. Traffic direction
 (reverse, regular, wireguard) is detected per-flow via proxy_mode.
+
+Addon chain ordering:
+  1. InspectorScript — OTel span lifecycle (must fire first)
+  2. Inbound router — xepor routes for flows heading to LiteLLM
+  3. Outbound router — xepor routes for flows from LiteLLM to providers
+  4. PcapAddon — optional PCAP export (only when configured)
 """
 
 from __future__ import annotations
@@ -17,6 +23,7 @@ from mitmproxy.addonmanager import Loader
 
 from ccproxy.config import InspectorConfig, OtelConfig
 from ccproxy.inspector.addon import InspectorAddon
+from ccproxy.inspector.routing import InspectorRouter, RouteType
 
 # Configure logging
 logging.basicConfig(
@@ -24,6 +31,44 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+def _is_inbound(flow: http.HTTPFlow) -> bool:
+    """Any flow heading to LiteLLM — CLI (WireGuard) or HTTP (reverse)."""
+    from mitmproxy.proxy.mode_specs import ReverseMode, WireGuardMode
+
+    return isinstance(flow.client_conn.proxy_mode, (WireGuardMode, ReverseMode))
+
+
+def _is_outbound(flow: http.HTTPFlow) -> bool:
+    """Any flow from LiteLLM to provider (via forward proxy)."""
+    from mitmproxy.proxy.mode_specs import RegularMode
+
+    return isinstance(flow.client_conn.proxy_mode, RegularMode)
+
+
+def _make_inbound_router() -> InspectorRouter:
+    router = InspectorRouter(name="ccproxy_inbound", request_passthrough=True, response_passthrough=True)
+
+    @router.route("/{path:.*}", rtype=RouteType.REQUEST)  # type: ignore[untyped-decorator]
+    def tag_inbound(flow: http.HTTPFlow, **kwargs: object) -> None:
+        if not _is_inbound(flow):
+            return
+        flow.metadata["ccproxy.direction"] = "inbound"
+
+    return router
+
+
+def _make_outbound_router() -> InspectorRouter:
+    router = InspectorRouter(name="ccproxy_outbound", request_passthrough=True, response_passthrough=True)
+
+    @router.route("/{path:.*}", rtype=RouteType.REQUEST)  # type: ignore[untyped-decorator]
+    def tag_outbound(flow: http.HTTPFlow, **kwargs: object) -> None:
+        if not _is_outbound(flow):
+            return
+        flow.metadata["ccproxy.direction"] = "outbound"
+
+    return router
 
 
 class InspectorScript:
@@ -131,4 +176,20 @@ class InspectorScript:
             await self.addon.error(flow)
 
 
-addons = [InspectorScript()]
+def _make_pcap_addon() -> list[object]:
+    """Create PcapAddon if configured, returning a list (empty or singleton)."""
+    pcap_file = os.environ.get("CCPROXY_PCAP_FILE")
+    pcap_pipe = os.environ.get("CCPROXY_PCAP_PIPE")
+    if not pcap_file and not pcap_pipe:
+        return []
+    from ccproxy.inspector.pcap import PcapAddon
+
+    return [PcapAddon(pcap_file=pcap_file, pcap_pipe=pcap_pipe)]
+
+
+addons: list[object] = [
+    InspectorScript(),
+    _make_inbound_router(),
+    _make_outbound_router(),
+    *_make_pcap_addon(),
+]

@@ -75,6 +75,13 @@ class Response(Message):
     def status_code(self) -> int: ...
     @property
     def reason(self) -> str: ...
+    @classmethod
+    def make(
+        cls,
+        status_code: int = ...,
+        content: str | bytes = ...,
+        headers: dict[str, str] = ...,
+    ) -> Response: ...
 
 
 class HTTPFlow(flow.Flow):
@@ -82,3 +89,4 @@ class HTTPFlow(flow.Flow):
     response: Response | None
     error: flow.Error | None
     client_conn: connection.Client
+    server_conn: connection.Server

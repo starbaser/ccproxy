@@ -35,6 +35,7 @@ dependencies = [
   "certifi>=2024.0.0",
   "langfuse>=2.0.0,<3.0.0",
   "mitmproxy>=10.0.0",
+  "parse>=1.19.0,<3.0.0",
 ]
 
 [project.scripts]
