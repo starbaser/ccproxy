@@ -53,7 +53,7 @@ def register_inbound_routes(router: InspectorRouter) -> None:
     """Register all inbound route handlers on the given router."""
     from ccproxy.inspector.routing import RouteType
 
-    @router.route("/{path:.*}", rtype=RouteType.REQUEST)  # type: ignore[untyped-decorator]
+    @router.route("/{path}", rtype=RouteType.REQUEST)  # type: ignore[untyped-decorator]
     def handle_inbound(flow: HTTPFlow, **kwargs: object) -> None:
         if not _is_inbound(flow):
             return

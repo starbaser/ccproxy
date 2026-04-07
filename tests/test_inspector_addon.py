@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from ccproxy.config import InspectorConfig
-from ccproxy.inspector.addon import InspectorAddon
+from ccproxy.inspector.addon import InspectorAddon, ProxyDirection
 
 
 def _make_mock_flow(*, reverse: bool = True) -> MagicMock:
@@ -156,3 +156,68 @@ class TestWireGuardForwarding:
         flow2 = _make_wg_flow(host="api.anthropic.com")
         await addon.request(flow2)
         assert flow2.request.host == "api.anthropic.com"
+
+
+class TestWireGuardDirectionDetection:
+    """Tests for Phase 3 WIREGUARD_CLI vs WIREGUARD_GW detection."""
+
+    @pytest.fixture(autouse=True)
+    def _set_litellm_port(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("CCPROXY_LITELLM_PORT", "4001")
+
+    def _make_addon(self, wg_cli_port: int = 51820, wg_gateway_port: int = 51821) -> InspectorAddon:
+        return InspectorAddon(
+            config=InspectorConfig(),
+            wg_cli_port=wg_cli_port,
+            wg_gateway_port=wg_gateway_port,
+        )
+
+    @pytest.mark.asyncio
+    async def test_wireguard_cli_direction(self) -> None:
+        addon = self._make_addon(wg_cli_port=51820, wg_gateway_port=51821)
+        flow = _make_wg_flow(host="api.anthropic.com")
+        # Port 51820 != gateway port 51821 → WIREGUARD_CLI
+        await addon.request(flow)
+        assert flow.metadata.get("ccproxy.direction") == "inbound"
+        # Should also forward to LiteLLM
+        assert flow.request.host == "localhost"
+
+    @pytest.mark.asyncio
+    async def test_wireguard_gw_direction(self) -> None:
+        from mitmproxy.proxy.mode_specs import ProxyMode as MitmProxyMode
+
+        addon = self._make_addon(wg_cli_port=51820, wg_gateway_port=51821)
+        flow = _make_wg_flow(host="api.anthropic.com")
+        flow.client_conn.proxy_mode = MitmProxyMode.parse("wireguard@51821")
+        await addon.request(flow)
+        assert flow.metadata.get("ccproxy.direction") == "outbound"
+        # Should NOT forward to LiteLLM (would cause infinite loop)
+        assert flow.request.host == "api.anthropic.com"
+
+    @pytest.mark.asyncio
+    async def test_reverse_direction_is_inbound(self) -> None:
+        addon = self._make_addon()
+        flow = _make_mock_flow(reverse=True)
+        flow.id = "rev-dir-1"
+        flow.request.pretty_host = "localhost"
+        flow.request.host = "localhost"
+        flow.request.method = "POST"
+        flow.request.path = "/v1/messages"
+        flow.request.pretty_url = "http://localhost/v1/messages"
+        flow.request.content = None
+        await addon.request(flow)
+        assert flow.metadata.get("ccproxy.direction") == "inbound"
+
+    @pytest.mark.asyncio
+    async def test_wireguard_cli_does_not_forward_non_llm(self) -> None:
+        addon = self._make_addon(wg_cli_port=51820, wg_gateway_port=51821)
+        flow = _make_wg_flow(host="github.com", path="/api/v3")
+        await addon.request(flow)
+        assert flow.metadata.get("ccproxy.direction") == "inbound"
+        assert flow.request.host == "github.com"
+
+    def test_proxy_direction_values_stable(self) -> None:
+        assert ProxyDirection.REVERSE == 0
+        assert ProxyDirection.FORWARD == 1
+        assert ProxyDirection.WIREGUARD_CLI == 2
+        assert ProxyDirection.WIREGUARD_GW == 3

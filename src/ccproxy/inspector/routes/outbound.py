@@ -27,7 +27,7 @@ def register_outbound_routes(router: InspectorRouter) -> None:
     """Register all outbound route handlers on the given router."""
     from ccproxy.inspector.routing import RouteType
 
-    @router.route("/{path:.*}", rtype=RouteType.REQUEST)  # type: ignore[untyped-decorator]
+    @router.route("/{path}", rtype=RouteType.REQUEST)  # type: ignore[untyped-decorator]
     def ensure_beta_headers(flow: HTTPFlow, **kwargs: object) -> None:
         if not _is_outbound(flow):
             return
@@ -44,7 +44,7 @@ def register_outbound_routes(router: InspectorRouter) -> None:
         merged = list(dict.fromkeys(ANTHROPIC_BETA_HEADERS + existing_list))
         flow.request.headers["anthropic-beta"] = ",".join(merged)
 
-    @router.route("/{path:.*}", rtype=RouteType.RESPONSE)  # type: ignore[untyped-decorator]
+    @router.route("/{path}", rtype=RouteType.RESPONSE)  # type: ignore[untyped-decorator]
     def observe_auth_failure(flow: HTTPFlow, **kwargs: object) -> None:
         if not _is_outbound(flow):
             return
