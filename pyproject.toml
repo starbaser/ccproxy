@@ -119,6 +119,18 @@ ignore_missing_imports = true
 include = ["src", "tests"]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
+venvPath = "."
+venv = ".venv"
+stubPath = "stubs"
+reportMissingModuleSource = "none"
+
+[[tool.pyright.overrides]]
+module = "opentelemetry.*"
+reportMissingImports = false
+
+[[tool.pyright.overrides]]
+module = "langfuse.*"
+reportMissingImports = false
 
 [tool.ty]
 python_version = "3.12"

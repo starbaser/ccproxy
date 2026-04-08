@@ -64,7 +64,8 @@ class InspectorAddon:
             return "inbound"
 
         if isinstance(mode, WireGuardMode):
-            if mode.custom_listen_port == self._wg_gateway_port:
+            port = mode.custom_listen_port
+            if port is not None and port == self._wg_gateway_port:
                 return "outbound"
             return "inbound"
 

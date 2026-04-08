@@ -215,3 +215,108 @@ class TestPassthroughMetadata:
         flow.metadata[FlowMeta.REQ_PASSTHROUGH] = True
         api.request(flow)
         assert not called
+
+
+class TestFindHandlerWildcard:
+    def test_none_host_matches_any(self) -> None:
+        router = InspectorRouter(name="test", default_host=None)
+        called = []
+
+        @router.route("/path", host=None)
+        def handler(flow: MagicMock) -> None:
+            called.append(True)
+
+        h, params = router.find_handler("anything.com", "/path")
+        assert h is not None
+        assert params is not None
+
+    def test_none_host_matches_when_default_host_none(self) -> None:
+        router = InspectorRouter(name="test")
+
+        @router.route("/{path}")
+        def handler(flow: MagicMock, path: str = "") -> None:
+            pass
+
+        h, params = router.find_handler("whatever-host.example", "/some-path")
+        assert h is not None
+
+    def test_explicit_host_still_filters(self) -> None:
+        router = InspectorRouter(name="test")
+
+        @router.route("/test", host="specific.com")
+        def handler(flow: MagicMock) -> None:
+            pass
+
+        h, params = router.find_handler("other.com", "/test")
+        assert h is None
+        assert params is None
+
+    def test_response_route_with_none_host(self) -> None:
+        router = InspectorRouter(name="test", default_host=None)
+
+        @router.route("/resp", host=None, rtype=RouteType.RESPONSE)
+        def handler(flow: MagicMock) -> None:
+            pass
+
+        h, params = router.find_handler("any-host.net", "/resp", rtype=RouteType.RESPONSE)
+        assert h is not None
+        assert params is not None
+
+
+class TestRemapHostFix:
+    def test_remap_creates_server_with_keyword_arg(self) -> None:
+        import re as _re
+
+        from mitmproxy.connection import Server
+
+        router = InspectorRouter(
+            name="test",
+            host_mapping=[(_re.compile(r"api\.example\.com"), "proxy.example.com")],
+        )
+        flow = _make_flow(host="api.example.com", path="/v1/test")
+        flow.request.headers = {}
+
+        router.remap_host(flow, overwrite=True)
+
+        assert flow.server_conn is not None
+        assert isinstance(flow.server_conn, Server)
+
+    def test_remap_no_mapping_returns_host(self) -> None:
+        router = InspectorRouter(name="test", host_mapping=[])
+        flow = _make_flow(host="unmapped.com")
+
+        result = router.remap_host(flow)
+
+        assert result == "unmapped.com"
+
+    def test_remap_overwrite_false(self) -> None:
+        import re as _re
+
+        router = InspectorRouter(
+            name="test",
+            host_mapping=[(_re.compile(r"api\.example\.com"), "proxy.example.com")],
+        )
+        flow = _make_flow(host="api.example.com")
+        original_server_conn = flow.server_conn
+
+        result = router.remap_host(flow, overwrite=False)
+
+        assert result == "proxy.example.com"
+        assert flow.server_conn is original_server_conn
+
+    def test_remap_with_regex_pattern(self) -> None:
+        import re as _re
+
+        from mitmproxy.connection import Server
+
+        router = InspectorRouter(
+            name="test",
+            host_mapping=[(_re.compile(r".*\.anthropic\.com"), "localhost")],
+        )
+        flow = _make_flow(host="api.anthropic.com", path="/v1/messages")
+        flow.request.headers = {}
+
+        result = router.remap_host(flow, overwrite=True)
+
+        assert result == "localhost"
+        assert isinstance(flow.server_conn, Server)

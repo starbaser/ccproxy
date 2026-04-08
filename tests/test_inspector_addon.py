@@ -1,11 +1,13 @@
 """Tests for inspector addon traffic capture."""
 
+import json
 from unittest.mock import MagicMock
 
 import pytest
 
 from ccproxy.config import InspectorConfig
 from ccproxy.inspector.addon import InspectorAddon
+from ccproxy.inspector.flow_store import FLOW_ID_HEADER, InspectorMeta, create_flow_record
 
 
 def _make_mock_flow(*, reverse: bool = True) -> MagicMock:
@@ -230,3 +232,190 @@ class TestWireGuardDirectionDetection:
         flow2.client_conn.proxy_mode = MitmProxyMode.parse("wireguard@51821")
         direction2 = addon._get_direction(flow2)
         assert direction2 == "outbound"
+
+
+class TestGetDirectionEdgeCases:
+    """Edge cases for _get_direction."""
+
+    def _make_addon(self, wg_gateway_port: int | None = None) -> InspectorAddon:
+        return InspectorAddon(
+            config=InspectorConfig(),
+            wg_gateway_port=wg_gateway_port,
+        )
+
+    def test_no_client_conn_returns_none(self) -> None:
+        addon = self._make_addon()
+        flow = MagicMock(spec=[])
+        assert addon._get_direction(flow) is None  # type: ignore[arg-type]
+
+    def test_none_client_conn_returns_none(self) -> None:
+        addon = self._make_addon()
+        flow = MagicMock()
+        flow.client_conn = None
+        assert addon._get_direction(flow) is None
+
+    def test_regular_mode_returns_none(self) -> None:
+        from mitmproxy.proxy.mode_specs import ProxyMode as MitmProxyMode
+
+        addon = self._make_addon()
+        flow = MagicMock()
+        flow.client_conn.proxy_mode = MitmProxyMode.parse("regular@8080")
+        assert addon._get_direction(flow) is None
+
+    def test_none_gateway_port_none_listen_port(self) -> None:
+        """WireGuard mode with no custom port and wg_gateway_port=None.
+
+        port is None → `port is not None` guard prevents None==None match → returns "inbound".
+        """
+        from mitmproxy.proxy.mode_specs import ProxyMode as MitmProxyMode
+
+        addon = self._make_addon(wg_gateway_port=None)
+        flow = MagicMock()
+        flow.client_conn.proxy_mode = MitmProxyMode.parse("wireguard")
+        direction = addon._get_direction(flow)
+        assert direction == "inbound"
+
+
+class TestTruncateBody:
+    """Tests for _truncate_body."""
+
+    def test_none_body(self) -> None:
+        addon = InspectorAddon(config=InspectorConfig())
+        assert addon._truncate_body(None) is None
+
+    def test_empty_body(self) -> None:
+        addon = InspectorAddon(config=InspectorConfig())
+        assert addon._truncate_body(b"") is None
+
+    def test_max_size_zero_returns_full(self) -> None:
+        addon = InspectorAddon(config=InspectorConfig(max_body_size=0))
+        body = b"A" * 100
+        assert addon._truncate_body(body) == body
+
+    def test_under_limit(self) -> None:
+        addon = InspectorAddon(config=InspectorConfig(max_body_size=200))
+        body = b"hello world"
+        assert addon._truncate_body(body) == body
+
+    def test_over_limit(self) -> None:
+        addon = InspectorAddon(config=InspectorConfig(max_body_size=5))
+        body = b"hello world"
+        result = addon._truncate_body(body)
+        assert result == b"hello"
+        assert len(result) == 5  # type: ignore[arg-type]
+
+    def test_exact_limit(self) -> None:
+        addon = InspectorAddon(config=InspectorConfig(max_body_size=11))
+        body = b"hello world"
+        assert addon._truncate_body(body) == body
+
+
+class TestExtractSessionId:
+    """Tests for _extract_session_id."""
+
+    def _make_request(self, content: bytes | None) -> MagicMock:
+        req = MagicMock()
+        req.content = content
+        return req
+
+    def test_no_content(self) -> None:
+        addon = InspectorAddon(config=InspectorConfig())
+        req = self._make_request(None)
+        assert addon._extract_session_id(req) is None
+
+    def test_invalid_json(self) -> None:
+        addon = InspectorAddon(config=InspectorConfig())
+        req = self._make_request(b"not-json{{{")
+        assert addon._extract_session_id(req) is None
+
+    def test_missing_metadata(self) -> None:
+        addon = InspectorAddon(config=InspectorConfig())
+        req = self._make_request(json.dumps({"model": "claude"}).encode())
+        assert addon._extract_session_id(req) is None
+
+    def test_metadata_not_dict(self) -> None:
+        addon = InspectorAddon(config=InspectorConfig())
+        req = self._make_request(json.dumps({"metadata": "a string"}).encode())
+        assert addon._extract_session_id(req) is None
+
+    def test_empty_user_id(self) -> None:
+        addon = InspectorAddon(config=InspectorConfig())
+        req = self._make_request(json.dumps({"metadata": {"user_id": ""}}).encode())
+        assert addon._extract_session_id(req) is None
+
+    def test_json_format_session_id(self) -> None:
+        addon = InspectorAddon(config=InspectorConfig())
+        user_id_obj = json.dumps({"session_id": "abc123"})
+        req = self._make_request(json.dumps({"metadata": {"user_id": user_id_obj}}).encode())
+        assert addon._extract_session_id(req) == "abc123"
+
+    def test_legacy_format(self) -> None:
+        addon = InspectorAddon(config=InspectorConfig())
+        req = self._make_request(
+            json.dumps({"metadata": {"user_id": "user_hash_account_uuid_session_sid123"}}).encode()
+        )
+        assert addon._extract_session_id(req) == "sid123"
+
+    def test_multiple_session_separators(self) -> None:
+        addon = InspectorAddon(config=InspectorConfig())
+        req = self._make_request(
+            json.dumps({"metadata": {"user_id": "a_session_b_session_c"}}).encode()
+        )
+        assert addon._extract_session_id(req) is None
+
+    def test_neither_format(self) -> None:
+        addon = InspectorAddon(config=InspectorConfig())
+        req = self._make_request(
+            json.dumps({"metadata": {"user_id": "plain-user-id"}}).encode()
+        )
+        assert addon._extract_session_id(req) is None
+
+
+class TestRequestFlowStore:
+    """Tests verifying flow store interaction during request()."""
+
+    @pytest.mark.asyncio
+    async def test_creates_flow_record_and_stamps_header(self) -> None:
+        from mitmproxy.proxy.mode_specs import ProxyMode as MitmProxyMode
+
+        addon = InspectorAddon(config=InspectorConfig())
+        flow = _make_wg_flow(host="api.anthropic.com")
+        flow.request.headers = {}
+
+        await addon.request(flow)
+
+        assert FLOW_ID_HEADER in flow.request.headers
+        assert flow.metadata.get(InspectorMeta.RECORD) is not None
+
+    @pytest.mark.asyncio
+    async def test_reuses_existing_record(self) -> None:
+        addon = InspectorAddon(config=InspectorConfig())
+        flow = _make_wg_flow(host="api.anthropic.com")
+
+        flow_id, existing_record = create_flow_record("inbound")
+        flow.request.headers = {FLOW_ID_HEADER: flow_id}
+
+        await addon.request(flow)
+
+        assert flow.metadata.get(InspectorMeta.RECORD) is existing_record
+
+
+class TestResponseAndError:
+    """Tests for response() and error() early-exit guards."""
+
+    @pytest.mark.asyncio
+    async def test_response_none_response(self) -> None:
+        addon = InspectorAddon(config=InspectorConfig())
+        flow = MagicMock()
+        flow.response = None
+        flow.request.timestamp_start = None
+
+        await addon.response(flow)
+
+    @pytest.mark.asyncio
+    async def test_error_none_error(self) -> None:
+        addon = InspectorAddon(config=InspectorConfig())
+        flow = MagicMock()
+        flow.error = None
+
+        await addon.error(flow)

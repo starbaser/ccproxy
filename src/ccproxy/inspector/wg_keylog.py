@@ -1,5 +1,4 @@
-"""WireGuard key export for Wireshark decryption.
-
+"""WireGuard key export for Wireshark decryption. **NOT** a "keylogger"
 Reads mitmproxy's WireGuard keypair JSON and writes a Wireshark-compatible
 keylog file (wg.keylog_file format) for decrypting the outer WireGuard
 tunnel layer in packet captures.

@@ -128,6 +128,7 @@
               uv
               ruff
               mypy
+              pyright
               jq
               git
               just
