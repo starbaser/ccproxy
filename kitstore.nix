@@ -1,91 +1,73 @@
 {
   repositories = {
-    "anthropic/anthropic-sdk-python" = {
-      url = "https://github.com/anthropics/anthropic-sdk-python";
-      kits = {
-        src = { include = [ "src/" ]; chunk_by = "symbols"; };
-      };
-    };
-    "bridge/gemini-claude" = {
-      url = "https://github.com/weijiafu14/gemini-claude-bridge";
-    };
     litellm = {
       url = "https://github.com/BerriAI/litellm";
       kits = {
         core = {
           include = [
-            "litellm/main.py"
-            "litellm/utils.py"
+            "litellm/types/**/*.py"
+            "litellm/integrations/**/*.py"
+            "litellm/caching/**/*.py"
+            "litellm/responses/**/*.py"
             "litellm/router.py"
-            "litellm/types/**"
-            "litellm/constants.py"
-            "litellm/exceptions.py"
-            "litellm/timeout.py"
+            "litellm/main.py"
+            "litellm/__init__.py"
+            "litellm/router_strategy/**/*.py"
+            "litellm/router_utils/**/*.py"
+            "litellm/litellm_core_utils/**/*.py"
+            "litellm/secret_managers/**/*.py"
+          ];
+          exclude = [
+            "tests/**/*"
+            "litellm/integrations/SlackAlerting/**/*"
           ];
           chunk_by = "symbols";
         };
-        docs = {
-          include = [
-            "docs/**/*.md"
-            "docs/**/*.mdx"
-            "README.md"
-            "CONTRIBUTING.md"
-          ];
-          exclude = [
-            "docs/my-website/node_modules/**"
-            "docs/my-website/.next/**"
-            "docs/**/*.ipynb"
-            "cookbook/**/*.ipynb"
-          ];
-          chunk_by = "lines";
-        };
+        docs = { include = [ "docs/my-website/docs/**/*.md" ]; chunk_by = "lines"; };
         llms = {
-          include = [
-            "litellm/llms/**"
-            "litellm/integrations/**"
-          ];
-          exclude = [
-            "**/test*"
-            "**/*.test.py"
-            "tests/**"
-            "litellm/llms/replicate/**"
-            "litellm/llms/petals/**"
-            "litellm/llms/vllm/**"
-            "litellm/llms/vertex_ai/**"
-            "litellm/llms/bedrock/**"
-            "litellm/llms/baseten/**"
-            "litellm/llms/helicone/**"
-            "litellm/llms/aleph_alpha/**"
-            "litellm/llms/baseten/**"
-          ];
+          include = [ "litellm/llms/**/*.py" ];
+          exclude = [ "tests/**/*" ];
+          chunk_by = "symbols";
+        };
+        proxy = {
+          include = [ "litellm/proxy/**/*.py" ];
+          exclude = [ "tests/**/*" ];
           chunk_by = "symbols";
         };
       };
     };
-    "proxy/mitmproxy" = {
+    "inspector/mitmproxy" = {
       url = "https://github.com/mitmproxy/mitmproxy";
       kits = {
-        docs = { include = [ "docs/**" ]; chunk_by = "lines"; };
+        docs = { include = [ "docs/src/**" ]; chunk_by = "lines"; };
         src = {
           include = [
-            "mitmproxy/proxy/**"
-            "mitmproxy/net/**"
-            "mitmproxy/addons/**"
-            "mitmproxy/*.py"
-            "examples/**"
+            "mitmproxy/**/*.py"
+            "examples/**/*.py"
           ];
           exclude = [
             "test/**"
-            "web/**"
+            "mitmproxy/test/**"
+            "mitmproxy/contrib/**"
             "mitmproxy/tools/**"
-            "release/**"
-            ".github/**"
+            "**/test_*.py"
+            "**/*_test.py"
           ];
           chunk_by = "symbols";
         };
       };
     };
-    slirp4netns = {
+    "inspector/xepor" = {
+      url = "https://github.com/xepor/xepor";
+      kits = {
+        docs = { include = [ "docs/**" ]; chunk_by = "lines"; };
+        src = { include = [ "src/xepor/**" ]; chunk_by = "symbols"; };
+      };
+    };
+    "inspector/xepor-examples" = {
+      url = "https://github.com/xepor/xepor-examples";
+    };
+    "inspector/slirp4netns" = {
       url = "https://github.com/rootless-containers/slirp4netns";
       kits = {
         docs = {

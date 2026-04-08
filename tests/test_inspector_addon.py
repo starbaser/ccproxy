@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from ccproxy.config import InspectorConfig
-from ccproxy.inspector.addon import InspectorAddon, ProxyDirection
+from ccproxy.inspector.addon import InspectorAddon
 
 
 def _make_mock_flow(*, reverse: bool = True) -> MagicMock:
@@ -216,8 +216,17 @@ class TestWireGuardDirectionDetection:
         assert flow.metadata.get("ccproxy.direction") == "inbound"
         assert flow.request.host == "github.com"
 
-    def test_proxy_direction_values_stable(self) -> None:
-        assert ProxyDirection.REVERSE == 0
-        assert ProxyDirection.FORWARD == 1
-        assert ProxyDirection.WIREGUARD_CLI == 2
-        assert ProxyDirection.WIREGUARD_GW == 3
+    def test_direction_is_string_literal(self) -> None:
+        """Direction metadata uses string literals, not an enum."""
+        from mitmproxy.proxy.mode_specs import ProxyMode as MitmProxyMode
+
+        addon = self._make_addon(wg_cli_port=51820, wg_gateway_port=51821)
+        flow = _make_wg_flow(host="api.anthropic.com")
+        # Confirm _get_direction returns a string literal
+        direction = addon._get_direction(flow)
+        assert direction == "inbound"
+
+        flow2 = _make_wg_flow(host="api.anthropic.com")
+        flow2.client_conn.proxy_mode = MitmProxyMode.parse("wireguard@51821")
+        direction2 = addon._get_direction(flow2)
+        assert direction2 == "outbound"

@@ -4,13 +4,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ccproxy.constants import OAUTH_SENTINEL_PREFIX, OAuthConfigError
+from ccproxy.constants import OAUTH_SENTINEL_PREFIX
+from ccproxy.inspector.flow_store import FlowRecord, InspectorMeta, create_flow_record
 from ccproxy.inspector.routing import InspectorRouter
 
 
 def _make_inbound_flow(
     api_key: str = "",
     mode: str = "wireguard@51820",
+    with_record: bool = False,
 ) -> MagicMock:
     from mitmproxy.proxy.mode_specs import ProxyMode
 
@@ -19,10 +21,20 @@ def _make_inbound_flow(
     flow.request.pretty_url = "https://api.anthropic.com/v1/messages"
     flow.request.method = "POST"
     flow.request.path = "/v1/messages"
+    flow.request.scheme = "https"
+    flow.request.host = "api.anthropic.com"
+    flow.request.port = 443
     flow.request.pretty_host = "api.anthropic.com"
     flow.metadata = {}
     flow.client_conn.proxy_mode = ProxyMode.parse(mode)
     flow.id = "test-flow-1"
+
+    if with_record:
+        flow_id, record = create_flow_record("inbound")
+        flow.metadata[InspectorMeta.RECORD] = record
+        flow.metadata[InspectorMeta.DIRECTION] = "inbound"
+        flow.request.headers["x-ccproxy-flow-id"] = flow_id
+
     return flow
 
 
@@ -34,30 +46,10 @@ def _setup_router() -> InspectorRouter:
     return router
 
 
-class TestInboundDirectionTag:
-    def test_tags_wireguard_flow_as_inbound(self) -> None:
-        router = _setup_router()
-        flow = _make_inbound_flow()
-        router.request(flow)
-        assert flow.metadata.get("ccproxy.direction") == "inbound"
-
-    def test_tags_reverse_flow_as_inbound(self) -> None:
-        router = _setup_router()
-        flow = _make_inbound_flow(mode="reverse:http://localhost:4001@4000")
-        router.request(flow)
-        assert flow.metadata.get("ccproxy.direction") == "inbound"
-
-    def test_skips_regular_mode_flow(self) -> None:
-        router = _setup_router()
-        flow = _make_inbound_flow(mode="regular@4003")
-        router.request(flow)
-        assert "ccproxy.direction" not in flow.metadata
-
-
 class TestOAuthSentinelKey:
     def test_sentinel_key_substitutes_token(self) -> None:
         router = _setup_router()
-        flow = _make_inbound_flow(api_key=f"{OAUTH_SENTINEL_PREFIX}anthropic")
+        flow = _make_inbound_flow(api_key=f"{OAUTH_SENTINEL_PREFIX}anthropic", with_record=True)
 
         with patch("ccproxy.inspector.routes.inbound._get_oauth_token", return_value="real-token-123"):
             with patch("ccproxy.inspector.routes.inbound._get_oauth_auth_header", return_value=None):
@@ -65,27 +57,36 @@ class TestOAuthSentinelKey:
 
         assert flow.request.headers["authorization"] == "Bearer real-token-123"
         assert flow.request.headers["x-api-key"] == ""
-        assert flow.metadata["ccproxy.oauth_injected"] is True
-        assert flow.metadata["ccproxy.oauth_provider"] == "anthropic"
         assert flow.request.headers["x-ccproxy-oauth-injected"] == "1"
+
+        record: FlowRecord = flow.metadata[InspectorMeta.RECORD]
+        assert record.auth is not None
+        assert record.auth.provider == "anthropic"
+        assert record.auth.credential == "real-token-123"
+        assert record.auth.key_field == "authorization"
+        assert record.auth.injected is True
+        assert record.auth.original_key == f"{OAUTH_SENTINEL_PREFIX}anthropic"
 
     def test_sentinel_key_with_custom_auth_header(self) -> None:
         router = _setup_router()
-        flow = _make_inbound_flow(api_key=f"{OAUTH_SENTINEL_PREFIX}zai")
+        flow = _make_inbound_flow(api_key=f"{OAUTH_SENTINEL_PREFIX}zai", with_record=True)
 
         with patch("ccproxy.inspector.routes.inbound._get_oauth_token", return_value="zai-token"):
             with patch("ccproxy.inspector.routes.inbound._get_oauth_auth_header", return_value="x-api-key"):
                 router.request(flow)
 
         assert flow.request.headers["x-api-key"] == "zai-token"
-        assert flow.metadata["ccproxy.oauth_injected"] is True
+
+        record: FlowRecord = flow.metadata[InspectorMeta.RECORD]
+        assert record.auth is not None
+        assert record.auth.key_field == "x-api-key"
+        assert record.auth.injected is True
 
     def test_missing_oat_sources_logs_error(self, caplog: pytest.LogCaptureFixture) -> None:
         router = _setup_router()
         flow = _make_inbound_flow(api_key=f"{OAUTH_SENTINEL_PREFIX}unknown")
 
         with patch("ccproxy.inspector.routes.inbound._get_oauth_token", return_value=None):
-            # xepor's catch_error=True catches the OAuthConfigError
             router.request(flow)
 
         assert "unknown" in caplog.text
@@ -96,17 +97,36 @@ class TestOAuthSentinelKey:
         flow = _make_inbound_flow(api_key="sk-ant-real-key-123")
         router.request(flow)
         assert flow.request.headers["x-api-key"] == "sk-ant-real-key-123"
-        assert "ccproxy.oauth_injected" not in flow.metadata
 
     def test_empty_api_key_passes_through(self) -> None:
         router = _setup_router()
         flow = _make_inbound_flow(api_key="")
         router.request(flow)
-        assert "ccproxy.oauth_injected" not in flow.metadata
+        assert "x-ccproxy-oauth-injected" not in flow.request.headers
 
     def test_no_api_key_header_passes_through(self) -> None:
         router = _setup_router()
         flow = _make_inbound_flow()
-        flow.request.headers = {}  # No x-api-key at all
+        flow.request.headers = {}
         router.request(flow)
-        assert "ccproxy.oauth_injected" not in flow.metadata
+        assert "x-ccproxy-oauth-injected" not in flow.request.headers
+
+    def test_regular_mode_flow_skipped(self) -> None:
+        router = _setup_router()
+        flow = _make_inbound_flow(api_key=f"{OAUTH_SENTINEL_PREFIX}anthropic", mode="regular@4003")
+        with patch("ccproxy.inspector.routes.inbound._get_oauth_token", return_value="token"):
+            with patch("ccproxy.inspector.routes.inbound._get_oauth_auth_header", return_value=None):
+                router.request(flow)
+        assert "x-ccproxy-oauth-injected" not in flow.request.headers
+
+    def test_works_without_flow_record(self) -> None:
+        """OAuth injection works even without FlowRecord (graceful degradation)."""
+        router = _setup_router()
+        flow = _make_inbound_flow(api_key=f"{OAUTH_SENTINEL_PREFIX}anthropic")
+
+        with patch("ccproxy.inspector.routes.inbound._get_oauth_token", return_value="token-123"):
+            with patch("ccproxy.inspector.routes.inbound._get_oauth_auth_header", return_value=None):
+                router.request(flow)
+
+        assert flow.request.headers["authorization"] == "Bearer token-123"
+        assert flow.request.headers["x-ccproxy-oauth-injected"] == "1"

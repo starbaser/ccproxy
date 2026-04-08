@@ -10,6 +10,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from ccproxy.constants import ANTHROPIC_BETA_HEADERS
+from ccproxy.inspector.flow_store import FLOW_ID_HEADER, FlowRecord, InspectorMeta, get_flow_record
 
 if TYPE_CHECKING:
     from mitmproxy.http import HTTPFlow
@@ -20,22 +21,25 @@ logger = logging.getLogger(__name__)
 
 
 def _is_outbound(flow: HTTPFlow) -> bool:
-    return flow.metadata.get("ccproxy.direction") == "outbound"
+    return flow.metadata.get(InspectorMeta.DIRECTION) == "outbound"
 
 
 def register_outbound_routes(router: InspectorRouter) -> None:
     """Register all outbound route handlers on the given router."""
     from ccproxy.inspector.routing import RouteType
 
-    @router.route("/{path}", rtype=RouteType.REQUEST)  # type: ignore[untyped-decorator]
+    @router.route("/{path}", rtype=RouteType.REQUEST)
     def ensure_beta_headers(flow: HTTPFlow, **kwargs: object) -> None:
         if not _is_outbound(flow):
             return
 
-        flow.metadata["ccproxy.direction"] = "outbound"
+        flow_id = flow.request.headers.get(FLOW_ID_HEADER)
+        record: FlowRecord | None = None
+        if flow_id:
+            record = get_flow_record(flow_id)
+            if record:
+                flow.metadata[InspectorMeta.RECORD] = record
 
-        # Provider-agnostic: only merge if anthropic-beta header already present
-        # (LiteLLM's hook pipeline sets it; this is a safety net / idempotent merge)
         existing = flow.request.headers.get("anthropic-beta")
         if existing is None:
             return
@@ -44,13 +48,14 @@ def register_outbound_routes(router: InspectorRouter) -> None:
         merged = list(dict.fromkeys(ANTHROPIC_BETA_HEADERS + existing_list))
         flow.request.headers["anthropic-beta"] = ",".join(merged)
 
-    @router.route("/{path}", rtype=RouteType.RESPONSE)  # type: ignore[untyped-decorator]
+    @router.route("/{path}", rtype=RouteType.RESPONSE)
     def observe_auth_failure(flow: HTTPFlow, **kwargs: object) -> None:
         if not _is_outbound(flow):
             return
 
         if flow.response and flow.response.status_code in (401, 403):
-            provider = flow.metadata.get("ccproxy.oauth_provider", "unknown")
+            record: FlowRecord | None = flow.metadata.get(InspectorMeta.RECORD)
+            provider = record.auth.provider if record and record.auth else "unknown"
             logger.warning(
                 "Auth failure on outbound: %s %d (provider: %s)",
                 flow.request.pretty_url,

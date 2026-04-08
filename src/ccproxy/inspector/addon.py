@@ -2,7 +2,8 @@
 
 Captures all HTTP traffic flowing through reverse, forward, and WireGuard
 proxy listeners. Mode is detected per-flow via mitmproxy's multi-mode
-`flow.client_conn.proxy_mode` attribute.
+``flow.client_conn.proxy_mode`` attribute using ``isinstance`` checks
+against the concrete mode dataclasses.
 """
 
 from __future__ import annotations
@@ -10,45 +11,26 @@ from __future__ import annotations
 import json
 import logging
 import os
-from enum import IntEnum
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from mitmproxy import http
+from mitmproxy.proxy.mode_specs import ReverseMode, WireGuardMode
 
 from ccproxy.config import InspectorConfig
-
-
-class ProxyDirection(IntEnum):
-    """Internal mode identifier for the mitmproxy listener that handled a flow.
-
-    These integer values are stored in the database and must remain stable
-    for backward compatibility with existing traces. They are not user-facing
-    concepts — inspect mode activates all three modes as a single unit.
-    """
-
-    REVERSE = 0         # External HTTP client → LiteLLM (reverse mode listener)
-    FORWARD = 1         # Reserved (was RegularMode / HTTPS_PROXY leg; no longer used)
-    WIREGUARD_CLI = 2   # CLI client namespace → mitmweb → LiteLLM (WireGuard port A)
-    WIREGUARD_GW = 3    # LiteLLM namespace → mitmweb → provider (WireGuard port B)
-
+from ccproxy.inspector.flow_store import (
+    FLOW_ID_HEADER,
+    FlowRecord,
+    InspectorMeta,
+    create_flow_record,
+    get_flow_record,
+)
 
 if TYPE_CHECKING:
     from ccproxy.inspector.telemetry import InspectorTracer
 
 logger = logging.getLogger(__name__)
 
-# Cached mode type references (avoid repeated imports per-flow)
-_ReverseMode: type | None = None
-
-
-def _get_reverse_mode_type() -> type:
-    """Lazily resolve mitmproxy ReverseMode type."""
-    global _ReverseMode
-    if _ReverseMode is None:
-        from mitmproxy.proxy.mode_specs import ReverseMode
-        _ReverseMode = ReverseMode
-    assert _ReverseMode is not None
-    return _ReverseMode
+Direction = Literal["inbound", "outbound"]
 
 
 class InspectorAddon:
@@ -61,127 +43,45 @@ class InspectorAddon:
         wg_cli_port: int | None = None,
         wg_gateway_port: int | None = None,
     ) -> None:
-        """Initialize the addon.
-
-        Args:
-            config: Mitmproxy configuration
-            traffic_source: Source label for traces (e.g. "shadow", "litellm")
-            wg_cli_port: UDP port of the CLI-namespace WireGuard listener (INBOUND)
-            wg_gateway_port: UDP port of the LiteLLM-namespace WireGuard listener (OUTBOUND)
-        """
         self.config = config
         self.traffic_source = traffic_source
         self.tracer: InspectorTracer | None = None
-        self._WireGuardMode: type | None = None
         self._forward_domains: set[str] = set(config.forward_domains)
         self._wg_cli_port = wg_cli_port
         self._wg_gateway_port = wg_gateway_port
 
     def set_tracer(self, tracer: InspectorTracer) -> None:
-        """Set the OTel tracer for span emission.
-
-        Args:
-            tracer: Initialized InspectorTracer instance
-        """
         self.tracer = tracer
 
-    def _get_wg_listen_port(self, mode: Any) -> int | None:
-        """Extract the UDP listening port from a WireGuardMode instance."""
-        try:
-            # WireGuardMode.listen_port or WireGuardMode.port
-            for attr in ("listen_port", "port"):
-                val = getattr(mode, attr, None)
-                if isinstance(val, int):
-                    return val
-            # Fallback: parse from full_spec string (e.g. "wireguard@51820")
-            full_spec: str = getattr(mode, "full_spec", "") or ""
-            if "@" in full_spec:
-                return int(full_spec.split("@")[-1])
-        except (AttributeError, ValueError):
-            pass
-        return None
-
-    def _get_direction(self, flow: http.HTTPFlow) -> ProxyDirection | None:
-        """Detect traffic direction from which listener accepted this flow.
-
-        Uses mitmproxy's multi-mode `flow.client_conn.proxy_mode` to determine
-        which mitmproxy --mode listener accepted this flow.
-
-        For WireGuard listeners, distinguishes CLI (port A) from gateway (port B)
-        using the configured wg_cli_port and wg_gateway_port.
-
-        Args:
-            flow: HTTP flow object
-
-        Returns:
-            ProxyDirection or None if the flow's mode is unsupported
-        """
+    def _get_direction(self, flow: http.HTTPFlow) -> Direction | None:
+        """Detect traffic direction from the proxy mode that accepted this flow."""
         if not hasattr(flow, "client_conn") or flow.client_conn is None:
-            return None  # Synthetic/replayed flows
+            return None
 
-        reverse_mode = _get_reverse_mode_type()
         mode = flow.client_conn.proxy_mode
 
-        if isinstance(mode, reverse_mode):
-            return ProxyDirection.REVERSE
+        if isinstance(mode, ReverseMode):
+            return "inbound"
 
-        if self._WireGuardMode is None:
-            from mitmproxy.proxy.mode_specs import WireGuardMode
-            self._WireGuardMode = WireGuardMode
-
-        if isinstance(mode, self._WireGuardMode):
-            listen_port = self._get_wg_listen_port(mode)
-            if listen_port is not None:
-                if listen_port == self._wg_gateway_port:
-                    return ProxyDirection.WIREGUARD_GW
-                # CLI port or any unrecognised WG port treated as INBOUND
-                return ProxyDirection.WIREGUARD_CLI
-            # Port indeterminate — default to CLI (inbound)
-            return ProxyDirection.WIREGUARD_CLI
+        if isinstance(mode, WireGuardMode):
+            if mode.custom_listen_port == self._wg_gateway_port:
+                return "outbound"
+            return "inbound"
 
         return None
 
     def _truncate_body(self, body: bytes | None) -> bytes | None:
-        """Truncate body to configured max size.
-
-        Args:
-            body: Request or response body
-
-        Returns:
-            Truncated body or None if empty
-        """
         if not body:
             return None
-
         if self.config.max_body_size > 0 and len(body) > self.config.max_body_size:
             return body[: self.config.max_body_size]
-
         return body
 
     def _serialize_headers(self, headers: Any) -> dict[str, str]:
-        """Convert mitmproxy headers to dict.
-
-        Args:
-            headers: Mitmproxy headers object
-
-        Returns:
-            Dict of header name -> value
-        """
         return {str(k): str(v) for k, v in headers.items()}
 
     def _extract_session_id(self, request: http.Request) -> str | None:
-        """Extract session_id from Claude Code's metadata.user_id field.
-
-        Claude Code embeds session info in the metadata.user_id field in one of two formats:
-        - JSON object: {"device_id": "...", "account_uuid": "...", "session_id": "<uuid>"}
-        - Legacy compound string: user_{hash}_account_{uuid}_session_{uuid}
-
-        Args:
-            request: HTTP request object
-
-        Returns:
-            Session ID string or None if not found/parseable
-        """
+        """Extract session_id from Claude Code's metadata.user_id field."""
         if not request.content:
             return None
 
@@ -190,7 +90,6 @@ class InspectorAddon:
         except (json.JSONDecodeError, UnicodeDecodeError):
             return None
 
-        # Navigate to metadata.user_id
         metadata = body.get("metadata", {})
         if not isinstance(metadata, dict):
             return None
@@ -199,7 +98,6 @@ class InspectorAddon:
         if not user_id:
             return None
 
-        # New format: JSON-encoded object with session_id key
         if user_id.startswith("{"):
             try:
                 user_id_obj = json.loads(user_id)
@@ -208,7 +106,6 @@ class InspectorAddon:
             except (json.JSONDecodeError, TypeError):
                 pass
 
-        # Legacy format: user_{hash}_account_{uuid}_session_{uuid}
         if "_session_" in user_id:
             parts = user_id.split("_session_")
             if len(parts) == 2:
@@ -216,17 +113,16 @@ class InspectorAddon:
 
         return None
 
-    def _maybe_forward(self, flow: http.HTTPFlow, direction: ProxyDirection, host: str) -> None:
+    def _maybe_forward(self, flow: http.HTTPFlow, direction: Direction, host: str) -> None:
         """Forward CLI WireGuard LLM API traffic to LiteLLM.
 
-        Rewrites the request target so mitmproxy connects to LiteLLM instead
-        of the original API domain. Only applies to WIREGUARD_CLI flows whose
-        host is in the configured forward_domains list.
-
-        WIREGUARD_GW flows (LiteLLM's outbound) are NOT forwarded — they pass
-        through to the real provider to avoid an infinite loop.
+        Only applies to inbound WireGuard flows (WIREGUARD_CLI) whose host is
+        in the configured forward_domains list. Reverse proxy flows are already
+        targeting LiteLLM. Outbound flows must not be forwarded (infinite loop).
         """
-        if direction != ProxyDirection.WIREGUARD_CLI or host not in self._forward_domains:
+        if direction != "inbound" or host not in self._forward_domains:
+            return
+        if not isinstance(flow.client_conn.proxy_mode, WireGuardMode):
             return
         litellm_port = int(os.environ.get("CCPROXY_LITELLM_PORT", "4000"))
         flow.request.headers["X-Forwarded-Host"] = host
@@ -236,37 +132,39 @@ class InspectorAddon:
         logger.info("Forwarding %s → localhost:%d", host, litellm_port)
 
     async def request(self, flow: http.HTTPFlow) -> None:
-        """Process request: forward WireGuard LLM traffic and emit OTel span.
-
-        Args:
-            flow: HTTP flow object
-        """
         direction = self._get_direction(flow)
         if direction is None:
             return
 
-        # Tag flow metadata with direction string for route guard use
-        if direction == ProxyDirection.WIREGUARD_GW:
-            flow.metadata["ccproxy.direction"] = "outbound"
-        elif direction in (ProxyDirection.REVERSE, ProxyDirection.WIREGUARD_CLI):
-            flow.metadata["ccproxy.direction"] = "inbound"
+        flow_id_header = flow.request.headers.get(FLOW_ID_HEADER)
+        record: FlowRecord | None = None
+
+        if flow_id_header:
+            record = get_flow_record(flow_id_header)
+
+        if record is None:
+            flow_id, record = create_flow_record(direction)
+            flow.request.headers[FLOW_ID_HEADER] = flow_id
+            record.original_headers = self._serialize_headers(flow.request.headers)
+
+        flow.metadata[InspectorMeta.DIRECTION] = direction
+        flow.metadata[InspectorMeta.RECORD] = record
 
         host = flow.request.pretty_host
         self._maybe_forward(flow, direction, host)
 
         try:
-            request = flow.request
-            session_id = self._extract_session_id(request)
+            session_id = self._extract_session_id(flow.request)
 
             if self.tracer:
-                self.tracer.start_span(flow, direction, host, request.method, session_id)
+                self.tracer.start_span(flow, direction, host, flow.request.method, session_id)
 
             logger.debug(
                 "Captured request: %s %s (trace_id: %s, direction: %s, session: %s)",
-                request.method,
-                request.pretty_url,
+                flow.request.method,
+                flow.request.pretty_url,
                 flow.id,
-                direction.name.lower(),
+                direction,
                 session_id or "none",
             )
 
@@ -274,11 +172,6 @@ class InspectorAddon:
             logger.error("Error capturing request: %s", e, exc_info=True)
 
     async def response(self, flow: http.HTTPFlow) -> None:
-        """Complete OTel span with response data.
-
-        Args:
-            flow: HTTP flow object
-        """
         try:
             response = flow.response
             if not response:
@@ -303,11 +196,6 @@ class InspectorAddon:
             logger.error("Error capturing response: %s", e, exc_info=True)
 
     async def error(self, flow: http.HTTPFlow) -> None:
-        """Handle flow errors.
-
-        Args:
-            flow: HTTP flow object
-        """
         try:
             error = flow.error
             if not error:

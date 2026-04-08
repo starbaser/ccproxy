@@ -10,7 +10,10 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from mitmproxy.proxy.mode_specs import ReverseMode, WireGuardMode
+
 from ccproxy.constants import OAUTH_SENTINEL_PREFIX, OAuthConfigError
+from ccproxy.inspector.flow_store import AuthMeta, FlowRecord, InspectorMeta
 
 if TYPE_CHECKING:
     from mitmproxy.http import HTTPFlow
@@ -21,8 +24,6 @@ logger = logging.getLogger(__name__)
 
 
 def _is_inbound(flow: HTTPFlow) -> bool:
-    from mitmproxy.proxy.mode_specs import ReverseMode, WireGuardMode
-
     return isinstance(flow.client_conn.proxy_mode, (WireGuardMode, ReverseMode))
 
 
@@ -53,14 +54,13 @@ def register_inbound_routes(router: InspectorRouter) -> None:
     """Register all inbound route handlers on the given router."""
     from ccproxy.inspector.routing import RouteType
 
-    @router.route("/{path}", rtype=RouteType.REQUEST)  # type: ignore[untyped-decorator]
+    @router.route("/{path}", rtype=RouteType.REQUEST)
     def handle_inbound(flow: HTTPFlow, **kwargs: object) -> None:
         if not _is_inbound(flow):
             return
 
-        flow.metadata["ccproxy.direction"] = "inbound"
+        record: FlowRecord | None = flow.metadata.get(InspectorMeta.RECORD)
 
-        # OAuth sentinel key detection and substitution
         api_key = flow.request.headers.get("x-api-key") or ""
         if not api_key.startswith(OAUTH_SENTINEL_PREFIX):
             return
@@ -78,18 +78,26 @@ def register_inbound_routes(router: InspectorRouter) -> None:
                 f"Add 'oat_sources.{provider}' to ccproxy.yaml."
             )
 
-        # Check if provider uses a custom auth header (e.g., x-api-key for some providers)
         target_header = _get_oauth_auth_header(provider)
+        key_field = target_header or "authorization"
+
+        if record:
+            record.auth = AuthMeta(
+                provider=provider,
+                credential=token,
+                key_field=key_field,
+                original_key=api_key,
+            )
+
         if target_header:
             flow.request.headers[target_header] = token
         else:
             flow.request.headers["authorization"] = f"Bearer {token}"
             flow.request.headers["x-api-key"] = ""
 
-        flow.metadata["ccproxy.oauth_injected"] = True
-        flow.metadata["ccproxy.oauth_provider"] = provider
+        if record and record.auth:
+            record.auth.injected = True
 
-        # Propagate to LiteLLM via header (flow.metadata doesn't cross process boundary)
         flow.request.headers["x-ccproxy-oauth-injected"] = "1"
 
         logger.info(

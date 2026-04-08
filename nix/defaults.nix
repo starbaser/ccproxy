@@ -23,6 +23,7 @@
     ];
     patches = [
       "ccproxy.patches.passthrough"
+      "ccproxy.patches.beta_headers"
     ];
     default_model_passthrough = true;
     rules = [ ];

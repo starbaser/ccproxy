@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ccproxy.config import clear_config_instance
+from ccproxy.inspector.flow_store import clear_flow_store
 from ccproxy.mcp.buffer import clear_buffer
 from ccproxy.router import clear_router
 
@@ -17,6 +18,7 @@ def cleanup():
     clear_config_instance()
     clear_router()
     clear_buffer()
+    clear_flow_store()
 
     # Clear handler status
     from ccproxy.handler import CCProxyHandler

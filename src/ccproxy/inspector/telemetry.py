@@ -14,21 +14,15 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from ccproxy.inspector.flow_store import FlowRecord, InspectorMeta, OtelMeta
+
 if TYPE_CHECKING:
     from mitmproxy import http
 
-    from ccproxy.inspector.addon import ProxyDirection
-
 logger = logging.getLogger(__name__)
 
-# Module-level provider reference for shutdown
 _provider: Any = None
 
-# OTel span metadata keys in flow.metadata
-_SPAN_KEY = "ccproxy.otel_span"
-_SPAN_ENDED_KEY = "ccproxy.otel_span_ended"
-
-# Provider hostname → gen_ai.system mapping
 _PROVIDER_MAP = {
     "api.anthropic.com": "anthropic",
     "api.openai.com": "openai",
@@ -38,12 +32,7 @@ _PROVIDER_MAP = {
 
 
 class InspectorTracer:
-    """Wraps OTel span lifecycle for inspector addon flows.
-
-    Handles tracer initialization, span creation per-flow, and attribute
-    mapping. When disabled or when OTel packages are absent, all methods
-    are no-ops.
-    """
+    """Wraps OTel span lifecycle for inspector addon flows."""
 
     def __init__(
         self,
@@ -72,26 +61,23 @@ class InspectorTracer:
     def start_span(
         self,
         flow: http.HTTPFlow,
-        direction: ProxyDirection,
+        direction: str,
         host: str,
         method: str,
         session_id: str | None,
     ) -> None:
         """Start an OTel span for an HTTP request flow.
 
-        The span is stored in flow.metadata and ended in finish_span() or
-        finish_span_error().
+        The span is stored in the FlowRecord's OtelMeta and ended in
+        finish_span() or finish_span_error().
         """
         if not self._enabled or self._tracer is None:
             return
 
         try:
-            direction_name = direction.name.lower()
-            span_name = f"ccproxy.{direction_name}.{method} {host}"
-
+            span_name = f"ccproxy.{direction}.{method} {host}"
             span = self._tracer.start_span(span_name)
 
-            # HTTP semantic conventions
             request = flow.request
             span.set_attribute("http.request.method", method)
             span.set_attribute("url.full", request.pretty_url)
@@ -100,24 +86,40 @@ class InspectorTracer:
             span.set_attribute("url.path", request.path)
             span.set_attribute("url.scheme", request.scheme)
 
-            # ccproxy-specific
-            span.set_attribute("ccproxy.proxy_direction", direction_name)
+            span.set_attribute("ccproxy.proxy_direction", direction)
             span.set_attribute("ccproxy.trace_id", flow.id)
 
             if session_id:
                 span.set_attribute("ccproxy.session_id", session_id)
 
-            # LLM-specific attributes
             path = request.path
             if "/messages" in path or "/completions" in path:
                 span.set_attribute("gen_ai.system", self._provider_map.get(host, host))
                 span.set_attribute("gen_ai.operation.name", "chat")
 
-            flow.metadata[_SPAN_KEY] = span
-            flow.metadata[_SPAN_ENDED_KEY] = False
+            record: FlowRecord | None = flow.metadata.get(InspectorMeta.RECORD)
+            if record:
+                record.otel = OtelMeta(span=span)
+            else:
+                flow.metadata["ccproxy.otel_span"] = span
+                flow.metadata["ccproxy.otel_span_ended"] = False
 
         except Exception as e:
             logger.debug("Error starting OTel span: %s", e)
+
+    def _get_span(self, flow: http.HTTPFlow) -> tuple[Any, bool]:
+        """Retrieve span and ended flag from FlowRecord or legacy metadata."""
+        record: FlowRecord | None = flow.metadata.get(InspectorMeta.RECORD)
+        if record and record.otel:
+            return record.otel.span, record.otel.ended
+        return flow.metadata.get("ccproxy.otel_span"), flow.metadata.get("ccproxy.otel_span_ended", False)
+
+    def _mark_ended(self, flow: http.HTTPFlow) -> None:
+        record: FlowRecord | None = flow.metadata.get(InspectorMeta.RECORD)
+        if record and record.otel:
+            record.otel.ended = True
+        else:
+            flow.metadata["ccproxy.otel_span_ended"] = True
 
     def finish_span(
         self,
@@ -129,8 +131,8 @@ class InspectorTracer:
         if not self._enabled:
             return
 
-        span = flow.metadata.get(_SPAN_KEY)
-        if span is None or flow.metadata.get(_SPAN_ENDED_KEY):
+        span, ended = self._get_span(flow)
+        if span is None or ended:
             return
 
         try:
@@ -138,14 +140,13 @@ class InspectorTracer:
             if duration_ms is not None:
                 span.set_attribute("ccproxy.duration_ms", duration_ms)
 
-            # Mark error status for 4xx/5xx
             if status_code >= 400:
                 from opentelemetry.trace import StatusCode
 
                 span.set_status(StatusCode.ERROR, f"HTTP {status_code}")
 
             span.end()
-            flow.metadata[_SPAN_ENDED_KEY] = True
+            self._mark_ended(flow)
 
         except Exception as e:
             logger.debug("Error finishing OTel span: %s", e)
@@ -159,8 +160,8 @@ class InspectorTracer:
         if not self._enabled:
             return
 
-        span = flow.metadata.get(_SPAN_KEY)
-        if span is None or flow.metadata.get(_SPAN_ENDED_KEY):
+        span, ended = self._get_span(flow)
+        if span is None or ended:
             return
 
         try:
@@ -169,17 +170,14 @@ class InspectorTracer:
             span.set_status(StatusCode.ERROR, error_message)
             span.set_attribute("error.message", error_message)
             span.end()
-            flow.metadata[_SPAN_ENDED_KEY] = True
+            self._mark_ended(flow)
 
         except Exception as e:
             logger.debug("Error finishing OTel span with error: %s", e)
 
-def _init_otel_tracer(service_name: str, otlp_endpoint: str) -> Any:
-    """Initialize the real OTel tracer with OTLP gRPC exporter.
 
-    Raises:
-        ImportError: If opentelemetry packages are not installed
-    """
+def _init_otel_tracer(service_name: str, otlp_endpoint: str) -> Any:
+    """Initialize the real OTel tracer with OTLP gRPC exporter."""
     global _provider
 
     from opentelemetry import trace

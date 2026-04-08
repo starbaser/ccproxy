@@ -2,10 +2,6 @@ ccproxy:
   debug: true
   handler: "ccproxy.handler:CCProxyHandler"
 
-  # OAuth token refresh settings
-  oauth_ttl: 28800  # Token lifetime in seconds (default: 8 hours)
-  oauth_refresh_buffer: 0.1  # Refresh at 90% of TTL (10% buffer)
-
   # OAuth token sources - shell commands to retrieve tokens for each provider
   oat_sources:
     anthropic:
@@ -29,21 +25,26 @@ ccproxy:
     #     - "z.ai"
     #   auth_header: x-api-key  # send token as this header instead of Authorization: Bearer
 
-  # Pipeline hooks — executed in DAG order. List order breaks ties.
+  # Hooks are executed in the order determined via dependency analysis via @hook():
+  # @hook(
+  #     reads=["proxy_server_request", "secret_fields"],
+  #     writes=["trace_metadata"],
+  # )
+  # This forms a dependency graph (DAG), enabling hook parallelism
   hooks:
-    - ccproxy.hooks.rule_evaluator         # evaluates rules against request
-    - ccproxy.hooks.model_router            # routes to appropriate model
-    # - ccproxy.hooks.extract_session_id      # extracts session_id for Langfuse grouping
-    - ccproxy.hooks.capture_headers          # captures HTTP headers with sensitive value redaction
-    # Hook with params example - capture only specific headers:
+    - ccproxy.hooks.rule_evaluator        # evaluates rules against request
+    - ccproxy.hooks.model_router          # routes to appropriate model
+    # - ccproxy.hooks.extract_session_id  # extracts session_id for Langfuse grouping
+    - ccproxy.hooks.capture_headers       # captures HTTP headers with sensitive value redaction
+    # Example: hook with parameters: src/ccproxy/hooks/capture_headers.py#L46
     # - hook: ccproxy.hooks.capture_headers
     #   params:
     #     headers: [user-agent, x-request-id, content-type]
-    - ccproxy.hooks.forward_oauth            # forwards OAuth token to provider
-    - ccproxy.hooks.add_beta_headers          # adds anthropic-beta headers for Claude Code OAuth
-    - ccproxy.hooks.inject_claude_code_identity # injects required system message for OAuth
-    # - ccproxy.hooks.forward_apikey           # forwards x-api-key header from request
-    # - ccproxy.hooks.inject_mcp_notifications # inject mcp notifications into matching sessions
+    - ccproxy.hooks.forward_oauth               # forwards OAuth
+    - ccproxy.hooks.add_beta_headers            # adds beta headers
+    - ccproxy.hooks.inject_claude_code_identity # injects required system message
+    # - ccproxy.hooks.forward_apikey            # forwards x-api-key header from request
+    # - ccproxy.hooks.inject_mcp_notifications  # MCP spec compliant (beta)
 
   # uses the original model that Claude Code requested when no routing rule matches.
   # NOTE: model deployments in config.yaml are still required

@@ -312,7 +312,7 @@ class CCProxyHandler(CustomLogger):
 
     def _is_auth_exception(self, exception: Exception) -> bool:
         """Check if exception indicates authentication failure (401)."""
-        if isinstance(exception, litellm.AuthenticationError):
+        if isinstance(exception, litellm.AuthenticationError):  # type: ignore[attr-defined]
             return True
 
         if hasattr(exception, "status_code") and exception.status_code == 401:
@@ -430,7 +430,7 @@ class CCProxyHandler(CustomLogger):
             except Exception as e:
                 logger.warning("Error in MCP buffer cleanup loop: %s", e)
 
-    async def async_pre_call_hook(
+    async def async_pre_call_hook(  # type: ignore[override]
         self,
         data: dict[str, Any],
         user_api_key_dict: dict[str, Any],
@@ -675,7 +675,7 @@ class CCProxyHandler(CustomLogger):
 
         # Reconstruct generation_id using same logic as LiteLLM's Langfuse callback
         try:
-            generation_id = litellm.utils.get_logging_id(start_time, response_obj)
+            generation_id = litellm.utils.get_logging_id(start_time, response_obj)  # type: ignore[no-untyped-call]
         except Exception:
             return
 

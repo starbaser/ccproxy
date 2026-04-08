@@ -7,6 +7,9 @@ resolution-markers = [
     "python_full_version < '3.13'",
 ]
 
+[manifest]
+overrides = [{ name = "mitmproxy", specifier = ">=10.0.0" }]
+
 [[package]]
 name = "aiohappyeyeballs"
 version = "2.6.1"
@@ -644,7 +647,6 @@ dependencies = [
     { name = "langfuse" },
     { name = "litellm", extra = ["proxy"] },
     { name = "mitmproxy" },
-    { name = "parse" },
     { name = "prometheus-client" },
     { name = "psutil" },
     { name = "pydantic" },
@@ -657,6 +659,7 @@ dependencies = [
     { name = "types-psutil" },
     { name = "tyro" },
     { name = "watchdog" },
+    { name = "xepor" },
 ]
 
 [package.optional-dependencies]
@@ -711,7 +714,6 @@ requires-dist = [
     { name = "opentelemetry-exporter-otlp-proto-grpc", marker = "extra == 'otel'", specifier = ">=1.20.0" },
     { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.20.0" },
     { name = "opentelemetry-semantic-conventions", marker = "extra == 'otel'", specifier = ">=0.41b0" },
-    { name = "parse", specifier = ">=1.19.0,<3.0.0" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.5.0" },
     { name = "prometheus-client", specifier = ">=0.18.0" },
     { name = "psutil", specifier = ">=5.9.0" },
@@ -731,6 +733,7 @@ requires-dist = [
     { name = "types-requests", marker = "extra == 'dev'", specifier = ">=2.31.0" },
     { name = "tyro", specifier = ">=0.7.0" },
     { name = "watchdog", specifier = ">=3.0.0" },
+    { name = "xepor", specifier = ">=0.6.0" },
 ]
 provides-extras = ["otel", "dev"]
 
@@ -3767,6 +3770,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c9/4a/44d3c295350d776427904d73c189e10aeae66d7f555bb2feee16d1e4ba5a/wsproto-1.2.0.tar.gz", hash = "sha256:ad565f26ecb92588a3e43bc3d96164de84cd9902482b130d0ddbaa9664a85065", size = 53425, upload-time = "2022-08-23T19:58:21.447Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/78/58/e860788190eba3bcce367f74d29c4675466ce8dddfba85f7827588416f01/wsproto-1.2.0-py3-none-any.whl", hash = "sha256:b9acddd652b585d75b20477888c56642fdade28bdfd3579aa24a4d2c037dd736", size = 24226, upload-time = "2022-08-23T19:58:19.96Z" },
+]
+
+[[package]]
+name = "xepor"
+version = "0.6.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "mitmproxy" },
+    { name = "parse" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/05/dd/a707dc216c61fd439996e86b75f33ab4e47a67eeaaa265f69b431b89894b/xepor-0.6.0.tar.gz", hash = "sha256:c9e88e2142def8558735d0b2023d4f8df38ab5186283c3f72896033ce721392f", size = 38204, upload-time = "2023-07-06T02:11:14.713Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/94/b1/521b6b257bede92726324785de823ac320c636dcf2f9666cba2b819ead94/xepor-0.6.0-py3-none-any.whl", hash = "sha256:644437d79872dde07a1b517dd803664b7aa5acda3e022c4c6f0fd8d3fef13f7a", size = 13653, upload-time = "2023-07-06T02:11:13.48Z" },
 ]
 
 [[package]]

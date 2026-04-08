@@ -47,6 +47,7 @@ class ModelRouter:
             else:
                 logger.error("No models were loaded from LiteLLM proxy - check configuration")
 
+                # TODO: You should use the API. White LLM already has the loaded model. So if you use it properly, whatever LightLLM class, then you can just load it
     def _load_model_mapping(self) -> None:
         """Load and parse model mapping from LiteLLM proxy config."""
         with self._lock:
