@@ -107,7 +107,7 @@ def forward_oauth(ctx: Context, params: dict[str, Any]) -> Context:
     )
 
     config = get_config()
-    custom_user_agent = config.get_oauth_user_agent(provider_name)
+    custom_user_agent = config.get_auth_provider_ua(provider_name)
 
     logger.info(
         log_msg,
@@ -208,7 +208,7 @@ def _setup_provider_headers(ctx: Context, provider_name: str, auth_header: str) 
 
     extra = ctx.provider_headers["extra_headers"]
     config = get_config()
-    target_header = config.get_oauth_auth_header(provider_name)
+    target_header = config.get_auth_header(provider_name)
 
     if target_header:
         # Custom auth header mode: send raw token as the named header
@@ -232,7 +232,7 @@ def _setup_provider_headers(ctx: Context, provider_name: str, auth_header: str) 
         ctx.raw_headers.pop("x-api-key", None)
 
     # Set custom User-Agent if configured
-    custom_user_agent = config.get_oauth_user_agent(provider_name)
+    custom_user_agent = config.get_auth_provider_ua(provider_name)
     if custom_user_agent:
         extra["user-agent"] = custom_user_agent
         logger.debug("Setting custom User-Agent for provider '%s': %s", provider_name, custom_user_agent)

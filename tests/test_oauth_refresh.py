@@ -140,7 +140,7 @@ class TestOAuthTokenRefresh:
         result = config.refresh_oauth_token("gemini")
 
         assert result == "gemini-token"
-        assert config.get_oauth_user_agent("gemini") == "CustomAgent/1.0"
+        assert config.get_auth_provider_ua("gemini") == "CustomAgent/1.0"
 
 
 class TestOAuthConfigFromYaml:

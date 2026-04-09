@@ -113,16 +113,13 @@ module = [
   "opentelemetry",
   "opentelemetry.*",
 ]
-ignore_missing_imports = true
 
 [tool.pyright]
 include = ["src", "tests"]
+ignore = ["tests/"]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
-venvPath = "."
-venv = ".venv"
 stubPath = "stubs"
-reportMissingModuleSource = "none"
 
 [tool.ty]
 python_version = "3.12"

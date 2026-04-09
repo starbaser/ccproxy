@@ -100,7 +100,7 @@ ccproxy:
             # Token should be loaded
             assert config.get_oauth_token("anthropic") == "anthropic-token-123"
             # No user-agent should be configured
-            assert config.get_oauth_user_agent("anthropic") is None
+            assert config.get_auth_provider_ua("anthropic") is None
 
         finally:
             yaml_path.unlink()
@@ -124,7 +124,7 @@ ccproxy:
             # Token should be loaded
             assert config.get_oauth_token("vertex_ai") == "vertex-ai-token-456"
             # User-agent should be configured
-            assert config.get_oauth_user_agent("vertex_ai") == "MyApp/1.0.0"
+            assert config.get_auth_provider_ua("vertex_ai") == "MyApp/1.0.0"
 
         finally:
             yaml_path.unlink()
@@ -153,9 +153,9 @@ ccproxy:
             assert config.get_oauth_token("openai") == "openai-token-789"
 
             # Only gemini should have user-agent
-            assert config.get_oauth_user_agent("anthropic") is None
-            assert config.get_oauth_user_agent("vertex_ai") == "VertexAIClient/2.1.0"
-            assert config.get_oauth_user_agent("openai") is None
+            assert config.get_auth_provider_ua("anthropic") is None
+            assert config.get_auth_provider_ua("vertex_ai") == "VertexAIClient/2.1.0"
+            assert config.get_auth_provider_ua("openai") is None
 
         finally:
             yaml_path.unlink()
@@ -178,7 +178,7 @@ ccproxy:
             # Token should be loaded
             assert config.get_oauth_token("vertex_ai") == "vertex-ai-token-456"
             # No user-agent
-            assert config.get_oauth_user_agent("vertex_ai") is None
+            assert config.get_auth_provider_ua("vertex_ai") is None
 
         finally:
             yaml_path.unlink()
@@ -260,7 +260,7 @@ ccproxy:
     def test_get_oauth_user_agent_nonexistent_provider(self) -> None:
         """Test getting user-agent for non-configured provider."""
         config = CCProxyConfig()
-        assert config.get_oauth_user_agent("nonexistent") is None
+        assert config.get_auth_provider_ua("nonexistent") is None
 
 
 class TestOAuthUserAgentForwarding:

@@ -2,7 +2,8 @@ ccproxy:
   debug: true
   handler: "ccproxy.handler:CCProxyHandler"
 
-  # OAuth token sources - shell commands to retrieve tokens for each provider
+  # OAuth token sources - shell commands to retrieve tokens for each provider.
+  # Supports any header via the `auth_header` field: `auth_header: x-api-key`
   oat_sources:
     anthropic:
       command: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"

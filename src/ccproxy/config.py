@@ -68,7 +68,7 @@ class OAuthSource(BaseModel):
     user_agent: str | None = None
     """Optional custom User-Agent header to send with requests using this token"""
 
-    destinations: list[str] = Field(default_factory=list)
+    destinations: list[str] = Field(default_factory=lambda: [])
     """URL patterns that should use this token (e.g., ['api.z.ai', 'anthropic.com'])"""
 
     auth_header: str | None = None
@@ -131,10 +131,10 @@ class MitmproxyOptions(BaseModel):
     web_open_browser: bool = False
     """Auto-open browser when mitmweb starts."""
 
-    ignore_hosts: list[str] = Field(default_factory=list)
+    ignore_hosts: list[str] = Field(default_factory=lambda: [])
     """Regex patterns for hosts to bypass (no TLS interception)."""
 
-    allow_hosts: list[str] = Field(default_factory=list)
+    allow_hosts: list[str] = Field(default_factory=lambda: [])
     """Regex patterns for hosts to intercept (exclusive allowlist)."""
 
     termlog_verbosity: str = "warn"
@@ -153,12 +153,6 @@ class InspectorConfig(BaseModel):
 
     max_body_size: int = 0
     """Maximum request/response body size to capture (bytes). 0 = unlimited."""
-
-    capture_bodies: bool = True
-    """Whether to capture request/response bodies."""
-
-    excluded_hosts: list[str] = Field(default_factory=list)
-    """Hosts to exclude from trace capture (checked by inspector addon)."""
 
     forward_domains: list[str] = Field(default_factory=lambda: [
         "api.anthropic.com",
@@ -249,7 +243,7 @@ class CCProxyConfig(BaseSettings):
     # OAuth token sources - dict mapping provider name to shell command or OAuthSource
     # Example: {"anthropic": "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"}
     # Extended: {"gemini": {"command": "jq -r '.token' ~/.gemini/creds.json", "user_agent": "MyApp/1.0"}}
-    oat_sources: dict[str, str | OAuthSource] = Field(default_factory=dict)
+    oat_sources: dict[str, str | OAuthSource | dict[str, Any]] = Field(default_factory=lambda: {})
 
     # TODO probably should remove oauth refrsh?
     # OAuth TTL in seconds (default 8 hours)
@@ -259,19 +253,19 @@ class CCProxyConfig(BaseSettings):
     oauth_refresh_buffer: float = 0.1
 
     # Cached OAuth tokens (loaded at startup) - dict mapping provider name to (token, timestamp)
-    _oat_values: dict[str, tuple[str, float]] = PrivateAttr(default_factory=dict)
+    _oat_values: dict[str, tuple[str, float]] = PrivateAttr(default_factory=lambda: {})
 
     # Cached OAuth user agents (loaded at startup) - dict mapping provider name to user-agent
-    _oat_user_agents: dict[str, str] = PrivateAttr(default_factory=dict)
+    _oat_user_agents: dict[str, str] = PrivateAttr(default_factory=lambda: {})
 
     # Hook configurations (function import paths or dict with params)
-    hooks: list[str | dict[str, Any]] = Field(default_factory=list)
+    hooks: list[str | dict[str, Any]] = Field(default_factory=lambda: [])
 
     # Patch modules applied at startup (module import paths with apply() function)
-    patches: list[str] = Field(default_factory=list, validation_alias="ccproxy_patches")
+    patches: list[str] = Field(default_factory=lambda: [], validation_alias="ccproxy_patches")
 
     # Rule configurations
-    rules: list[RuleConfig] = Field(default_factory=list)
+    rules: list[RuleConfig] = Field(default_factory=lambda: [])
 
     # Path to ccproxy config
     ccproxy_config_path: Path = Field(default_factory=lambda: Path("./ccproxy.yaml"))
@@ -331,15 +325,13 @@ class CCProxyConfig(BaseSettings):
             logger.warning(f"No OAuth source configured for provider '{provider}'")
             return None
 
+        oauth_source: OAuthSource
         if isinstance(source, str):
             oauth_source = OAuthSource(command=source)
         elif isinstance(source, OAuthSource):
             oauth_source = source
-        elif isinstance(source, dict):
-            oauth_source = OAuthSource(**source)
         else:
-            logger.error(f"Invalid OAuth source type for provider '{provider}': {type(source)}")
-            return None
+            oauth_source = OAuthSource(**source)
 
         if oauth_source.file:
             return self._read_oauth_file(oauth_source, provider)
@@ -416,7 +408,7 @@ class CCProxyConfig(BaseSettings):
             logger.debug(f"Refreshed OAuth token for provider '{provider}'")
             return token
 
-    def get_oauth_user_agent(self, provider: str) -> str | None:
+    def get_auth_provider_ua(self, provider: str) -> str | None:
         """Get custom User-Agent for a specific provider.
 
         Args:
@@ -427,7 +419,7 @@ class CCProxyConfig(BaseSettings):
         """
         return self._oat_user_agents.get(provider)
 
-    def get_oauth_auth_header(self, provider: str) -> str | None:
+    def get_auth_header(self, provider: str) -> str | None:
         """Get target auth header name for a specific provider.
 
         Args:
@@ -461,11 +453,9 @@ class CCProxyConfig(BaseSettings):
             if isinstance(source, str):
                 continue  # Simple string form has no destinations
             elif isinstance(source, OAuthSource):
-                oauth_source = source
-            elif isinstance(source, dict):
-                oauth_source = OAuthSource(**source)
+                oauth_source: OAuthSource = source
             else:
-                continue
+                oauth_source = OAuthSource(**source)
 
             # Check if api_base matches any destination pattern
             for dest in oauth_source.destinations:

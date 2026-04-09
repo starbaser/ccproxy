@@ -6,8 +6,6 @@ ID is propagated via the ``x-ccproxy-flow-id`` header so that inbound auth
 decisions are readable when the corresponding outbound flow fires.
 """
 
-from __future__ import annotations
-
 import threading
 import time
 import uuid
@@ -43,7 +41,7 @@ class FlowRecord:
     direction: Literal["inbound", "outbound"]
     auth: AuthMeta | None = None
     otel: OtelMeta | None = None
-    original_headers: dict[str, str] = field(default_factory=dict)
+    original_headers: dict[str, str] = field(default_factory=lambda: {})
 
 
 class InspectorMeta:
@@ -72,8 +70,10 @@ def create_flow_record(direction: Literal["inbound", "outbound"]) -> tuple[str, 
     return flow_id, record
 
 
-def get_flow_record(flow_id: str) -> FlowRecord | None:
-    """Look up a FlowRecord by flow ID. Returns None if not found or expired."""
+def get_flow_record(flow_id: str | None) -> FlowRecord | None:
+    """Look up a FlowRecord by flow ID. Returns None if not found, expired, or ID is None."""
+    if flow_id is None:
+        return None
     with _store_lock:
         entry = _flow_store.get(flow_id)
         if entry:

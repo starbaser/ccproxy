@@ -19,7 +19,6 @@ from mitmproxy.proxy.mode_specs import ReverseMode, WireGuardMode
 from ccproxy.config import InspectorConfig
 from ccproxy.inspector.flow_store import (
     FLOW_ID_HEADER,
-    FlowRecord,
     InspectorMeta,
     create_flow_record,
     get_flow_record,
@@ -134,11 +133,8 @@ class InspectorAddon:
         if direction is None:
             return
 
-        flow_id_header: str | None = cast("str | None", flow.request.headers.get(FLOW_ID_HEADER))  # pyright: ignore[reportUnknownMemberType]
-        record: FlowRecord | None = None
-
-        if flow_id_header:
-            record = get_flow_record(flow_id_header)
+        headers = cast("dict[str, Any]", flow.request.headers)
+        record = get_flow_record(headers.get(FLOW_ID_HEADER))
 
         if record is None:
             flow_id, record = create_flow_record(direction)

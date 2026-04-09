@@ -45,7 +45,7 @@ def _get_oauth_auth_header(provider: str) -> str | None:
         from ccproxy.config import get_config
 
         config = get_config()
-        return config.get_oauth_auth_header(provider)
+        return config.get_auth_header(provider)
     except Exception:
         return None
 
