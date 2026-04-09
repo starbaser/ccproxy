@@ -2,8 +2,6 @@
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from ccproxy.inspector.router import FlowMeta, InspectorRouter, InterceptedAPI, RouteType
 
 
@@ -237,7 +235,7 @@ class TestFindHandlerWildcard:
         def handler(flow: MagicMock, path: str = "") -> None:
             pass
 
-        h, params = router.find_handler("whatever-host.example", "/some-path")
+        h, _params = router.find_handler("whatever-host.example", "/some-path")
         assert h is not None
 
     def test_explicit_host_still_filters(self) -> None:

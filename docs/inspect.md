@@ -46,10 +46,9 @@ Inspect mode is all-or-nothing. There is no partial activation. If prerequisites
   │  listener 3: wireguard:keypair-gw@B        (WIREGUARD_GW)    │
   │                                                              │
   │  addon chain:                                                │
-  │    InspectorScript (OTel spans)                              │
+  │    InspectorAddon (OTel spans)                                │
   │    → inbound InspectorRouter  (OAuth sentinel detection)     │
   │    → outbound InspectorRouter (beta headers, auth failures)  │
-  │    → PcapAddon (optional)                                    │
   └──────────────┬─────────────────────────────────────────────-┘
                  │ forwarded to localhost:L (inbound flows)
                  │ provider API calls (outbound flows)
@@ -160,18 +159,17 @@ for h, parser, handler in routes:
 
 ### Addon chain
 
-The `addons` list in `src/ccproxy/inspector/script.py` defines the ordered chain:
+The addon chain is built by `_build_addons()` in `src/ccproxy/inspector/process.py`:
 
-```
+```python
 addons = [
-    InspectorScript(),          # OTel span lifecycle — must fire first
+    InspectorAddon(...),        # OTel span lifecycle — must fire first
     _make_inbound_router(),     # OAuth sentinel detection (request phase)
     _make_outbound_router(),    # Beta headers + auth failure (request+response phases)
-    *_make_pcap_addon(),        # Optional PCAP export
 ]
 ```
 
-Each addon receives mitmproxy lifecycle events in list order. `InspectorScript` must be first so
+Each addon receives mitmproxy lifecycle events in list order. `InspectorAddon` must be first so
 that OTel spans are started before route handlers mutate headers.
 
 ### Route registration
@@ -361,37 +359,36 @@ which was populated by `ensure_beta_headers` in the same flow).
 
 ---
 
-## 8. PCAP Synthesizer
+## 8. TLS Key Log
 
-The PCAP synthesizer (`src/ccproxy/inspector/pcap.py`) constructs valid PCAP frames from
-mitmproxy's HTTP-layer flow data without any kernel-level packet capture.
+mitmproxy natively supports the [NSS Key Log format](https://firefox-source-docs.mozilla.org/security/nss/legacy/key_log_format/index.html)
+via the `MITMPROXY_SSLKEYLOGFILE` environment variable. ccproxy sets this automatically when
+`--inspect` is active, writing TLS master secrets to `{config_dir}/tls.keylog`.
 
 ### Mechanism
 
-Each completed flow produces two synthetic TCP streams: the client→server request stream and
-the server→client response stream. Frames use fabricated-but-parseable Ethernet + IPv4 + TCP
-headers. Addresses come from `flow.client_conn.ip_address` and `flow.server_conn.ip_address`,
-with IPv6-mapped IPv4 addresses normalized (`::ffff:` prefix stripped) and non-IPv4 addresses
-replaced with `127.0.0.1`.
+`mitmproxy.net.tls` reads `MITMPROXY_SSLKEYLOGFILE` at module import time (module-level global).
+The env var must be set before any mitmproxy module that triggers `mitmproxy.net.tls` is imported.
+ccproxy sets it at the top of `_run_inspect()` in `cli.py`, before the `run_inspector()` call
+which triggers `WebMaster` import.
 
-TCP sequence numbers are tracked per connection key (`src:port-dst:port`) and advance by the
-payload length on each write. Payloads larger than 40960 bytes are chunked.
+`MITMPROXY_SSLKEYLOGFILE` is preferred over the generic `SSLKEYLOGFILE` to avoid affecting
+Python's `ssl` module, browsers, or other TLS libraries.
 
-### Output modes
+### Scope
 
-| Class | Activation | Behavior |
-|-------|------------|----------|
-| `PcapFile` | `CCPROXY_PCAP_FILE=<path>` | Appends to existing file or creates new with global header |
-| `PcapPipe` | `CCPROXY_PCAP_PIPE=<cmd>` | Spawns subprocess, streams PCAP to its stdin |
+In WireGuard mode, the TLS sessions mitmproxy intercepts are the inner TLS connections (e.g.,
+to `api.anthropic.com`). Combined with the WireGuard keylog (`wg.keylog`) that decrypts the
+outer tunnel, a complete packet capture can be fully decrypted in Wireshark.
 
-Example: real-time Wireshark view:
+### Wireshark usage
 
-```bash
-CCPROXY_PCAP_PIPE="wireshark -k -i -" ccproxy start --inspect
-```
+1. Capture traffic (e.g., `tcpdump -i any -w capture.pcap`)
+2. Open in Wireshark
+3. Decrypt outer WireGuard: Edit → Preferences → Protocols → WireGuard → Key log file → `{config_dir}/wg.keylog`
+4. Decrypt inner TLS: Edit → Preferences → Protocols → TLS → (Pre)-Master-Secret log filename → `{config_dir}/tls.keylog`
 
-`PcapAddon` is conditionally added to the addon chain in `_make_pcap_addon()`. If neither env
-var is set, the addon is not instantiated.
+Both paths are printed to stdout at inspector startup.
 
 ---
 
@@ -414,11 +411,8 @@ format to `{config_dir}/wg.keylog`. The output path is logged at inspector start
 
 ### Scope
 
-This decrypts only the outer WireGuard UDP tunnel. The inner TLS 1.3 session between the client
-and provider is not decrypted — mitmproxy issues [#3994](https://github.com/mitmproxy/mitmproxy/issues/3994)
-and [#4418](https://github.com/mitmproxy/mitmproxy/issues/4418) track TLS key export from
-mitmproxy's WireGuard stack, and it is not currently supported. mitmweb's flow list provides
-the decrypted HTTP content.
+This decrypts only the outer WireGuard UDP tunnel. Inner TLS sessions are separately decrypted
+via the TLS keylog at `{config_dir}/tls.keylog` (see Section 8).
 
 ---
 
@@ -619,10 +613,8 @@ not exist (stale venv after a Python upgrade, for example), it falls back in ord
 | `src/ccproxy/inspector/addon.py` | `InspectorAddon` — direction detection, flow store integration, OTel delegation |
 | `src/ccproxy/inspector/flow_store.py` | `FlowRecord`, `AuthMeta`, `OtelMeta`, `InspectorMeta`, TTL store |
 | `src/ccproxy/inspector/router.py` | `InspectorRouter` — xepor subclass with mitmproxy 12.x fixes |
-| `src/ccproxy/inspector/script.py` | `InspectorScript` — addon chain composition, mitmproxy lifecycle |
 | `src/ccproxy/inspector/routes/inbound.py` | OAuth sentinel detection and token substitution |
 | `src/ccproxy/inspector/routes/outbound.py` | Beta header merge, auth failure observation |
-| `src/ccproxy/inspector/pcap.py` | PCAP synthesizer (`PcapFile`, `PcapPipe`, `PcapAddon`) |
 | `src/ccproxy/inspector/wg_keylog.py` | WireGuard keylog export for Wireshark |
 | `src/ccproxy/inspector/namespace.py` | Network namespace confinement, `PortForwarder`, lifecycle |
 | `src/ccproxy/inspector/process.py` | mitmweb process launch and env construction |
@@ -666,8 +658,8 @@ Or add to the devShell packages in `flake.nix`.
 - Verify the combined CA bundle is being used by the confined process — check `SSL_CERT_FILE`
   in the namespace environment
 - Check mitmweb logs for WireGuard handshake errors (look for `[inspector]` prefixed lines)
-- For Wireshark PCAP analysis, set `CCPROXY_PCAP_FILE` and open in Wireshark; use the WireGuard
-  keylog at `{config_dir}/wg.keylog` to decrypt the outer tunnel layer
+- For Wireshark analysis: use `{config_dir}/wg.keylog` to decrypt the outer WireGuard tunnel
+  and `{config_dir}/tls.keylog` to decrypt inner TLS sessions (both paths printed at startup)
 
 ### OAuth token not substituted
 

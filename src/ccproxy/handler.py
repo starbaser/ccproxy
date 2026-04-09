@@ -48,15 +48,6 @@ class CCProxyHandler(CustomLogger):
         self._pipeline: PipelineExecutor | None = None
 
         config = get_config()
-        if config.debug:
-            # Set DEBUG level for all ccproxy loggers (handler, pipeline, hooks)
-            ccproxy_logger = logging.getLogger("ccproxy")
-            ccproxy_logger.setLevel(logging.DEBUG)
-            # Ensure ccproxy loggers have a handler so messages appear in the log file
-            if not ccproxy_logger.handlers:
-                handler = logging.StreamHandler()
-                handler.setFormatter(logging.Formatter("%(name)s:%(levelname)s: %(message)s"))
-                ccproxy_logger.addHandler(handler)
 
         # Initialize pipeline executor with DAG-based hook ordering
         self._init_pipeline()

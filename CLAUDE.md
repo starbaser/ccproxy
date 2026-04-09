@@ -27,12 +27,15 @@ just typecheck   # Type check (uv run mypy src/ccproxy)
 
 ### Process Compose
 
-`process-compose.yml` manages the dev ccproxy instance. Socket at `/tmp/process-compose-ccproxy.sock`.
+**IMPORTANT**: Always use `just up` / `just down` to manage the dev ccproxy instance. Never run `ccproxy start` directly with `&`/`disown` — orphaned namespace sentinels and slirp4netns processes will accumulate without supervision.
+
+`process-compose.yml` manages the dev ccproxy instance. Socket at `/tmp/process-compose-ccproxy.sock` (set via `PC_SOCKET_PATH` in the devShell).
 
 ```bash
-just up                    # Start all processes
-just down                  # Stop all processes
+just up                    # Start all processes (detached)
+just down                  # Stop all processes (clean shutdown)
 process-compose attach     # Attach to TUI
+just logs                  # View ccproxy logs
 ```
 
 ### Running Tests
@@ -132,9 +135,7 @@ Request → CCProxyHandler → Hook Pipeline → Response
 - **inspector/addon.py**: Inspector addon for HTTP traffic capture with OTel span emission. Detects traffic direction per-flow via `ProxyDirection` enum (`REVERSE=0`, `FORWARD=1` (reserved), `WIREGUARD_CLI=2`, `WIREGUARD_GW=3`). Distinguishes CLI vs gateway WireGuard flows by comparing the WG listen port against the configured gateway port. Sets `flow.metadata["ccproxy.direction"]` (`"inbound"` or `"outbound"`) for downstream route handlers. Forwards `WIREGUARD_CLI` LLM API traffic to LiteLLM; explicitly skips `WIREGUARD_GW` to prevent infinite loops.
 - **inspector/namespace.py**: Network namespace confinement for `ccproxy run --inspect`. Creates user+net namespace with slirp4netns bridge and WireGuard client routing through mitmweb's WireGuard server. Also provides `create_gateway_namespace()` for confining LiteLLM in its own namespace with `add_hostfwd` API socket port forwarding for host accessibility. LiteLLM binds to `0.0.0.0` inside the namespace so slirp4netns can deliver forwarded traffic to the tap0 IP (`10.0.2.100`). Requires `slirp4netns`, `wg`, `unshare`, `nsenter`, `ip` (all rootless on Linux 5.6+ with `unprivileged_userns_clone=1`).
 - **inspector/process.py**: In-process mitmproxy management via the WebMaster API. Builds `Options` with three `--mode` listeners (reverse + 2x WireGuard), defers web/streaming options via `update_defer()` (addon-registered options unavailable at construction time). Registers addons directly as Python objects. Returns `(master, master_task, web_token)`. WireGuard ports are auto-assigned via `_find_free_udp_port()`.
-- **inspector/script.py**: Mitmproxy addon script loaded via `-s` flag. Runs in the mitmproxy process. Addon chain: `InspectorScript` (OTel spans, always first) → inbound `InspectorRouter` → outbound `InspectorRouter` → optional `PcapAddon`. Loads `OtelConfig` from `ccproxy.yaml` via `CCPROXY_CONFIG_DIR`.
 - **inspector/router.py**: Vendored xepor 0.6.0 routing framework (Apache-2.0) with mitmproxy 12.x compatibility fix (`Server(address=...)` keyword arg). Provides `InterceptedAPI` with Flask-style `@router.route("/path/{param}")` decorators, `RouteType.REQUEST`/`RESPONSE`, passthrough/whitelist modes, host remapping. `InspectorRouter` subclass adds a `name` attribute to avoid mitmproxy AddonManager name collisions. Uses `parse` library for path template matching (NOT regex — `{path}` not `{path:.*}`).
-- **inspector/pcap.py**: PCAP synthesizer for Wireshark integration. Constructs fake-but-valid IPv4+TCP frames from mitmproxy's HTTP-layer flow data using `struct.pack`. Based on `muzuiget/mitmpcap`. `PcapFile` writes to disk, `PcapPipe` streams to a subprocess (e.g., `wireshark -k -i -`). `PcapAddon` is a mitmproxy addon activated via `CCPROXY_PCAP_FILE` or `CCPROXY_PCAP_PIPE` env vars.
 - **inspector/wg_keylog.py**: Reads mitmproxy's WireGuard keypair JSON (`wireguard.{pid}.conf`) and writes a Wireshark-compatible `wg.keylog_file` for decrypting the outer WireGuard tunnel layer in packet captures. Auto-called after inspector startup; path logged for Wireshark usage.
 - **inspector/routes/**: xepor route handlers for the inspector addon chain:
   - `inbound.py` — Unified OAuth handler on ALL inbound flows (WireGuard CLI + reverse proxy HTTP). Detects sentinel keys (`sk-ant-oat-ccproxy-{provider}`), substitutes tokens from `oat_sources`, supports custom `auth_header` per provider, sets `x-ccproxy-oauth-injected: 1` header to signal LiteLLM-side hook to skip.
@@ -206,12 +207,11 @@ The test suite uses pytest with comprehensive fixtures (24 test files, 499 tests
 - Mock flows use real `ProxyMode.parse()` for mode objects (e.g., `ProxyMode.parse("wireguard@51820")`)
 - `pytest-asyncio` for async tests (`asyncio_mode = "auto"`)
 - `monkeypatch.setenv()` for env-var-dependent tests
-- `tmp_path` fixture for file I/O tests (PCAP, WireGuard keylog)
+- `tmp_path` fixture for file I/O tests (WireGuard keylog)
 
 **Inspector-specific test files:**
 - `test_inspector_addon.py` — Direction detection (WIREGUARD_CLI vs WIREGUARD_GW), forwarding, metadata tagging
 - `test_routing.py` — xepor route dispatch, passthrough, host matching, error handling, path params
-- `test_pcap.py` — Frame construction, sequence tracking, file/pipe output, addr normalization
 - `test_wg_keylog.py` — JSON parsing, keylog format, error cases
 - `test_inbound_routes.py` — OAuth sentinel detection, token substitution, direction tagging
 - `test_outbound_routes.py` — Beta header merge, dedup, auth failure observation
@@ -244,9 +244,9 @@ Two `setattr` calls in `handler.py` carry `# noqa: B010` to satisfy mypy (`metho
 - **Hook error isolation**: Errors in one hook don't block others from executing.
 - **Lazy model loading**: Models loaded from LiteLLM proxy on first request, not at startup.
 - **Inspector**: Dual-WireGuard transparent proxy architecture activated by `--inspect`. mitmweb binds two auto-assigned UDP ports for WireGuard servers — one for CLI clients (WIREGUARD_CLI), one for LiteLLM gateway (WIREGUARD_GW). Without `--inspect`, the inspector is not started. The mitmproxy-layer route handlers handle OAuth (inbound) and beta headers (outbound). The LiteLLM-side `forward_oauth` hook skips when `x-ccproxy-oauth-injected` header is present (set by the mitmproxy inbound route).
-- **Inspector addon chain**: `InspectorScript` (OTel) → inbound `InspectorRouter` (OAuth) → outbound `InspectorRouter` (beta headers) → optional `PcapAddon`. Order matters: OTel spans must start before route handlers fire.
-- **PCAP synthesizer**: Constructs fake-but-valid PCAP frames from mitmproxy flows for Wireshark. Activated via `CCPROXY_PCAP_FILE` or `CCPROXY_PCAP_PIPE` env vars. No kernel capture needed — pure userspace reconstruction. Wireshark gets packet timing, TCP analysis; content comes from mitmweb UI.
-- **WireGuard keylog**: Auto-exported to `{config_dir}/wg.keylog` after inspector startup. Enables Wireshark to decrypt the outer WireGuard tunnel layer. Inner TLS (TLSv1.3) key export is not supported by mitmproxy (issues #3994, #4418).
+- **Inspector addon chain**: `InspectorAddon` (OTel) → inbound `InspectorRouter` (OAuth) → outbound `InspectorRouter` (beta headers). Order matters: OTel spans must start before route handlers fire.
+- **TLS keylog**: Auto-exported to `{config_dir}/tls.keylog` via `MITMPROXY_SSLKEYLOGFILE`. mitmproxy logs TLS master secrets in NSS Key Log format for Wireshark decryption. The env var is evaluated at module import time in `mitmproxy.net.tls`, so it must be set before the first mitmproxy import — done in `_run_inspect()` before the `run_inspector()` call.
+- **WireGuard keylog**: Auto-exported to `{config_dir}/wg.keylog` after inspector startup. Enables Wireshark to decrypt the outer WireGuard tunnel layer.
 - **SSL certificate handling**: `SSL_CERT_FILE` is validated on startup — if the path doesn't exist (e.g., stale venv after Python upgrade), falls back to `certifi.where()` then `/etc/ssl/certs/ca-certificates.crt`. In `--inspect` mode, the combined CA bundle (mitmproxy CA + system CAs) is built **after** mitmproxy starts to ensure the CA cert exists. All four cert env vars are set inside the gateway namespace: `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`.
 - **Namespace confinement**: Two namespaces in `--inspect` mode:
   - **CLI namespace** (`ccproxy run --inspect`): rootless user+net namespace via `unshare`, slirp4netns bridge, WireGuard client routing to mitmweb's CLI listener. For jailed CLI clients (Claude Code, Gemini CLI).

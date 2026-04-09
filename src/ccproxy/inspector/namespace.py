@@ -25,15 +25,19 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+_nsenter_logger = logging.getLogger("ccproxy.subprocess.nsenter")
+
+
 def _pipe_output(proc: subprocess.Popen[bytes], tag: str) -> threading.Thread:
-    """Forward subprocess stdout to stderr with a [tag] prefix."""
-    import sys
+    """Forward subprocess stdout to a tagged logger."""
+    sub_logger = logging.getLogger(f"ccproxy.subprocess.{tag}")
 
     def reader() -> None:
         assert proc.stdout is not None
-        for line in proc.stdout:
-            sys.stderr.buffer.write(f"[{tag}] ".encode() + line)
-            sys.stderr.buffer.flush()
+        for raw_line in proc.stdout:
+            line = raw_line.rstrip(b"\n\r").decode("utf-8", errors="replace")
+            if line:
+                sub_logger.info("%s", line)
 
     t = threading.Thread(target=reader, daemon=True)
     t.start()
@@ -331,8 +335,10 @@ def create_namespace(wg_client_conf: str) -> NamespaceContext:
             text=True,
         )
         if result.returncode != 0:
-            stderr = result.stderr.strip()
-            raise RuntimeError(f"WireGuard setup failed in namespace: {stderr}")
+            _nsenter_logger.error("wg setup failed (rc=%d): %s", result.returncode, result.stderr.strip())
+            raise RuntimeError(f"WireGuard setup failed in namespace: {result.stderr.strip()}")
+        elif result.stdout or result.stderr:
+            _nsenter_logger.debug("wg setup: %s", (result.stdout + result.stderr).strip())
 
         logger.info("Namespace created: WireGuard tunnel active via %s", gateway)
 
@@ -489,8 +495,10 @@ def create_gateway_namespace(wg_client_conf: str, main_port: int) -> NamespaceCo
             text=True,
         )
         if result.returncode != 0:
-            stderr = result.stderr.strip()
-            raise RuntimeError(f"WireGuard setup failed in gateway namespace: {stderr}")
+            _nsenter_logger.error("gateway wg setup failed (rc=%d): %s", result.returncode, result.stderr.strip())
+            raise RuntimeError(f"WireGuard setup failed in gateway namespace: {result.stderr.strip()}")
+        elif result.stdout or result.stderr:
+            _nsenter_logger.debug("gateway wg setup: %s", (result.stdout + result.stderr).strip())
 
         logger.info("Gateway namespace created: WireGuard tunnel active via %s", gateway)
 
@@ -559,9 +567,31 @@ async def run_in_namespace_async(
         "--net", "--user", "--preserve-credentials",
         "--", *command,
     ]
-    proc = await asyncio.create_subprocess_exec(*nsenter_cmd, env=env)
+    log_file = Path(env.get("CCPROXY_CONFIG_DIR", "")) / "ccproxy.log"
+    if log_file.exists():
+        proc = await asyncio.create_subprocess_exec(
+            *nsenter_cmd, env=env,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+        )
+        litellm_logger = logging.getLogger("ccproxy.subprocess.litellm")
+
+        async def _reader() -> None:
+            assert proc.stdout is not None
+            async for raw_line in proc.stdout:
+                line = raw_line.rstrip(b"\n\r").decode("utf-8", errors="replace")
+                if line:
+                    litellm_logger.info("%s", line)
+
+        reader_task = asyncio.create_task(_reader())
+    else:
+        proc = await asyncio.create_subprocess_exec(*nsenter_cmd, env=env)
+        reader_task = None
+
     try:
-        return await proc.wait()
+        result = await proc.wait()
+        if reader_task:
+            await reader_task
+        return result
     except asyncio.CancelledError:
         proc.terminate()
         try:

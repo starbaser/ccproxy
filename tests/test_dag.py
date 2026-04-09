@@ -194,3 +194,60 @@ class TestValidate:
         hooks = [make_spec("writer", writes=["k"]), make_spec("reader", reads=["k"])]
         dag = HookDAG(hooks)
         assert dag.validate() == []
+
+    def test_warns_on_write_without_reader(self):
+        dag = HookDAG([make_spec("writer", writes=["orphan_key"])])
+        warnings = dag.validate()
+        assert any("orphan_key" in w for w in warnings)
+
+
+class TestToMermaid:
+    def test_basic_dependency_graph(self):
+        hooks = [make_spec("writer", writes=["k"]), make_spec("reader", reads=["k"])]
+        dag = HookDAG(hooks)
+        mermaid = dag.to_mermaid()
+        assert "graph TD" in mermaid
+        assert "writer --> reader" in mermaid
+
+    def test_independent_hook_appears_standalone(self):
+        dag = HookDAG([make_spec("solo")])
+        mermaid = dag.to_mermaid()
+        assert "solo" in mermaid
+
+    def test_no_duplicate_edges(self):
+        hooks = [make_spec("a", writes=["k1", "k2"]), make_spec("b", reads=["k1", "k2"])]
+        dag = HookDAG(hooks)
+        mermaid = dag.to_mermaid()
+        # Should appear exactly once
+        assert mermaid.count("a --> b") == 1
+
+
+class TestToAscii:
+    def test_single_hook_ascii(self):
+        dag = HookDAG([make_spec("my_hook", reads=["r"], writes=["w"])])
+        ascii_art = dag.to_ascii()
+        assert "my_hook" in ascii_art
+
+    def test_chain_ascii_has_arrows(self):
+        hooks = [
+            make_spec("step1", writes=["k1"]),
+            make_spec("step2", reads=["k1"], writes=["k2"]),
+            make_spec("step3", reads=["k2"]),
+        ]
+        dag = HookDAG(hooks)
+        ascii_art = dag.to_ascii()
+        assert "step1" in ascii_art
+        assert "step2" in ascii_art
+        assert "step3" in ascii_art
+        assert "│" in ascii_art or "▼" in ascii_art
+
+    def test_parallel_hooks_ascii(self):
+        hooks = [make_spec("a"), make_spec("b"), make_spec("c")]
+        dag = HookDAG(hooks)
+        ascii_art = dag.to_ascii()
+        assert "PARALLEL" in ascii_art
+
+    def test_single_group_no_arrows(self):
+        dag = HookDAG([make_spec("only")])
+        ascii_art = dag.to_ascii()
+        assert "only" in ascii_art

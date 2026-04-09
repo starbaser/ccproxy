@@ -51,9 +51,11 @@ class TestOAuthSentinelKey:
         router = _setup_router()
         flow = _make_inbound_flow(api_key=f"{OAUTH_SENTINEL_PREFIX}anthropic", with_record=True)
 
-        with patch("ccproxy.inspector.routes.inbound._get_oauth_token", return_value="real-token-123"):
-            with patch("ccproxy.inspector.routes.inbound._get_oauth_auth_header", return_value=None):
-                router.request(flow)
+        with (
+            patch("ccproxy.inspector.routes.inbound._get_oauth_token", return_value="real-token-123"),
+            patch("ccproxy.inspector.routes.inbound._get_oauth_auth_header", return_value=None),
+        ):
+            router.request(flow)
 
         assert flow.request.headers["authorization"] == "Bearer real-token-123"
         assert flow.request.headers["x-api-key"] == ""
@@ -71,9 +73,11 @@ class TestOAuthSentinelKey:
         router = _setup_router()
         flow = _make_inbound_flow(api_key=f"{OAUTH_SENTINEL_PREFIX}zai", with_record=True)
 
-        with patch("ccproxy.inspector.routes.inbound._get_oauth_token", return_value="zai-token"):
-            with patch("ccproxy.inspector.routes.inbound._get_oauth_auth_header", return_value="x-api-key"):
-                router.request(flow)
+        with (
+            patch("ccproxy.inspector.routes.inbound._get_oauth_token", return_value="zai-token"),
+            patch("ccproxy.inspector.routes.inbound._get_oauth_auth_header", return_value="x-api-key"),
+        ):
+            router.request(flow)
 
         assert flow.request.headers["x-api-key"] == "zai-token"
 
@@ -114,9 +118,11 @@ class TestOAuthSentinelKey:
     def test_regular_mode_flow_skipped(self) -> None:
         router = _setup_router()
         flow = _make_inbound_flow(api_key=f"{OAUTH_SENTINEL_PREFIX}anthropic", mode="regular@4003")
-        with patch("ccproxy.inspector.routes.inbound._get_oauth_token", return_value="token"):
-            with patch("ccproxy.inspector.routes.inbound._get_oauth_auth_header", return_value=None):
-                router.request(flow)
+        with (
+            patch("ccproxy.inspector.routes.inbound._get_oauth_token", return_value="token"),
+            patch("ccproxy.inspector.routes.inbound._get_oauth_auth_header", return_value=None),
+        ):
+            router.request(flow)
         assert "x-ccproxy-oauth-injected" not in flow.request.headers
 
     def test_works_without_flow_record(self) -> None:
@@ -124,9 +130,11 @@ class TestOAuthSentinelKey:
         router = _setup_router()
         flow = _make_inbound_flow(api_key=f"{OAUTH_SENTINEL_PREFIX}anthropic")
 
-        with patch("ccproxy.inspector.routes.inbound._get_oauth_token", return_value="token-123"):
-            with patch("ccproxy.inspector.routes.inbound._get_oauth_auth_header", return_value=None):
-                router.request(flow)
+        with (
+            patch("ccproxy.inspector.routes.inbound._get_oauth_token", return_value="token-123"),
+            patch("ccproxy.inspector.routes.inbound._get_oauth_auth_header", return_value=None),
+        ):
+            router.request(flow)
 
         assert flow.request.headers["authorization"] == "Bearer token-123"
         assert flow.request.headers["x-ccproxy-oauth-injected"] == "1"

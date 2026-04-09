@@ -7,12 +7,12 @@ import pytest
 
 import ccproxy.inspector.flow_store as fs
 from ccproxy.inspector.flow_store import (
+    _STORE_TTL,
     FLOW_ID_HEADER,
     AuthMeta,
     FlowRecord,
     InspectorMeta,
     OtelMeta,
-    _STORE_TTL,
     clear_flow_store,
     create_flow_record,
     get_flow_record,
@@ -184,7 +184,7 @@ class TestCleanupExpired:
         # then create id4 at future time (triggers cleanup).
         future = t + _STORE_TTL + 1.0
         timestamps.append(future)
-        id4, record4 = create_flow_record("inbound")
+        id4, _record4 = create_flow_record("inbound")
 
         assert id1 not in fs._flow_store
         assert id2 not in fs._flow_store

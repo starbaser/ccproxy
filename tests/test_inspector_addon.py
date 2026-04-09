@@ -324,8 +324,6 @@ class TestRequestFlowStore:
 
     @pytest.mark.asyncio
     async def test_creates_flow_record_and_stamps_header(self) -> None:
-        from mitmproxy.proxy.mode_specs import ProxyMode as MitmProxyMode
-
         addon = InspectorAddon(config=InspectorConfig())
         flow = _make_wg_flow(host="api.anthropic.com")
         flow.request.headers = {}

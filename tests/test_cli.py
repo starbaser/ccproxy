@@ -932,6 +932,8 @@ class TestMainFunction:
 
     def test_main_default_config_dir(self, tmp_path: Path) -> None:
         """Test main uses default config directory when not specified."""
+        default_dir = tmp_path / ".ccproxy"
+        default_dir.mkdir()
         with (
             patch.dict(os.environ, {}, clear=False),
             patch.object(Path, "home", return_value=tmp_path),
@@ -941,7 +943,7 @@ class TestMainFunction:
             cmd = Start()
             main(cmd)
 
-            mock_litellm.assert_called_once_with(tmp_path / ".ccproxy", args=None, inspect=False)
+            mock_litellm.assert_called_once_with(default_dir, args=None, inspect=False)
 
     @patch("ccproxy.cli.view_logs")
     def test_main_logs_command(self, mock_logs: Mock, tmp_path: Path) -> None:
@@ -949,7 +951,7 @@ class TestMainFunction:
         cmd = Logs(follow=True, lines=50)
         main(cmd, config_dir=tmp_path)
 
-        mock_logs.assert_called_once_with(follow=True, lines=50)
+        mock_logs.assert_called_once_with(follow=True, lines=50, config_dir=tmp_path)
 
     @patch("ccproxy.cli.show_status")
     def test_main_status_command(self, mock_status: Mock, tmp_path: Path) -> None:

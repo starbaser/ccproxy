@@ -2,8 +2,6 @@
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from ccproxy.inspector.flow_store import FlowRecord, InspectorMeta, OtelMeta
 from ccproxy.inspector.telemetry import InspectorTracer
 

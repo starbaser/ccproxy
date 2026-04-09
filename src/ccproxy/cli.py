@@ -11,6 +11,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 from builtins import print as builtin_print
 from pathlib import Path
 from typing import Annotated, Any
@@ -185,13 +186,42 @@ Command = (
 )
 
 
-def setup_logging() -> None:
-    """Configure logging with 100-character text width."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)-20s - %(levelname)-8s - %(message).100s",
+def setup_logging(config_dir: Path, debug: bool = False, *, log_file: bool = False) -> Path | None:
+    """Configure unified logging with tagged namespaces and optional file output.
+
+    In systemd mode (INVOCATION_ID set), logs to stderr only (journal captures).
+    When log_file=True and not systemd, also logs to {config_dir}/ccproxy.log
+    (truncated on restart).
+
+    Returns the log file path if created, None otherwise.
+    """
+    root = logging.getLogger()
+    root.handlers.clear()
+
+    level = logging.DEBUG if debug else logging.INFO
+    root.setLevel(level)
+
+    fmt = logging.Formatter(
+        "%(asctime)s %(name)-30s %(levelname)-8s %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+
+    stream = logging.StreamHandler(sys.stderr)
+    stream.setFormatter(fmt)
+    root.addHandler(stream)
+
+    log_path: Path | None = None
+    if log_file and not os.environ.get("INVOCATION_ID"):
+        log_path = config_dir / "ccproxy.log"
+        fh = logging.FileHandler(str(log_path), mode="w", encoding="utf-8")
+        fh.setFormatter(fmt)
+        root.addHandler(fh)
+
+    logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+
+    return log_path
 
 
 def install_config(config_dir: Path, force: bool = False) -> None:
@@ -513,6 +543,13 @@ async def _run_inspect(
 
     inspector = get_config().inspector
 
+    # Set TLS keylog path before any mitmproxy module that reads
+    # MITMPROXY_SSLKEYLOGFILE is imported. mitmproxy.net.tls evaluates
+    # this env var at module import time (module-level global), triggered
+    # by the WebMaster import inside run_inspector() below.
+    tls_keylog_path = config_dir / "tls.keylog"
+    os.environ["MITMPROXY_SSLKEYLOGFILE"] = str(tls_keylog_path)
+
     pid = os.getpid()
     wg_cli_keypair_path = config_dir / f"wireguard-cli.{pid}.conf"
     wg_gateway_keypair_path = config_dir / f"wireguard-gateway.{pid}.conf"
@@ -587,16 +624,11 @@ async def _run_inspect(
             builtin_print(f"WireGuard keylog: {wg_keylog_path}")
             builtin_print(f"  Wireshark: -o wg.keylog_file:{wg_keylog_path}")
 
+        builtin_print(f"TLS keylog: {tls_keylog_path}")
+        builtin_print("  Wireshark: Edit → Preferences → Protocols → TLS → (Pre)-Master-Secret log filename")
+
         web_url = f"http://{inspector.mitmproxy.web_host}:{inspector.port}/?token={web_token}"
         builtin_print(f"Inspector UI: {web_url}")
-        try:
-            subprocess.Popen(  # noqa: S603
-                ["xdg-open", web_url],  # noqa: S607
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-        except FileNotFoundError:
-            logger.debug("xdg-open not found; open the inspector URL manually")
 
         # Create gateway namespace and run LiteLLM inside it
         gateway_ctx = create_gateway_namespace(wg_gateway_conf, litellm_port)
@@ -736,9 +768,25 @@ def start_litellm(
         sys.exit(exit_code)
 
     try:
-        # S603: Command construction is safe - we control the litellm path
-        result = subprocess.run(litellm_cmd, env=env)  # noqa: S603
-        sys.exit(result.returncode)
+        log_file = config_dir / "ccproxy.log"
+        if log_file.exists():
+            litellm_logger = logging.getLogger("ccproxy.subprocess.litellm")
+            proc = subprocess.Popen(litellm_cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)  # noqa: S603
+
+            def _litellm_reader() -> None:
+                assert proc.stdout is not None
+                for raw_line in proc.stdout:
+                    line = raw_line.rstrip(b"\n\r").decode("utf-8", errors="replace")
+                    if line:
+                        litellm_logger.info("%s", line)
+
+            reader_thread = threading.Thread(target=_litellm_reader, daemon=True)
+            reader_thread.start()
+            proc.wait()
+            sys.exit(proc.returncode)
+        else:
+            result = subprocess.run(litellm_cmd, env=env)  # noqa: S603
+            sys.exit(result.returncode)
     except FileNotFoundError:
         print("Error: litellm command not found.", file=sys.stderr)
         print(
@@ -750,8 +798,8 @@ def start_litellm(
         pass
 
 
-def view_logs(follow: bool = False, lines: int = 100) -> None:
-    """View ccproxy logs from journal or process-compose."""
+def view_logs(follow: bool = False, lines: int = 100, config_dir: Path | None = None) -> None:
+    """View ccproxy logs from journal, process-compose, or log file."""
     if shutil.which("systemctl"):
         result = subprocess.run(
             ["systemctl", "--user", "is-active", "ccproxy.service"],  # noqa: S607
@@ -784,6 +832,8 @@ def view_logs(follow: bool = False, lines: int = 100) -> None:
             "process",
             "logs",
             "ccproxy",
+            "-n",
+            str(lines),
         ]
         if follow:
             pc_cmd.append("-f")
@@ -792,6 +842,19 @@ def view_logs(follow: bool = False, lines: int = 100) -> None:
             sys.exit(proc.returncode)
         except KeyboardInterrupt:
             sys.exit(0)
+
+    if config_dir:
+        log_path = config_dir / "ccproxy.log"
+        if log_path.exists():
+            tail_cmd = ["tail", "-n", str(lines)]
+            if follow:
+                tail_cmd.append("-f")
+            tail_cmd.append(str(log_path))
+            try:
+                proc = subprocess.run(tail_cmd)  # noqa: S603
+                sys.exit(proc.returncode)
+            except KeyboardInterrupt:
+                sys.exit(0)
 
     print(
         "No active ccproxy service found.\n"
@@ -891,7 +954,7 @@ def show_status(
         "callbacks": callbacks,
         "hooks": hooks,
         "model_list": model_list,
-        "log": None,
+        "log": str(config_dir / "ccproxy.log") if (config_dir / "ccproxy.log").exists() else None,
         "inspector": {
             "running": combined_running,
             "entry_port": main_port,
@@ -1051,8 +1114,11 @@ def main(
         env_config_dir = os.environ.get("CCPROXY_CONFIG_DIR")
         config_dir = Path(env_config_dir) if env_config_dir else Path.home() / ".ccproxy"
 
-    # Setup logging with 100-character text width
-    setup_logging()
+    os.environ.setdefault("CCPROXY_CONFIG_DIR", str(config_dir))
+    from ccproxy.config import get_config
+
+    config = get_config()
+    setup_logging(config_dir, debug=config.debug, log_file=isinstance(cmd, Start))
 
     # Handle each command type
     if isinstance(cmd, Start):
@@ -1098,7 +1164,7 @@ def main(
         run_with_proxy(config_dir, filtered, inspect=inspect)
 
     elif isinstance(cmd, Logs):
-        view_logs(follow=cmd.follow, lines=cmd.lines)
+        view_logs(follow=cmd.follow, lines=cmd.lines, config_dir=config_dir)
 
     elif isinstance(cmd, Status):
         show_status(

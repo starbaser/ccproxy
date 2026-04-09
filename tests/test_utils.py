@@ -158,6 +158,270 @@ class TestCalculateDurationMs:
         assert result == -1000000.0  # Negative duration is allowed
 
 
+class TestFindAvailablePort:
+    """Tests for find_available_port function."""
+
+    def test_returns_a_port_in_range(self) -> None:
+        from ccproxy.utils import find_available_port
+
+        port = find_available_port(49200, 49300)
+        assert 49200 <= port <= 49300
+
+    def test_returned_port_is_bindable(self) -> None:
+        import socket
+
+        from ccproxy.utils import find_available_port
+
+        port = find_available_port(49200, 49300)
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", port))
+
+    def test_raises_when_all_ports_occupied(self) -> None:
+        import socket
+
+        from ccproxy.utils import find_available_port
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+
+            with (
+                patch("socket.socket") as mock_sock_cls,
+                pytest.raises(RuntimeError, match="Could not find available port"),
+            ):
+                mock_sock = mock_sock_cls.return_value.__enter__.return_value
+                mock_sock.bind.side_effect = OSError("in use")
+                find_available_port(port, port)
+
+
+class TestDebugTable:
+    """Tests for debug_table and helper functions."""
+
+    def test_debug_dict(self) -> None:
+        from ccproxy.utils import debug_table
+
+        debug_table({"key": "value", "num": 42})
+
+    def test_debug_list(self) -> None:
+        from ccproxy.utils import debug_table
+
+        debug_table([1, 2, 3])
+
+    def test_debug_tuple(self) -> None:
+        from ccproxy.utils import debug_table
+
+        debug_table((1, "two", 3.0))
+
+    def test_debug_object(self) -> None:
+        from ccproxy.utils import debug_table
+
+        class Obj:
+            def __init__(self) -> None:
+                self.x = 1
+                self.y = "hello"
+
+            def my_method(self) -> None:
+                pass
+
+        debug_table(Obj())
+
+    def test_debug_scalar(self) -> None:
+        from ccproxy.utils import debug_table
+
+        debug_table(42)
+
+    def test_debug_dict_with_title(self) -> None:
+        from ccproxy.utils import debug_table
+
+        debug_table({"a": 1}, title="My Dict")
+
+    def test_debug_dict_non_compact(self) -> None:
+        from ccproxy.utils import debug_table
+
+        debug_table({"a": 1}, compact=False)
+
+    def test_debug_list_non_compact(self) -> None:
+        from ccproxy.utils import debug_table
+
+        debug_table([1, 2], compact=False)
+
+    def test_debug_object_show_methods(self) -> None:
+        from ccproxy.utils import debug_table
+
+        class Obj:
+            def method(self) -> str:
+                return "hi"
+
+            @property
+            def bad_prop(self) -> str:
+                raise RuntimeError("cannot access")
+
+        debug_table(Obj(), show_methods=True)
+
+    def test_debug_dict_max_width(self) -> None:
+        from ccproxy.utils import debug_table
+
+        debug_table({"k": "x" * 200}, max_width=10)
+
+
+class TestFormatValue:
+    """Tests for _format_value helper."""
+
+    def test_none(self) -> None:
+        from ccproxy.utils import _format_value
+
+        result = _format_value(None)
+        assert "None" in result
+
+    def test_bool_true(self) -> None:
+        from ccproxy.utils import _format_value
+
+        result = _format_value(True)
+        assert "True" in result
+
+    def test_bool_false(self) -> None:
+        from ccproxy.utils import _format_value
+
+        result = _format_value(False)
+        assert "False" in result
+
+    def test_int(self) -> None:
+        from ccproxy.utils import _format_value
+
+        result = _format_value(42)
+        assert "42" in result
+
+    def test_float(self) -> None:
+        from ccproxy.utils import _format_value
+
+        result = _format_value(3.14)
+        assert "3.14" in result
+
+    def test_string_truncation(self) -> None:
+        from ccproxy.utils import _format_value
+
+        result = _format_value("x" * 100, max_width=10)
+        assert "..." in result
+
+    def test_string_no_truncation(self) -> None:
+        from ccproxy.utils import _format_value
+
+        result = _format_value("short")
+        assert "short" in result
+
+    def test_list(self) -> None:
+        from ccproxy.utils import _format_value
+
+        result = _format_value([1, 2, 3])
+        assert "list" in result
+
+    def test_tuple(self) -> None:
+        from ccproxy.utils import _format_value
+
+        result = _format_value((1, 2))
+        assert "tuple" in result
+
+    def test_dict(self) -> None:
+        from ccproxy.utils import _format_value
+
+        result = _format_value({"a": 1})
+        assert "dict" in result
+
+    def test_callable(self) -> None:
+        from ccproxy.utils import _format_value
+
+        result = _format_value(lambda: None)
+        assert "()" in result
+
+    def test_object_truncation(self) -> None:
+        from ccproxy.utils import _format_value
+
+        class Big:
+            def __str__(self) -> str:
+                return "x" * 100
+
+        result = _format_value(Big(), max_width=10)
+        assert "..." in result
+
+    def test_string_escapes_markup(self) -> None:
+        from ccproxy.utils import _format_value
+
+        result = _format_value("[bold]text[/bold]")
+        assert r"\[" in result
+
+
+class TestDvFunction:
+    """Tests for dv() debug variables function."""
+
+    def test_dv_basic(self) -> None:
+        from ccproxy.utils import dv
+
+        dv(1, "hello", [1, 2])
+
+    def test_dv_with_kwargs(self) -> None:
+        from ccproxy.utils import dv
+
+        dv(x=1, y="test")
+
+    def test_dv_no_frame(self) -> None:
+        import inspect
+        from unittest.mock import patch
+
+        from ccproxy.utils import dv
+
+        with patch.object(inspect, "currentframe", return_value=None):
+            dv(1, 2, 3)
+
+
+class TestAliasedFunctions:
+    """Tests for dt(), d(), p() aliases."""
+
+    def test_dt(self) -> None:
+        from ccproxy.utils import dt
+
+        dt({"key": "val"})
+
+    def test_d(self) -> None:
+        from ccproxy.utils import d
+
+        d({"key": "val"})
+
+    def test_p_dict(self) -> None:
+        from ccproxy.utils import p
+
+        p({"key": "val"})
+
+    def test_p_list(self) -> None:
+        from ccproxy.utils import p
+
+        p([1, 2, 3])
+
+    def test_p_tuple(self) -> None:
+        from ccproxy.utils import p
+
+        p((1, 2))
+
+    def test_p_object(self) -> None:
+        from ccproxy.utils import p
+
+        class Obj:
+            def __init__(self) -> None:
+                self.x = 1
+                self.y = "hello"
+
+        p(Obj())
+
+    def test_p_scalar(self) -> None:
+        from ccproxy.utils import p
+
+        p(42)
+
+    def test_p_scalar_string(self) -> None:
+        from ccproxy.utils import p
+
+        p("plain string")
+
+
 class TestParseSessionId:
     """Tests for parse_session_id."""
 

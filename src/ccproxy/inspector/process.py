@@ -80,16 +80,14 @@ def _build_opts(
     # Many options (web_*, stream_large_bodies, body_size_limit, etc.) are
     # registered by addons inside WebMaster.__init__, not on Options() itself.
     # Defer ALL non-mode options so they resolve after addon registration.
-    deferred: dict[str, Any] = {
-        "web_port": inspector.port,
-        "web_host": inspector.mitmproxy.web_host,
-        "web_open_browser": inspector.mitmproxy.web_open_browser,
-        "web_password": web_token,
-    }
+    deferred: dict[str, Any] = {}
     for field_name in MitmproxyOptions.model_fields:
         value = getattr(inspector.mitmproxy, field_name)
         if value is not None:
             deferred[field_name] = value
+
+    deferred["web_port"] = inspector.port
+    deferred["web_password"] = web_token
 
     opts.update_defer(**deferred)  # type: ignore[no-untyped-call]
 
@@ -126,8 +124,7 @@ def _build_addons(
     """Build the addon chain from the singleton config.
 
     Order matters: InspectorAddon (OTel spans) must fire first, then
-    inbound router (OAuth), outbound router (beta headers), then optional
-    PcapAddon.
+    inbound router (OAuth), then outbound router (beta headers).
     """
     from ccproxy.config import get_config
     from ccproxy.inspector.addon import InspectorAddon
@@ -158,20 +155,11 @@ def _build_addons(
     except Exception as e:
         logger.warning("Failed to initialize OTel tracer: %s", e)
 
-    addons: list[Any] = [
+    return [
         addon,
         _make_inbound_router(),
         _make_outbound_router(),
     ]
-
-    pcap_file = os.environ.get("CCPROXY_PCAP_FILE")
-    pcap_pipe = os.environ.get("CCPROXY_PCAP_PIPE")
-    if pcap_file or pcap_pipe:
-        from ccproxy.inspector.pcap import PcapAddon
-
-        addons.append(PcapAddon(pcap_file=pcap_file, pcap_pipe=pcap_pipe))
-
-    return addons
 
 
 def get_wg_client_conf(master: WebMaster, keypair_path: Path) -> str | None:
@@ -245,7 +233,10 @@ async def run_inspector(
         web_token,
     )
 
-    master = WebMaster(opts, with_termlog=True)
+    master = WebMaster(opts, with_termlog=False)
+
+    mitmproxy_level = logging.DEBUG if config.debug else logging.WARNING
+    logging.getLogger("mitmproxy").setLevel(mitmproxy_level)
 
     ready = ReadySignal()
     addons = _build_addons(litellm_port, wg_cli_port, wg_gateway_port)
