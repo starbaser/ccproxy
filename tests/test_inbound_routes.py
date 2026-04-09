@@ -63,7 +63,7 @@ class TestOAuthSentinelKey:
         assert record.auth is not None
         assert record.auth.provider == "anthropic"
         assert record.auth.credential == "real-token-123"
-        assert record.auth.key_field == "authorization"
+        assert record.auth.auth_header == "authorization"
         assert record.auth.injected is True
         assert record.auth.original_key == f"{OAUTH_SENTINEL_PREFIX}anthropic"
 
@@ -79,7 +79,7 @@ class TestOAuthSentinelKey:
 
         record: FlowRecord = flow.metadata[InspectorMeta.RECORD]
         assert record.auth is not None
-        assert record.auth.key_field == "x-api-key"
+        assert record.auth.auth_header == "x-api-key"
         assert record.auth.injected is True
 
     def test_missing_oat_sources_logs_error(self, caplog: pytest.LogCaptureFixture) -> None:

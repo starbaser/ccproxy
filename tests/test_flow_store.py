@@ -33,7 +33,7 @@ class TestFlowRecordDataclass:
         assert "key" not in r2.original_headers
 
     def test_auth_meta_defaults(self):
-        auth = AuthMeta(provider="anthropic", credential="tok", key_field="Authorization")
+        auth = AuthMeta(provider="anthropic", credential="tok", auth_header="Authorization")
         assert auth.injected is False
         assert auth.original_key == ""
 

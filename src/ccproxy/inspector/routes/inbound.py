@@ -85,7 +85,7 @@ def register_inbound_routes(router: InspectorRouter) -> None:
             record.auth = AuthMeta(
                 provider=provider,
                 credential=token,
-                key_field=key_field,
+                auth_header=key_field,
                 original_key=api_key,
             )
 

@@ -21,7 +21,7 @@ class AuthMeta:
 
     provider: str
     credential: str
-    key_field: str
+    auth_header: str
     injected: bool = False
     original_key: str = ""
 
