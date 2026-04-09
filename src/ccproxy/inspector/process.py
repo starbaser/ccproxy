@@ -75,19 +75,23 @@ def _build_opts(
             f"wireguard:{wg_cli_conf_path}@{wg_cli_port}",
             f"wireguard:{wg_gateway_conf_path}@{wg_gateway_port}",
         ],
-        web_port=inspector.port,
-        web_host=inspector.mitmproxy.web_host,
-        web_open_browser=inspector.mitmproxy.web_open_browser,
-        web_password=web_token,
     )
 
-    skip = {"web_host", "web_password", "web_open_browser"}
+    # Many options (web_*, stream_large_bodies, body_size_limit, etc.) are
+    # registered by addons inside WebMaster.__init__, not on Options() itself.
+    # Defer ALL non-mode options so they resolve after addon registration.
+    deferred: dict[str, Any] = {
+        "web_port": inspector.port,
+        "web_host": inspector.mitmproxy.web_host,
+        "web_open_browser": inspector.mitmproxy.web_open_browser,
+        "web_password": web_token,
+    }
     for field_name in MitmproxyOptions.model_fields:
-        if field_name in skip:
-            continue
         value = getattr(inspector.mitmproxy, field_name)
         if value is not None:
-            opts.update(**{field_name: value})  # type: ignore[no-untyped-call]
+            deferred[field_name] = value
+
+    opts.update_defer(**deferred)  # type: ignore[no-untyped-call]
 
     return opts
 

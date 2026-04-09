@@ -599,7 +599,7 @@ async def _run_inspect(
             logger.debug("xdg-open not found; open the inspector URL manually")
 
         # Create gateway namespace and run LiteLLM inside it
-        gateway_ctx = create_gateway_namespace(wg_gateway_conf, main_port)
+        gateway_ctx = create_gateway_namespace(wg_gateway_conf, litellm_port)
         exit_code = await run_in_namespace_async(gateway_ctx, litellm_cmd, env)
 
     finally:
@@ -712,7 +712,10 @@ def start_litellm(
         "--config",
         str(config_path),
         "--host",
-        litellm_host,
+        # In inspect mode, LiteLLM runs inside a gateway namespace where
+        # slirp4netns hostfwd delivers traffic to the tap0 IP (10.0.2.100).
+        # Bind to 0.0.0.0 so LiteLLM accepts on all namespace interfaces.
+        "0.0.0.0" if inspect else litellm_host,
         "--port",
         str(litellm_port),
     ]

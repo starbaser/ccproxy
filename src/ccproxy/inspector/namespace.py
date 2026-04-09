@@ -390,8 +390,8 @@ def create_gateway_namespace(wg_client_conf: str, main_port: int) -> NamespaceCo
 
     Like create_namespace(), but designed for confining LiteLLM rather than
     CLI clients. Differences:
-    - Adds a fixed slirp4netns --port-map for main_port so external HTTP clients
-      can reach LiteLLM via the host's main_port.
+    - Uses slirp4netns add_hostfwd API to forward main_port from host into the
+      namespace. LiteLLM must bind to 0.0.0.0 so it accepts on the tap0 IP.
     - The dynamic PortForwarder is not started (LiteLLM's port is known upfront).
     - WireGuard routes ALL outbound traffic through mitmweb's gateway listener
       so LiteLLM's provider calls are captured transparently.
@@ -444,7 +444,6 @@ def create_gateway_namespace(wg_client_conf: str, main_port: int) -> NamespaceCo
             f"--ready-fd={ready_w}",
             f"--exit-fd={exit_r}",
             f"--api-socket={api_socket_path}",
-            f"--port-map={main_port}:{main_port}/tcp",
             str(ns_pid),
             "tap0",
         ]
@@ -470,6 +469,10 @@ def create_gateway_namespace(wg_client_conf: str, main_port: int) -> NamespaceCo
 
         logger.debug("slirp4netns (gateway) ready, configuring WireGuard in namespace")
 
+        # Port-forward LiteLLM port from host into the namespace via API socket.
+        # LiteLLM binds to 0.0.0.0 so it accepts on the tap0 IP (10.0.2.100).
+        _slirp_add_hostfwd(api_socket_path, main_port)
+
         wg_setup = (
             f"ip link add wg0 type wireguard && "
             f"wg setconf wg0 {conf_path} && "
@@ -478,6 +481,7 @@ def create_gateway_namespace(wg_client_conf: str, main_port: int) -> NamespaceCo
             f"ip route del default && "
             f"ip route add default dev wg0"
         )
+
         result = subprocess.run(  # noqa: S603
             ["nsenter", "-t", str(ns_pid), "--net", "--user", "--preserve-credentials", "--",  # noqa: S607
              "sh", "-c", wg_setup],
