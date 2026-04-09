@@ -165,6 +165,57 @@ class TestTokenCountRule:
         result = rule.evaluate(request, config)
         assert isinstance(result, bool)
 
+    def test_messages_with_string_items(self, rule: TokenCountRule, config: CCProxyConfig) -> None:
+        """Test token counting when messages contain string items."""
+        request = {
+            "messages": [
+                "This is a simple string message",
+                {"role": "user", "content": "Dict message"},
+                "Another string",
+            ]
+        }
+        result = rule.evaluate(request, config)
+        assert result is False  # Below threshold of 1000
+
+    def test_messages_with_none_content(self, rule: TokenCountRule, config: CCProxyConfig) -> None:
+        """Test handling of None content in messages."""
+        request = {
+            "messages": [
+                {"role": "user", "content": None},
+                {"role": "assistant", "content": "Valid content"},
+            ]
+        }
+        result = rule.evaluate(request, config)
+        assert result is False
+
+    def test_unicode_in_messages(self, rule: TokenCountRule, config: CCProxyConfig) -> None:
+        """Test token counting with unicode characters."""
+        request = {
+            "messages": [
+                {"role": "user", "content": "Hello 你好 🌍"},
+                "Émojis: 🚀🎉🎨",
+            ]
+        }
+        result = rule.evaluate(request, config)
+        assert result is False  # Below threshold of 1000
+
+    def test_concurrent_token_fields(self, rule: TokenCountRule, config: CCProxyConfig) -> None:
+        """Test when multiple token count fields have different values."""
+        request = {
+            "token_count": 500,
+            "num_tokens": 1500,
+            "input_tokens": 750,
+            "messages": [{"content": "short"}],
+        }
+        result = rule.evaluate(request, config)
+        assert result is True  # max(500, 1500, 750) > 1000
+
+    def test_malformed_messages_structure(self, rule: TokenCountRule, config: CCProxyConfig) -> None:
+        """Test with various malformed message structures."""
+        assert rule.evaluate({"messages": "not a list"}, config) is False
+        assert rule.evaluate({"messages": {"content": "test"}}, config) is False
+        assert rule.evaluate({"messages": None}, config) is False
+
 
 class TestModelMatchRule:
     """Tests for MatchModelRule."""
@@ -206,6 +257,31 @@ class TestModelMatchRule:
         request = {"model": 123}
         assert rule.evaluate(request, config) is False
 
+    def test_empty_model_string(self, rule: MatchModelRule, config: CCProxyConfig) -> None:
+        """Test MatchModelRule with empty string model."""
+        request = {"model": ""}
+        assert rule.evaluate(request, config) is False
+
+    def test_model_name_partial_matches(self, rule: MatchModelRule, config: CCProxyConfig) -> None:
+        """Test substring matching: matches and non-matches."""
+        matches = [
+            "claude-haiku-4-5-20251001",
+            "claude-haiku-4-5-20251001-20241022",
+            "claude-haiku-4-5-20251001-vision",
+        ]
+        for model in matches:
+            assert rule.evaluate({"model": model}, config) is True, f"Should match model: {model}"
+
+        non_matches = [
+            "claude-sonnet-4-5-20250929",
+            "claude-3-5",
+            "haiku",
+            "claude-haiku-3-20241022",
+            "claude-35-haiku",
+        ]
+        for model in non_matches:
+            assert rule.evaluate({"model": model}, config) is False, f"Should not match model: {model}"
+
 
 class TestThinkingRule:
     """Tests for ThinkingRule."""
@@ -236,6 +312,14 @@ class TestThinkingRule:
         """Test request without thinking field."""
         request = {"model": "gpt-4", "messages": []}
         assert rule.evaluate(request, config) is False
+
+    def test_thinking_field_false(self, rule: ThinkingRule, config: CCProxyConfig) -> None:
+        """Test ThinkingRule when thinking field is explicitly False (key presence, not truthiness)."""
+        assert rule.evaluate({"thinking": False}, config) is True
+
+    def test_thinking_field_zero(self, rule: ThinkingRule, config: CCProxyConfig) -> None:
+        """Test ThinkingRule when thinking field is 0 (key presence, not truthiness)."""
+        assert rule.evaluate({"thinking": 0}, config) is True
 
 
 class TestMatchToolRule:
@@ -307,6 +391,43 @@ class TestMatchToolRule:
             "tools": [{"type": "function", "function": {"name": "web_search_api", "description": "Search the web"}}]
         }
         assert rule.evaluate(request, config) is True
+
+    def test_nested_tool_structure(self, rule: MatchToolRule, config: CCProxyConfig) -> None:
+        """Test with case-insensitive match at top level and function.name miss."""
+        request = {
+            "tools": [
+                {"function": {"name": "search_web"}},
+                {"name": "WEB_SEARCH"},
+            ]
+        }
+        assert rule.evaluate(request, config) is True
+
+    def test_tools_with_invalid_types(self, rule: MatchToolRule, config: CCProxyConfig) -> None:
+        """Test with invalid tool entry types (None, int, list)."""
+        request = {
+            "tools": [
+                None,
+                123,
+                ["web_search"],
+                {"name": "valid_tool"},
+            ]
+        }
+        assert rule.evaluate(request, config) is False
+
+    def test_tool_name_in_description_not_name(self, rule: MatchToolRule, config: CCProxyConfig) -> None:
+        """Test that tool_name in description field does not match."""
+        request = {"tools": [{"name": "search_tool", "description": "Uses web_search API"}]}
+        assert rule.evaluate(request, config) is False
+
+    def test_tool_name_nested_dict(self, rule: MatchToolRule, config: CCProxyConfig) -> None:
+        """Test that nested dict name field does not match."""
+        request = {"tools": [{"function": {"name": {"value": "web_search"}}}]}
+        assert rule.evaluate(request, config) is False
+
+    def test_tool_name_numeric(self, rule: MatchToolRule, config: CCProxyConfig) -> None:
+        """Test that numeric tool name does not match."""
+        request = {"tools": [{"name": 123}]}
+        assert rule.evaluate(request, config) is False
 
 
 class TestParameterizedModelNameRule:

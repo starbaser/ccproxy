@@ -196,6 +196,20 @@ class TestRequestClassifier:
         result = classifier.classify(PlainObject())
         assert result == "default"
 
+    def test_empty_request(self, classifier: RequestClassifier) -> None:
+        """Test classifier with completely empty request."""
+        assert classifier.classify({}) == "default"
+
+    def test_none_request_fields(self, classifier: RequestClassifier) -> None:
+        """Test classifier with None values in request fields."""
+        request = {
+            "model": None,
+            "messages": None,
+            "tools": None,
+            "token_count": None,
+        }
+        assert classifier.classify(request) == "default"
+
 
 class TestClassificationRuleProtocol:
     """Tests for ClassificationRule abstract base class."""

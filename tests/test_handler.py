@@ -22,6 +22,7 @@ class TestCCProxyRouting:
         mock_proxy_server = MagicMock()
         mock_proxy_server.llm_router = MagicMock()
         mock_proxy_server.llm_router.model_list = model_list
+        mock_proxy_server.llm_router.get_model_list.return_value = model_list
 
         mock_module = MagicMock()
         mock_module.proxy_server = mock_proxy_server
@@ -154,6 +155,7 @@ class TestCCProxyRouting:
         mock_proxy_server = MagicMock()
         mock_proxy_server.llm_router = MagicMock()
         mock_proxy_server.llm_router.model_list = test_model_list
+        mock_proxy_server.llm_router.get_model_list.return_value = test_model_list
 
         mock_module = MagicMock()
         mock_module.proxy_server = mock_proxy_server
@@ -207,6 +209,7 @@ class TestCCProxyRouting:
         mock_proxy_server = MagicMock()
         mock_proxy_server.llm_router = MagicMock()
         mock_proxy_server.llm_router.model_list = test_model_list
+        mock_proxy_server.llm_router.get_model_list.return_value = test_model_list
 
         mock_module = MagicMock()
         mock_module.proxy_server = mock_proxy_server
@@ -307,6 +310,7 @@ class TestHandlerHookMethods:
                 "litellm_params": {"model": "claude-sonnet-4-5-20250929"},
             },
         ]
+        mock_proxy_server.llm_router.get_model_list.return_value = mock_proxy_server.llm_router.model_list
 
         mock_module = MagicMock()
         mock_module.proxy_server = mock_proxy_server
@@ -442,6 +446,7 @@ class TestCCProxyHandler:
         mock_proxy_server = MagicMock()
         mock_proxy_server.llm_router = MagicMock()
         mock_proxy_server.llm_router.model_list = test_model_list
+        mock_proxy_server.llm_router.get_model_list.return_value = test_model_list
 
         mock_module = MagicMock()
         mock_module.proxy_server = mock_proxy_server
@@ -618,6 +623,7 @@ class TestCCProxyHandler:
             mock_proxy_server = MagicMock()
             mock_proxy_server.llm_router = MagicMock()
             mock_proxy_server.llm_router.model_list = test_model_list
+            mock_proxy_server.llm_router.get_model_list.return_value = test_model_list
 
             mock_module = MagicMock()
             mock_module.proxy_server = mock_proxy_server
@@ -680,6 +686,7 @@ class TestCCProxyHandler:
             mock_proxy_server = MagicMock()
             mock_proxy_server.llm_router = MagicMock()
             mock_proxy_server.llm_router.model_list = []
+            mock_proxy_server.llm_router.get_model_list.return_value = []
 
             mock_module = MagicMock()
             mock_module.proxy_server = mock_proxy_server
@@ -727,6 +734,7 @@ class TestCCProxyHandler:
                 "litellm_params": {"model": "gemini-2.5-pro"},
             },
         ]
+        mock_proxy_server.llm_router.get_model_list.return_value = mock_proxy_server.llm_router.model_list
 
         mock_module = MagicMock()
         mock_module.proxy_server = mock_proxy_server

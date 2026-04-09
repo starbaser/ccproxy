@@ -19,6 +19,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from ccproxy.pipeline.hook import hook
+from ccproxy.utils import parse_session_id
 
 if TYPE_CHECKING:
     from ccproxy.pipeline.context import Context
@@ -73,17 +74,16 @@ def extract_session_id(ctx: Context, params: dict[str, Any]) -> Context:
     user_id = body_metadata.get("user_id", "")
 
     if user_id:
-        session_id = None
+        session_id = parse_session_id(user_id)
 
-        # New format: JSON-encoded object {"device_id": "...", "account_uuid": "...", "session_id": "<uuid>"}
-        if user_id.startswith("{"):
-            try:
-                user_id_obj = json.loads(user_id)
-                if isinstance(user_id_obj, dict):
-                    session_id = user_id_obj.get("session_id") or None
-                    if session_id:
-                        ctx.metadata["session_id"] = session_id
-                        logger.debug("Extracted session_id from user_id JSON: %s", session_id)
+        if session_id:
+            ctx.metadata["session_id"] = session_id
+
+            # Enrich with account/device metadata from JSON format
+            if user_id.startswith("{"):
+                try:
+                    user_id_obj = json.loads(user_id)
+                    if isinstance(user_id_obj, dict):
                         account_uuid = user_id_obj.get("account_uuid")
                         device_id = user_id_obj.get("device_id")
                         if account_uuid:
@@ -94,18 +94,13 @@ def extract_session_id(ctx: Context, params: dict[str, Any]) -> Context:
                             ctx.metadata["trace_metadata"]["claude_device_id"] = device_id
                         if account_uuid:
                             ctx.metadata["trace_metadata"]["claude_account_id"] = account_uuid
-            except (json.JSONDecodeError, TypeError):
-                pass
+                except (json.JSONDecodeError, TypeError):
+                    pass
+                logger.debug("Extracted session_id from user_id JSON: %s", session_id)
 
-        # Legacy format: user_{hash}_account_{uuid}_session_{uuid}
-        if not session_id and "_session_" in user_id:
-            parts = user_id.split("_session_")
-            if len(parts) == 2:
-                session_id = parts[1]
-                ctx.metadata["session_id"] = session_id
-                logger.debug("Extracted session_id from user_id legacy format: %s", session_id)
-
-                prefix = parts[0]
+            # Enrich with account metadata from legacy format
+            elif "_session_" in user_id:
+                prefix = user_id.split("_session_")[0]
                 if "_account_" in prefix:
                     user_account = prefix.split("_account_")
                     if len(user_account) == 2:
@@ -115,6 +110,7 @@ def extract_session_id(ctx: Context, params: dict[str, Any]) -> Context:
                         if "trace_metadata" not in ctx.metadata:
                             ctx.metadata["trace_metadata"] = {}
                         ctx.metadata["trace_metadata"]["claude_account_id"] = account_id
+                logger.debug("Extracted session_id from user_id legacy format: %s", session_id)
 
     # Inject langfuse_* headers so values survive LiteLLM's
     # validate_anthropic_api_metadata stripping on /v1/messages routes.

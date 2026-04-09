@@ -245,7 +245,6 @@ class CCProxyConfig(BaseSettings):
     # Extended: {"gemini": {"command": "jq -r '.token' ~/.gemini/creds.json", "user_agent": "MyApp/1.0"}}
     oat_sources: dict[str, str | OAuthSource | dict[str, Any]] = Field(default_factory=lambda: {})
 
-    # TODO probably should remove oauth refrsh?
     # OAuth TTL in seconds (default 8 hours)
     oauth_ttl: int = 28800
 

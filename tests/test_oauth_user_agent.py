@@ -280,6 +280,7 @@ class TestOAuthUserAgentForwarding:
                 },
             },
         ]
+        mock_proxy_server.llm_router.get_model_list.return_value = mock_proxy_server.llm_router.model_list
 
         mock_module = MagicMock()
         mock_module.proxy_server = mock_proxy_server
@@ -356,6 +357,7 @@ ccproxy:
                 },
             },
         ]
+        mock_proxy_server.llm_router.get_model_list.return_value = mock_proxy_server.llm_router.model_list
 
         mock_module = MagicMock()
         mock_module.proxy_server = mock_proxy_server
@@ -430,6 +432,7 @@ ccproxy:
                 },
             },
         ]
+        mock_proxy_server.llm_router.get_model_list.return_value = mock_proxy_server.llm_router.model_list
 
         mock_module = MagicMock()
         mock_module.proxy_server = mock_proxy_server
@@ -508,6 +511,7 @@ ccproxy:
                 },
             },
         ]
+        mock_proxy_server.llm_router.get_model_list.return_value = mock_proxy_server.llm_router.model_list
 
         mock_module = MagicMock()
         mock_module.proxy_server = mock_proxy_server

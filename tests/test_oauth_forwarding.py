@@ -31,6 +31,7 @@ def mock_handler():
             },
         },
     ]
+    mock_proxy_server.llm_router.get_model_list.return_value = mock_proxy_server.llm_router.model_list
 
     mock_module = MagicMock()
     mock_module.proxy_server = mock_proxy_server
@@ -207,6 +208,7 @@ async def test_oauth_forwarding_for_anthropic_direct_api():
             },
         },
     ]
+    mock_proxy_server.llm_router.get_model_list.return_value = mock_proxy_server.llm_router.model_list
 
     mock_module = MagicMock()
     mock_module.proxy_server = mock_proxy_server
@@ -268,6 +270,7 @@ async def test_oauth_forwarding_auth_header_mode():
             },
         },
     ]
+    mock_proxy_server.llm_router.get_model_list.return_value = mock_proxy_server.llm_router.model_list
 
     mock_module = MagicMock()
     mock_module.proxy_server = mock_proxy_server
@@ -327,6 +330,7 @@ async def test_oauth_forwarding_default_bearer_clears_api_key():
             },
         },
     ]
+    mock_proxy_server.llm_router.get_model_list.return_value = mock_proxy_server.llm_router.model_list
 
     mock_module = MagicMock()
     mock_module.proxy_server = mock_proxy_server
@@ -378,6 +382,7 @@ async def test_sentinel_key_missing_oat_sources_raises():
             },
         },
     ]
+    mock_proxy_server.llm_router.get_model_list.return_value = mock_proxy_server.llm_router.model_list
 
     mock_module = MagicMock()
     mock_module.proxy_server = mock_proxy_server

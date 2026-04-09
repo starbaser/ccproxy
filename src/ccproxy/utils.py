@@ -1,6 +1,7 @@
 """Utility functions for ccproxy."""
 
 import inspect
+import json
 import secrets
 import socket
 from pathlib import Path
@@ -9,6 +10,31 @@ from typing import Any
 from rich import box
 from rich.console import Console
 from rich.table import Table
+
+
+def parse_session_id(user_id: str) -> str | None:
+    """Extract session_id from Claude Code's user_id field.
+
+    Supports two formats:
+    - JSON object: {"device_id": "...", "account_uuid": "...", "session_id": "<uuid>"}
+    - Legacy compound string: user_{hash}_account_{uuid}_session_{uuid}
+    """
+    if user_id.startswith("{"):
+        try:
+            obj = json.loads(user_id)
+            if isinstance(obj, dict):
+                sid = obj.get("session_id")
+                if sid:
+                    return str(sid)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    if "_session_" in user_id:
+        parts = user_id.split("_session_")
+        if len(parts) == 2:
+            return parts[1]
+
+    return None
 
 
 def get_templates_dir() -> Path:

@@ -258,40 +258,6 @@ class TestGetDirectionEdgeCases:
         assert direction == "inbound"
 
 
-class TestTruncateBody:
-    """Tests for _truncate_body."""
-
-    def test_none_body(self) -> None:
-        addon = InspectorAddon(config=InspectorConfig())
-        assert addon._truncate_body(None) is None
-
-    def test_empty_body(self) -> None:
-        addon = InspectorAddon(config=InspectorConfig())
-        assert addon._truncate_body(b"") is None
-
-    def test_max_size_zero_returns_full(self) -> None:
-        addon = InspectorAddon(config=InspectorConfig(max_body_size=0))
-        body = b"A" * 100
-        assert addon._truncate_body(body) == body
-
-    def test_under_limit(self) -> None:
-        addon = InspectorAddon(config=InspectorConfig(max_body_size=200))
-        body = b"hello world"
-        assert addon._truncate_body(body) == body
-
-    def test_over_limit(self) -> None:
-        addon = InspectorAddon(config=InspectorConfig(max_body_size=5))
-        body = b"hello world"
-        result = addon._truncate_body(body)
-        assert result == b"hello"
-        assert len(result) == 5  # type: ignore[arg-type]
-
-    def test_exact_limit(self) -> None:
-        addon = InspectorAddon(config=InspectorConfig(max_body_size=11))
-        body = b"hello world"
-        assert addon._truncate_body(body) == body
-
-
 class TestExtractSessionId:
     """Tests for _extract_session_id."""
 

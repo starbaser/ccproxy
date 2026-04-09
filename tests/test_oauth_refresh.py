@@ -297,6 +297,7 @@ class TestHandler401Refresh:
         mock_proxy_server = MagicMock()
         mock_proxy_server.llm_router = MagicMock()
         mock_proxy_server.llm_router.model_list = []
+        mock_proxy_server.llm_router.get_model_list.return_value = []
         mock_module = MagicMock()
         mock_module.proxy_server = mock_proxy_server
 
@@ -331,6 +332,7 @@ class TestHandler401Refresh:
         mock_proxy_server = MagicMock()
         mock_proxy_server.llm_router = MagicMock()
         mock_proxy_server.llm_router.model_list = []
+        mock_proxy_server.llm_router.get_model_list.return_value = []
         mock_module = MagicMock()
         mock_module.proxy_server = mock_proxy_server
 
@@ -361,6 +363,7 @@ class TestBackgroundRefreshTask:
         mock_proxy_server = MagicMock()
         mock_proxy_server.llm_router = MagicMock()
         mock_proxy_server.llm_router.model_list = []
+        mock_proxy_server.llm_router.get_model_list.return_value = []
         mock_module = MagicMock()
         mock_module.proxy_server = mock_proxy_server
 
@@ -403,6 +406,7 @@ class TestPostCallFailureHook:
         mock_proxy_server = MagicMock()
         mock_proxy_server.llm_router = MagicMock()
         mock_proxy_server.llm_router.model_list = []
+        mock_proxy_server.llm_router.get_model_list.return_value = []
         mock_module = MagicMock()
         mock_module.proxy_server = mock_proxy_server
 
@@ -434,6 +438,7 @@ class TestPostCallFailureHook:
         mock_proxy_server = MagicMock()
         mock_proxy_server.llm_router = MagicMock()
         mock_proxy_server.llm_router.model_list = []
+        mock_proxy_server.llm_router.get_model_list.return_value = []
         mock_module = MagicMock()
         mock_module.proxy_server = mock_proxy_server
 
@@ -472,6 +477,7 @@ class TestPostCallFailureHook:
         mock_proxy_server = MagicMock()
         mock_proxy_server.llm_router = MagicMock()
         mock_proxy_server.llm_router.model_list = []
+        mock_proxy_server.llm_router.get_model_list.return_value = []
         mock_module = MagicMock()
         mock_module.proxy_server = mock_proxy_server
 
@@ -511,6 +517,7 @@ class TestPostCallFailureHook:
         mock_proxy_server = MagicMock()
         mock_proxy_server.llm_router = MagicMock()
         mock_proxy_server.llm_router.model_list = []
+        mock_proxy_server.llm_router.get_model_list.return_value = []
         mock_module = MagicMock()
         mock_module.proxy_server = mock_proxy_server
 
@@ -570,6 +577,7 @@ class TestPostCallFailureHook:
         mock_proxy_server = MagicMock()
         mock_proxy_server.llm_router = MagicMock()
         mock_proxy_server.llm_router.model_list = []
+        mock_proxy_server.llm_router.get_model_list.return_value = []
         mock_module = MagicMock()
         mock_module.proxy_server = mock_proxy_server
 
@@ -615,6 +623,7 @@ class TestIsAuthException:
         mock_proxy_server = MagicMock()
         mock_proxy_server.llm_router = MagicMock()
         mock_proxy_server.llm_router.model_list = []
+        mock_proxy_server.llm_router.get_model_list.return_value = []
         mock_module = MagicMock()
         mock_module.proxy_server = mock_proxy_server
 
@@ -640,6 +649,7 @@ class TestIsAuthException:
         mock_proxy_server = MagicMock()
         mock_proxy_server.llm_router = MagicMock()
         mock_proxy_server.llm_router.model_list = []
+        mock_proxy_server.llm_router.get_model_list.return_value = []
         mock_module = MagicMock()
         mock_module.proxy_server = mock_proxy_server
 
@@ -662,6 +672,7 @@ class TestIsAuthException:
         mock_proxy_server = MagicMock()
         mock_proxy_server.llm_router = MagicMock()
         mock_proxy_server.llm_router.model_list = []
+        mock_proxy_server.llm_router.get_model_list.return_value = []
         mock_module = MagicMock()
         mock_module.proxy_server = mock_proxy_server
 
@@ -700,6 +711,7 @@ class TestExtractProviderFromRequestData:
         mock_proxy_server = MagicMock()
         mock_proxy_server.llm_router = MagicMock()
         mock_proxy_server.llm_router.model_list = []
+        mock_proxy_server.llm_router.get_model_list.return_value = []
         mock_module = MagicMock()
         mock_module.proxy_server = mock_proxy_server
 
@@ -729,6 +741,7 @@ class TestExtractProviderFromRequestData:
         mock_proxy_server = MagicMock()
         mock_proxy_server.llm_router = MagicMock()
         mock_proxy_server.llm_router.model_list = []
+        mock_proxy_server.llm_router.get_model_list.return_value = []
         mock_module = MagicMock()
         mock_module.proxy_server = mock_proxy_server
 

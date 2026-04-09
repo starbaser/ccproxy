@@ -2,7 +2,7 @@
 
 import logging
 import threading
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,6 @@ class ModelRouter:
             else:
                 logger.error("No models were loaded from LiteLLM proxy - check configuration")
 
-                # TODO: You should use the API. White LLM already has the loaded model. So if you use it properly, whatever LightLLM class, then you can just load it
     def _load_model_mapping(self) -> None:
         """Load and parse model mapping from LiteLLM proxy config."""
         with self._lock:
@@ -59,7 +58,7 @@ class ModelRouter:
             from litellm.proxy import proxy_server
 
             if proxy_server and hasattr(proxy_server, "llm_router") and proxy_server.llm_router:
-                model_list = proxy_server.llm_router.model_list or []
+                model_list = cast(list[dict[str, Any]], proxy_server.llm_router.get_model_list() or [])
                 logger.debug(f"Loaded {len(model_list)} models from LiteLLM proxy server")
             else:
                 model_list = []

@@ -9,6 +9,7 @@ def create_mock_proxy_server(model_list: list[dict[str, Any]]) -> MagicMock:
     mock_proxy_server = MagicMock()
     mock_proxy_server.llm_router = MagicMock()
     mock_proxy_server.llm_router.model_list = model_list
+    mock_proxy_server.llm_router.get_model_list.return_value = model_list
     return mock_proxy_server
 
 

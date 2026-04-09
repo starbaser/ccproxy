@@ -24,6 +24,7 @@ class TestModelRouter:
         mock_proxy_server = MagicMock()
         mock_proxy_server.llm_router = MagicMock()
         mock_proxy_server.llm_router.model_list = model_list
+        mock_proxy_server.llm_router.get_model_list.return_value = model_list
 
         # Patch the import where it's used and return both router and patcher
         patcher = patch("litellm.proxy.proxy_server", mock_proxy_server)
@@ -218,6 +219,7 @@ class TestModelRouter:
         mock_proxy_server = MagicMock()
         mock_proxy_server.llm_router = MagicMock()
         mock_proxy_server.llm_router.model_list = None
+        mock_proxy_server.llm_router.get_model_list.return_value = None
 
         mock_module = MagicMock()
         mock_module.proxy_server = mock_proxy_server
@@ -364,6 +366,7 @@ class TestModelRouter:
         mock_proxy_server = MagicMock()
         mock_proxy_server.llm_router = MagicMock()
         mock_proxy_server.llm_router.model_list = test_model_list
+        mock_proxy_server.llm_router.get_model_list.return_value = test_model_list
 
         # Patch the import throughout the test
         with patch("litellm.proxy.proxy_server", mock_proxy_server):
@@ -425,6 +428,7 @@ class TestModelRouter:
 
         with patch("litellm.proxy.proxy_server") as mock_proxy:
             mock_proxy.llm_router.model_list = test_model_list
+            mock_proxy.llm_router.get_model_list.return_value = test_model_list
 
             router = ModelRouter()
 

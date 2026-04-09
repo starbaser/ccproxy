@@ -22,6 +22,7 @@ from ccproxy.inspector.flow_store import (
     create_flow_record,
     get_flow_record,
 )
+from ccproxy.utils import parse_session_id
 
 if TYPE_CHECKING:
     from ccproxy.inspector.telemetry import InspectorTracer
@@ -68,16 +69,6 @@ class InspectorAddon:
 
         return None
 
-    def _truncate_body(self, body: bytes | None) -> bytes | None:
-        if not body:
-            return None
-        if self.config.max_body_size > 0 and len(body) > self.config.max_body_size:
-            return body[: self.config.max_body_size]
-        return body
-
-    def _serialize_headers(self, headers: Any) -> dict[str, str]:
-        return {str(k): str(v) for k, v in headers.items()}
-
     def _extract_session_id(self, request: http.Request) -> str | None:
         """Extract session_id from Claude Code's metadata.user_id field."""
         if not request.content:
@@ -96,20 +87,7 @@ class InspectorAddon:
         if not user_id:
             return None
 
-        if user_id.startswith("{"):
-            try:
-                user_id_obj = json.loads(user_id)
-                if isinstance(user_id_obj, dict) and user_id_obj.get("session_id"):  # pyright: ignore[reportUnknownMemberType]
-                    return cast(str, user_id_obj["session_id"])
-            except (json.JSONDecodeError, TypeError):
-                pass
-
-        if "_session_" in user_id:
-            parts = user_id.split("_session_")
-            if len(parts) == 2:
-                return parts[1]
-
-        return None
+        return parse_session_id(user_id)
 
     def _maybe_forward(self, flow: http.HTTPFlow, direction: Direction, host: str) -> None:
         """Forward CLI WireGuard LLM API traffic to LiteLLM.
@@ -139,7 +117,7 @@ class InspectorAddon:
         if record is None:
             flow_id, record = create_flow_record(direction)
             flow.request.headers[FLOW_ID_HEADER] = flow_id
-            record.original_headers = self._serialize_headers(flow.request.headers)
+            record.original_headers = dict(flow.request.headers.items())  # type: ignore[no-untyped-call]
 
         flow.metadata[InspectorMeta.DIRECTION] = direction
         flow.metadata[InspectorMeta.RECORD] = record
