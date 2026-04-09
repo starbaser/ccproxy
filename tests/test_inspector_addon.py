@@ -243,17 +243,6 @@ class TestGetDirectionEdgeCases:
             wg_gateway_port=wg_gateway_port,
         )
 
-    def test_no_client_conn_returns_none(self) -> None:
-        addon = self._make_addon()
-        flow = MagicMock(spec=[])
-        assert addon._get_direction(flow) is None  # type: ignore[arg-type]
-
-    def test_none_client_conn_returns_none(self) -> None:
-        addon = self._make_addon()
-        flow = MagicMock()
-        flow.client_conn = None
-        assert addon._get_direction(flow) is None
-
     def test_regular_mode_returns_none(self) -> None:
         from mitmproxy.proxy.mode_specs import ProxyMode as MitmProxyMode
 

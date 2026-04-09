@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from ccproxy.constants import ANTHROPIC_BETA_HEADERS
-from ccproxy.inspector.routing import InspectorRouter
+from ccproxy.inspector.router import InspectorRouter
 
 
 def _make_outbound_flow(

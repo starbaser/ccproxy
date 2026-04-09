@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from typing import Any
 
 import yaml
 from mitmproxy import http
@@ -23,7 +24,7 @@ from mitmproxy.addonmanager import Loader
 
 from ccproxy.config import InspectorConfig, OtelConfig
 from ccproxy.inspector.addon import InspectorAddon
-from ccproxy.inspector.routing import InspectorRouter
+from ccproxy.inspector.router import InspectorRouter
 
 # Configure logging
 logging.basicConfig(
@@ -93,8 +94,8 @@ class InspectorScript:
         ccproxy_yaml = Path(config_dir) / "ccproxy.yaml"
         if ccproxy_yaml.exists():
             with ccproxy_yaml.open() as f:
-                data = yaml.safe_load(f) or {}
-            otel_data = data.get("ccproxy", {}).get("otel", {})
+                data: dict[str, Any] = yaml.safe_load(f) or {}
+            otel_data: dict[str, Any] = data.get("ccproxy", {}).get("otel", {})
             self._otel_config = OtelConfig(**otel_data)
         else:
             self._otel_config = OtelConfig()

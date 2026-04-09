@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ccproxy.inspector.routing import FlowMeta, InspectorRouter, InterceptedAPI, RouteType
+from ccproxy.inspector.router import FlowMeta, InspectorRouter, InterceptedAPI, RouteType
 
 
 def _make_flow(host: str = "example.com", path: str = "/api/test", method: str = "GET") -> MagicMock:

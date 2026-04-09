@@ -1,4 +1,4 @@
-"""Mitmproxy addon for HTTP/HTTPS traffic capture.
+"""Inspector addon for HTTP/HTTPS traffic capture with ccproxy
 
 Captures all HTTP traffic flowing through reverse, forward, and WireGuard
 proxy listeners. Mode is detected per-flow via mitmproxy's multi-mode
@@ -55,9 +55,6 @@ class InspectorAddon:
 
     def _get_direction(self, flow: http.HTTPFlow) -> Direction | None:
         """Detect traffic direction from the proxy mode that accepted this flow."""
-        if not hasattr(flow, "client_conn") or flow.client_conn is None:
-            return None
-
         mode = flow.client_conn.proxy_mode
 
         if isinstance(mode, ReverseMode):
@@ -95,14 +92,14 @@ class InspectorAddon:
         if not isinstance(metadata, dict):
             return None
 
-        user_id: str = metadata.get("user_id", "")
+        user_id = str(metadata.get("user_id", ""))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
         if not user_id:
             return None
 
         if user_id.startswith("{"):
             try:
                 user_id_obj = json.loads(user_id)
-                if isinstance(user_id_obj, dict) and user_id_obj.get("session_id"):
+                if isinstance(user_id_obj, dict) and user_id_obj.get("session_id"):  # pyright: ignore[reportUnknownMemberType]
                     return cast(str, user_id_obj["session_id"])
             except (json.JSONDecodeError, TypeError):
                 pass
@@ -137,7 +134,7 @@ class InspectorAddon:
         if direction is None:
             return
 
-        flow_id_header = flow.request.headers.get(FLOW_ID_HEADER)
+        flow_id_header: str | None = cast("str | None", flow.request.headers.get(FLOW_ID_HEADER))  # pyright: ignore[reportUnknownMemberType]
         record: FlowRecord | None = None
 
         if flow_id_header:

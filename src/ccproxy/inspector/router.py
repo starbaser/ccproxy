@@ -41,7 +41,7 @@ class InspectorRouter(InterceptedAPI):
         for h, parser, handler in routes:
             if h is not None and h != host:
                 continue
-            parse_result = parser.parse(path)
+            parse_result = parser.parse(path)  # pyright: ignore[reportUnknownMemberType]
             if parse_result is not None:
                 return handler, parse_result
         return None, None

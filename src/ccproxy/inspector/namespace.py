@@ -22,7 +22,7 @@ import tempfile
 import threading
 from pathlib import Path
 
-from ccproxy.inspector.process import _pipe_output
+from ccproxy.inspector.process import _pipe_output  # pyright: ignore[reportPrivateUsage]
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ def check_namespace_capabilities() -> list[str]:
     Returns empty list if all capabilities are present, or a list of
     human-readable problem descriptions.
     """
-    problems = []
+    problems: list[str] = []
 
     userns_path = Path("/proc/sys/kernel/unprivileged_userns_clone")
     if userns_path.exists():
@@ -441,7 +441,7 @@ def create_gateway_namespace(wg_client_conf: str, main_port: int) -> NamespaceCo
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         )
-        from ccproxy.inspector.process import _pipe_output
+        from ccproxy.inspector.process import _pipe_output  # pyright: ignore[reportPrivateUsage]
         _pipe_output(slirp_proc, "slirp4netns-gw")
 
         os.close(ready_w)
@@ -515,8 +515,8 @@ def run_in_namespace(ctx: NamespaceContext, command: list[str], env: dict[str, s
         "--net", "--user", "--preserve-credentials",
         "--", *command,
     ]
+    proc = subprocess.Popen(nsenter_cmd, env=env)  # noqa: S603
     try:
-        proc = subprocess.Popen(nsenter_cmd, env=env)  # noqa: S603
         return proc.wait()
     except KeyboardInterrupt:
         proc.terminate()

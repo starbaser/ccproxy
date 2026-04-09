@@ -6,7 +6,7 @@ import pytest
 
 from ccproxy.constants import OAUTH_SENTINEL_PREFIX
 from ccproxy.inspector.flow_store import FlowRecord, InspectorMeta, create_flow_record
-from ccproxy.inspector.routing import InspectorRouter
+from ccproxy.inspector.router import InspectorRouter
 
 
 def _make_inbound_flow(

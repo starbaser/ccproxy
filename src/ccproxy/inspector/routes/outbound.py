@@ -7,7 +7,7 @@ outbound leg (LiteLLM → provider API).
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from ccproxy.constants import ANTHROPIC_BETA_HEADERS
 from ccproxy.inspector.flow_store import FLOW_ID_HEADER, FlowRecord, InspectorMeta, get_flow_record
@@ -15,7 +15,7 @@ from ccproxy.inspector.flow_store import FLOW_ID_HEADER, FlowRecord, InspectorMe
 if TYPE_CHECKING:
     from mitmproxy.http import HTTPFlow
 
-    from ccproxy.inspector.routing import InspectorRouter
+    from ccproxy.inspector.router import InspectorRouter
 
 logger = logging.getLogger(__name__)
 
@@ -26,21 +26,21 @@ def _is_outbound(flow: HTTPFlow) -> bool:
 
 def register_outbound_routes(router: InspectorRouter) -> None:
     """Register all outbound route handlers on the given router."""
-    from ccproxy.inspector.routing import RouteType
+    from ccproxy.inspector.router import RouteType
 
     @router.route("/{path}", rtype=RouteType.REQUEST)
-    def ensure_beta_headers(flow: HTTPFlow, **kwargs: object) -> None:
+    def ensure_beta_headers(flow: HTTPFlow, **kwargs: object) -> None:  # pyright: ignore[reportUnusedFunction]
         if not _is_outbound(flow):
             return
 
-        flow_id = flow.request.headers.get(FLOW_ID_HEADER)
+        flow_id: str | None = cast("str | None", flow.request.headers.get(FLOW_ID_HEADER))  # pyright: ignore[reportUnknownMemberType]
         record: FlowRecord | None = None
         if flow_id:
             record = get_flow_record(flow_id)
             if record:
                 flow.metadata[InspectorMeta.RECORD] = record
 
-        existing = flow.request.headers.get("anthropic-beta")
+        existing: str | None = cast("str | None", flow.request.headers.get("anthropic-beta"))  # pyright: ignore[reportUnknownMemberType]
         if existing is None:
             return
 
@@ -49,7 +49,7 @@ def register_outbound_routes(router: InspectorRouter) -> None:
         flow.request.headers["anthropic-beta"] = ",".join(merged)
 
     @router.route("/{path}", rtype=RouteType.RESPONSE)
-    def observe_auth_failure(flow: HTTPFlow, **kwargs: object) -> None:
+    def observe_auth_failure(flow: HTTPFlow, **kwargs: object) -> None:  # pyright: ignore[reportUnusedFunction]
         if not _is_outbound(flow):
             return
 

@@ -124,14 +124,6 @@ venv = ".venv"
 stubPath = "stubs"
 reportMissingModuleSource = "none"
 
-[[tool.pyright.overrides]]
-module = "opentelemetry.*"
-reportMissingImports = false
-
-[[tool.pyright.overrides]]
-module = "langfuse.*"
-reportMissingImports = false
-
 [tool.ty]
 python_version = "3.12"
 

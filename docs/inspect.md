@@ -137,7 +137,7 @@ xepor is vendored at version 0.6.0 with two compatibility fixes applied.
 ### InspectorRouter
 
 `InspectorRouter` is a subclass of xepor's `InterceptedAPI` defined in
-`src/ccproxy/inspector/routing.py`. It adds three things:
+`src/ccproxy/inspector/router.py`. It adds three things:
 
 **1. `name` attribute** — mitmproxy's `AddonManager` uses addon names to detect collisions.
 Multiple `InterceptedAPI` instances would all have the same default name, causing the second
@@ -618,7 +618,7 @@ not exist (stale venv after a Python upgrade, for example), it falls back in ord
 |------|------|
 | `src/ccproxy/inspector/addon.py` | `InspectorAddon` — direction detection, flow store integration, OTel delegation |
 | `src/ccproxy/inspector/flow_store.py` | `FlowRecord`, `AuthMeta`, `OtelMeta`, `InspectorMeta`, TTL store |
-| `src/ccproxy/inspector/routing.py` | `InspectorRouter` — xepor subclass with mitmproxy 12.x fixes |
+| `src/ccproxy/inspector/router.py` | `InspectorRouter` — xepor subclass with mitmproxy 12.x fixes |
 | `src/ccproxy/inspector/script.py` | `InspectorScript` — addon chain composition, mitmproxy lifecycle |
 | `src/ccproxy/inspector/routes/inbound.py` | OAuth sentinel detection and token substitution |
 | `src/ccproxy/inspector/routes/outbound.py` | Beta header merge, auth failure observation |

@@ -8,7 +8,7 @@ via reverse proxy). Single entry point for auth.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from mitmproxy.proxy.mode_specs import ReverseMode, WireGuardMode
 
@@ -18,7 +18,7 @@ from ccproxy.inspector.flow_store import AuthMeta, FlowRecord, InspectorMeta
 if TYPE_CHECKING:
     from mitmproxy.http import HTTPFlow
 
-    from ccproxy.inspector.routing import InspectorRouter
+    from ccproxy.inspector.router import InspectorRouter
 
 logger = logging.getLogger(__name__)
 
@@ -52,16 +52,16 @@ def _get_oauth_auth_header(provider: str) -> str | None:
 
 def register_inbound_routes(router: InspectorRouter) -> None:
     """Register all inbound route handlers on the given router."""
-    from ccproxy.inspector.routing import RouteType
+    from ccproxy.inspector.router import RouteType
 
     @router.route("/{path}", rtype=RouteType.REQUEST)
-    def handle_inbound(flow: HTTPFlow, **kwargs: object) -> None:
+    def handle_inbound(flow: HTTPFlow, **kwargs: object) -> None:  # pyright: ignore[reportUnusedFunction]
         if not _is_inbound(flow):
             return
 
         record: FlowRecord | None = flow.metadata.get(InspectorMeta.RECORD)
 
-        api_key = flow.request.headers.get("x-api-key") or ""
+        api_key: str = cast("str | None", flow.request.headers.get("x-api-key")) or ""  # pyright: ignore[reportUnknownMemberType]
         if not api_key.startswith(OAUTH_SENTINEL_PREFIX):
             return
 
