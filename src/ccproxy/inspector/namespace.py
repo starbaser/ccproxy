@@ -22,9 +22,22 @@ import tempfile
 import threading
 from pathlib import Path
 
-from ccproxy.inspector.process import _pipe_output  # pyright: ignore[reportPrivateUsage]
-
 logger = logging.getLogger(__name__)
+
+
+def _pipe_output(proc: subprocess.Popen[bytes], tag: str) -> threading.Thread:
+    """Forward subprocess stdout to stderr with a [tag] prefix."""
+    import sys
+
+    def reader() -> None:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            sys.stderr.buffer.write(f"[{tag}] ".encode() + line)
+            sys.stderr.buffer.flush()
+
+    t = threading.Thread(target=reader, daemon=True)
+    t.start()
+    return t
 
 
 def check_namespace_capabilities() -> list[str]:
@@ -441,7 +454,6 @@ def create_gateway_namespace(wg_client_conf: str, main_port: int) -> NamespaceCo
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         )
-        from ccproxy.inspector.process import _pipe_output  # pyright: ignore[reportPrivateUsage]
         _pipe_output(slirp_proc, "slirp4netns-gw")
 
         os.close(ready_w)
@@ -523,6 +535,34 @@ def run_in_namespace(ctx: NamespaceContext, command: list[str], env: dict[str, s
         try:
             return proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
+            proc.kill()
+            return 130
+
+
+async def run_in_namespace_async(
+    ctx: NamespaceContext, command: list[str], env: dict[str, str],
+) -> int:
+    """Run a command inside the confined namespace without blocking the event loop.
+
+    Async variant of run_in_namespace() for use inside asyncio.run() where
+    blocking proc.wait() would starve the event loop.
+    """
+    import asyncio
+
+    nsenter_cmd = [
+        "nsenter",
+        "-t", str(ctx.ns_pid),
+        "--net", "--user", "--preserve-credentials",
+        "--", *command,
+    ]
+    proc = await asyncio.create_subprocess_exec(*nsenter_cmd, env=env)
+    try:
+        return await proc.wait()
+    except asyncio.CancelledError:
+        proc.terminate()
+        try:
+            return await asyncio.wait_for(proc.wait(), timeout=5)
+        except TimeoutError:
             proc.kill()
             return 130
 

@@ -25,9 +25,10 @@ class TestIsCcproxyProcess:
         cmdline = "/usr/bin/python /usr/bin/litellm --config /home/user/.ccproxy/config.yaml --port 4000"
         assert _is_ccproxy_process(cmdline) is True
 
-    def test_mitmweb_with_script(self):
+    def test_mitmweb_no_longer_detected(self):
+        """mitmweb runs in-process now — no separate subprocess to detect."""
         cmdline = "/usr/bin/mitmweb --listen-port 4000 -s /home/user/ccproxy/inspector/script.py"
-        assert _is_ccproxy_process(cmdline) is True
+        assert _is_ccproxy_process(cmdline) is False
 
     def test_unrelated_litellm(self):
         cmdline = "/usr/bin/python /usr/bin/litellm --config /etc/litellm/config.yaml"

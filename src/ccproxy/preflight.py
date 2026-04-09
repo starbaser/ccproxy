@@ -19,8 +19,6 @@ logger = logging.getLogger(__name__)
 # Patterns that identify ccproxy-managed processes via /proc/*/cmdline
 _CCPROXY_PATTERNS = [
     ("litellm", ".ccproxy/config.yaml"),
-    ("mitmweb", "ccproxy/inspector/script.py"),
-    ("mitmdump", "ccproxy/inspector/script.py"),
 ]
 
 

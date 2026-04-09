@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from mitmproxy import http
@@ -41,6 +40,7 @@ class InspectorAddon:
         traffic_source: str | None = None,
         wg_cli_port: int | None = None,
         wg_gateway_port: int | None = None,
+        litellm_port: int = 4000,
     ) -> None:
         self.config = config
         self.traffic_source = traffic_source
@@ -48,6 +48,7 @@ class InspectorAddon:
         self._forward_domains: set[str] = set(config.forward_domains)
         self._wg_cli_port = wg_cli_port
         self._wg_gateway_port = wg_gateway_port
+        self._litellm_port = litellm_port
 
     def set_tracer(self, tracer: InspectorTracer) -> None:
         self.tracer = tracer
@@ -121,12 +122,11 @@ class InspectorAddon:
             return
         if not isinstance(flow.client_conn.proxy_mode, WireGuardMode):
             return
-        litellm_port = int(os.environ.get("CCPROXY_LITELLM_PORT", "4000"))
         flow.request.headers["X-Forwarded-Host"] = host
         flow.request.host = "localhost"
-        flow.request.port = litellm_port
+        flow.request.port = self._litellm_port
         flow.request.scheme = "http"
-        logger.info("Forwarding %s → localhost:%d", host, litellm_port)
+        logger.info("Forwarding %s → localhost:%d", host, self._litellm_port)
 
     async def request(self, flow: http.HTTPFlow) -> None:
         direction = self._get_direction(flow)

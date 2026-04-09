@@ -78,15 +78,11 @@ class TestRequestMethod:
 class TestWireGuardForwarding:
     """Tests for WireGuard LLM API domain forwarding to LiteLLM."""
 
-    @pytest.fixture(autouse=True)
-    def _set_litellm_port(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("CCPROXY_LITELLM_PORT", "4001")
-
     @pytest.mark.asyncio
     async def test_forwards_anthropic_to_litellm(self) -> None:
         """WireGuard flow to api.anthropic.com should be forwarded to LiteLLM."""
         config = InspectorConfig()
-        addon = InspectorAddon(config=config)
+        addon = InspectorAddon(config=config, litellm_port=4001)
 
         flow = _make_wg_flow(host="api.anthropic.com")
         await addon.request(flow)
@@ -100,7 +96,7 @@ class TestWireGuardForwarding:
     async def test_forwards_openai_to_litellm(self) -> None:
         """WireGuard flow to api.openai.com should be forwarded to LiteLLM."""
         config = InspectorConfig()
-        addon = InspectorAddon(config=config)
+        addon = InspectorAddon(config=config, litellm_port=4001)
 
         flow = _make_wg_flow(host="api.openai.com")
         await addon.request(flow)
@@ -126,7 +122,7 @@ class TestWireGuardForwarding:
     async def test_reverse_flow_not_forwarded(self) -> None:
         """Reverse proxy flows should never be forwarded, even for LLM domains."""
         config = InspectorConfig()
-        addon = InspectorAddon(config=config)
+        addon = InspectorAddon(config=config, litellm_port=4001)
 
         flow = _make_mock_flow(reverse=True)
         flow.id = "rev-1"
@@ -147,7 +143,7 @@ class TestWireGuardForwarding:
         config = InspectorConfig(
             forward_domains=["custom-llm.example.com"],
         )
-        addon = InspectorAddon(config=config)
+        addon = InspectorAddon(config=config, litellm_port=4001)
 
         flow = _make_wg_flow(host="custom-llm.example.com")
         await addon.request(flow)
@@ -163,15 +159,12 @@ class TestWireGuardForwarding:
 class TestWireGuardDirectionDetection:
     """Tests for Phase 3 WIREGUARD_CLI vs WIREGUARD_GW detection."""
 
-    @pytest.fixture(autouse=True)
-    def _set_litellm_port(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("CCPROXY_LITELLM_PORT", "4001")
-
     def _make_addon(self, wg_cli_port: int = 51820, wg_gateway_port: int = 51821) -> InspectorAddon:
         return InspectorAddon(
             config=InspectorConfig(),
             wg_cli_port=wg_cli_port,
             wg_gateway_port=wg_gateway_port,
+            litellm_port=4001,
         )
 
     @pytest.mark.asyncio

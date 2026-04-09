@@ -1,19 +1,22 @@
-"""Process management for inspector traffic capture."""
+"""In-process mitmproxy management for inspector traffic capture.
+
+Embeds mitmweb via the WebMaster API instead of launching a subprocess.
+Addons are registered as Python objects with direct access to ccproxy config.
+"""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import secrets
 import socket
-import subprocess
-import sys
-import threading
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from ccproxy.config import InspectorConfig, MitmproxyOptions
+    from mitmproxy.proxy.mode_servers import ServerInstance
+    from mitmproxy.tools.web.master import WebMaster
 
 logger = logging.getLogger(__name__)
 
@@ -25,20 +28,6 @@ def _find_free_udp_port() -> int:
         return int(s.getsockname()[1])
 
 
-
-def _pipe_output(proc: subprocess.Popen[bytes], tag: str) -> threading.Thread:
-    """Forward subprocess stdout to stderr with a [tag] prefix."""
-    def reader() -> None:
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            sys.stderr.buffer.write(f"[{tag}] ".encode() + line)
-            sys.stderr.buffer.flush()
-
-    t = threading.Thread(target=reader, daemon=True)
-    t.start()
-    return t
-
-
 def _check_port_alive(host: str, port: int, timeout: float = 0.5) -> bool:
     try:
         with socket.create_connection((host, port), timeout=timeout):
@@ -47,210 +36,236 @@ def _check_port_alive(host: str, port: int, timeout: float = 0.5) -> bool:
         return False
 
 
-def _resolve_mitmproxy_binary(web: bool = False) -> Path:
-    """Resolve the mitmproxy binary path from the current Python environment.
+class ReadySignal:
+    """Mitmproxy addon that signals when servers are bound and running.
 
-    Args:
-        web: Use mitmweb instead of mitmdump
-
-    Returns:
-        Path to the binary
-
-    Raises:
-        SystemExit: If binary not found
+    mitmproxy's RunningHook fires after setup_servers() completes — all
+    listeners (reverse, WireGuard) are bound by the time running() is called.
+    This addon bridges that internal hook into an asyncio.Event that external
+    code can await.
     """
-    venv_bin = Path(sys.executable).parent
-    binary_name = "mitmweb" if web else "mitmdump"
-    binary_path = venv_bin / binary_name
 
-    if not binary_path.exists():
-        logger.error(f"{binary_name} not found at {binary_path}")
-        logger.error("Make sure mitmproxy is installed: uv add mitmproxy")
-        sys.exit(1)
+    def __init__(self) -> None:
+        self.event = asyncio.Event()
 
-    return binary_path
+    async def running(self) -> None:
+        self.event.set()
 
 
-def _resolve_addon_script() -> Path:
-    """Resolve the mitmproxy addon script path.
+def _build_opts(
+    litellm_port: int,
+    wg_cli_conf_path: Path,
+    wg_gateway_conf_path: Path,
+    reverse_port: int,
+    wg_cli_port: int,
+    wg_gateway_port: int,
+    web_token: str,
+) -> Any:
+    """Build mitmproxy Options from the singleton config."""
+    from mitmproxy.options import Options
 
-    Returns:
-        Path to script.py
+    from ccproxy.config import MitmproxyOptions, get_config
 
-    Raises:
-        SystemExit: If script not found
-    """
-    script_path = Path(__file__).parent / "script.py"
-    if not script_path.exists():
-        logger.error(f"Addon script not found at {script_path}")
-        sys.exit(1)
-    return script_path
+    config = get_config()
+    inspector = config.inspector
 
+    opts = Options(
+        mode=[
+            f"reverse:http://localhost:{litellm_port}@{reverse_port}",
+            f"wireguard:{wg_cli_conf_path}@{wg_cli_port}",
+            f"wireguard:{wg_gateway_conf_path}@{wg_gateway_port}",
+        ],
+        web_port=inspector.port,
+        web_host=inspector.mitmproxy.web_host,
+        web_open_browser=inspector.mitmproxy.web_open_browser,
+        web_password=web_token,
+    )
 
-_WEB_FIELDS = {"web_host", "web_password", "web_open_browser"}
-
-
-def _build_mitmproxy_set_args(opts: MitmproxyOptions) -> list[str]:
-    """Convert MitmproxyOptions fields to mitmproxy --set arguments.
-
-    Web UI fields (web_host, web_password, web_open_browser) are excluded —
-    they use dedicated CLI flags handled by the caller.
-    """
-    from ccproxy.config import MitmproxyOptions
-
-    args: list[str] = []
+    skip = {"web_host", "web_password", "web_open_browser"}
     for field_name in MitmproxyOptions.model_fields:
-        if field_name in _WEB_FIELDS:
+        if field_name in skip:
             continue
-        value = getattr(opts, field_name)
-        if value is None:
-            continue
-        if isinstance(value, list):
-            if value:
-                args += ["--set", f"{field_name}={','.join(value)}"]
-            continue
-        if isinstance(value, bool):
-            args += ["--set", f"{field_name}={'true' if value else 'false'}"]
-        else:
-            args += ["--set", f"{field_name}={value}"]
-    return args
+        value = getattr(inspector.mitmproxy, field_name)
+        if value is not None:
+            opts.update(**{field_name: value})  # type: ignore[no-untyped-call]
+
+    return opts
 
 
+def _make_inbound_router() -> Any:
+    from ccproxy.inspector.router import InspectorRouter
+    from ccproxy.inspector.routes.inbound import register_inbound_routes
 
-def _build_env(
-    config_dir: Path,
-    *,
-    reverse_port: int | None = None,
-    litellm_port: int | None = None,
-    wg_cli_port: int | None = None,
-    wg_gateway_port: int | None = None,
-) -> dict[str, str]:
-    """Build environment variables for the mitmweb subprocess."""
-    env = os.environ.copy()
-    env["CCPROXY_CONFIG_DIR"] = str(config_dir)
-
-    if reverse_port is not None:
-        env["CCPROXY_INSPECTOR_REVERSE_PORT"] = str(reverse_port)
-    if litellm_port is not None:
-        env["CCPROXY_LITELLM_PORT"] = str(litellm_port)
-    if wg_cli_port is not None:
-        env["CCPROXY_INSPECTOR_WG_CLI_PORT"] = str(wg_cli_port)
-    if wg_gateway_port is not None:
-        env["CCPROXY_INSPECTOR_WG_GATEWAY_PORT"] = str(wg_gateway_port)
-
-    return env
+    router = InspectorRouter(
+        name="ccproxy_inbound", request_passthrough=True, response_passthrough=True,
+    )
+    register_inbound_routes(router)
+    return router
 
 
-def _launch_process(
-    cmd: list[str],
-    env: dict[str, str],
-    description: str,
-) -> subprocess.Popen[bytes]:
-    """Launch a mitmproxy subprocess and return the Popen object.
+def _make_outbound_router() -> Any:
+    from ccproxy.inspector.router import InspectorRouter
+    from ccproxy.inspector.routes.outbound import register_outbound_routes
 
-    Args:
-        cmd: Command and arguments
-        env: Environment variables
-        description: Human-readable description for log messages
+    router = InspectorRouter(
+        name="ccproxy_outbound", request_passthrough=True, response_passthrough=True,
+    )
+    register_outbound_routes(router)
+    return router
 
-    Returns:
-        The running subprocess as a Popen object
+
+def _build_addons(
+    litellm_port: int,
+    wg_cli_port: int,
+    wg_gateway_port: int,
+) -> list[Any]:
+    """Build the addon chain from the singleton config.
+
+    Order matters: InspectorAddon (OTel spans) must fire first, then
+    inbound router (OAuth), outbound router (beta headers), then optional
+    PcapAddon.
     """
-    logger.info("Starting %s", description)
+    from ccproxy.config import get_config
+    from ccproxy.inspector.addon import InspectorAddon
+
+    config = get_config()
+    inspector = config.inspector
+    otel = config.otel
+
+    addon = InspectorAddon(
+        config=inspector,
+        traffic_source=os.environ.get("CCPROXY_TRAFFIC_SOURCE") or None,
+        wg_cli_port=wg_cli_port,
+        wg_gateway_port=wg_gateway_port,
+        litellm_port=litellm_port,
+    )
 
     try:
-        process = subprocess.Popen(        # noqa: S603
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            start_new_session=False,
-            env=env,
+        from ccproxy.inspector.telemetry import InspectorTracer
+
+        tracer = InspectorTracer(
+            enabled=otel.enabled,
+            otlp_endpoint=otel.endpoint,
+            service_name=otel.service_name,
         )
-        logger.info("Mitmproxy started with PID %d", process.pid)
-        _pipe_output(process, "inspector")
-        return process
-    except FileNotFoundError:
-        logger.error("mitmproxy command not found")
-        sys.exit(1)
+        addon.set_tracer(tracer)
+        if otel.enabled:
+            logger.info("OTel tracing enabled, exporting to %s", otel.endpoint)
+    except Exception as e:
+        logger.warning("Failed to initialize OTel tracer: %s", e)
+
+    addons: list[Any] = [
+        addon,
+        _make_inbound_router(),
+        _make_outbound_router(),
+    ]
+
+    pcap_file = os.environ.get("CCPROXY_PCAP_FILE")
+    pcap_pipe = os.environ.get("CCPROXY_PCAP_PIPE")
+    if pcap_file or pcap_pipe:
+        from ccproxy.inspector.pcap import PcapAddon
+
+        addons.append(PcapAddon(pcap_file=pcap_file, pcap_pipe=pcap_pipe))
+
+    return addons
 
 
-def start_inspector(
-    config_dir: Path,
-    config: InspectorConfig,
+def get_wg_client_conf(master: WebMaster, keypair_path: Path) -> str | None:
+    """Extract a WireGuard client config from the running proxyserver.
+
+    Matches the WireGuardServerInstance whose mode.data path resolves to
+    the given keypair_path. Returns the WireGuard INI client config string
+    or None if not found.
+    """
+    from mitmproxy.proxy.mode_servers import WireGuardServerInstance
+
+    proxyserver = master.addons.get("proxyserver")  # type: ignore[no-untyped-call]
+    resolved = keypair_path.resolve()
+
+    for server_instance in proxyserver.servers:
+        if not isinstance(server_instance, WireGuardServerInstance):
+            continue
+        if Path(server_instance.mode.data).resolve() == resolved:
+            return server_instance.client_conf()
+
+    return None
+
+
+def get_listen_port(server_instance: ServerInstance) -> int | None:  # type: ignore[type-arg]
+    """Get the actual bound port from a running server instance."""
+    addrs = server_instance.listen_addrs
+    if addrs:
+        return int(addrs[0][1])
+    return None
+
+
+async def run_inspector(
     litellm_port: int,
     *,
     wg_cli_conf_path: Path,
     wg_gateway_conf_path: Path,
-    reverse_port: int | None = None,
-) -> tuple[subprocess.Popen[bytes], str, int, int]:
-    """Start the mitmweb inspector process.
+    reverse_port: int,
+) -> tuple[WebMaster, asyncio.Task[None], str]:
+    """Start the inspector in-process via mitmproxy's WebMaster API.
 
-    Launches mitmweb with three --mode listeners: reverse (external HTTP
-    client-facing), and two wireguard listeners — one for CLI clients (port A)
-    and one for LiteLLM's outbound traffic (port B / gateway).
+    Reads InspectorConfig and OtelConfig from the singleton. Creates and
+    starts a WebMaster with three listeners (reverse + 2x WireGuard),
+    registers all addons directly, and waits for servers to bind.
 
-    Args:
-        config_dir: Runtime configuration directory
-        config: InspectorConfig with all inspector settings
-        litellm_port: Port where LiteLLM is running (runtime-derived)
-        wg_cli_conf_path: Keypair file path for the CLI namespace WireGuard listener
-        wg_gateway_conf_path: Keypair file path for the LiteLLM gateway WireGuard listener
-        reverse_port: Override for reverse listener port (defaults to config.port)
+    Returns after the running() hook fires — all ports are bound and
+    WG configs are readable.
+
+    The caller is responsible for:
+    - Namespace setup using get_wg_client_conf()
+    - Calling master.shutdown() when done
+    - Awaiting the master_task for clean shutdown
 
     Returns:
-        Tuple of (running subprocess, web API auth token, wg_cli_port, wg_gateway_port)
+        (master, master_task, web_token)
     """
+    from mitmproxy.tools.web.master import WebMaster
 
-    mitm_bin = _resolve_mitmproxy_binary(web=True)
-    script_path = _resolve_addon_script()
+    from ccproxy.config import get_config
 
-    rev_port = reverse_port or config.port
+    config = get_config()
+    inspector = config.inspector
+
     wg_cli_port = _find_free_udp_port()
     wg_gateway_port = _find_free_udp_port()
+    web_token = inspector.mitmproxy.web_password or secrets.token_hex(16)
 
-    cmd = [
-        str(mitm_bin),
-        "--mode", f"reverse:http://localhost:{litellm_port}@{rev_port}",
-        "--mode", f"wireguard:{wg_cli_conf_path}@{wg_cli_port}",
-        "--mode", f"wireguard:{wg_gateway_conf_path}@{wg_gateway_port}",
-        "-s", str(script_path),
-        *_build_mitmproxy_set_args(config.mitmproxy),
-        "--web-port", str(config.port),
-        "--web-host", config.mitmproxy.web_host,
-    ]
-
-    if not config.mitmproxy.web_open_browser:
-        cmd.append("--no-web-open-browser")
-
-    web_token = config.mitmproxy.web_password or secrets.token_hex(16)
-    cmd += ["--set", f"web_password={web_token}"]
-
-    env = _build_env(
-        config_dir,
-        reverse_port=rev_port,
-        litellm_port=litellm_port,
-        wg_cli_port=wg_cli_port,
-        wg_gateway_port=wg_gateway_port,
+    opts = _build_opts(
+        litellm_port,
+        wg_cli_conf_path, wg_gateway_conf_path,
+        reverse_port, wg_cli_port, wg_gateway_port,
+        web_token,
     )
 
-    description = (
-        f"mitmweb: reverse@{rev_port} → LiteLLM@{litellm_port}, "
-        f"wg-cli@{wg_cli_port}, wg-gateway@{wg_gateway_port}, "
-        f"UI@{config.port}"
+    master = WebMaster(opts, with_termlog=True)
+
+    ready = ReadySignal()
+    addons = _build_addons(litellm_port, wg_cli_port, wg_gateway_port)
+    master.addons.add(ready, *addons)  # type: ignore[no-untyped-call]
+
+    master_task = asyncio.create_task(master.run())
+
+    try:
+        await asyncio.wait_for(ready.event.wait(), timeout=15)
+    except TimeoutError as err:
+        master.shutdown()  # type: ignore[no-untyped-call]
+        await master_task
+        raise RuntimeError("mitmweb failed to start (timeout waiting for servers to bind)") from err
+
+    logger.info(
+        "Inspector running: reverse@%d → LiteLLM@%d, wg-cli@%d, wg-gateway@%d, UI@%d",
+        reverse_port, litellm_port, wg_cli_port, wg_gateway_port, inspector.port,
     )
 
-    return _launch_process(cmd, env, description), web_token, wg_cli_port, wg_gateway_port
+    return master, master_task, web_token
 
 
 def get_inspector_status() -> dict[str, dict[str, bool | str | None]]:
-    """Get the status of the inspector process via TCP port probe.
-
-    Probes the mitmweb UI port (InspectorConfig.port) to determine
-    whether the inspector is running.
-
-    Returns:
-        Dictionary with status information
-    """
+    """Get the status of the inspector process via TCP port probe."""
     from ccproxy.config import get_config
 
     config = get_config()
