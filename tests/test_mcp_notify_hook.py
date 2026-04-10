@@ -13,12 +13,13 @@ from ccproxy.pipeline.context import Context
 
 def make_ctx(messages=None, session_id=None):
     body: dict = {"model": "test-model", "messages": messages if messages is not None else []}
-    if session_id:
-        body["metadata"] = {"session_id": session_id}
     flow = MagicMock()
     flow.id = "test-id"
     flow.request.content = json.dumps(body).encode()
     flow.request.headers = {}
+    flow.metadata = {}
+    if session_id:
+        flow.metadata["ccproxy.session_id"] = session_id
     return Context.from_flow(flow)
 
 

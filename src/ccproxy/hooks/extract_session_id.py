@@ -27,7 +27,7 @@ def extract_session_id_guard(ctx: Context) -> bool:
 
 @hook(
     reads=["metadata"],
-    writes=["session_id"],
+    writes=[],
 )
 def extract_session_id(ctx: Context, params: dict[str, Any]) -> Context:
     """Extract session_id from metadata.user_id into flow metadata.
