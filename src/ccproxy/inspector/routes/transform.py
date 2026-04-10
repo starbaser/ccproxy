@@ -22,7 +22,7 @@ from urllib.parse import urlparse
 from mitmproxy.connection import Server
 from mitmproxy.proxy.mode_specs import ReverseMode
 
-from ccproxy.inspector.flow_store import InspectorMeta
+from ccproxy.inspector.flow_store import InspectorMeta, TransformMeta
 
 if TYPE_CHECKING:
     from mitmproxy.http import HTTPFlow
@@ -95,14 +95,26 @@ def _handle_transform(flow: HTTPFlow, target: TransformRoute, body: dict[str, ob
     """Transform request body via lightllm dispatch and rewrite destination."""
     from ccproxy.lightllm import transform_to_provider
 
+    is_streaming = bool(body.get("stream", False))
+
     url, headers, new_body = transform_to_provider(
         model=target.dest_model,
         provider=target.dest_provider,
         messages=body.get("messages", []),  # type: ignore[arg-type]
         optional_params={k: v for k, v in body.items() if k != "messages"},
         api_key=_resolve_api_key(target),
-        stream=bool(body.get("stream", False)),
+        stream=is_streaming,
     )
+
+    # Persist transform context for response phase
+    record = flow.metadata.get(InspectorMeta.RECORD)
+    if record is not None:
+        record.transform = TransformMeta(
+            provider=target.dest_provider,
+            model=target.dest_model,
+            request_data={**body},
+            is_streaming=is_streaming,
+        )
 
     parsed = urlparse(url)
     flow.request.host = parsed.hostname or flow.request.host
@@ -154,3 +166,43 @@ def register_transform_routes(router: InspectorRouter) -> None:
             _handle_passthrough(flow)
         else:
             _handle_transform(flow, target, body)
+
+    @router.route("/{path}", rtype=RouteType.RESPONSE)
+    def handle_transform_response(flow: HTTPFlow, **kwargs: object) -> None:  # pyright: ignore[reportUnusedFunction]
+        record = flow.metadata.get(InspectorMeta.RECORD)
+        if record is None or getattr(record, "transform", None) is None:
+            return
+
+        meta = record.transform
+        if meta.is_streaming:
+            return
+
+        if not flow.response or flow.response.status_code >= 400:
+            return
+
+        try:
+            from ccproxy.lightllm import MitmResponseShim, transform_to_openai
+
+            shim = MitmResponseShim(flow.response)
+            messages = meta.request_data.get("messages", [])
+            request_data = {k: v for k, v in meta.request_data.items() if k != "messages"}
+
+            model_response = transform_to_openai(
+                model=meta.model,
+                provider=meta.provider,
+                raw_response=shim,
+                request_data=request_data,
+                messages=messages,
+            )
+
+            flow.response.content = json.dumps(model_response.model_dump()).encode()  # type: ignore[no-untyped-call]
+            flow.response.headers["content-type"] = "application/json"
+            flow.response.headers.pop("content-encoding", None)  # type: ignore[no-untyped-call]
+
+            logger.info(
+                "lightllm response transform: %s %s → OpenAI format",
+                meta.provider,
+                meta.model,
+            )
+        except Exception:
+            logger.warning("Response transform failed, passing through raw response", exc_info=True)

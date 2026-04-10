@@ -11,15 +11,18 @@ entirely.  We import ``_transform_request_body`` and ``_get_gemini_url`` directl
 from __future__ import annotations
 
 import json
+import logging
+from collections.abc import Iterable
 from typing import Any
 
 import httpx
-
 from litellm.types.utils import LlmProviders, ModelResponse
 from litellm.utils import ProviderConfigManager
 
 from ccproxy.lightllm.noop_logging import NoopLogging
 from ccproxy.lightllm.registry import get_config
+
+logger = logging.getLogger(__name__)
 
 _noop = NoopLogging()
 
@@ -179,10 +182,29 @@ def transform_to_provider(
     return url, headers, body
 
 
+class MitmResponseShim:
+    """Duck-types httpx.Response for BaseConfig.transform_response().
+
+    transform_response() only accesses .status_code, .headers, .text, .json().
+    """
+
+    def __init__(self, mitm_response: Any) -> None:
+        self.status_code: int = mitm_response.status_code
+        self.headers: dict[str, str] = dict(mitm_response.headers.items())  # type: ignore[no-untyped-call]
+        self._content: bytes = mitm_response.content
+
+    @property
+    def text(self) -> str:
+        return self._content.decode("utf-8", errors="replace")
+
+    def json(self) -> Any:
+        return json.loads(self._content)
+
+
 def transform_to_openai(
     model: str,
     provider: str,
-    raw_response: httpx.Response,
+    raw_response: httpx.Response | MitmResponseShim,
     request_data: dict[str, Any],
     messages: list[Any],
 ) -> ModelResponse:
@@ -191,7 +213,7 @@ def transform_to_openai(
     model_response = ModelResponse()
     return config.transform_response(
         model=model,
-        raw_response=raw_response,
+        raw_response=raw_response,  # type: ignore[arg-type]
         model_response=model_response,
         logging_obj=_noop,  # type: ignore[arg-type]
         request_data=request_data,
@@ -202,3 +224,107 @@ def transform_to_openai(
         api_key=None,
         json_mode=None,
     )
+
+
+def _make_response_iterator(provider: str, model: str, optional_params: dict[str, Any]) -> Any:
+    """Create a provider-specific ModelResponseIterator for SSE chunk parsing.
+
+    The iterator is instantiated with a dummy empty iterable — we call
+    chunk_parser() directly rather than driving __next__().
+    """
+    if provider in _GEMINI_PROVIDERS:
+        from litellm.llms.vertex_ai.gemini.vertex_and_google_ai_studio_gemini import (
+            ModelResponseIterator as GeminiIterator,
+        )
+
+        return GeminiIterator(
+            streaming_response=iter([]),
+            sync_stream=True,
+            logging_obj=NoopLogging(optional_params),  # type: ignore[arg-type]
+        )
+
+    if provider == "anthropic":
+        from litellm.llms.anthropic.chat.handler import (
+            ModelResponseIterator as AnthropicIterator,
+        )
+
+        return AnthropicIterator(
+            streaming_response=iter([]),
+            sync_stream=True,
+        )
+
+    # Generic path: use BaseConfig.get_model_response_iterator()
+    config = get_config(provider, model)
+    iterator = config.get_model_response_iterator(
+        streaming_response=iter([]),
+        sync_stream=True,
+    )
+    if iterator is not None:
+        return iterator
+
+    # Fallback: provider returns OpenAI-format SSE natively — no iterator needed
+    return None
+
+
+class SseTransformer:
+    """Stateful SSE chunk transformer for flow.response.stream.
+
+    mitmproxy calls this with raw TCP bytes per chunk. We parse SSE events,
+    transform each via the provider's ModelResponseIterator.chunk_parser(),
+    and re-serialize as OpenAI-format SSE.
+
+    If no iterator is available (provider already emits OpenAI-format SSE),
+    bytes pass through unchanged.
+    """
+
+    def __init__(self, provider: str, model: str, optional_params: dict[str, Any]) -> None:
+        self._iterator = _make_response_iterator(provider, model, optional_params)
+        self._buf = b""
+
+    def __call__(self, data: bytes) -> bytes | Iterable[bytes]:
+        if self._iterator is None:
+            return data
+
+        if data == b"":
+            return b"data: [DONE]\n\n"
+
+        self._buf += data
+        out = bytearray()
+
+        while b"\n\n" in self._buf:
+            event, self._buf = self._buf.split(b"\n\n", 1)
+            out += self._process_event(event)
+
+        return bytes(out)
+
+    def _process_event(self, event: bytes) -> bytes:
+        for line in event.split(b"\n"):
+            line = line.strip()
+            if not line.startswith(b"data:"):
+                continue
+            payload = line[5:].strip()
+            if payload == b"[DONE]":
+                return b""
+            try:
+                chunk_dict = json.loads(payload)
+            except json.JSONDecodeError:
+                logger.debug("SSE transform: skipping unparseable chunk")
+                return line + b"\n\n"
+            try:
+                model_chunk = self._iterator.chunk_parser(chunk_dict)
+            except Exception:
+                logger.debug("SSE transform: chunk_parser failed, passing through", exc_info=True)
+                return line + b"\n\n"
+            if model_chunk is None:
+                return b""
+            return b"data: " + json.dumps(model_chunk.model_dump()).encode() + b"\n\n"
+        return b""
+
+
+def make_sse_transformer(
+    provider: str,
+    model: str,
+    optional_params: dict[str, Any] | None = None,
+) -> SseTransformer:
+    """Factory for creating an SSE stream transformer."""
+    return SseTransformer(provider, model, optional_params or {})

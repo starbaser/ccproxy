@@ -45,6 +45,16 @@ class OriginalRequest:
 
 
 @dataclass
+class TransformMeta:
+    """Transform context stored during request phase, consumed by response phase."""
+
+    provider: str
+    model: str
+    request_data: dict[str, Any]
+    is_streaming: bool
+
+
+@dataclass
 class FlowRecord:
     """Cross-pass state for a single logical request through the inspector."""
 
@@ -53,6 +63,7 @@ class FlowRecord:
     otel: OtelMeta | None = None
     original_headers: dict[str, str] = field(default_factory=lambda: {})
     original_request: OriginalRequest | None = None
+    transform: TransformMeta | None = None
 
 
 class InspectorMeta:

@@ -18,7 +18,6 @@ from mitmproxy.proxy.mode_specs import ReverseMode, WireGuardMode
 
 from ccproxy.inspector.flow_store import (
     FLOW_ID_HEADER,
-    FlowRecord,
     InspectorMeta,
     create_flow_record,
     get_flow_record,
@@ -116,6 +115,42 @@ class InspectorAddon:
 
         except Exception as e:
             logger.error("Error capturing request: %s", e, exc_info=True)
+
+    async def responseheaders(self, flow: http.HTTPFlow) -> None:
+        """Enable SSE streaming for all event-stream responses.
+
+        Sets flow.response.stream before the body arrives. For cross-provider
+        transformed flows, wraps the stream with an SSE chunk transformer.
+        For same-provider or unmatched flows, passes bytes through unchanged.
+        """
+        if not flow.response:
+            return
+
+        content_type = flow.response.headers.get("content-type", "")
+        if "text/event-stream" not in content_type:
+            return
+
+        record = flow.metadata.get(InspectorMeta.RECORD)
+        transform = getattr(record, "transform", None) if record else None
+
+        if transform is not None and transform.is_streaming:
+            from ccproxy.lightllm.dispatch import make_sse_transformer
+
+            optional_params = {
+                k: v for k, v in transform.request_data.items() if k != "messages"
+            }
+            try:
+                flow.response.stream = make_sse_transformer(
+                    transform.provider, transform.model, optional_params,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to create SSE transformer, falling back to passthrough",
+                    exc_info=True,
+                )
+                flow.response.stream = True
+        else:
+            flow.response.stream = True
 
     async def response(self, flow: http.HTTPFlow) -> None:
         try:
