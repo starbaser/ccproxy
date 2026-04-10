@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
 
 from ccproxy.constants import SENSITIVE_PATTERNS
@@ -36,7 +36,7 @@ def _redact_value(header: str, value: str) -> str:
 
 def capture_headers_guard(ctx: Context) -> bool:
     """Guard: Run if proxy_server_request exists."""
-    return bool(ctx._raw_data.get("proxy_server_request"))
+    return bool(ctx._raw_data.get("proxy_server_request"))  # pyright: ignore[reportPrivateUsage]
 
 
 @hook(
@@ -57,12 +57,12 @@ def capture_headers(ctx: Context, params: dict[str, Any]) -> Context:
     """
     if "trace_metadata" not in ctx.metadata:
         ctx.metadata["trace_metadata"] = {}
-    trace_metadata = ctx.metadata["trace_metadata"]
+    trace_metadata: dict[str, Any] = cast(dict[str, Any], ctx.metadata["trace_metadata"])
 
     # Get optional headers filter from params
     headers_filter: list[str] | None = params.get("headers")
 
-    request = ctx._raw_data.get("proxy_server_request", {})
+    request = ctx._raw_data.get("proxy_server_request", {})  # pyright: ignore[reportPrivateUsage]
     headers = request.get("headers", {})
 
     # Merge with raw headers (has auth info)
@@ -88,7 +88,7 @@ def capture_headers(ctx: Context, params: dict[str, Any]) -> Context:
 
     url = request.get("url", "")
     if url:
-        path = urlparse(url).path
+        path: str = urlparse(str(url)).path
         if path:
             trace_metadata["http_path"] = path
 
@@ -99,7 +99,7 @@ def capture_headers(ctx: Context, params: dict[str, Any]) -> Context:
 
         call_id = str(uuid.uuid4())
         ctx.litellm_call_id = call_id
-        ctx._raw_data["litellm_call_id"] = call_id
+        ctx._raw_data["litellm_call_id"] = call_id  # pyright: ignore[reportPrivateUsage]
 
     store_request_metadata(call_id, {"trace_metadata": trace_metadata.copy()})
 

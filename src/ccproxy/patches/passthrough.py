@@ -97,4 +97,4 @@ def _patch_bearer_auth() -> None:
             request, target, custom_headers, user_api_key_dict, **kwargs
         )
 
-    pt_module.pass_through_request = _patched_pass_through_request  # type: ignore[assignment]
+    pt_module.pass_through_request = _patched_pass_through_request

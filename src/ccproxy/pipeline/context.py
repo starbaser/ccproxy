@@ -27,15 +27,15 @@ class Context:
     """
 
     model: str = ""
-    messages: list[dict[str, Any]] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
+    messages: list[dict[str, Any]] = field(default_factory=list)  # pyright: ignore[reportUnknownVariableType]
+    metadata: dict[str, Any] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
     system: str | list[dict[str, Any]] | None = None
-    headers: dict[str, str] = field(default_factory=dict)
-    raw_headers: dict[str, str] = field(default_factory=dict)
-    provider_headers: dict[str, Any] = field(default_factory=dict)
+    headers: dict[str, str] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
+    raw_headers: dict[str, str] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
+    provider_headers: dict[str, Any] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
     litellm_call_id: str = ""
     api_key: str | None = None
-    _raw_data: dict[str, Any] = field(default_factory=dict, repr=False)
+    _raw_data: dict[str, Any] = field(default_factory=dict, repr=False)  # pyright: ignore[reportUnknownVariableType]
 
     @classmethod
     def from_litellm_data(cls, data: dict[str, Any]) -> Context:
@@ -60,27 +60,27 @@ class Context:
         secret_fields = data.get("secret_fields", {})
         provider_specific = data.get("provider_specific_header", {})
 
-        headers = {}
-        raw_headers_data = proxy_request.get("headers", {})
-        if isinstance(raw_headers_data, dict):
-            headers = {k.lower(): v for k, v in raw_headers_data.items()}
+        headers: dict[str, str] = {}
+        raw_headers_data: dict[str, Any] = cast(dict[str, Any], proxy_request.get("headers", {}))
+        if isinstance(raw_headers_data, dict):  # pyright: ignore[reportUnnecessaryIsInstance]
+            headers = {str(k).lower(): str(v) for k, v in raw_headers_data.items()}
 
         # Extract raw headers from secret_fields (contains sensitive data)
-        raw_headers = {}
-        secret_raw = secret_fields.get("raw_headers", {})
-        if isinstance(secret_raw, dict):
-            raw_headers = {k.lower(): v for k, v in secret_raw.items()}
+        raw_headers: dict[str, str] = {}
+        secret_raw: dict[str, Any] = cast(dict[str, Any], secret_fields.get("raw_headers", {}))
+        if isinstance(secret_raw, dict):  # pyright: ignore[reportUnnecessaryIsInstance]
+            raw_headers = {str(k).lower(): str(v) for k, v in secret_raw.items()}
 
         return cls(
-            model=data.get("model", ""),
-            messages=data.get("messages", []),
-            metadata=data.get("metadata", {}),
+            model=cast(str, data.get("model", "")),
+            messages=cast(list[dict[str, Any]], data.get("messages", [])),
+            metadata=cast(dict[str, Any], data.get("metadata", {})),
             system=data.get("system"),
             headers=headers,
             raw_headers=raw_headers,
-            provider_headers=provider_specific,
-            litellm_call_id=data.get("litellm_call_id", ""),
-            api_key=data.get("api_key"),
+            provider_headers=cast(dict[str, Any], provider_specific),
+            litellm_call_id=cast(str, data.get("litellm_call_id", "")),
+            api_key=cast("str | None", data.get("api_key")),
             _raw_data=data,
         )
 

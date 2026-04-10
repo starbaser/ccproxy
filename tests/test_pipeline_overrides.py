@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import logging
 
-import pytest
-
 from ccproxy.pipeline.overrides import (
     HookOverride,
     OverrideSet,

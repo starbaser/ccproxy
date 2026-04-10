@@ -41,7 +41,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import yaml
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
@@ -154,14 +154,18 @@ class InspectorConfig(BaseModel):
     max_body_size: int = 0
     """Maximum request/response body size to capture (bytes). 0 = unlimited."""
 
-    forward_domains: list[str] = Field(default_factory=lambda: [
-        "api.anthropic.com",
-        "api.openai.com",
-        "generativelanguage.googleapis.com",
-        "openrouter.ai",
-        "api.z.ai",
-    ])
-    """LLM API domains to forward from WireGuard to LiteLLM."""
+    forward_domains: dict[str, str | None] = Field(default_factory=lambda: {
+        "api.anthropic.com": None,
+        "api.openai.com": None,
+        "generativelanguage.googleapis.com": None,
+        "cloudcode-pa.googleapis.com": "/gemini/",
+        "openrouter.ai": None,
+        "api.z.ai": None,
+    })
+    """Map of domains to forward from WireGuard to LiteLLM.
+
+    Key is the incoming domain. Value is the LiteLLM endpoint path prefix
+    to prepend (e.g. ``/gemini/``), or ``None`` for direct forwarding."""
 
     debug: bool = False
     """Enable debug logging (includes request body logging)."""
@@ -215,9 +219,9 @@ class RuleConfig:
             return rule_class()
 
         if all(isinstance(p, dict) for p in self.params):
-            kwargs = {}
+            kwargs: dict[str, Any] = {}
             for p in self.params:
-                kwargs.update(p)
+                kwargs.update(cast(dict[str, Any], p))
             return rule_class(**kwargs)
         return rule_class(*self.params)
 
@@ -562,9 +566,10 @@ class CCProxyConfig(BaseSettings):
                     instance.oauth_refresh_buffer = ccproxy_data["oauth_refresh_buffer"]
                 inspector_data = ccproxy_data.get("inspector")
                 if inspector_data:
-                    if "debug" not in inspector_data and instance.debug:
-                        inspector_data = {**inspector_data, "debug": instance.debug}
-                    instance.inspector = InspectorConfig(**inspector_data)
+                    inspector_dict = cast(dict[str, Any], inspector_data)
+                    if "debug" not in inspector_dict and instance.debug:
+                        inspector_dict = {**inspector_dict, "debug": instance.debug}
+                    instance.inspector = InspectorConfig(**inspector_dict)  # pyright: ignore[reportArgumentType]
                 # Migrate OTel fields from legacy inspector section
                 otel_data = ccproxy_data.get("otel")
                 if otel_data:
@@ -602,9 +607,10 @@ class CCProxyConfig(BaseSettings):
                 instance.rules = []
                 for rule_data in rules_data:
                     if isinstance(rule_data, dict):
-                        name = rule_data.get("name", "")
-                        rule_path = rule_data.get("rule", "")
-                        params = rule_data.get("params", [])
+                        rule_dict = cast(dict[str, Any], rule_data)
+                        name: str = cast(str, rule_dict.get("name", ""))
+                        rule_path: str = cast(str, rule_dict.get("rule", ""))
+                        params: list[Any] = cast(list[Any], rule_dict.get("params", []))
                         if name and rule_path:
                             rule_config = RuleConfig(name, rule_path, params)
                             instance.rules.append(rule_config)

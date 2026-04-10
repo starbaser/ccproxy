@@ -138,3 +138,66 @@ class TestOAuthSentinelKey:
 
         assert flow.request.headers["authorization"] == "Bearer token-123"
         assert flow.request.headers["x-ccproxy-oauth-injected"] == "1"
+
+
+class TestGetOauthHelpers:
+    """Direct tests for the private helper functions."""
+
+    def test_get_oauth_token_returns_token(self) -> None:
+        import time
+
+        from ccproxy.config import CCProxyConfig, set_config_instance
+        from ccproxy.inspector.routes.inbound import _get_oauth_token
+
+        config = CCProxyConfig()
+        config._oat_values["anthropic"] = ("my-token-abc", time.time())
+        set_config_instance(config)
+
+        try:
+            result = _get_oauth_token("anthropic")
+            assert result == "my-token-abc"
+        finally:
+            from ccproxy.config import clear_config_instance
+            clear_config_instance()
+
+    def test_get_oauth_token_returns_none_when_no_token(self) -> None:
+        from ccproxy.config import CCProxyConfig, set_config_instance
+        from ccproxy.inspector.routes.inbound import _get_oauth_token
+
+        config = CCProxyConfig()
+        set_config_instance(config)
+
+        try:
+            result = _get_oauth_token("unknown_provider")
+            assert result is None
+        finally:
+            from ccproxy.config import clear_config_instance
+            clear_config_instance()
+
+    def test_get_oauth_token_handles_exception(self) -> None:
+        from ccproxy.inspector.routes.inbound import _get_oauth_token
+        with patch("ccproxy.config.get_config", side_effect=RuntimeError("error")):
+            result = _get_oauth_token("anthropic")
+            assert result is None
+
+    def test_get_oauth_auth_header_returns_header(self) -> None:
+        from ccproxy.config import CCProxyConfig, OAuthSource, set_config_instance
+        from ccproxy.inspector.routes.inbound import _get_oauth_auth_header
+
+        config = CCProxyConfig(
+            oat_sources={"zai": OAuthSource(command="echo token", auth_header="x-api-key")}
+        )
+        set_config_instance(config)
+
+        try:
+            result = _get_oauth_auth_header("zai")
+            assert result == "x-api-key"
+        finally:
+            from ccproxy.config import clear_config_instance
+            clear_config_instance()
+
+    def test_get_oauth_auth_header_handles_exception(self) -> None:
+        from ccproxy.inspector.routes.inbound import _get_oauth_auth_header
+        with patch("ccproxy.config.get_config", side_effect=RuntimeError("error")):
+            result = _get_oauth_auth_header("anthropic")
+            assert result is None

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from ccproxy.hooks.verbose_mode import verbose_mode
 from ccproxy.pipeline.context import Context
 

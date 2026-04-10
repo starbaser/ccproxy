@@ -2,7 +2,7 @@
 
 import logging
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -84,26 +84,34 @@ class TokenCountRule(ClassificationRule):
         # ~3 chars per token estimation
         return len(text) // 3
 
+    @staticmethod
+    def _extract_text(messages: list[Any]) -> str:
+        """Extract text content from a messages list for token counting."""
+        parts: list[str] = []
+        for msg in messages:
+            if isinstance(msg, dict):
+                msg_dict = cast(dict[str, Any], msg)
+                content: Any = msg_dict.get("content", "")
+                if isinstance(content, str):
+                    parts.append(content)
+                elif isinstance(content, list):
+                    for item in cast(list[Any], content):
+                        if isinstance(item, dict):
+                            item_dict = cast(dict[str, Any], item)
+                            if item_dict.get("type") == "text":
+                                parts.append(str(item_dict.get("text", "")))
+            else:
+                parts.append(str(msg))
+        return " ".join(parts)
+
     def evaluate(self, request: dict[str, Any], config: "CCProxyConfig") -> bool:
         token_count = 0
 
-        model = request.get("model", "")
+        model: str = str(request.get("model", ""))
 
-        messages = request.get("messages", [])
+        messages: Any = request.get("messages", [])
         if isinstance(messages, list):
-            total_text = ""
-            for msg in messages:
-                if isinstance(msg, dict):
-                    content = msg.get("content", "")
-                    if isinstance(content, str):
-                        total_text += content + " "
-                    elif isinstance(content, list):
-                        for item in content:
-                            if isinstance(item, dict) and item.get("type") == "text":
-                                total_text += item.get("text", "") + " "
-                else:
-                    total_text += str(msg) + " "
-
+            total_text = self._extract_text(cast(list[Any], messages))
             if total_text:
                 token_count = self._count_tokens(total_text.strip(), model)
 
@@ -124,21 +132,24 @@ class MatchToolRule(ClassificationRule):
         self.tool_name = tool_name.lower()
 
     def evaluate(self, request: dict[str, Any], config: "CCProxyConfig") -> bool:
-        tools = request.get("tools", [])
-        if isinstance(tools, list):
-            for tool in tools:
-                if isinstance(tool, dict):
-                    name = tool.get("name", "")
-                    if isinstance(name, str) and self.tool_name in name.lower():
-                        return True
-
-                    # Check function.name (OpenAI format)
-                    function = tool.get("function", {})
-                    if isinstance(function, dict):
-                        function_name = function.get("name", "")
-                        if isinstance(function_name, str) and self.tool_name in function_name.lower():
-                            return True
-                elif isinstance(tool, str) and self.tool_name in tool.lower():
+        tools: Any = request.get("tools", [])
+        if not isinstance(tools, list):
+            return False
+        for tool in cast(list[Any], tools):
+            if isinstance(tool, dict):
+                tool_dict = cast(dict[str, Any], tool)
+                name: Any = tool_dict.get("name", "")
+                if isinstance(name, str) and self.tool_name in name.lower():
                     return True
+
+                # Check function.name (OpenAI format)
+                function: Any = tool_dict.get("function", {})
+                if isinstance(function, dict):
+                    fn_dict = cast(dict[str, Any], function)
+                    fn_name: Any = fn_dict.get("name", "")
+                    if isinstance(fn_name, str) and self.tool_name in fn_name.lower():
+                        return True
+            elif isinstance(tool, str) and self.tool_name in tool.lower():
+                return True
 
         return False

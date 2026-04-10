@@ -29,6 +29,6 @@ def load_patches(patch_paths: list[str]) -> list[PatchFn]:
             logger.warning("Patch module %s has no apply() function", path)
             continue
 
-        patches.append(apply_fn)
+        patches.append(apply_fn)  # pyright: ignore[reportArgumentType]
 
     return patches

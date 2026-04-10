@@ -174,7 +174,7 @@ def get_wg_client_conf(master: WebMaster, keypair_path: Path) -> str | None:
     proxyserver = master.addons.get("proxyserver")  # type: ignore[no-untyped-call]
     resolved = keypair_path.resolve()
 
-    for server_instance in proxyserver.servers:
+    for server_instance in proxyserver.servers:  # pyright: ignore[reportUnknownMemberType,reportOptionalMemberAccess,reportUnknownVariableType]
         if not isinstance(server_instance, WireGuardServerInstance):
             continue
         if Path(server_instance.mode.data).resolve() == resolved:

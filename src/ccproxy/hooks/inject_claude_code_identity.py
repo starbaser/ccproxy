@@ -69,10 +69,10 @@ def inject_claude_code_identity(ctx: Context, params: dict[str, Any]) -> Context
             # String system message
             if CLAUDE_CODE_SYSTEM_PREFIX not in system_msg:
                 ctx.system = f"{CLAUDE_CODE_SYSTEM_PREFIX}\n\n{system_msg}"
-        elif isinstance(system_msg, list):
+        elif isinstance(system_msg, list):  # pyright: ignore[reportUnnecessaryIsInstance]
             # Array of content blocks
             has_prefix = any(
-                isinstance(block, dict)
+                isinstance(block, dict)  # pyright: ignore[reportUnnecessaryIsInstance]
                 and block.get("type") == "text"
                 and CLAUDE_CODE_SYSTEM_PREFIX in block.get("text", "")
                 for block in system_msg

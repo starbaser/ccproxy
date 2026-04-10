@@ -41,9 +41,9 @@ class HookSpec:
     name: str
     handler: HandlerFn
     guard: GuardFn = always_true
-    reads: frozenset[str] = field(default_factory=frozenset)
-    writes: frozenset[str] = field(default_factory=frozenset)
-    params: dict[str, Any] = field(default_factory=dict)
+    reads: frozenset[str] = field(default_factory=frozenset)  # pyright: ignore[reportUnknownVariableType]
+    writes: frozenset[str] = field(default_factory=frozenset)  # pyright: ignore[reportUnknownVariableType]
+    params: dict[str, Any] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
     priority: int = 0
 
     def __hash__(self) -> int:

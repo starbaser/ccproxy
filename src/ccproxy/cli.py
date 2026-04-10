@@ -5,7 +5,6 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
-import logging.config
 import os
 import shutil
 import signal
@@ -14,7 +13,7 @@ import sys
 import threading
 from builtins import print as builtin_print
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 import attrs
 import tyro
@@ -119,7 +118,7 @@ class Run:
 
     Usage: ccproxy run [--inspect] -- <command> [args...]"""
 
-    command: Annotated[list[str], tyro.conf.Positional] = attrs.Factory(list)
+    command: Annotated[list[str], tyro.conf.Positional] = attrs.Factory(list)  # pyright: ignore[reportUnknownVariableType]
     """Command and arguments to execute with proxy settings."""
 
 
@@ -996,7 +995,7 @@ def show_status(
         inspector_info = status_data["inspector"]
         litellm_port = inspector_info["litellm_port"]
 
-        inspector_parts = []
+        inspector_parts: list[str] = []
 
         if inspector_info["running"]:
             entry_port = inspector_info["entry_port"]
@@ -1069,7 +1068,7 @@ def show_status(
             model_lookup = {m.get("model_name", ""): m for m in status_data["model_list"]}
 
             for model in status_data["model_list"]:
-                model_entry: dict[str, Any] = model if isinstance(model, dict) else {}
+                model_entry: dict[str, Any] = cast(dict[str, Any], model) if isinstance(model, dict) else {}
                 model_name: str = model_entry.get("model_name", "")
                 litellm_params: dict[str, Any] = model_entry.get("litellm_params", {})
                 provider_model: str = litellm_params.get("model", "")
@@ -1174,21 +1173,21 @@ def main(
             check_inspect=cmd.inspect,
         )
 
-    elif isinstance(cmd, DagViz):
+    elif isinstance(cmd, DagViz):  # pyright: ignore[reportUnnecessaryIsInstance]
         handle_dag_viz(cmd)
 
 
 def handle_dag_viz(cmd: DagViz) -> None:
     """Handle dag-viz subcommand to visualize the pipeline DAG."""
     # Import all hooks to register them
-    from ccproxy.hooks import (  # noqa: F401  # pyright: ignore[reportUnusedImport]
-        add_beta_headers,
-        capture_headers,
-        extract_session_id,
-        forward_oauth,
-        inject_claude_code_identity,
-        model_router,
-        rule_evaluator,
+    from ccproxy.hooks import (  # noqa: F401
+        add_beta_headers,  # pyright: ignore[reportUnusedImport]
+        capture_headers,  # pyright: ignore[reportUnusedImport]
+        extract_session_id,  # pyright: ignore[reportUnusedImport]
+        forward_oauth,  # pyright: ignore[reportUnusedImport]
+        inject_claude_code_identity,  # pyright: ignore[reportUnusedImport]
+        model_router,  # pyright: ignore[reportUnusedImport]
+        rule_evaluator,  # pyright: ignore[reportUnusedImport]
     )
     from ccproxy.pipeline import PipelineExecutor
     from ccproxy.pipeline.hook import get_registry

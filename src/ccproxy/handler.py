@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 
 import litellm
 from fastapi import HTTPException
@@ -41,7 +41,7 @@ class CCProxyHandler(CustomLogger):
     _oauth_refresh_task: asyncio.Task[None] | None = None  # Background refresh task
 
     def __init__(self) -> None:
-        super().__init__()
+        super().__init__()  # pyright: ignore[reportUnknownMemberType]
         self.classifier = RequestClassifier()
         self.router = get_router()
         self._langfuse_client: Any = None
@@ -85,14 +85,14 @@ class CCProxyHandler(CustomLogger):
         try:
             from litellm.proxy import health_check as hc_module
 
-            _original = hc_module._update_litellm_params_for_health_check
+            _original = hc_module._update_litellm_params_for_health_check  # pyright: ignore[reportPrivateUsage]
 
             def _patched(model_info: dict[str, Any], litellm_params: dict[str, Any]) -> dict[str, Any]:
-                result = _original(model_info, litellm_params)
+                result: dict[str, Any] = _original(model_info, litellm_params)
                 _inject_health_check_auth(result, litellm_params)
                 return result
 
-            hc_module._update_litellm_params_for_health_check = _patched
+            hc_module._update_litellm_params_for_health_check = _patched  # pyright: ignore[reportPrivateUsage]
 
             # Prevent OAuth tokens in extra_headers from leaking into /health response
             if "extra_headers" not in hc_module.ILLEGAL_DISPLAY_PARAMS:
@@ -120,7 +120,7 @@ class CCProxyHandler(CustomLogger):
         try:
             from litellm.llms.anthropic.common_utils import AnthropicModelInfo
 
-            _original_validate = AnthropicModelInfo.validate_environment
+            _original_validate = AnthropicModelInfo.validate_environment  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
 
             def _patched_validate(
                 self: Any,
@@ -142,12 +142,12 @@ class CCProxyHandler(CustomLogger):
                     auth = headers.get("authorization", "")
                     if auth.lower().startswith("bearer "):
                         api_key = auth[7:]  # len("bearer ") == 7
-                result = _original_validate(
+                result: dict[str, Any] = _original_validate(  # pyright: ignore[reportUnknownVariableType]
                     self, headers, model, messages, optional_params, litellm_params, api_key=api_key, api_base=api_base
                 )
                 if oauth_mode:
                     # Remove x-api-key so Anthropic uses Authorization header
-                    result.pop("x-api-key", None)
+                    result.pop("x-api-key", None)  # pyright: ignore[reportUnknownMemberType]
                     logger.debug("Removed x-api-key from Anthropic headers (OAuth mode)")
                 return result
 
@@ -174,15 +174,14 @@ class CCProxyHandler(CustomLogger):
         hook_priority_map: dict[str, int] = {}
 
         for idx, entry in enumerate(config.hooks):
+            params: dict[str, Any] = {}
             if isinstance(entry, str):
-                module_path, params = entry, {}
-            elif isinstance(entry, dict):
-                module_path = entry.get("hook", "")
+                module_path = entry
+            else:
+                module_path = str(entry.get("hook", ""))
                 params = entry.get("params", {})
                 if not module_path:
                     continue
-            else:
-                continue
 
             try:
                 mod = importlib.import_module(module_path)
@@ -194,7 +193,7 @@ class CCProxyHandler(CustomLogger):
             for attr_name in dir(mod):
                 obj = getattr(mod, attr_name, None)
                 if callable(obj) and hasattr(obj, "_hook_spec"):
-                    hook_name = obj._hook_spec.name
+                    hook_name = obj._hook_spec.name  # pyright: ignore[reportFunctionMemberAccess]
                     hook_priority_map[hook_name] = idx
                     if params:
                         hook_params_map[hook_name] = params
@@ -202,14 +201,14 @@ class CCProxyHandler(CustomLogger):
         # If no config hooks, fall back to importing built-in hooks directly
         if not config.hooks:
             from ccproxy.hooks import (  # noqa: F401
-                add_beta_headers,
-                capture_headers,
-                extract_session_id,
-                forward_oauth,
-                inject_claude_code_identity,
-                inject_mcp_notifications,
-                model_router,
-                rule_evaluator,
+                add_beta_headers,  # pyright: ignore[reportUnusedImport]
+                capture_headers,  # pyright: ignore[reportUnusedImport]
+                extract_session_id,  # pyright: ignore[reportUnusedImport]
+                forward_oauth,  # pyright: ignore[reportUnusedImport]
+                inject_claude_code_identity,  # pyright: ignore[reportUnusedImport]
+                inject_mcp_notifications,  # pyright: ignore[reportUnusedImport]
+                model_router,  # pyright: ignore[reportUnusedImport]
+                rule_evaluator,  # pyright: ignore[reportUnusedImport]
             )
 
         all_specs = registry.get_all_specs()
@@ -303,10 +302,10 @@ class CCProxyHandler(CustomLogger):
 
     def _is_auth_exception(self, exception: Exception) -> bool:
         """Check if exception indicates authentication failure (401)."""
-        if isinstance(exception, litellm.AuthenticationError):  # type: ignore[attr-defined]
+        if isinstance(exception, litellm.AuthenticationError):
             return True
 
-        if hasattr(exception, "status_code") and exception.status_code == 401:
+        if hasattr(exception, "status_code") and getattr(exception, "status_code") == 401:  # noqa: B009
             return True
 
         exc_str = str(exception).lower()
@@ -533,7 +532,7 @@ class CCProxyHandler(CustomLogger):
             # Print the panel with width constraint
             console.print(Panel(routing_text, border_style=color, padding=(0, 1), width=78))
 
-        log_data = {
+        log_data: dict[str, Any] = {
             "event": "ccproxy_routing",
             "model_name": model_name,
             "original_model": original_model,
@@ -543,9 +542,9 @@ class CCProxyHandler(CustomLogger):
 
         # Exclude sensitive keys from model_info
         if model_config and "model_info" in model_config:
-            model_info = model_config["model_info"]
+            model_info: dict[str, Any] = cast(dict[str, Any], model_config["model_info"])
             # Only include non-sensitive metadata
-            safe_info = {}
+            safe_info: dict[str, Any] = {}
             for key, value in model_info.items():
                 if key not in ("api_key", "secret", "token", "password"):
                     safe_info[key] = value
@@ -666,7 +665,7 @@ class CCProxyHandler(CustomLogger):
 
         # Reconstruct generation_id using same logic as LiteLLM's Langfuse callback
         try:
-            generation_id = litellm.utils.get_logging_id(start_time, response_obj)  # type: ignore[no-untyped-call]
+            generation_id = litellm.utils.get_logging_id(start_time, response_obj)
         except Exception:
             return
 
@@ -749,7 +748,7 @@ class CCProxyHandler(CustomLogger):
     async def async_log_stream_event(
         self,
         kwargs: dict[str, Any],
-        _response_obj: Any,
+        response_obj: Any,
         start_time: float,
         end_time: float,
     ) -> None:
@@ -757,7 +756,7 @@ class CCProxyHandler(CustomLogger):
 
         Args:
             kwargs: Request arguments
-            _response_obj: LiteLLM streaming response object (unused)
+            response_obj: LiteLLM streaming response object (unused)
             start_time: Request start timestamp
             end_time: Request completion timestamp
         """

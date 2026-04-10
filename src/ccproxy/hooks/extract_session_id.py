@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from ccproxy.pipeline.hook import hook
 from ccproxy.utils import parse_session_id
@@ -43,7 +43,7 @@ _LANGFUSE_HEADER_KEYS = frozenset(
 
 def extract_session_id_guard(ctx: Context) -> bool:
     """Guard: Run if proxy_server_request exists."""
-    return bool(ctx._raw_data.get("proxy_server_request"))
+    return bool(ctx._raw_data.get("proxy_server_request"))  # pyright: ignore[reportPrivateUsage]
 
 
 @hook(reads=["proxy_server_request"], writes=["session_id", "trace_metadata"])
@@ -57,21 +57,21 @@ def extract_session_id(ctx: Context, params: dict[str, Any]) -> Context:
     Additionally parses Claude Code's compound user_id format
     (user_{hash}_account_{uuid}_session_{uuid}) to extract session_id.
     """
-    request = ctx._raw_data.get("proxy_server_request", {})
-    body = request.get("body", {})
+    request: dict[str, Any] = cast(dict[str, Any], ctx._raw_data.get("proxy_server_request", {}))  # pyright: ignore[reportPrivateUsage]
+    body: Any = request.get("body", {})
     if not isinstance(body, dict):
         return ctx
 
-    body_metadata = body.get("metadata", {})
+    body_metadata: Any = body.get("metadata", {})
 
     # Forward all body metadata to ctx.metadata (transparent proxy).
     # Internal ccproxy keys (ccproxy_*) and already-set keys are not overwritten.
     for key, value in body_metadata.items():
-        if key.startswith("ccproxy_") or key in ctx.metadata:
+        if str(key).startswith("ccproxy_") or key in ctx.metadata:
             continue
         ctx.metadata[key] = value
 
-    user_id = body_metadata.get("user_id", "")
+    user_id: str = cast(str, body_metadata.get("user_id", ""))
 
     if user_id:
         session_id = parse_session_id(user_id)
@@ -84,8 +84,9 @@ def extract_session_id(ctx: Context, params: dict[str, Any]) -> Context:
                 try:
                     user_id_obj = json.loads(user_id)
                     if isinstance(user_id_obj, dict):
-                        account_uuid = user_id_obj.get("account_uuid")
-                        device_id = user_id_obj.get("device_id")
+                        user_id_dict = cast(dict[str, Any], user_id_obj)
+                        account_uuid: str | None = cast("str | None", user_id_dict.get("account_uuid"))
+                        device_id: str | None = cast("str | None", user_id_dict.get("device_id"))
                         if account_uuid:
                             ctx.metadata["trace_user_id"] = account_uuid
                         if "trace_metadata" not in ctx.metadata:
@@ -100,12 +101,12 @@ def extract_session_id(ctx: Context, params: dict[str, Any]) -> Context:
 
             # Enrich with account metadata from legacy format
             elif "_session_" in user_id:
-                prefix = user_id.split("_session_")[0]
+                prefix: str = user_id.split("_session_")[0]
                 if "_account_" in prefix:
-                    user_account = prefix.split("_account_")
+                    user_account: list[str] = prefix.split("_account_")
                     if len(user_account) == 2:
-                        user_hash = user_account[0].replace("user_", "")
-                        account_id = user_account[1]
+                        user_hash: str = user_account[0].replace("user_", "")
+                        account_id: str = user_account[1]
                         ctx.metadata["trace_user_id"] = user_hash
                         if "trace_metadata" not in ctx.metadata:
                             ctx.metadata["trace_metadata"] = {}

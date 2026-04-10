@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from ccproxy.pipeline.guards import routes_to_anthropic_provider
 from ccproxy.pipeline.hook import hook
@@ -29,16 +29,17 @@ def verbose_mode(ctx: Context, params: dict[str, Any]) -> Context:
     """
     for headers_dict in (
         ctx.provider_headers.get("extra_headers"),
-        ctx._raw_data.get("extra_headers"),
+        ctx._raw_data.get("extra_headers"),  # pyright: ignore[reportPrivateUsage]
     ):
         if not isinstance(headers_dict, dict):
             continue
-        beta = headers_dict.get("anthropic-beta", "")
+        hd: dict[str, Any] = cast(dict[str, Any], headers_dict)
+        beta: str = cast(str, hd.get("anthropic-beta", ""))
         if not beta:
             continue
         filtered = ",".join(b.strip() for b in beta.split(",") if not b.strip().startswith(_STRIP_PREFIX))
         if filtered != beta:
-            headers_dict["anthropic-beta"] = filtered
+            hd["anthropic-beta"] = filtered
             logger.info("Verbose mode: stripped redact-thinking beta header")
 
     return ctx

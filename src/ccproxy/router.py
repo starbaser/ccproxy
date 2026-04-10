@@ -30,9 +30,10 @@ class ModelRouter:
             return
 
         with self._lock:
-            # Double-check pattern
-            if self._models_loaded:
-                return
+            # Double-check pattern: another thread may have loaded while we waited
+            # on the lock. mypy can't model concurrent mutation of self._models_loaded.
+            if self._models_loaded:  # type: ignore[unreachable]
+                return  # type: ignore[unreachable]
 
             self._load_model_mapping()
 
@@ -58,7 +59,7 @@ class ModelRouter:
             from litellm.proxy import proxy_server
 
             if proxy_server and hasattr(proxy_server, "llm_router") and proxy_server.llm_router:
-                model_list = cast(list[dict[str, Any]], proxy_server.llm_router.get_model_list() or [])
+                model_list = proxy_server.llm_router.get_model_list() or []
                 logger.debug(f"Loaded {len(model_list)} models from LiteLLM proxy server")
             else:
                 model_list = []
@@ -73,9 +74,9 @@ class ModelRouter:
                 self._available_models.add(model_name)
                 self._model_map[model_name] = model_entry.copy()
 
-                litellm_params = model_entry.get("litellm_params", {})
-                if isinstance(litellm_params, dict):
-                    underlying_model = litellm_params.get("model")
+                litellm_params: dict[str, Any] = cast(dict[str, Any], model_entry.get("litellm_params", {}))
+                if isinstance(litellm_params, dict):  # pyright: ignore[reportUnnecessaryIsInstance]
+                    underlying_model: str | None = cast("str | None", litellm_params.get("model"))
                     if underlying_model:
                         if underlying_model not in self._model_group_alias:
                             self._model_group_alias[underlying_model] = []

@@ -72,6 +72,55 @@ class TestBetaHeaders:
         assert flow.request.headers.get("anthropic-beta") == original
 
 
+class TestRestoreOriginalRequest:
+    def test_restores_host_and_path(self) -> None:
+        """Outbound flow with original_request should be rewritten back."""
+        from ccproxy.inspector.flow_store import (
+            FLOW_ID_HEADER,
+            OriginalRequest,
+            create_flow_record,
+        )
+
+        router = _setup_router()
+        flow_id, record = create_flow_record("inbound")
+        record.original_request = OriginalRequest(
+            host="cloudcode-pa.googleapis.com",
+            port=443,
+            scheme="https",
+            path="/v1internal:streamGenerateContent",
+        )
+
+        flow = _make_outbound_flow()
+        flow.request.headers[FLOW_ID_HEADER] = flow_id
+        flow.request.host = "generativelanguage.googleapis.com"
+        flow.request.port = 443
+        flow.request.path = "/streamGenerateContent"
+
+        router.request(flow)
+
+        assert flow.request.host == "cloudcode-pa.googleapis.com"
+        assert flow.request.path == "/v1internal:streamGenerateContent"
+        assert flow.request.scheme == "https"
+        assert flow.request.port == 443
+
+    def test_no_restore_without_original_request(self) -> None:
+        """Outbound flow without original_request should not be rewritten."""
+        from ccproxy.inspector.flow_store import FLOW_ID_HEADER, create_flow_record
+
+        router = _setup_router()
+        flow_id, _record = create_flow_record("inbound")
+
+        flow = _make_outbound_flow()
+        flow.request.headers[FLOW_ID_HEADER] = flow_id
+        flow.request.host = "api.anthropic.com"
+        flow.request.path = "/v1/messages"
+
+        router.request(flow)
+
+        assert flow.request.host == "api.anthropic.com"
+        assert flow.request.path == "/v1/messages"
+
+
 class TestAuthFailureObservation:
     def test_logs_401(self, caplog: pytest.LogCaptureFixture) -> None:
         router = _setup_router()

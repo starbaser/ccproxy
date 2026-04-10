@@ -74,8 +74,8 @@ def add_beta_headers(ctx: Context, params: dict[str, Any]) -> Context:
     existing = ""
     if "extra_headers" in ctx.provider_headers:
         existing = ctx.provider_headers["extra_headers"].get("anthropic-beta", "")
-    elif "extra_headers" in ctx._raw_data:
-        existing = ctx._raw_data["extra_headers"].get("anthropic-beta", "")
+    elif "extra_headers" in ctx._raw_data:  # pyright: ignore[reportPrivateUsage]
+        existing = ctx._raw_data["extra_headers"].get("anthropic-beta", "")  # pyright: ignore[reportPrivateUsage]
 
     client_beta = ctx.headers.get("anthropic-beta", "")
     if client_beta:
@@ -96,10 +96,10 @@ def add_beta_headers(ctx: Context, params: dict[str, Any]) -> Context:
     ctx.provider_headers["extra_headers"]["anthropic-version"] = "2023-06-01"
 
     # Method 2: extra_headers (direct to completion call)
-    if "extra_headers" not in ctx._raw_data:
-        ctx._raw_data["extra_headers"] = {}
-    ctx._raw_data["extra_headers"]["anthropic-beta"] = merged_str
-    ctx._raw_data["extra_headers"]["anthropic-version"] = "2023-06-01"
+    if "extra_headers" not in ctx._raw_data:  # pyright: ignore[reportPrivateUsage]
+        ctx._raw_data["extra_headers"] = {}  # pyright: ignore[reportPrivateUsage]
+    ctx._raw_data["extra_headers"]["anthropic-beta"] = merged_str  # pyright: ignore[reportPrivateUsage]
+    ctx._raw_data["extra_headers"]["anthropic-version"] = "2023-06-01"  # pyright: ignore[reportPrivateUsage]
 
     logger.info(
         "Added anthropic-beta headers for Claude Code impersonation",

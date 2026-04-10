@@ -5,7 +5,7 @@ import json
 import secrets
 import socket
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from rich import box
 from rich.console import Console
@@ -23,7 +23,7 @@ def parse_session_id(user_id: str) -> str | None:
         try:
             obj = json.loads(user_id)
             if isinstance(obj, dict):
-                sid = obj.get("session_id")
+                sid: str | None = cast("str | None", cast(dict[str, Any], obj).get("session_id"))
                 if sid:
                     return str(sid)
         except (json.JSONDecodeError, TypeError):
@@ -155,9 +155,10 @@ def debug_table(
         compact: Use compact table style
     """
     if isinstance(obj, dict):
-        _print_dict(obj, title or "Dict", max_width, compact)
+        _print_dict(cast(dict[Any, Any], obj), title or "Dict", max_width, compact)
     elif isinstance(obj, list | tuple):
-        _print_list(obj, title or type(obj).__name__, max_width, compact)
+        seq = cast("list[Any] | tuple[Any, ...]", obj)
+        _print_list(seq, title or type(seq).__name__, max_width, compact)
     elif hasattr(obj, "__dict__"):
         _print_object(obj, title or obj.__class__.__name__, max_width, show_methods, compact)
     else:
@@ -219,21 +220,21 @@ def _print_object(obj: Any, title: str, max_width: int | None, show_methods: boo
     table.add_column("Type", style="dim cyan")
 
     # Get all attributes
-    attrs = {}
-    for name in dir(obj):
-        if name.startswith("_"):
+    attrs: dict[str, Any] = {}
+    for attr_name in dir(obj):
+        if attr_name.startswith("_"):
             continue
         try:
-            value = getattr(obj, name)
-            if not show_methods and callable(value):
+            attr_value: Any = getattr(obj, attr_name)
+            if not show_methods and callable(attr_value):
                 continue
-            attrs[name] = value
+            attrs[attr_name] = attr_value
         except Exception:
-            attrs[name] = "<unable to access>"
+            attrs[attr_name] = "<unable to access>"
 
     # Sort and display
     for name in sorted(attrs.keys()):
-        value = attrs[name]
+        value: Any = attrs[name]
         table.add_row(name, _format_value(value, max_width), type(value).__name__)
 
     console.print(table)
@@ -254,9 +255,11 @@ def _format_value(value: Any, max_width: int | None = None) -> str:
             s = s[: max_width - 3] + "..."
         return f'"{s}"'
     elif isinstance(value, list | tuple):
-        return f"[dim]{type(value).__name__}[{len(value)}][/dim]"
+        seq = cast("list[Any] | tuple[Any, ...]", value)
+        return f"[dim]{type(seq).__name__}[{len(seq)}][/dim]"
     elif isinstance(value, dict):
-        return f"[dim]dict[{len(value)}][/dim]"
+        d = cast(dict[Any, Any], value)
+        return f"[dim]dict[{len(d)}][/dim]"
     elif callable(value):
         return f"[magenta]{value.__name__}()[/magenta]"
     else:
@@ -315,17 +318,19 @@ def p(obj: Any) -> None:
     if isinstance(obj, dict):
         table.add_column("Key", style="yellow")
         table.add_column("Value")
-        for k, v in obj.items():
+        typed_dict = cast(dict[Any, Any], obj)
+        for k, v in typed_dict.items():
             table.add_row(str(k), repr(v))
     elif isinstance(obj, list | tuple):
         table.add_column("#", style="dim")
         table.add_column("Value")
-        for i, v in enumerate(obj):
+        typed_seq = cast("list[Any] | tuple[Any, ...]", obj)
+        for i, v in enumerate(typed_seq):
             table.add_row(str(i), repr(v))
     elif hasattr(obj, "__dict__"):
         table.add_column("Attr", style="yellow")
         table.add_column("Value")
-        for k, v in obj.__dict__.items():
+        for k, v in cast(dict[str, Any], obj.__dict__).items():
             if not k.startswith("_"):
                 table.add_row(k, repr(v))
     else:

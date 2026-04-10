@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from litellm.litellm_core_utils.get_llm_provider_logic import get_llm_provider
 
@@ -206,7 +206,7 @@ def _setup_provider_headers(ctx: Context, provider_name: str, auth_header: str) 
     if "extra_headers" not in ctx.provider_headers:
         ctx.provider_headers["extra_headers"] = {}
 
-    extra = ctx.provider_headers["extra_headers"]
+    extra: dict[str, Any] = cast(dict[str, Any], ctx.provider_headers["extra_headers"])
     config = get_config()
     target_header = config.get_auth_header(provider_name)
 

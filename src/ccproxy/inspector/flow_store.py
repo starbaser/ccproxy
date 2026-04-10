@@ -35,6 +35,16 @@ class OtelMeta:
 
 
 @dataclass
+class OriginalRequest:
+    """Snapshot of the original request before LiteLLM forwarding rewrites it."""
+
+    host: str
+    port: int
+    scheme: str
+    path: str
+
+
+@dataclass
 class FlowRecord:
     """Cross-pass state for a single logical request through the inspector."""
 
@@ -42,6 +52,7 @@ class FlowRecord:
     auth: AuthMeta | None = None
     otel: OtelMeta | None = None
     original_headers: dict[str, str] = field(default_factory=lambda: {})
+    original_request: OriginalRequest | None = None
 
 
 class InspectorMeta:

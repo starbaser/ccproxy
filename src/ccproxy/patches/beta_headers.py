@@ -13,7 +13,7 @@ mapping so they pass through the filter unchanged.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from ccproxy.constants import ANTHROPIC_BETA_HEADERS
 
@@ -36,15 +36,13 @@ def apply(handler: CCProxyHandler) -> None:
 
 def _patch_beta_filter() -> None:
     """Inject ccproxy beta headers into LiteLLM's beta filter config."""
-    from litellm.anthropic_beta_headers_manager import (
-        _load_beta_headers_config,
-    )
+    from litellm.anthropic_beta_headers_manager import _load_beta_headers_config  # pyright: ignore[reportPrivateUsage]
 
-    _original_load = _load_beta_headers_config
+    _original_load = _load_beta_headers_config  # pyright: ignore[reportPrivateUsage]
 
     def _patched_load() -> dict[str, Any]:
-        config = _original_load()
-        anthropic_mapping = config.get("anthropic", {})
+        config: dict[str, Any] = _original_load()
+        anthropic_mapping: dict[str, Any] = cast(dict[str, Any], config.get("anthropic", {}))
         for header in ANTHROPIC_BETA_HEADERS:
             if header not in anthropic_mapping:
                 anthropic_mapping[header] = header
@@ -53,7 +51,7 @@ def _patch_beta_filter() -> None:
 
     import litellm.anthropic_beta_headers_manager as mgr
 
-    mgr._load_beta_headers_config = _patched_load
+    mgr._load_beta_headers_config = _patched_load  # pyright: ignore[reportPrivateUsage]
     logger.debug(
         "Patched LiteLLM beta header filter to preserve ccproxy headers: %s",
         ANTHROPIC_BETA_HEADERS,

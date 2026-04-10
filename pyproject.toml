@@ -100,10 +100,30 @@ exclude_lines = [
 
 [tool.mypy]
 python_version = "3.12"
-strict = true
-warn_return_any = true
-warn_unused_configs = true
+pretty = true
+show_error_codes = true
 mypy_path = "stubs"
+
+# Turn these off to avoid conflicts with pyright's Unknown-type narrowing.
+# pyright strict narrows `isinstance(x: Any, dict)` to `dict[Unknown, Unknown]`
+# and requires casts that mypy considers redundant.
+warn_unused_ignores = false
+warn_redundant_casts = false
+
+# Explicit strict-equivalent flags (Stainless SDK pattern)
+strict_equality = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_return_any = true
+warn_unreachable = true
+warn_unused_configs = true
+disallow_any_generics = true
+disallow_untyped_defs = true
+disallow_untyped_calls = true
+disallow_subclassing_any = true
+disallow_incomplete_defs = true
+disallow_untyped_decorators = true
+implicit_reexport = true
 
 [[tool.mypy.overrides]]
 module = [
@@ -114,11 +134,16 @@ module = [
   "opentelemetry.*",
 ]
 
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+check_untyped_defs = true
+
 [tool.pyright]
 include = ["src", "tests"]
 ignore = ["tests/"]
 pythonVersion = "3.12"
-typeCheckingMode = "strict"
+typeCheckingMode = "standard"
 stubPath = "stubs"
 
 [tool.ty]

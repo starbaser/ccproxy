@@ -17,7 +17,7 @@ class TaskBuffer:
 
     task_id: str
     session_id: str
-    events: list[dict[str, Any]] = field(default_factory=list)
+    events: list[dict[str, Any]] = field(default_factory=list)  # pyright: ignore[reportUnknownVariableType]
     last_seen: float = field(default_factory=time.time)
 
 

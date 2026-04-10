@@ -75,9 +75,10 @@ class RequestClassifier:
             return "default"
 
         config = get_config()
+        request_typed: dict[str, Any] = request  # pyright: ignore[reportUnknownVariableType]
 
         for model_name, rule in self._rules:
-            if rule.evaluate(request, config):
+            if rule.evaluate(request_typed, config):
                 return model_name
 
         return "default"

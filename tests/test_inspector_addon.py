@@ -141,7 +141,7 @@ class TestWireGuardForwarding:
     async def test_custom_forward_domains(self) -> None:
         """Custom forward_domains in config should be respected."""
         config = InspectorConfig(
-            forward_domains=["custom-llm.example.com"],
+            forward_domains={"custom-llm.example.com": None},
         )
         addon = InspectorAddon(config=config, litellm_port=4001)
 
@@ -150,10 +150,51 @@ class TestWireGuardForwarding:
         assert flow.request.host == "localhost"
         assert flow.request.port == 4001
 
-        # Default domain should NOT be forwarded when custom list replaces it
+        # Default domain should NOT be forwarded when custom map replaces it
         flow2 = _make_wg_flow(host="api.anthropic.com")
         await addon.request(flow2)
         assert flow2.request.host == "api.anthropic.com"
+
+    @pytest.mark.asyncio
+    async def test_endpoint_prefix_rewrites_path(self) -> None:
+        """Domain with endpoint prefix rewrites path and stores original."""
+        config = InspectorConfig(
+            forward_domains={"cloudcode-pa.googleapis.com": "/gemini/"},
+        )
+        addon = InspectorAddon(config=config, litellm_port=4001)
+
+        flow = _make_wg_flow(
+            host="cloudcode-pa.googleapis.com",
+            path="/v1internal:streamGenerateContent",
+        )
+        await addon.request(flow)
+
+        assert flow.request.host == "localhost"
+        assert flow.request.port == 4001
+        assert flow.request.path == "/gemini/v1internal:streamGenerateContent"
+
+        record = flow.metadata[InspectorMeta.RECORD]
+        assert record.original_request is not None
+        assert record.original_request.host == "cloudcode-pa.googleapis.com"
+        assert record.original_request.path == "/v1internal:streamGenerateContent"
+        assert record.original_request.scheme == "https"
+
+    @pytest.mark.asyncio
+    async def test_none_prefix_no_path_rewrite(self) -> None:
+        """Domain with None prefix forwards without path rewriting."""
+        config = InspectorConfig(
+            forward_domains={"api.anthropic.com": None},
+        )
+        addon = InspectorAddon(config=config, litellm_port=4001)
+
+        flow = _make_wg_flow(host="api.anthropic.com", path="/v1/messages")
+        await addon.request(flow)
+
+        assert flow.request.host == "localhost"
+        assert flow.request.path == "/v1/messages"
+
+        record = flow.metadata[InspectorMeta.RECORD]
+        assert record.original_request is None
 
 
 class TestWireGuardDirectionDetection:
@@ -365,3 +406,122 @@ class TestResponseAndError:
         flow.error = None
 
         await addon.error(flow)
+
+    @pytest.mark.asyncio
+    async def test_response_with_tracer(self) -> None:
+        from unittest.mock import MagicMock
+
+        addon = InspectorAddon(config=InspectorConfig())
+        mock_tracer = MagicMock()
+        addon.set_tracer(mock_tracer)
+
+        flow = MagicMock()
+        flow.response = MagicMock()
+        flow.response.status_code = 200
+        flow.response.timestamp_end = 1000.5
+        flow.request.timestamp_start = 1000.0
+        flow.request.pretty_url = "https://api.anthropic.com/v1/messages"
+        flow.id = "resp-flow-1"
+
+        await addon.response(flow)
+        mock_tracer.finish_span.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_response_exception_handled(self) -> None:
+        addon = InspectorAddon(config=InspectorConfig())
+        flow = MagicMock()
+        flow.response = MagicMock()
+        flow.response.status_code = 200
+        flow.response.timestamp_end = MagicMock()
+        flow.request.timestamp_start = None  # Will cause TypeError in duration calc
+        flow.request.pretty_url = "https://api.anthropic.com/v1/messages"
+        flow.id = "error-test"
+
+        # Should not raise even if something goes wrong
+        await addon.response(flow)
+
+    @pytest.mark.asyncio
+    async def test_error_with_tracer(self) -> None:
+        addon = InspectorAddon(config=InspectorConfig())
+        mock_tracer = MagicMock()
+        addon.set_tracer(mock_tracer)
+
+        flow = MagicMock()
+        flow.error = MagicMock()
+        flow.error.__str__ = lambda self: "connection timeout"
+        flow.id = "error-flow-1"
+
+        await addon.error(flow)
+        mock_tracer.finish_span_error.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_error_exception_handled(self) -> None:
+        addon = InspectorAddon(config=InspectorConfig())
+        mock_tracer = MagicMock()
+        mock_tracer.finish_span_error.side_effect = RuntimeError("tracer error")
+        addon.set_tracer(mock_tracer)
+
+        flow = MagicMock()
+        flow.error = MagicMock()
+        flow.error.__str__ = lambda self: "connection error"
+        flow.id = "error-flow-2"
+
+        await addon.error(flow)
+        # Should not raise
+
+
+class TestSetTracer:
+    def test_set_tracer(self) -> None:
+        addon = InspectorAddon(config=InspectorConfig())
+        assert addon.tracer is None
+
+        mock_tracer = MagicMock()
+        addon.set_tracer(mock_tracer)
+
+        assert addon.tracer is mock_tracer
+
+
+class TestRequestWithTracer:
+    @pytest.mark.asyncio
+    async def test_request_with_tracer(self) -> None:
+        addon = InspectorAddon(config=InspectorConfig(), litellm_port=4001)
+        mock_tracer = MagicMock()
+        addon.set_tracer(mock_tracer)
+
+        flow = _make_mock_flow(reverse=True)
+        flow.id = "tracer-test-1"
+        flow.request.pretty_host = "api.anthropic.com"
+        flow.request.method = "POST"
+        flow.request.path = "/v1/messages"
+        flow.request.pretty_url = "https://api.anthropic.com/v1/messages"
+        flow.request.content = None
+
+        await addon.request(flow)
+        mock_tracer.start_span.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_unknown_mode_skipped(self) -> None:
+        """Flows with non-reverse, non-WireGuard modes are skipped."""
+        from mitmproxy.proxy.mode_specs import ProxyMode as MitmProxyMode
+
+        addon = InspectorAddon(config=InspectorConfig())
+        flow = MagicMock()
+        flow.client_conn.proxy_mode = MitmProxyMode.parse("regular@4003")
+        flow.request = MagicMock()
+        flow.metadata = {}
+
+        await addon.request(flow)
+        # direction is None, should return early without setting metadata
+        assert flow.metadata == {}
+
+    @pytest.mark.asyncio
+    async def test_request_exception_handled(self) -> None:
+        """Exception during request processing is logged but not raised."""
+        addon = InspectorAddon(config=InspectorConfig())
+        mock_tracer = MagicMock()
+        mock_tracer.start_span.side_effect = RuntimeError("tracer failure")
+        addon.set_tracer(mock_tracer)
+
+        flow = _make_wg_flow(host="api.anthropic.com")
+        await addon.request(flow)
+        # Should not raise

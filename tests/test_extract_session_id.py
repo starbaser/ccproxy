@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from ccproxy.hooks.extract_session_id import extract_session_id, _inject_langfuse_headers
+from ccproxy.hooks.extract_session_id import _inject_langfuse_headers, extract_session_id
 from ccproxy.pipeline.context import Context
 
 

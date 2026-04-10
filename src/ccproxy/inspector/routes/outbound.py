@@ -10,7 +10,12 @@ import logging
 from typing import TYPE_CHECKING, cast
 
 from ccproxy.constants import ANTHROPIC_BETA_HEADERS
-from ccproxy.inspector.flow_store import FLOW_ID_HEADER, FlowRecord, InspectorMeta, get_flow_record
+from ccproxy.inspector.flow_store import (
+    FLOW_ID_HEADER,
+    FlowRecord,
+    InspectorMeta,
+    get_flow_record,
+)
 
 if TYPE_CHECKING:
     from mitmproxy.http import HTTPFlow
@@ -29,7 +34,7 @@ def register_outbound_routes(router: InspectorRouter) -> None:
     from ccproxy.inspector.router import RouteType
 
     @router.route("/{path}", rtype=RouteType.REQUEST)
-    def ensure_beta_headers(flow: HTTPFlow, **kwargs: object) -> None:  # pyright: ignore[reportUnusedFunction]
+    def handle_outbound_request(flow: HTTPFlow, **kwargs: object) -> None:  # pyright: ignore[reportUnusedFunction]
         if not _is_outbound(flow):
             return
 
@@ -40,13 +45,22 @@ def register_outbound_routes(router: InspectorRouter) -> None:
             if record:
                 flow.metadata[InspectorMeta.RECORD] = record
 
-        existing: str | None = cast("str | None", flow.request.headers.get("anthropic-beta"))  # pyright: ignore[reportUnknownMemberType]
-        if existing is None:
-            return
+        if record and record.original_request:
+            orig = record.original_request
+            flow.request.host = orig.host
+            flow.request.port = orig.port
+            flow.request.scheme = orig.scheme
+            flow.request.path = orig.path
+            logger.info(
+                "Restored outbound request: %s://%s:%d%s",
+                orig.scheme, orig.host, orig.port, orig.path,
+            )
 
-        existing_list = [h.strip() for h in existing.split(",") if h.strip()]
-        merged = list(dict.fromkeys(ANTHROPIC_BETA_HEADERS + existing_list))
-        flow.request.headers["anthropic-beta"] = ",".join(merged)
+        existing: str | None = cast("str | None", flow.request.headers.get("anthropic-beta"))  # pyright: ignore[reportUnknownMemberType]
+        if existing is not None:
+            existing_list = [h.strip() for h in existing.split(",") if h.strip()]
+            merged = list(dict.fromkeys(ANTHROPIC_BETA_HEADERS + existing_list))
+            flow.request.headers["anthropic-beta"] = ",".join(merged)
 
     @router.route("/{path}", rtype=RouteType.RESPONSE)
     def observe_auth_failure(flow: HTTPFlow, **kwargs: object) -> None:  # pyright: ignore[reportUnusedFunction]
