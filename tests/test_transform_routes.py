@@ -120,6 +120,40 @@ class TestResolveTransformTarget:
         target = _resolve_transform_target(flow)
         assert target is not None
 
+    def test_match_model(self, cleanup: None) -> None:
+        _make_config_with_transforms([{
+            "match_path": "/v1/chat/completions",
+            "match_model": "gpt-4o",
+            "dest_provider": "anthropic",
+            "dest_model": "claude-3-5-sonnet-20241022",
+        }])
+        flow = _make_flow(body={"model": "gpt-4o", "messages": [{"role": "user", "content": "hi"}]})
+        body = json.loads(flow.request.content)
+        target = _resolve_transform_target(flow, body)
+        assert target is not None
+        assert target.dest_provider == "anthropic"
+
+    def test_match_model_no_match(self, cleanup: None) -> None:
+        _make_config_with_transforms([{
+            "match_path": "/v1/chat/completions",
+            "match_model": "gpt-4o",
+            "dest_provider": "anthropic",
+            "dest_model": "claude-3-5-sonnet-20241022",
+        }])
+        flow = _make_flow(body={"model": "claude-3-haiku", "messages": [{"role": "user", "content": "hi"}]})
+        body = json.loads(flow.request.content)
+        assert _resolve_transform_target(flow, body) is None
+
+    def test_null_match_host_matches_any(self, cleanup: None) -> None:
+        _make_config_with_transforms([{
+            "match_path": "/v1/chat/completions",
+            "dest_provider": "anthropic",
+            "dest_model": "claude-3-5-sonnet-20241022",
+        }])
+        flow = _make_flow(host="any-host.example.com")
+        target = _resolve_transform_target(flow)
+        assert target is not None
+
 
 class TestResolveApiKey:
     def test_none_ref(self) -> None:
