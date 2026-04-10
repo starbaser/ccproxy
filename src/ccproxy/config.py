@@ -147,12 +147,19 @@ class MitmproxyOptions(BaseModel):
 class TransformRoute(BaseModel):
     """A single lightllm transformation rule for the inspector."""
 
-    match_host: str
-    """Hostname to match (e.g. ``api.openai.com``)."""
+    match_host: str | None = None
+    """Hostname to match (e.g. ``api.openai.com``). Checked against
+    ``pretty_host``, ``Host`` header, and ``X-Forwarded-Host``.
+    ``None`` matches any host."""
 
     match_path: str = "/"
     """Path prefix to match (e.g. ``/v1/chat/completions``). Matches any
     path that starts with this prefix."""
+
+    match_model: str | None = None
+    """Model name substring to match in the request body's ``model`` field.
+    ``None`` matches any model. Most useful for reverse proxy flows where
+    all traffic arrives at the same host."""
 
     dest_provider: str
     """Destination LiteLLM provider name (e.g. ``anthropic``, ``gemini``)."""

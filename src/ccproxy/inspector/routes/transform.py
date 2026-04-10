@@ -25,7 +25,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _resolve_transform_target(flow: HTTPFlow) -> TransformRoute | None:
+def _get_flow_hosts(flow: HTTPFlow) -> set[str]:
+    """Collect all host identifiers for this flow (pretty_host, Host header, X-Forwarded-Host)."""
+    hosts: set[str] = set()
+    hosts.add(flow.request.pretty_host)
+    host_header = flow.request.headers.get("host", "")
+    if host_header:
+        hosts.add(host_header.split(":")[0])
+    fwd_host = flow.request.headers.get("x-forwarded-host", "")
+    if fwd_host:
+        hosts.add(fwd_host.split(":")[0])
+    return hosts
+
+
+def _resolve_transform_target(flow: HTTPFlow, body: dict[str, object] | None = None) -> TransformRoute | None:
     """Match flow against configured transform rules (first match wins)."""
     from ccproxy.config import get_config
 
@@ -34,13 +47,16 @@ def _resolve_transform_target(flow: HTTPFlow) -> TransformRoute | None:
     if not transforms:
         return None
 
-    host = flow.request.pretty_host
+    hosts = _get_flow_hosts(flow)
     path = flow.request.path
+    request_model = (body or {}).get("model", "") if body is not None else ""
 
     for rule in transforms:
-        if rule.match_host != host:
+        if rule.match_host is not None and rule.match_host not in hosts:
             continue
         if not path.startswith(rule.match_path):
+            continue
+        if rule.match_model is not None and rule.match_model not in str(request_model):
             continue
         return rule
     return None
@@ -72,11 +88,14 @@ def register_transform_routes(router: InspectorRouter) -> None:
         if flow.metadata.get(InspectorMeta.DIRECTION) != "inbound":
             return
 
-        target = _resolve_transform_target(flow)
-        if target is None:
+        try:
+            body = json.loads(flow.request.content or b"{}")
+        except (json.JSONDecodeError, TypeError):
             return
 
-        body = json.loads(flow.request.content or b"{}")
+        target = _resolve_transform_target(flow, body)
+        if target is None:
+            return
 
         url, headers, new_body = transform_to_provider(
             model=target.dest_model,
@@ -97,9 +116,11 @@ def register_transform_routes(router: InspectorRouter) -> None:
             flow.request.headers[k] = v
         flow.request.content = new_body
 
+        # Strip query params (may contain API keys) from log output
+        log_url = url.split("?")[0]
         logger.info(
             "lightllm transform: %s → %s %s",
             body.get("model", "?"),
             target.dest_provider,
-            url,
+            log_url,
         )

@@ -64,12 +64,23 @@ def _transform_gemini(
     from litellm.llms.vertex_ai.common_utils import _get_gemini_url
     from litellm.llms.vertex_ai.gemini.transformation import _transform_request_body
 
+    # _get_gemini_url embeds the key in ?key= for API key auth.
+    # For OAuth tokens (ya29.*), strip ?key= and use Authorization header only.
+    is_oauth = api_key is not None and api_key.startswith("ya29.")
+
     url, _endpoint = _get_gemini_url(
         mode="chat",
         model=model,
         stream=stream,
-        gemini_api_key=api_key,
+        gemini_api_key=api_key if not is_oauth else "placeholder",
     )
+
+    if is_oauth:
+        # Strip ?key=placeholder and use Bearer auth instead
+        url = url.split("?key=")[0]
+        # Preserve &alt=sse for streaming
+        if stream:
+            url += "?alt=sse"
 
     config = get_config(provider, model)
     headers = config.validate_environment(
