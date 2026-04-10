@@ -2,12 +2,14 @@
 
 Intercepts inbound flows matching configured transform rules, rewrites the
 request body from one provider format to another using lightllm, and redirects
-the flow to the destination provider — optionally bypassing LiteLLM entirely.
+the flow to the destination provider.
 
 Two modes:
   - ``transform``: rewrite request body via lightllm dispatch
-  - ``passthrough``: bypass LiteLLM and forward to the original destination
-    unchanged (restores the pre-_maybe_forward host/port/scheme/path)
+  - ``passthrough``: forward to the original destination unchanged
+
+Unmatched flows: WireGuard flows pass through to their original destination;
+reverse proxy flows get a 501 error (no default upstream).
 """
 
 from __future__ import annotations
@@ -18,8 +20,9 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from mitmproxy.connection import Server
+from mitmproxy.proxy.mode_specs import ReverseMode
 
-from ccproxy.inspector.flow_store import FlowRecord, InspectorMeta
+from ccproxy.inspector.flow_store import InspectorMeta
 
 if TYPE_CHECKING:
     from mitmproxy.http import HTTPFlow
@@ -83,19 +86,9 @@ def _resolve_api_key(target: TransformRoute) -> str | None:
     return os.environ.get(target.dest_api_key_ref)
 
 
-def _handle_passthrough(flow: HTTPFlow, target: TransformRoute) -> None:
-    """Bypass LiteLLM — restore original destination from FlowRecord."""
-    record: FlowRecord | None = flow.metadata.get(InspectorMeta.RECORD)
-    if record is not None and record.original_request is not None:
-        orig = record.original_request
-        flow.request.host = orig.host
-        flow.request.port = orig.port
-        flow.request.scheme = orig.scheme
-        flow.request.path = orig.path
-        flow.server_conn = Server(address=(orig.host, orig.port))
-        logger.info("lightllm passthrough: → %s:%d%s", orig.host, orig.port, orig.path)
-    else:
-        logger.warning("lightllm passthrough: no OriginalRequest on record, cannot restore")
+def _handle_passthrough(flow: HTTPFlow) -> None:
+    """Forward to original destination unchanged."""
+    logger.info("lightllm passthrough: → %s:%d%s", flow.request.host, flow.request.port, flow.request.path)
 
 
 def _handle_transform(flow: HTTPFlow, target: TransformRoute, body: dict[str, object]) -> None:
@@ -105,7 +98,7 @@ def _handle_transform(flow: HTTPFlow, target: TransformRoute, body: dict[str, ob
     url, headers, new_body = transform_to_provider(
         model=target.dest_model,
         provider=target.dest_provider,
-        messages=body.get("messages", []),
+        messages=body.get("messages", []),  # type: ignore[arg-type]
         optional_params={k: v for k, v in body.items() if k != "messages"},
         api_key=_resolve_api_key(target),
         stream=bool(body.get("stream", False)),
@@ -145,10 +138,19 @@ def register_transform_routes(router: InspectorRouter) -> None:
             body = {}
 
         target = _resolve_transform_target(flow, body)
+
         if target is None:
+            if isinstance(flow.client_conn.proxy_mode, ReverseMode):
+                from mitmproxy.http import Response
+
+                flow.response = Response.make(
+                    501,
+                    b'{"error": "no transform rule configured for this destination"}',
+                    {"Content-Type": "application/json"},
+                )
             return
 
         if target.mode == "passthrough":
-            _handle_passthrough(flow, target)
+            _handle_passthrough(flow)
         else:
             _handle_transform(flow, target, body)

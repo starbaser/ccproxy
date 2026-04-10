@@ -1,9 +1,10 @@
 """Inspector addon for HTTP/HTTPS traffic capture with ccproxy
 
-Captures all HTTP traffic flowing through reverse, forward, and WireGuard
-proxy listeners. Mode is detected per-flow via mitmproxy's multi-mode
-``flow.client_conn.proxy_mode`` attribute using ``isinstance`` checks
-against the concrete mode dataclasses.
+Captures all HTTP traffic flowing through reverse and WireGuard proxy
+listeners. All flows are treated as inbound — there is no outbound
+direction concept. The three-stage addon chain (inbound → transform →
+outbound) handles OAuth injection, lightllm routing, and last-mile
+fixups respectively.
 """
 
 from __future__ import annotations
@@ -15,12 +16,10 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from mitmproxy import http
 from mitmproxy.proxy.mode_specs import ReverseMode, WireGuardMode
 
-from ccproxy.config import InspectorConfig
 from ccproxy.inspector.flow_store import (
     FLOW_ID_HEADER,
     FlowRecord,
     InspectorMeta,
-    OriginalRequest,
     create_flow_record,
     get_flow_record,
 )
@@ -31,7 +30,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-Direction = Literal["inbound", "outbound"]
+Direction = Literal["inbound"]
 
 
 class InspectorAddon:
@@ -39,34 +38,25 @@ class InspectorAddon:
 
     def __init__(
         self,
-        config: InspectorConfig,
         traffic_source: str | None = None,
         wg_cli_port: int | None = None,
-        wg_gateway_port: int | None = None,
-        litellm_port: int = 4000,
     ) -> None:
-        self.config = config
         self.traffic_source = traffic_source
         self.tracer: InspectorTracer | None = None
-        self._forward_domains: dict[str, str | None] = dict(config.forward_domains)
         self._wg_cli_port = wg_cli_port
-        self._wg_gateway_port = wg_gateway_port
-        self._litellm_port = litellm_port
 
     def set_tracer(self, tracer: InspectorTracer) -> None:
         self.tracer = tracer
 
     def _get_direction(self, flow: http.HTTPFlow) -> Direction | None:
-        """Detect traffic direction from the proxy mode that accepted this flow."""
+        """Detect traffic direction from the proxy mode that accepted this flow.
+
+        All reverse proxy and WireGuard flows are inbound. Returns None for
+        unrecognized modes (skipped).
+        """
         mode = flow.client_conn.proxy_mode
 
-        if isinstance(mode, ReverseMode):
-            return "inbound"
-
-        if isinstance(mode, WireGuardMode):
-            port = mode.custom_listen_port
-            if port is not None and port == self._wg_gateway_port:
-                return "outbound"
+        if isinstance(mode, (ReverseMode, WireGuardMode)):
             return "inbound"
 
         return None
@@ -91,52 +81,6 @@ class InspectorAddon:
 
         return parse_session_id(user_id)
 
-    def _maybe_forward(
-        self, flow: http.HTTPFlow, direction: Direction, host: str, record: FlowRecord | None,
-    ) -> None:
-        """Forward CLI WireGuard LLM API traffic to LiteLLM.
-
-        Only applies to inbound WireGuard flows (WIREGUARD_CLI) whose host is
-        in the configured forward_domains map. Reverse proxy flows are already
-        targeting LiteLLM. Outbound flows must not be forwarded (infinite loop).
-
-        When a domain maps to a non-None endpoint prefix (e.g. ``/gemini/``),
-        the original request is snapshotted in flow metadata and the path is
-        rewritten to route through LiteLLM's pass-through endpoint.
-        """
-        if direction != "inbound" or host not in self._forward_domains:
-            return
-        if not isinstance(flow.client_conn.proxy_mode, WireGuardMode):
-            return
-
-        endpoint_prefix = self._forward_domains[host]
-
-        if endpoint_prefix:
-            original = OriginalRequest(
-                host=host,
-                port=flow.request.port,
-                scheme=flow.request.scheme,
-                path=flow.request.path,
-            )
-            if record:
-                record.original_request = original
-            flow.request.path = endpoint_prefix.rstrip("/") + flow.request.path
-
-        if endpoint_prefix:
-            flow_id: str | None = cast("str | None", flow.request.headers.get(FLOW_ID_HEADER))  # pyright: ignore[reportUnknownMemberType]
-            if flow_id:
-                flow.request.headers[f"x-pass-{FLOW_ID_HEADER}"] = flow_id
-
-        flow.request.headers["X-Forwarded-Host"] = host
-        flow.request.host = "localhost"
-        flow.request.port = self._litellm_port
-        flow.request.scheme = "http"
-        logger.info(
-            "Forwarding %s → localhost:%d%s",
-            host, self._litellm_port,
-            f" (via {endpoint_prefix})" if endpoint_prefix else "",
-        )
-
     async def request(self, flow: http.HTTPFlow) -> None:
         direction = self._get_direction(flow)
         if direction is None:
@@ -154,7 +98,6 @@ class InspectorAddon:
         flow.metadata[InspectorMeta.RECORD] = record
 
         host = flow.request.pretty_host
-        self._maybe_forward(flow, direction, host, record)
 
         try:
             session_id = self._extract_session_id(flow.request)

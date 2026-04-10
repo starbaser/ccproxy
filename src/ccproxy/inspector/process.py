@@ -53,12 +53,9 @@ class ReadySignal:
 
 
 def _build_opts(
-    litellm_port: int,
     wg_cli_conf_path: Path,
-    wg_gateway_conf_path: Path,
     reverse_port: int,
     wg_cli_port: int,
-    wg_gateway_port: int,
     web_token: str,
 ) -> Any:
     """Build mitmproxy Options from the singleton config."""
@@ -71,9 +68,8 @@ def _build_opts(
 
     opts = Options(
         mode=[
-            f"reverse:http://localhost:{litellm_port}@{reverse_port}",
+            f"reverse:http://localhost:1@{reverse_port}",
             f"wireguard:{wg_cli_conf_path}@{wg_cli_port}",
-            f"wireguard:{wg_gateway_conf_path}@{wg_gateway_port}",
         ],
     )
 
@@ -128,28 +124,22 @@ def _make_transform_router() -> Any:
 
 
 def _build_addons(
-    litellm_port: int,
     wg_cli_port: int,
-    wg_gateway_port: int,
 ) -> list[Any]:
     """Build the addon chain from the singleton config.
 
-    Order matters: InspectorAddon (OTel spans) must fire first, then
-    inbound router (OAuth), then outbound router (beta headers).
+    Order matters: InspectorAddon (OTel spans, flow records) fires first,
+    then inbound (OAuth), transform (lightllm routing), outbound (last-mile fixups).
     """
     from ccproxy.config import get_config
     from ccproxy.inspector.addon import InspectorAddon
 
     config = get_config()
-    inspector = config.inspector
     otel = config.otel
 
     addon = InspectorAddon(
-        config=inspector,
         traffic_source=os.environ.get("CCPROXY_TRAFFIC_SOURCE") or None,
         wg_cli_port=wg_cli_port,
-        wg_gateway_port=wg_gateway_port,
-        litellm_port=litellm_port,
     )
 
     try:
@@ -204,17 +194,15 @@ def get_listen_port(server_instance: ServerInstance) -> int | None:  # type: ign
 
 
 async def run_inspector(
-    litellm_port: int,
     *,
     wg_cli_conf_path: Path,
-    wg_gateway_conf_path: Path,
     reverse_port: int,
 ) -> tuple[WebMaster, asyncio.Task[None], str]:
     """Start the inspector in-process via mitmproxy's WebMaster API.
 
     Reads InspectorConfig and OtelConfig from the singleton. Creates and
-    starts a WebMaster with three listeners (reverse + 2x WireGuard),
-    registers all addons directly, and waits for servers to bind.
+    starts a WebMaster with two listeners (reverse + WireGuard), registers
+    all addons directly, and waits for servers to bind.
 
     Returns after the running() hook fires — all ports are bound and
     WG configs are readable.
@@ -235,13 +223,11 @@ async def run_inspector(
     inspector = config.inspector
 
     wg_cli_port = _find_free_udp_port()
-    wg_gateway_port = _find_free_udp_port()
     web_token = inspector.mitmproxy.web_password or secrets.token_hex(16)
 
     opts = _build_opts(
-        litellm_port,
-        wg_cli_conf_path, wg_gateway_conf_path,
-        reverse_port, wg_cli_port, wg_gateway_port,
+        wg_cli_conf_path,
+        reverse_port, wg_cli_port,
         web_token,
     )
 
@@ -251,7 +237,7 @@ async def run_inspector(
     logging.getLogger("mitmproxy").setLevel(mitmproxy_level)
 
     ready = ReadySignal()
-    addons = _build_addons(litellm_port, wg_cli_port, wg_gateway_port)
+    addons = _build_addons(wg_cli_port)
     master.addons.add(ready, *addons)  # type: ignore[no-untyped-call]
 
     master_task = asyncio.create_task(master.run())
@@ -264,8 +250,8 @@ async def run_inspector(
         raise RuntimeError("mitmweb failed to start (timeout waiting for servers to bind)") from err
 
     logger.info(
-        "Inspector running: reverse@%d → LiteLLM@%d, wg-cli@%d, wg-gateway@%d, UI@%d",
-        reverse_port, litellm_port, wg_cli_port, wg_gateway_port, inspector.port,
+        "Inspector running: reverse@%d, wg-cli@%d, UI@%d",
+        reverse_port, wg_cli_port, inspector.port,
     )
 
     return master, master_task, web_token

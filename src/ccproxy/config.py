@@ -149,8 +149,7 @@ class TransformRoute(BaseModel):
 
     mode: str = "transform"
     """``transform`` (default): rewrite request body via lightllm dispatch.
-    ``passthrough``: bypass LiteLLM and forward to the original destination
-    unchanged — restores the pre-``_maybe_forward`` host/port/scheme/path."""
+    ``passthrough``: forward to the original destination unchanged."""
 
     match_host: str | None = None
     """Hostname to match (e.g. ``api.openai.com``). Checked against
@@ -188,19 +187,6 @@ class InspectorConfig(BaseModel):
 
     max_body_size: int = 0
     """Maximum request/response body size to capture (bytes). 0 = unlimited."""
-
-    forward_domains: dict[str, str | None] = Field(default_factory=lambda: {
-        "api.anthropic.com": None,
-        "api.openai.com": None,
-        "generativelanguage.googleapis.com": None,
-        "cloudcode-pa.googleapis.com": "/gemini/",
-        "openrouter.ai": None,
-        "api.z.ai": None,
-    })
-    """Map of domains to forward from WireGuard to LiteLLM.
-
-    Key is the incoming domain. Value is the LiteLLM endpoint path prefix
-    to prepend (e.g. ``/gemini/``), or ``None`` for direct forwarding."""
 
     debug: bool = False
     """Enable debug logging (includes request body logging)."""

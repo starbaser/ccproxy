@@ -57,13 +57,6 @@ ccproxy:
   inspector:
     port: 8083
     capture_bodies: true
-    forward_domains:
-      api.anthropic.com:
-      api.openai.com:
-      generativelanguage.googleapis.com:
-      cloudcode-pa.googleapis.com: /gemini/
-      openrouter.ai:
-      api.z.ai:
     cert_dir: ~/.ccproxy
     debug: false
     graphql:

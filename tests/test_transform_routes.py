@@ -8,6 +8,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from mitmproxy.proxy.mode_specs import ProxyMode
+
 from ccproxy.config import InspectorConfig, TransformRoute, set_config_instance
 from ccproxy.inspector.flow_store import InspectorMeta
 from ccproxy.inspector.router import InspectorRouter
@@ -23,6 +25,7 @@ def _make_flow(
     path: str = "/v1/chat/completions",
     body: dict[str, Any] | None = None,
     direction: str = "inbound",
+    proxy_mode: Any = None,
 ) -> MagicMock:
     """Build a mock HTTPFlow for testing transform routes."""
     flow = MagicMock()
@@ -38,6 +41,9 @@ def _make_flow(
     }).encode()
     flow.metadata = {InspectorMeta.DIRECTION: direction}
     flow.server_conn = MagicMock()
+    flow.response = None
+    if proxy_mode is not None:
+        flow.client_conn.proxy_mode = proxy_mode
     return flow
 
 
@@ -268,3 +274,70 @@ class TestHandleTransform:
         mock_transform.assert_called_once()
         call_kwargs = mock_transform.call_args
         assert call_kwargs.kwargs.get("model") or call_kwargs[1].get("model") or call_kwargs[0][0] == "claude-3-5-sonnet-20241022"
+
+    def test_reverse_proxy_unmatched_returns_501(self, cleanup: None) -> None:
+        _make_config_with_transforms([{
+            "match_host": "api.openai.com",
+            "match_path": "/v1/chat/completions",
+            "dest_provider": "anthropic",
+            "dest_model": "claude-3-5-sonnet-20241022",
+        }])
+        router = InspectorRouter(
+            name="test_transform", request_passthrough=True, response_passthrough=True,
+        )
+        register_transform_routes(router)
+
+        flow = _make_flow(
+            host="api.other.com",
+            proxy_mode=ProxyMode.parse("reverse:http://localhost:1@4001"),
+        )
+        router.request(flow)
+
+        assert flow.response is not None
+        assert flow.response.status_code == 501
+
+    def test_wireguard_unmatched_passes_through(self, cleanup: None) -> None:
+        _make_config_with_transforms([{
+            "match_host": "api.openai.com",
+            "match_path": "/v1/chat/completions",
+            "dest_provider": "anthropic",
+            "dest_model": "claude-3-5-sonnet-20241022",
+        }])
+        router = InspectorRouter(
+            name="test_transform", request_passthrough=True, response_passthrough=True,
+        )
+        register_transform_routes(router)
+
+        flow = _make_flow(
+            host="api.other.com",
+            proxy_mode=ProxyMode.parse("wireguard@51820"),
+        )
+        original_content = flow.request.content
+        router.request(flow)
+
+        assert flow.response is None
+        assert flow.request.content == original_content
+
+    def test_passthrough_mode_leaves_flow_unchanged(self, cleanup: None) -> None:
+        _make_config_with_transforms([{
+            "match_host": "api.openai.com",
+            "match_path": "/v1/chat/completions",
+            "dest_provider": "anthropic",
+            "dest_model": "claude-3-5-sonnet-20241022",
+            "mode": "passthrough",
+        }])
+        router = InspectorRouter(
+            name="test_transform", request_passthrough=True, response_passthrough=True,
+        )
+        register_transform_routes(router)
+
+        flow = _make_flow()
+        original_host = flow.request.host
+        original_path = flow.request.path
+        original_content = flow.request.content
+        router.request(flow)
+
+        assert flow.request.host == original_host
+        assert flow.request.path == original_path
+        assert flow.request.content == original_content
+        assert flow.response is None

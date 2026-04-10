@@ -506,28 +506,22 @@ handler = {class_name}()
 
 async def _run_inspect(
     config_dir: Path,
-    litellm_port: int,
-    litellm_cmd: list[str],
-    env: dict[str, str],
     main_port: int,
 ) -> int:
-    """Run the full inspect lifecycle: mitmweb + namespaces + LiteLLM.
+    """Run the inspector lifecycle: mitmweb + WireGuard namespace.
 
-    Embeds mitmweb in-process via WebMaster, creates WireGuard namespaces,
-    and runs LiteLLM inside the gateway namespace. Returns LiteLLM's exit code.
+    Embeds mitmweb in-process via WebMaster with two listeners (reverse
+    proxy + WireGuard CLI). The three-stage addon chain (inbound → transform
+    → outbound) handles all request routing via lightllm — no LiteLLM
+    subprocess.
 
-    InspectorConfig and OtelConfig are read from the singleton.
+    Returns 0 on clean shutdown.
     """
     import asyncio
 
     from ccproxy.config import get_config
     from ccproxy.inspector import get_wg_client_conf, run_inspector
-    from ccproxy.inspector.namespace import (
-        check_namespace_capabilities,
-        cleanup_namespace,
-        create_gateway_namespace,
-        run_in_namespace_async,
-    )
+    from ccproxy.inspector.namespace import check_namespace_capabilities
 
     problems = check_namespace_capabilities()
     if problems:
@@ -551,73 +545,41 @@ async def _run_inspect(
 
     pid = os.getpid()
     wg_cli_keypair_path = config_dir / f"wireguard-cli.{pid}.conf"
-    wg_gateway_keypair_path = config_dir / f"wireguard-gateway.{pid}.conf"
 
     (config_dir / ".inspector-wireguard-client.conf").unlink(missing_ok=True)
 
     builtin_print(
         f"Starting inspector: mitmweb reverse@{main_port} "
-        f"+ wg-cli (auto-port) + wg-gateway (auto-port), UI@{inspector.port}"
+        f"+ wg-cli (auto-port), UI@{inspector.port}"
     )
 
     master, master_task, web_token = await run_inspector(
-        litellm_port,
         wg_cli_conf_path=wg_cli_keypair_path,
-        wg_gateway_conf_path=wg_gateway_keypair_path,
         reverse_port=main_port,
     )
 
     loop = asyncio.get_running_loop()
     loop.add_signal_handler(signal.SIGTERM, master.shutdown)
 
-    gateway_ctx = None
-    exit_code = 1
-
     try:
-        # WG client configs — direct in-process access
         wg_cli_conf = get_wg_client_conf(master, wg_cli_keypair_path)
         if wg_cli_conf:
             (config_dir / ".inspector-wireguard-client.conf").write_text(wg_cli_conf)
         else:
             logger.warning("Failed to retrieve CLI WireGuard client config")
 
-        wg_gateway_conf = get_wg_client_conf(master, wg_gateway_keypair_path)
-        if not wg_gateway_conf:
-            builtin_print("Error: Failed to retrieve gateway WireGuard config", file=sys.stderr)
-            return 1
-
-        # Build combined CA bundle (mitmproxy CA cert exists after servers bind)
-        confdir_path = Path(inspector.mitmproxy.confdir) if inspector.mitmproxy.confdir else None
-        combined_bundle = _ensure_combined_ca_bundle(
-            config_dir,
-            env.get("SSL_CERT_FILE"),
-            confdir=confdir_path,
-        )
-        if combined_bundle:
-            bundle = str(combined_bundle)
-            env["SSL_CERT_FILE"] = bundle
-            env["REQUESTS_CA_BUNDLE"] = bundle
-            env["CURL_CA_BUNDLE"] = bundle
-            env["NODE_EXTRA_CA_CERTS"] = bundle
-        else:
-            logger.warning(
-                "mitmproxy CA certificate not found — "
-                "LiteLLM may fail SSL verification inside the gateway namespace"
-            )
-
         # Export WireGuard keys for Wireshark decryption
         wg_keylog_path = config_dir / "wg.keylog"
         keylog_lines: list[str] = []
-        for kp_path in (wg_cli_keypair_path, wg_gateway_keypair_path):
-            if kp_path.exists():
-                try:
-                    kp_data = json.loads(kp_path.read_text())
-                    for key_field in ("server_key", "client_key"):
-                        key_val = kp_data.get(key_field)
-                        if key_val:
-                            keylog_lines.append(f"LOCAL_STATIC_PRIVATE_KEY = {key_val}")
-                except (ValueError, OSError):
-                    pass
+        if wg_cli_keypair_path.exists():
+            try:
+                kp_data = json.loads(wg_cli_keypair_path.read_text())
+                for key_field in ("server_key", "client_key"):
+                    key_val = kp_data.get(key_field)
+                    if key_val:
+                        keylog_lines.append(f"LOCAL_STATIC_PRIVATE_KEY = {key_val}")
+            except (ValueError, OSError):
+                pass
         if keylog_lines:
             wg_keylog_path.write_text("\n".join(keylog_lines) + "\n")
             builtin_print(f"WireGuard keylog: {wg_keylog_path}")
@@ -629,21 +591,20 @@ async def _run_inspect(
         web_url = f"http://{inspector.mitmproxy.web_host}:{inspector.port}/?token={web_token}"
         builtin_print(f"Inspector UI: {web_url}")
 
-        # Create gateway namespace and run LiteLLM inside it
-        gateway_ctx = create_gateway_namespace(wg_gateway_conf, litellm_port)
-        exit_code = await run_in_namespace_async(gateway_ctx, litellm_cmd, env)
+        # Block until shutdown (SIGTERM or SIGINT)
+        await master_task
 
     finally:
         master.shutdown()  # type: ignore[no-untyped-call]
-        await master_task
+        try:
+            await master_task
+        except Exception:
+            pass
         loop.remove_signal_handler(signal.SIGTERM)
 
-        if gateway_ctx is not None:
-            cleanup_namespace(gateway_ctx)
         wg_cli_keypair_path.unlink(missing_ok=True)
-        wg_gateway_keypair_path.unlink(missing_ok=True)
 
-    return exit_code
+    return 0
 
 
 def start_litellm(
@@ -651,30 +612,18 @@ def start_litellm(
     args: list[str] | None = None,
     inspect: bool = False,
 ) -> None:
-    """Start the LiteLLM proxy server with ccproxy configuration.
+    """Start the proxy server with ccproxy configuration.
+
+    In inspect mode: runs mitmweb with the three-stage addon chain
+    (inbound → transform → outbound) — no LiteLLM subprocess.
+
+    In non-inspect mode: runs LiteLLM proxy as a subprocess (legacy).
 
     Runs in the foreground. Use process-compose or systemd for supervision.
-
-    Args:
-        config_dir: Configuration directory containing config files
-        args: Additional arguments to pass to litellm command
-        inspect: Start mitmproxy with browser-based flow inspection
     """
-    from ccproxy.utils import find_available_port
-
     config_path = config_dir / "config.yaml"
-    if not config_path.exists():
-        print(f"Error: Configuration not found at {config_path}", file=sys.stderr)
-        print("Run 'ccproxy install' first to set up configuration.", file=sys.stderr)
-        sys.exit(1)
 
     litellm_host, main_port = _read_proxy_settings(config_dir)
-
-    ccproxy_config_path = config_dir / "ccproxy.yaml"
-    ccproxy_config: dict[str, Any] | None = None
-    if ccproxy_config_path.exists():
-        with ccproxy_config_path.open() as f:
-            ccproxy_config = yaml.safe_load(f)
 
     from ccproxy.preflight import run_preflight_checks
 
@@ -685,21 +634,41 @@ def start_litellm(
         ports_to_check.append(get_config().inspector.port)
     run_preflight_checks(ports=ports_to_check, config_dir=config_dir)
 
+    if inspect:
+        import asyncio
+
+        litellm_port_file = config_dir / ".litellm_port"
+        if litellm_port_file.exists():
+            litellm_port_file.unlink()
+
+        exit_code = asyncio.run(_run_inspect(
+            config_dir=config_dir,
+            main_port=main_port,
+        ))
+        sys.exit(exit_code)
+
+    # Non-inspect mode: run LiteLLM proxy (legacy path)
+    if not config_path.exists():
+        print(f"Error: Configuration not found at {config_path}", file=sys.stderr)
+        print("Run 'ccproxy install' first to set up configuration.", file=sys.stderr)
+        sys.exit(1)
+
+    ccproxy_config_path = config_dir / "ccproxy.yaml"
+    ccproxy_config: dict[str, Any] | None = None
+    if ccproxy_config_path.exists():
+        with ccproxy_config_path.open() as f:
+            ccproxy_config = yaml.safe_load(f)
+
     try:
         generate_handler_file(config_dir)
     except Exception as e:
         print(f"Error generating handler file: {e}", file=sys.stderr)
         sys.exit(1)
 
-    if inspect:
-        litellm_port = find_available_port()
-        litellm_port_file = config_dir / ".litellm_port"
-        litellm_port_file.write_text(str(litellm_port))
-    else:
-        litellm_port = main_port
-        litellm_port_file = config_dir / ".litellm_port"
-        if litellm_port_file.exists():
-            litellm_port_file.unlink()
+    litellm_port = main_port
+    litellm_port_file = config_dir / ".litellm_port"
+    if litellm_port_file.exists():
+        litellm_port_file.unlink()
 
     env = os.environ.copy()
     env["CCPROXY_CONFIG_DIR"] = str(config_dir.absolute())
@@ -743,28 +712,13 @@ def start_litellm(
         "--config",
         str(config_path),
         "--host",
-        # In inspect mode, LiteLLM runs inside a gateway namespace where
-        # slirp4netns hostfwd delivers traffic to the tap0 IP (10.0.2.100).
-        # Bind to 0.0.0.0 so LiteLLM accepts on all namespace interfaces.
-        "0.0.0.0" if inspect else litellm_host,
+        litellm_host,
         "--port",
         str(litellm_port),
     ]
 
     if args:
         litellm_cmd.extend(args)
-
-    if inspect:
-        import asyncio
-
-        exit_code = asyncio.run(_run_inspect(
-            config_dir=config_dir,
-            litellm_port=litellm_port,
-            litellm_cmd=litellm_cmd,
-            env=env,
-            main_port=main_port,
-        ))
-        sys.exit(exit_code)
 
     try:
         log_file = config_dir / "ccproxy.log"

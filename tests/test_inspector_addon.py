@@ -5,7 +5,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ccproxy.config import InspectorConfig
 from ccproxy.inspector.addon import InspectorAddon
 from ccproxy.inspector.flow_store import FLOW_ID_HEADER, InspectorMeta, create_flow_record
 
@@ -67,172 +66,26 @@ class TestRequestMethod:
     @pytest.mark.asyncio
     async def test_request_runs_without_error(self, mock_flow: MagicMock) -> None:
         """request() should run without error."""
-        config = InspectorConfig()
-        addon = InspectorAddon(config=config)
+        addon = InspectorAddon()
 
         mock_flow.request.pretty_host = "api.anthropic.com"
 
         await addon.request(mock_flow)
 
 
-class TestWireGuardForwarding:
-    """Tests for WireGuard LLM API domain forwarding to LiteLLM."""
-
-    @pytest.mark.asyncio
-    async def test_forwards_anthropic_to_litellm(self) -> None:
-        """WireGuard flow to api.anthropic.com should be forwarded to LiteLLM."""
-        config = InspectorConfig()
-        addon = InspectorAddon(config=config, litellm_port=4001)
-
-        flow = _make_wg_flow(host="api.anthropic.com")
-        await addon.request(flow)
-
-        assert flow.request.host == "localhost"
-        assert flow.request.port == 4001
-        assert flow.request.scheme == "http"
-        assert flow.request.headers["X-Forwarded-Host"] == "api.anthropic.com"
-
-    @pytest.mark.asyncio
-    async def test_forwards_openai_to_litellm(self) -> None:
-        """WireGuard flow to api.openai.com should be forwarded to LiteLLM."""
-        config = InspectorConfig()
-        addon = InspectorAddon(config=config, litellm_port=4001)
-
-        flow = _make_wg_flow(host="api.openai.com")
-        await addon.request(flow)
-
-        assert flow.request.host == "localhost"
-        assert flow.request.port == 4001
-        assert flow.request.scheme == "http"
-
-    @pytest.mark.asyncio
-    async def test_non_llm_domain_passes_through(self) -> None:
-        """WireGuard flow to non-LLM domains should not be forwarded."""
-        config = InspectorConfig()
-        addon = InspectorAddon(config=config)
-
-        flow = _make_wg_flow(host="github.com", path="/api/v3/repos")
-        await addon.request(flow)
-
-        assert flow.request.host == "github.com"
-        assert flow.request.port == 443
-        assert flow.request.scheme == "https"
-
-    @pytest.mark.asyncio
-    async def test_reverse_flow_not_forwarded(self) -> None:
-        """Reverse proxy flows should never be forwarded, even for LLM domains."""
-        config = InspectorConfig()
-        addon = InspectorAddon(config=config, litellm_port=4001)
-
-        flow = _make_mock_flow(reverse=True)
-        flow.id = "rev-1"
-        flow.request.pretty_host = "api.anthropic.com"
-        flow.request.host = "api.anthropic.com"
-        flow.request.method = "POST"
-        flow.request.path = "/v1/messages"
-        flow.request.pretty_url = "https://api.anthropic.com/v1/messages"
-        flow.request.content = None
-
-        await addon.request(flow)
-        # host should NOT have been rewritten
-        assert flow.request.host == "api.anthropic.com"
-
-    @pytest.mark.asyncio
-    async def test_custom_forward_domains(self) -> None:
-        """Custom forward_domains in config should be respected."""
-        config = InspectorConfig(
-            forward_domains={"custom-llm.example.com": None},
-        )
-        addon = InspectorAddon(config=config, litellm_port=4001)
-
-        flow = _make_wg_flow(host="custom-llm.example.com")
-        await addon.request(flow)
-        assert flow.request.host == "localhost"
-        assert flow.request.port == 4001
-
-        # Default domain should NOT be forwarded when custom map replaces it
-        flow2 = _make_wg_flow(host="api.anthropic.com")
-        await addon.request(flow2)
-        assert flow2.request.host == "api.anthropic.com"
-
-    @pytest.mark.asyncio
-    async def test_endpoint_prefix_rewrites_path(self) -> None:
-        """Domain with endpoint prefix rewrites path and stores original."""
-        config = InspectorConfig(
-            forward_domains={"cloudcode-pa.googleapis.com": "/gemini/"},
-        )
-        addon = InspectorAddon(config=config, litellm_port=4001)
-
-        flow = _make_wg_flow(
-            host="cloudcode-pa.googleapis.com",
-            path="/v1internal:streamGenerateContent",
-        )
-        await addon.request(flow)
-
-        assert flow.request.host == "localhost"
-        assert flow.request.port == 4001
-        assert flow.request.path == "/gemini/v1internal:streamGenerateContent"
-
-        record = flow.metadata[InspectorMeta.RECORD]
-        assert record.original_request is not None
-        assert record.original_request.host == "cloudcode-pa.googleapis.com"
-        assert record.original_request.path == "/v1internal:streamGenerateContent"
-        assert record.original_request.scheme == "https"
-
-    @pytest.mark.asyncio
-    async def test_none_prefix_no_path_rewrite(self) -> None:
-        """Domain with None prefix forwards without path rewriting."""
-        config = InspectorConfig(
-            forward_domains={"api.anthropic.com": None},
-        )
-        addon = InspectorAddon(config=config, litellm_port=4001)
-
-        flow = _make_wg_flow(host="api.anthropic.com", path="/v1/messages")
-        await addon.request(flow)
-
-        assert flow.request.host == "localhost"
-        assert flow.request.path == "/v1/messages"
-
-        record = flow.metadata[InspectorMeta.RECORD]
-        assert record.original_request is None
-
-
 class TestWireGuardDirectionDetection:
-    """Tests for Phase 3 WIREGUARD_CLI vs WIREGUARD_GW detection."""
-
-    def _make_addon(self, wg_cli_port: int = 51820, wg_gateway_port: int = 51821) -> InspectorAddon:
-        return InspectorAddon(
-            config=InspectorConfig(),
-            wg_cli_port=wg_cli_port,
-            wg_gateway_port=wg_gateway_port,
-            litellm_port=4001,
-        )
+    """Tests for WireGuard direction detection — all WG and reverse flows are inbound."""
 
     @pytest.mark.asyncio
-    async def test_wireguard_cli_direction(self) -> None:
-        addon = self._make_addon(wg_cli_port=51820, wg_gateway_port=51821)
+    async def test_wireguard_direction_is_inbound(self) -> None:
+        addon = InspectorAddon(wg_cli_port=51820)
         flow = _make_wg_flow(host="api.anthropic.com")
-        # Port 51820 != gateway port 51821 → WIREGUARD_CLI
         await addon.request(flow)
         assert flow.metadata.get("ccproxy.direction") == "inbound"
-        # Should also forward to LiteLLM
-        assert flow.request.host == "localhost"
-
-    @pytest.mark.asyncio
-    async def test_wireguard_gw_direction(self) -> None:
-        from mitmproxy.proxy.mode_specs import ProxyMode as MitmProxyMode
-
-        addon = self._make_addon(wg_cli_port=51820, wg_gateway_port=51821)
-        flow = _make_wg_flow(host="api.anthropic.com")
-        flow.client_conn.proxy_mode = MitmProxyMode.parse("wireguard@51821")
-        await addon.request(flow)
-        assert flow.metadata.get("ccproxy.direction") == "outbound"
-        # Should NOT forward to LiteLLM (would cause infinite loop)
-        assert flow.request.host == "api.anthropic.com"
 
     @pytest.mark.asyncio
     async def test_reverse_direction_is_inbound(self) -> None:
-        addon = self._make_addon()
+        addon = InspectorAddon()
         flow = _make_mock_flow(reverse=True)
         flow.id = "rev-dir-1"
         flow.request.pretty_host = "localhost"
@@ -246,53 +99,42 @@ class TestWireGuardDirectionDetection:
 
     @pytest.mark.asyncio
     async def test_wireguard_cli_does_not_forward_non_llm(self) -> None:
-        addon = self._make_addon(wg_cli_port=51820, wg_gateway_port=51821)
+        addon = InspectorAddon(wg_cli_port=51820)
         flow = _make_wg_flow(host="github.com", path="/api/v3")
         await addon.request(flow)
         assert flow.metadata.get("ccproxy.direction") == "inbound"
-        assert flow.request.host == "github.com"
 
     def test_direction_is_string_literal(self) -> None:
         """Direction metadata uses string literals, not an enum."""
-        from mitmproxy.proxy.mode_specs import ProxyMode as MitmProxyMode
-
-        addon = self._make_addon(wg_cli_port=51820, wg_gateway_port=51821)
+        addon = InspectorAddon(wg_cli_port=51820)
         flow = _make_wg_flow(host="api.anthropic.com")
-        # Confirm _get_direction returns a string literal
         direction = addon._get_direction(flow)
         assert direction == "inbound"
 
-        flow2 = _make_wg_flow(host="api.anthropic.com")
-        flow2.client_conn.proxy_mode = MitmProxyMode.parse("wireguard@51821")
-        direction2 = addon._get_direction(flow2)
-        assert direction2 == "outbound"
+    def test_reverse_mode_returns_inbound(self) -> None:
+        """ReverseMode flows return 'inbound'."""
+        addon = InspectorAddon()
+        flow = _make_mock_flow(reverse=True)
+        direction = addon._get_direction(flow)
+        assert direction == "inbound"
 
 
 class TestGetDirectionEdgeCases:
     """Edge cases for _get_direction."""
 
-    def _make_addon(self, wg_gateway_port: int | None = None) -> InspectorAddon:
-        return InspectorAddon(
-            config=InspectorConfig(),
-            wg_gateway_port=wg_gateway_port,
-        )
-
     def test_regular_mode_returns_none(self) -> None:
         from mitmproxy.proxy.mode_specs import ProxyMode as MitmProxyMode
 
-        addon = self._make_addon()
+        addon = InspectorAddon()
         flow = MagicMock()
         flow.client_conn.proxy_mode = MitmProxyMode.parse("regular@8080")
         assert addon._get_direction(flow) is None
 
-    def test_none_gateway_port_none_listen_port(self) -> None:
-        """WireGuard mode with no custom port and wg_gateway_port=None.
-
-        port is None → `port is not None` guard prevents None==None match → returns "inbound".
-        """
+    def test_wireguard_mode_returns_inbound(self) -> None:
+        """WireGuard mode always returns 'inbound'."""
         from mitmproxy.proxy.mode_specs import ProxyMode as MitmProxyMode
 
-        addon = self._make_addon(wg_gateway_port=None)
+        addon = InspectorAddon()
         flow = MagicMock()
         flow.client_conn.proxy_mode = MitmProxyMode.parse("wireguard")
         direction = addon._get_direction(flow)
@@ -308,52 +150,52 @@ class TestExtractSessionId:
         return req
 
     def test_no_content(self) -> None:
-        addon = InspectorAddon(config=InspectorConfig())
+        addon = InspectorAddon()
         req = self._make_request(None)
         assert addon._extract_session_id(req) is None
 
     def test_invalid_json(self) -> None:
-        addon = InspectorAddon(config=InspectorConfig())
+        addon = InspectorAddon()
         req = self._make_request(b"not-json{{{")
         assert addon._extract_session_id(req) is None
 
     def test_missing_metadata(self) -> None:
-        addon = InspectorAddon(config=InspectorConfig())
+        addon = InspectorAddon()
         req = self._make_request(json.dumps({"model": "claude"}).encode())
         assert addon._extract_session_id(req) is None
 
     def test_metadata_not_dict(self) -> None:
-        addon = InspectorAddon(config=InspectorConfig())
+        addon = InspectorAddon()
         req = self._make_request(json.dumps({"metadata": "a string"}).encode())
         assert addon._extract_session_id(req) is None
 
     def test_empty_user_id(self) -> None:
-        addon = InspectorAddon(config=InspectorConfig())
+        addon = InspectorAddon()
         req = self._make_request(json.dumps({"metadata": {"user_id": ""}}).encode())
         assert addon._extract_session_id(req) is None
 
     def test_json_format_session_id(self) -> None:
-        addon = InspectorAddon(config=InspectorConfig())
+        addon = InspectorAddon()
         user_id_obj = json.dumps({"session_id": "abc123"})
         req = self._make_request(json.dumps({"metadata": {"user_id": user_id_obj}}).encode())
         assert addon._extract_session_id(req) == "abc123"
 
     def test_legacy_format(self) -> None:
-        addon = InspectorAddon(config=InspectorConfig())
+        addon = InspectorAddon()
         req = self._make_request(
             json.dumps({"metadata": {"user_id": "user_hash_account_uuid_session_sid123"}}).encode()
         )
         assert addon._extract_session_id(req) == "sid123"
 
     def test_multiple_session_separators(self) -> None:
-        addon = InspectorAddon(config=InspectorConfig())
+        addon = InspectorAddon()
         req = self._make_request(
             json.dumps({"metadata": {"user_id": "a_session_b_session_c"}}).encode()
         )
         assert addon._extract_session_id(req) is None
 
     def test_neither_format(self) -> None:
-        addon = InspectorAddon(config=InspectorConfig())
+        addon = InspectorAddon()
         req = self._make_request(
             json.dumps({"metadata": {"user_id": "plain-user-id"}}).encode()
         )
@@ -365,7 +207,7 @@ class TestRequestFlowStore:
 
     @pytest.mark.asyncio
     async def test_creates_flow_record_and_stamps_header(self) -> None:
-        addon = InspectorAddon(config=InspectorConfig())
+        addon = InspectorAddon()
         flow = _make_wg_flow(host="api.anthropic.com")
         flow.request.headers = {}
 
@@ -376,7 +218,7 @@ class TestRequestFlowStore:
 
     @pytest.mark.asyncio
     async def test_reuses_existing_record(self) -> None:
-        addon = InspectorAddon(config=InspectorConfig())
+        addon = InspectorAddon()
         flow = _make_wg_flow(host="api.anthropic.com")
 
         flow_id, existing_record = create_flow_record("inbound")
@@ -392,7 +234,7 @@ class TestResponseAndError:
 
     @pytest.mark.asyncio
     async def test_response_none_response(self) -> None:
-        addon = InspectorAddon(config=InspectorConfig())
+        addon = InspectorAddon()
         flow = MagicMock()
         flow.response = None
         flow.request.timestamp_start = None
@@ -401,7 +243,7 @@ class TestResponseAndError:
 
     @pytest.mark.asyncio
     async def test_error_none_error(self) -> None:
-        addon = InspectorAddon(config=InspectorConfig())
+        addon = InspectorAddon()
         flow = MagicMock()
         flow.error = None
 
@@ -411,7 +253,7 @@ class TestResponseAndError:
     async def test_response_with_tracer(self) -> None:
         from unittest.mock import MagicMock
 
-        addon = InspectorAddon(config=InspectorConfig())
+        addon = InspectorAddon()
         mock_tracer = MagicMock()
         addon.set_tracer(mock_tracer)
 
@@ -428,7 +270,7 @@ class TestResponseAndError:
 
     @pytest.mark.asyncio
     async def test_response_exception_handled(self) -> None:
-        addon = InspectorAddon(config=InspectorConfig())
+        addon = InspectorAddon()
         flow = MagicMock()
         flow.response = MagicMock()
         flow.response.status_code = 200
@@ -442,7 +284,7 @@ class TestResponseAndError:
 
     @pytest.mark.asyncio
     async def test_error_with_tracer(self) -> None:
-        addon = InspectorAddon(config=InspectorConfig())
+        addon = InspectorAddon()
         mock_tracer = MagicMock()
         addon.set_tracer(mock_tracer)
 
@@ -456,7 +298,7 @@ class TestResponseAndError:
 
     @pytest.mark.asyncio
     async def test_error_exception_handled(self) -> None:
-        addon = InspectorAddon(config=InspectorConfig())
+        addon = InspectorAddon()
         mock_tracer = MagicMock()
         mock_tracer.finish_span_error.side_effect = RuntimeError("tracer error")
         addon.set_tracer(mock_tracer)
@@ -472,7 +314,7 @@ class TestResponseAndError:
 
 class TestSetTracer:
     def test_set_tracer(self) -> None:
-        addon = InspectorAddon(config=InspectorConfig())
+        addon = InspectorAddon()
         assert addon.tracer is None
 
         mock_tracer = MagicMock()
@@ -484,7 +326,7 @@ class TestSetTracer:
 class TestRequestWithTracer:
     @pytest.mark.asyncio
     async def test_request_with_tracer(self) -> None:
-        addon = InspectorAddon(config=InspectorConfig(), litellm_port=4001)
+        addon = InspectorAddon()
         mock_tracer = MagicMock()
         addon.set_tracer(mock_tracer)
 
@@ -504,7 +346,7 @@ class TestRequestWithTracer:
         """Flows with non-reverse, non-WireGuard modes are skipped."""
         from mitmproxy.proxy.mode_specs import ProxyMode as MitmProxyMode
 
-        addon = InspectorAddon(config=InspectorConfig())
+        addon = InspectorAddon()
         flow = MagicMock()
         flow.client_conn.proxy_mode = MitmProxyMode.parse("regular@4003")
         flow.request = MagicMock()
@@ -517,7 +359,7 @@ class TestRequestWithTracer:
     @pytest.mark.asyncio
     async def test_request_exception_handled(self) -> None:
         """Exception during request processing is logged but not raised."""
-        addon = InspectorAddon(config=InspectorConfig())
+        addon = InspectorAddon()
         mock_tracer = MagicMock()
         mock_tracer.start_span.side_effect = RuntimeError("tracer failure")
         addon.set_tracer(mock_tracer)
