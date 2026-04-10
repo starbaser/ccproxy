@@ -26,8 +26,9 @@ from ccproxy.preflight import (
 
 class TestIsCcproxyProcess:
     def test_litellm_with_config(self):
+        """_CCPROXY_PATTERNS is empty — no cmdline matches."""
         cmdline = "/usr/bin/python /usr/bin/litellm --config /home/user/.ccproxy/config.yaml --port 4000"
-        assert _is_ccproxy_process(cmdline) is True
+        assert _is_ccproxy_process(cmdline) is False
 
     def test_mitmweb_no_longer_detected(self):
         """mitmweb runs in-process now — no separate subprocess to detect."""
@@ -88,6 +89,7 @@ class TestFindCcproxyProcesses:
     @patch("ccproxy.preflight._read_proc_cmdline")
     @patch("pathlib.Path.iterdir")
     def test_finds_litellm(self, mock_iterdir, mock_cmdline):
+        """_CCPROXY_PATTERNS is empty — no process matches regardless of cmdline."""
         proc_dir = MagicMock()
         proc_dir.name = "9999"
         proc_dir.is_dir.return_value = True
@@ -95,8 +97,7 @@ class TestFindCcproxyProcesses:
         mock_cmdline.return_value = "/usr/bin/python /usr/bin/litellm --config /home/user/.ccproxy/config.yaml"
 
         results = find_ccproxy_processes(exclude_pid=os.getpid())
-        assert len(results) == 1
-        assert results[0][0] == 9999
+        assert results == []
 
     @patch("ccproxy.preflight._read_proc_cmdline")
     @patch("pathlib.Path.iterdir")
@@ -179,16 +180,13 @@ class TestRunPreflightChecks:
             srv.close()
 
     def test_orphan_killed_then_port_freed(self, tmp_path):
-        """Orphaned ccproxy process on port → killed, startup proceeds."""
+        """Port held by any process → SystemExit (no pattern matches, so no auto-kill)."""
         fake_cmdline = "/usr/bin/litellm --config /home/user/.ccproxy/config.yaml"
 
         with (
-            patch(
-                "ccproxy.preflight.get_port_pid",
-                side_effect=[(42, fake_cmdline[:80]), (None, None)],
-            ),
+            patch("ccproxy.preflight.get_port_pid", return_value=(42, fake_cmdline[:80])),
             patch("ccproxy.preflight._read_proc_cmdline", return_value=fake_cmdline),
-            patch("ccproxy.preflight.kill_stale_processes", return_value=1),
+            pytest.raises(SystemExit),
         ):
             run_preflight_checks(ports=[4000])
 
@@ -227,13 +225,11 @@ class TestRunPreflightChecks:
             run_preflight_checks(ports=[4000])
 
     def test_orphan_killed_but_port_still_occupied(self):
-        """Orphaned ccproxy killed but port still in use → SystemExit."""
+        """Port held by any process → SystemExit (no pattern matches, so no auto-kill)."""
         fake_cmdline = "/usr/bin/litellm --config /home/user/.ccproxy/config.yaml"
         with (
             patch("ccproxy.preflight.get_port_pid", return_value=(42, fake_cmdline)),
             patch("ccproxy.preflight._read_proc_cmdline", return_value=fake_cmdline),
-            patch("ccproxy.preflight.kill_stale_processes", return_value=1),
-            patch("ccproxy.preflight.time"),
             pytest.raises(SystemExit),
         ):
             run_preflight_checks(ports=[4000])

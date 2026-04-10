@@ -1,8 +1,7 @@
-"""ccproxy CLI for managing the LiteLLM proxy server - Tyro implementation."""
+"""ccproxy CLI."""
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 import os
@@ -12,11 +11,10 @@ import subprocess
 import sys
 from builtins import print as builtin_print
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import Annotated, Any
 
 import attrs
 import tyro
-import yaml
 from rich import print
 from rich.console import Console
 from rich.panel import Panel
@@ -25,53 +23,6 @@ from rich.table import Table
 from ccproxy.utils import get_templates_dir
 
 logger = logging.getLogger(__name__)
-
-
-def _read_proxy_settings(config_dir: Path) -> tuple[str, int]:
-    """Read host and port from the config directory.
-
-    Checks config.yaml general_settings first (LiteLLM's canonical location),
-    then falls back to ccproxy.yaml litellm section (legacy global config).
-    Env vars HOST/PORT override both.
-    """
-    host = "127.0.0.1"
-    port = 4000
-    host_set = False
-    port_set = False
-
-    # Primary: config.yaml general_settings (per-project and modern configs)
-    config_yaml = config_dir / "config.yaml"
-    if config_yaml.exists():
-        try:
-            with config_yaml.open() as f:
-                data: dict[str, Any] = yaml.safe_load(f) or {}
-            general: dict[str, Any] = data.get("general_settings", {})
-            if "host" in general:
-                host = general["host"]
-                host_set = True
-            if "port" in general:
-                port = int(general["port"])
-                port_set = True
-        except (yaml.YAMLError, OSError, ValueError):
-            pass
-
-    # Fallback: ccproxy.yaml litellm section
-    ccproxy_yaml = config_dir / "ccproxy.yaml"
-    if ccproxy_yaml.exists():
-        try:
-            with ccproxy_yaml.open() as f:
-                data = yaml.safe_load(f) or {}
-            litellm: dict[str, Any] = data.get("litellm", {})
-            if not host_set:
-                host = litellm.get("host", host)
-            if not port_set:
-                port = int(litellm.get("port", port))
-        except (yaml.YAMLError, OSError, ValueError):
-            pass
-
-    host = os.environ.get("HOST", host)
-    port = int(os.environ.get("PORT", str(port)))
-    return host, port
 
 
 # Subcommand definitions using attrs
@@ -114,7 +65,7 @@ class Logs:
 
 @attrs.define
 class Status:
-    """Show the status of LiteLLM proxy and ccproxy configuration.
+    """Show ccproxy status.
 
     When service flags (--proxy, --inspect) are specified,
     runs in health check mode with bitmask exit codes:
@@ -126,14 +77,14 @@ class Status:
 
     Examples:
         ccproxy status --proxy --inspect  # All must be running
-        ccproxy status --proxy            # Just check LiteLLM
+        ccproxy status --proxy            # Just check proxy
     """
 
     json: bool = False
     """Output status as JSON with boolean values."""
 
     proxy: bool = False
-    """Check if LiteLLM proxy is running."""
+    """Check if proxy is running."""
 
     inspect: bool = False
     """Check if inspector stack (mitmweb) is running."""
@@ -195,7 +146,7 @@ def setup_logging(config_dir: Path, debug: bool = False, *, log_file: bool = Fal
         fh.setFormatter(fmt)
         root.addHandler(fh)
 
-    logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+    logging.getLogger("LiteLLM").setLevel(logging.WARNING)  # suppress litellm import noise
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
@@ -226,10 +177,8 @@ def install_config(config_dir: Path, force: bool = False) -> None:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # List of files to copy
     template_files = [
         "ccproxy.yaml",
-        "config.yaml",
     ]
 
     # Copy template files
@@ -248,9 +197,8 @@ def install_config(config_dir: Path, force: bool = False) -> None:
 
     print(f"\nInstallation complete! Configuration files installed to: {config_dir}")
     print("\nNext steps:")
-    print(f"  1. Edit {config_dir}/ccproxy.yaml to configure routing rules")
-    print(f"  2. Edit {config_dir}/config.yaml to configure LiteLLM models")
-    print("  3. Start the proxy with: ccproxy start")
+    print(f"  1. Edit {config_dir}/ccproxy.yaml to configure ccproxy")
+    print("  2. Start the proxy with: ccproxy start")
 
 
 def _ensure_combined_ca_bundle(
@@ -308,14 +256,16 @@ def run_with_proxy(
     With --inspect: confines the subprocess in a WireGuard namespace jail
     for transparent traffic capture (all traffic routes through mitmweb).
     """
-    # Load config to get proxy settings
+    from ccproxy.config import get_config
+
     ccproxy_config_path = config_dir / "ccproxy.yaml"
     if not ccproxy_config_path.exists():
         print(f"Error: Configuration not found at {ccproxy_config_path}", file=sys.stderr)
         print("Run 'ccproxy install' first to set up configuration.", file=sys.stderr)
         sys.exit(1)
 
-    host, port = _read_proxy_settings(config_dir)
+    cfg = get_config()
+    host, port = cfg.host, cfg.port
 
     # Set up environment for the subprocess
     env = os.environ.copy()
@@ -351,17 +301,8 @@ def run_with_proxy(
 
         wg_client_conf = wg_conf_file.read_text()
 
-        inspector_confdir: Path | None = None
-        ccproxy_config_path = config_dir / "ccproxy.yaml"
-        if ccproxy_config_path.exists():
-            import yaml
-
-            with ccproxy_config_path.open() as f:
-                cfg: dict[str, Any] = yaml.safe_load(f) or {}
-            inspect_section: dict[str, Any] = cfg.get("ccproxy", {}).get("inspector", {})
-            cert_dir = inspect_section.get("cert_dir")
-            if cert_dir:
-                inspector_confdir = Path(cert_dir).expanduser()
+        confdir = cfg.inspector.mitmproxy.confdir
+        inspector_confdir: Path | None = Path(confdir) if confdir else None
 
         # Trust mitmproxy's CA so TLS interception works transparently
         combined_bundle = _ensure_combined_ca_bundle(
@@ -519,17 +460,12 @@ def start_server(
     """
     import asyncio
 
-    _litellm_host, main_port = _read_proxy_settings(config_dir)
-
     from ccproxy.config import get_config
     from ccproxy.preflight import run_preflight_checks
 
+    main_port = get_config().port
     ports_to_check = [main_port, get_config().inspector.port]
     run_preflight_checks(ports=ports_to_check, config_dir=config_dir)
-
-    litellm_port_file = config_dir / ".litellm_port"
-    if litellm_port_file.exists():
-        litellm_port_file.unlink()
 
     exit_code = asyncio.run(_run_inspect(
         config_dir=config_dir,
@@ -611,17 +547,7 @@ def show_status(
     check_proxy: bool = False,
     check_inspect: bool = False,
 ) -> None:
-    """Show the status of LiteLLM proxy and ccproxy configuration.
-
-    Args:
-        config_dir: Configuration directory to check
-        json_output: Output status as JSON with boolean values
-        check_proxy: Health check - require LiteLLM proxy running
-        check_inspect: Health check - require inspector stack running
-
-    When any check_* flag is True, exits 0 only if ALL specified services
-    are healthy, otherwise exits 1. No output is produced in check mode.
-    """
+    """Show ccproxy status."""
     import socket
 
     def _check_alive(check_host: str, check_port: int, timeout: float = 0.5) -> bool:
@@ -631,76 +557,36 @@ def show_status(
         except OSError:
             return False
 
+    from ccproxy.config import get_config
+
+    cfg = get_config()
+    host, main_port = cfg.host, cfg.port
+    inspect_port = cfg.inspector.port
+    hooks = cfg.hooks
+
     # Check configuration files
     ccproxy_config = config_dir / "ccproxy.yaml"
-    litellm_config = config_dir / "config.yaml"
-    user_hooks = config_dir / "ccproxy.py"
-
-    # Build config paths dict
-    config_paths = {}
+    config_paths: dict[str, str] = {}
     if ccproxy_config.exists():
         config_paths["ccproxy.yaml"] = str(ccproxy_config)
-    if litellm_config.exists():
-        config_paths["config.yaml"] = str(litellm_config)
-    if user_hooks.exists():
-        config_paths["ccproxy.py"] = str(user_hooks)
 
-    # Extract callbacks and model_list from config.yaml
-    callbacks = []
-    model_list = []
-    if litellm_config.exists():
-        try:
-            with litellm_config.open() as f:
-                config_data: dict[str, Any] = yaml.safe_load(f)
-            if config_data:
-                litellm_settings: dict[str, Any] = config_data.get("litellm_settings", {})
-                callbacks = litellm_settings.get("callbacks", [])
-                model_list = config_data.get("model_list", [])
-        except (yaml.YAMLError, OSError):
-            pass
-
-    # Extract hooks and inspect config from ccproxy.yaml
-    hooks: list[Any] = []
-    inspect_config: dict[str, Any] = {}
-    if ccproxy_config.exists():
-        try:
-            with ccproxy_config.open() as f:
-                ccproxy_data: dict[str, Any] = yaml.safe_load(f)
-            if ccproxy_data:
-                ccproxy_section: dict[str, Any] = ccproxy_data.get("ccproxy", {})
-                hooks = ccproxy_section.get("hooks", [])
-                inspect_config = ccproxy_section.get("inspector", {})
-        except (yaml.YAMLError, OSError):
-            pass
-
-    host, main_port = _read_proxy_settings(config_dir)
     proxy_url = f"http://{host}:{main_port}"
 
     # Detect running state via TCP probes
     proxy_running = _check_alive(host, main_port)
-    inspect_port = inspect_config.get("port", 8083)
     combined_running = _check_alive("127.0.0.1", inspect_port)
-    litellm_actual_port = main_port
-
-    litellm_port_file = config_dir / ".litellm_port"
-    if litellm_port_file.exists():
-        with contextlib.suppress(ValueError, OSError):
-            litellm_actual_port = int(litellm_port_file.read_text().strip())
 
     status_data: dict[str, Any] = {
         "proxy": proxy_running,
         "url": proxy_url,
         "config": config_paths,
-        "callbacks": callbacks,
         "hooks": hooks,
-        "model_list": model_list,
         "log": str(config_dir / "ccproxy.log") if (config_dir / "ccproxy.log").exists() else None,
         "inspector": {
             "running": combined_running,
             "entry_port": main_port,
             "inspect_port": inspect_port,
             "inspect_url": f"http://127.0.0.1:{inspect_port}" if combined_running else None,
-            "litellm_port": litellm_actual_port,
         },
     }
 
@@ -732,23 +618,18 @@ def show_status(
             proxy_status = f"[dim]{url}[/dim] [red]false[/red]"
         table.add_row("proxy", proxy_status)
 
-        # Inspector status — inspect stack
+        # Inspector status
         inspector_info = status_data["inspector"]
-        litellm_port = inspector_info["litellm_port"]
-
-        inspector_parts: list[str] = []
 
         if inspector_info["running"]:
             entry_port = inspector_info["entry_port"]
-            inspect_status = f"[green]inspect[/green]@[cyan]{entry_port}[/cyan] → litellm@[cyan]{litellm_port}[/cyan]"
+            inspect_status = f"[green]listening[/green]@[cyan]{entry_port}[/cyan]"
             if inspector_info.get("inspect_url"):
                 inspect_status += f"\n[green]ui[/green] → [cyan]{inspector_info['inspect_url']}[/cyan]"
-            inspector_parts.append(inspect_status)
         else:
-            inspector_parts.append("[dim]stopped[/dim]")
+            inspect_status = "[dim]stopped[/dim]"
 
-        inspector_display = "\n".join(inspector_parts)
-        table.add_row("inspector", inspector_display)
+        table.add_row("inspector", inspect_status)
 
         # Config files
         if status_data["config"]:
@@ -756,13 +637,6 @@ def show_status(
         else:
             config_display = "[red]No config files found[/red]"
         table.add_row("config", config_display)
-
-        # Callbacks
-        if status_data["callbacks"]:
-            callbacks_display = "\n".join(f"[green]• {cb}[/green]" for cb in status_data["callbacks"])
-        else:
-            callbacks_display = "[dim]No callbacks configured[/dim]"
-        table.add_row("callbacks", callbacks_display)
 
         # Log file
         log_display = status_data["log"] if status_data["log"] else "[yellow]No log file[/yellow]"
@@ -798,46 +672,6 @@ def show_status(
 
             console.print(Panel(hooks_table, title="[bold]Hooks[/bold]", border_style="green"))
 
-        # Model deployments table
-        if status_data["model_list"]:
-            models_table = Table(show_header=True, show_lines=True, expand=True)
-            models_table.add_column("Model Name", style="cyan", no_wrap=True)
-            models_table.add_column("Provider Model", style="yellow", no_wrap=True)
-            models_table.add_column("API Base", style="dim", no_wrap=True)
-
-            # Build lookup for resolving model aliases
-            model_lookup = {m.get("model_name", ""): m for m in status_data["model_list"]}
-
-            for model in status_data["model_list"]:
-                model_entry: dict[str, Any] = cast(dict[str, Any], model) if isinstance(model, dict) else {}
-                model_name: str = model_entry.get("model_name", "")
-                litellm_params: dict[str, Any] = model_entry.get("litellm_params", {})
-                provider_model: str = litellm_params.get("model", "")
-                api_base: str | None = litellm_params.get("api_base")
-
-                # Resolve API base from target model if this is an alias
-                if not api_base and provider_model in model_lookup:
-                    target: dict[str, Any] = model_lookup[provider_model]
-                    api_base = target.get("litellm_params", {}).get("api_base")
-
-                # Shorten API base to just the hostname
-                if api_base:
-                    from urllib.parse import urlparse
-
-                    parsed = urlparse(api_base)
-                    api_base_display = parsed.netloc or api_base
-                else:
-                    api_base_display = "[dim]default[/dim]"
-
-                models_table.add_row(model_name, provider_model, api_base_display)
-
-            console.print(
-                Panel(
-                    models_table,
-                    title="[bold]Model Deployments[/bold]",
-                    border_style="magenta",
-                )
-            )
 
 
 def main(

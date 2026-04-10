@@ -1,4 +1,6 @@
 ccproxy:
+  host: 127.0.0.1
+  port: 4000
   debug: true
 
   # OAuth token sources - shell commands to retrieve tokens for each provider.
@@ -28,7 +30,3 @@ ccproxy:
     port: 8083
     cert_dir: ~/.ccproxy
     debug: false
-
-litellm:
-  host: 127.0.0.1
-  port: 4000

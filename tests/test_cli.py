@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from ccproxy.config import clear_config_instance
 from ccproxy.cli import (
     Install,
     Logs,
@@ -31,9 +32,8 @@ class TestInstallConfig:
         templates_dir = tmp_path / "templates"
         templates_dir.mkdir()
 
-        # Create template files (ccproxy.py is no longer a template - it's auto-generated on start)
+        # Only ccproxy.yaml is installed; ccproxy.py is auto-generated on start
         (templates_dir / "ccproxy.yaml").write_text("test: config")
-        (templates_dir / "config.yaml").write_text("litellm: config")
 
         mock_get_templates.return_value = templates_dir
 
@@ -41,8 +41,6 @@ class TestInstallConfig:
         install_config(config_dir)
 
         assert (config_dir / "ccproxy.yaml").exists()
-        assert (config_dir / "config.yaml").exists()
-        # ccproxy.py is not installed - it's generated on startup
 
         captured = capsys.readouterr()
         assert "Installation complete!" in captured.out
@@ -67,7 +65,6 @@ class TestInstallConfig:
         templates_dir = tmp_path / "templates"
         templates_dir.mkdir()
         (templates_dir / "ccproxy.yaml").write_text("new: config")
-        (templates_dir / "config.yaml").write_text("new: litellm")
 
         mock_get_templates.return_value = templates_dir
 
@@ -86,8 +83,7 @@ class TestInstallConfig:
         """Test install when template file is missing."""
         templates_dir = tmp_path / "templates"
         templates_dir.mkdir()
-        # Only create some template files
-        (templates_dir / "ccproxy.yaml").write_text("test: config")
+        # No template files present
 
         mock_get_templates.return_value = templates_dir
 
@@ -95,8 +91,7 @@ class TestInstallConfig:
         install_config(config_dir)
 
         captured = capsys.readouterr()
-        assert "Warning: Template config.yaml not found" in captured.err
-        # ccproxy.py is no longer a template, so no warning expected
+        assert "Warning: Template ccproxy.yaml not found" in captured.err
 
     def test_install_template_dir_error(self, tmp_path: Path) -> None:
         """Test install when get_templates_dir raises RuntimeError."""
@@ -140,15 +135,19 @@ class TestRunWithProxy:
         assert "Run 'ccproxy install' first" in captured.err
 
     @patch("subprocess.run")
-    def test_run_with_proxy_success(self, mock_run: Mock, tmp_path: Path) -> None:
+    def test_run_with_proxy_success(self, mock_run: Mock, tmp_path: Path, monkeypatch) -> None:
         """Test successful command execution with proxy environment."""
         config_file = tmp_path / "ccproxy.yaml"
         config_file.write_text("""
-litellm:
+ccproxy:
   host: 192.168.1.1
   port: 8888
 """)
 
+        monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
+        monkeypatch.delenv("CCPROXY_PORT", raising=False)
+        monkeypatch.delenv("CCPROXY_HOST", raising=False)
+        clear_config_instance()
         mock_run.return_value = Mock(returncode=0)
 
         with pytest.raises(SystemExit) as exc_info:
@@ -163,21 +162,22 @@ litellm:
         assert env["ANTHROPIC_BASE_URL"] == "http://192.168.1.1:8888"
 
     @patch("subprocess.run")
-    def test_run_with_env_override(self, mock_run: Mock, tmp_path: Path) -> None:
+    def test_run_with_env_override(self, mock_run: Mock, tmp_path: Path, monkeypatch) -> None:
         """Test run with environment variable overrides."""
         config_file = tmp_path / "ccproxy.yaml"
         config_file.write_text("""
-litellm:
+ccproxy:
   host: 192.168.1.1
   port: 8888
 """)
 
+        monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
+        monkeypatch.setenv("CCPROXY_HOST", "10.0.0.1")
+        monkeypatch.setenv("CCPROXY_PORT", "9999")
+        clear_config_instance()  # env vars already set above, clear stale singleton
         mock_run.return_value = Mock(returncode=0)
 
-        with (
-            patch.dict(os.environ, {"HOST": "10.0.0.1", "PORT": "9999"}),
-            pytest.raises(SystemExit),
-        ):
+        with pytest.raises(SystemExit):
             run_with_proxy(tmp_path, ["echo", "test"])
 
         # Check environment variables use env overrides
@@ -186,18 +186,21 @@ litellm:
         assert env["OPENAI_API_BASE"] == "http://10.0.0.1:9999"
 
     @patch("subprocess.run")
-    def test_run_with_inspect_running(self, mock_run: Mock, tmp_path: Path) -> None:
+    def test_run_with_inspect_running(self, mock_run: Mock, tmp_path: Path, monkeypatch) -> None:
         """Test run with inspect - client still connects to main port (transparent proxy)."""
         config_file = tmp_path / "ccproxy.yaml"
         config_file.write_text("""
-litellm:
+ccproxy:
   host: 127.0.0.1
   port: 4000
-ccproxy:
-  inspect:
+  inspector:
     port: 8081
 """)
 
+        monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
+        monkeypatch.delenv("CCPROXY_PORT", raising=False)
+        monkeypatch.delenv("CCPROXY_HOST", raising=False)
+        clear_config_instance()
         mock_run.return_value = Mock(returncode=0)
 
         with pytest.raises(SystemExit) as exc_info:
@@ -216,18 +219,21 @@ ccproxy:
         assert env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:4000"
 
     @patch("subprocess.run")
-    def test_run_with_inspect_not_running(self, mock_run: Mock, tmp_path: Path) -> None:
+    def test_run_with_inspect_not_running(self, mock_run: Mock, tmp_path: Path, monkeypatch) -> None:
         """Test run without inspect routes directly to LiteLLM."""
         config_file = tmp_path / "ccproxy.yaml"
         config_file.write_text("""
-litellm:
+ccproxy:
   host: 127.0.0.1
   port: 4000
-ccproxy:
-  inspect:
+  inspector:
     port: 8081
 """)
 
+        monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
+        monkeypatch.delenv("CCPROXY_PORT", raising=False)
+        monkeypatch.delenv("CCPROXY_HOST", raising=False)
+        clear_config_instance()
         mock_run.return_value = Mock(returncode=0)
 
         with pytest.raises(SystemExit) as exc_info:
@@ -245,11 +251,13 @@ ccproxy:
         assert "HTTP_PROXY" not in env or env.get("HTTP_PROXY") == os.environ.get("HTTP_PROXY")
 
     @patch("subprocess.run")
-    def test_run_command_not_found(self, mock_run: Mock, tmp_path: Path, capsys) -> None:
+    def test_run_command_not_found(self, mock_run: Mock, tmp_path: Path, capsys, monkeypatch) -> None:
         """Test run with non-existent command."""
         config_file = tmp_path / "ccproxy.yaml"
-        config_file.write_text("litellm: {}")
+        config_file.write_text("ccproxy: {}")
 
+        monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
+        clear_config_instance()
         mock_run.side_effect = FileNotFoundError()
 
         with pytest.raises(SystemExit) as exc_info:
@@ -260,11 +268,13 @@ ccproxy:
         assert "Command not found: nonexistent" in captured.err
 
     @patch("subprocess.run")
-    def test_run_command_keyboard_interrupt(self, mock_run: Mock, tmp_path: Path) -> None:
+    def test_run_command_keyboard_interrupt(self, mock_run: Mock, tmp_path: Path, monkeypatch) -> None:
         """Test run with keyboard interrupt."""
         config_file = tmp_path / "ccproxy.yaml"
-        config_file.write_text("litellm: {}")
+        config_file.write_text("ccproxy: {}")
 
+        monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
+        clear_config_instance()
         mock_run.side_effect = KeyboardInterrupt()
 
         with pytest.raises(SystemExit) as exc_info:
@@ -367,19 +377,17 @@ class TestShowStatus:
     """Test suite for show_status function."""
 
     @patch("socket.create_connection")
-    def test_status_json_proxy_running(self, mock_conn: Mock, tmp_path: Path, capsys) -> None:
+    def test_status_json_proxy_running(self, mock_conn: Mock, tmp_path: Path, capsys, monkeypatch) -> None:
         """Test status JSON output with proxy running."""
-        # Create config files
         ccproxy_config = tmp_path / "ccproxy.yaml"
-        ccproxy_config.write_text("litellm: {}")
-
-        litellm_config = tmp_path / "config.yaml"
-        litellm_config.write_text("""
-litellm_settings:
-  callbacks:
-    - ccproxy.handler
-    - langfuse
+        ccproxy_config.write_text("""
+ccproxy:
+  host: 127.0.0.1
+  port: 4000
 """)
+
+        monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
+        clear_config_instance()
 
         user_hooks = tmp_path / "ccproxy.py"
         user_hooks.write_text("# hooks")
@@ -394,20 +402,20 @@ litellm_settings:
         status = json.loads(captured.out)
         assert status["proxy"] is True
         assert status["config"]["ccproxy.yaml"] == str(ccproxy_config)
-        assert status["config"]["config.yaml"] == str(litellm_config)
-        assert status["config"]["ccproxy.py"] == str(user_hooks)
-        assert status["callbacks"] == ["ccproxy.handler", "langfuse"]
         assert status["log"] is None
 
     @patch("socket.create_connection", side_effect=OSError)
-    def test_status_json_proxy_stopped(self, mock_conn: Mock, tmp_path: Path, capsys) -> None:
+    def test_status_json_proxy_stopped(self, mock_conn: Mock, tmp_path: Path, capsys, monkeypatch) -> None:
         """Test status JSON output with proxy stopped."""
-        # Create only config files
         ccproxy_config = tmp_path / "ccproxy.yaml"
-        ccproxy_config.write_text("litellm: {}")
+        ccproxy_config.write_text("""
+ccproxy:
+  host: 127.0.0.1
+  port: 4000
+""")
 
-        litellm_config = tmp_path / "config.yaml"
-        litellm_config.write_text("litellm_settings: {}")
+        monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
+        clear_config_instance()
 
         show_status(tmp_path, json_output=True)
 
@@ -415,26 +423,27 @@ litellm_settings:
         status = json.loads(captured.out)
         assert status["proxy"] is False
         assert status["config"]["ccproxy.yaml"] == str(ccproxy_config)
-        assert status["config"]["config.yaml"] == str(litellm_config)
-        assert "ccproxy.py" not in status["config"]
-        assert status["callbacks"] == []
-        assert status["log"] is None
 
     @patch("socket.create_connection", side_effect=OSError)
-    def test_status_json_no_config(self, mock_conn: Mock, tmp_path: Path, capsys) -> None:
+    def test_status_json_no_config(self, mock_conn: Mock, tmp_path: Path, capsys, monkeypatch) -> None:
         """Test status JSON output with no config files."""
+        monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
+        clear_config_instance()
+
         show_status(tmp_path, json_output=True)
 
         captured = capsys.readouterr()
         status = json.loads(captured.out)
         assert status["proxy"] is False
         assert status["config"] == {}
-        assert status["callbacks"] == []
         assert status["log"] is None
 
     @patch("socket.create_connection", side_effect=OSError)
-    def test_status_json_proxy_not_reachable(self, mock_conn: Mock, tmp_path: Path, capsys) -> None:
+    def test_status_json_proxy_not_reachable(self, mock_conn: Mock, tmp_path: Path, capsys, monkeypatch) -> None:
         """Test status JSON output when proxy port is not reachable."""
+        monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
+        clear_config_instance()
+
         show_status(tmp_path, json_output=True)
 
         captured = capsys.readouterr()
@@ -442,20 +451,22 @@ litellm_settings:
         assert status["proxy"] is False
 
     @patch("socket.create_connection")
-    def test_status_rich_output_proxy_running(self, mock_conn: Mock, tmp_path: Path, capsys) -> None:
+    def test_status_rich_output_proxy_running(self, mock_conn: Mock, tmp_path: Path, capsys, monkeypatch) -> None:
         """Test status rich output with proxy running."""
-        # Create config files
         ccproxy_config = tmp_path / "ccproxy.yaml"
-        ccproxy_config.write_text("litellm: {}")
-
-        litellm_config = tmp_path / "config.yaml"
-        litellm_config.write_text("""
-litellm_settings:
-  callbacks:
-    - ccproxy.handler
+        ccproxy_config.write_text("""
+ccproxy:
+  host: 127.0.0.1
+  port: 4000
+  hooks:
+    inbound:
+      - ccproxy.hooks.forward_oauth
 """)
 
-        log_file = tmp_path / "litellm.log"
+        monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
+        clear_config_instance()
+
+        log_file = tmp_path / "ccproxy.log"
         log_file.write_text("log content")
 
         # Mock TCP probe: proxy is reachable
@@ -470,21 +481,12 @@ litellm_settings:
         assert "true" in captured.out
         assert "config" in captured.out
         assert "ccproxy.yaml" in captured.out
-        assert "callbacks" in captured.out
-        assert "ccproxy.handler" in captured.out
 
-    def test_status_rich_output_no_callbacks(self, tmp_path: Path, capsys) -> None:
-        """Test status rich output with no callbacks configured."""
-        litellm_config = tmp_path / "config.yaml"
-        litellm_config.write_text("litellm_settings: {}")
-
-        show_status(tmp_path, json_output=False)
-
-        captured = capsys.readouterr()
-        assert "No callbacks configured" in captured.out
-
-    def test_status_rich_output_no_config(self, tmp_path: Path, capsys) -> None:
+    def test_status_rich_output_no_config(self, tmp_path: Path, capsys, monkeypatch) -> None:
         """Test status rich output with no config files."""
+        monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
+        clear_config_instance()
+
         show_status(tmp_path, json_output=False)
 
         captured = capsys.readouterr()
@@ -495,31 +497,39 @@ class TestMainFunction:
     """Test suite for main CLI function using Tyro."""
 
     @patch("ccproxy.cli.start_server")
-    def test_main_start_command(self, mock_start: Mock, tmp_path: Path) -> None:
+    def test_main_start_command(self, mock_start: Mock, tmp_path: Path, monkeypatch) -> None:
         """Test main with start command."""
+        monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
+        clear_config_instance()
         cmd = Start()
         main(cmd, config_dir=tmp_path)
 
         mock_start.assert_called_once_with(tmp_path)
 
     @patch("ccproxy.cli.install_config")
-    def test_main_install_command(self, mock_install: Mock, tmp_path: Path) -> None:
+    def test_main_install_command(self, mock_install: Mock, tmp_path: Path, monkeypatch) -> None:
         """Test main with install command."""
+        monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
+        clear_config_instance()
         cmd = Install(force=True)
         main(cmd, config_dir=tmp_path)
 
         mock_install.assert_called_once_with(tmp_path, force=True)
 
     @patch("ccproxy.cli.run_with_proxy")
-    def test_main_run_command(self, mock_run: Mock, tmp_path: Path) -> None:
+    def test_main_run_command(self, mock_run: Mock, tmp_path: Path, monkeypatch) -> None:
         """Test main with run command."""
+        monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
+        clear_config_instance()
         cmd = Run(command=["echo", "hello", "world"])
         main(cmd, config_dir=tmp_path)
 
         mock_run.assert_called_once_with(tmp_path, ["echo", "hello", "world"], inspect=False)
 
-    def test_main_run_no_args(self, tmp_path: Path, capsys) -> None:
+    def test_main_run_no_args(self, tmp_path: Path, capsys, monkeypatch) -> None:
         """Test main run command without arguments shows help."""
+        monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
+        clear_config_instance()
         cmd = Run(command=[])
 
         with pytest.raises(SystemExit) as exc_info:
@@ -545,16 +555,20 @@ class TestMainFunction:
             mock_start.assert_called_once_with(default_dir)
 
     @patch("ccproxy.cli.view_logs")
-    def test_main_logs_command(self, mock_logs: Mock, tmp_path: Path) -> None:
+    def test_main_logs_command(self, mock_logs: Mock, tmp_path: Path, monkeypatch) -> None:
         """Test main with logs command."""
+        monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
+        clear_config_instance()
         cmd = Logs(follow=True, lines=50)
         main(cmd, config_dir=tmp_path)
 
         mock_logs.assert_called_once_with(follow=True, lines=50, config_dir=tmp_path)
 
     @patch("ccproxy.cli.show_status")
-    def test_main_status_command(self, mock_status: Mock, tmp_path: Path) -> None:
+    def test_main_status_command(self, mock_status: Mock, tmp_path: Path, monkeypatch) -> None:
         """Test main with status command."""
+        monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
+        clear_config_instance()
         cmd = Status(json=False)
         main(cmd, config_dir=tmp_path)
 
@@ -563,8 +577,10 @@ class TestMainFunction:
         )
 
     @patch("ccproxy.cli.show_status")
-    def test_main_status_command_json(self, mock_status: Mock, tmp_path: Path) -> None:
+    def test_main_status_command_json(self, mock_status: Mock, tmp_path: Path, monkeypatch) -> None:
         """Test main with status command with JSON output."""
+        monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
+        clear_config_instance()
         cmd = Status(json=True)
         main(cmd, config_dir=tmp_path)
 

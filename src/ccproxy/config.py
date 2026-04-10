@@ -1,38 +1,12 @@
 """Configuration management for ccproxy.
 
-Configuration Discovery Precedence (Highest to Lowest Priority):
-===============================================================
+Config discovery precedence:
 
-1. **CCPROXY_CONFIG_DIR Environment Variable** (Highest Priority)
-   - Set by CLI or manually: `export CCPROXY_CONFIG_DIR=/path/to/config`
-   - Looks for: `${CCPROXY_CONFIG_DIR}/ccproxy.yaml`
-   - Use case: Development, testing, custom deployments
+1. ``CCPROXY_CONFIG_DIR`` env var → ``$CCPROXY_CONFIG_DIR/ccproxy.yaml``
+2. ``~/.ccproxy/ccproxy.yaml`` (fallback)
 
-2. **LiteLLM Proxy Server Runtime Directory**
-   - Automatically detected from proxy_server.config_path
-   - Looks for: `{proxy_runtime_dir}/ccproxy.yaml`
-   - Use case: Production deployments with LiteLLM proxy
-
-3. **~/.ccproxy Directory** (Fallback)
-   - User's home directory default location
-   - Looks for: `~/.ccproxy/ccproxy.yaml`
-   - Use case: Default user installations
-
-The first existing `ccproxy.yaml` found in this order is used.
-If no `ccproxy.yaml` is found, default configuration is applied.
-
-Examples:
---------
-# Override with environment variable (highest priority)
-export CCPROXY_CONFIG_DIR=/custom/path
-litellm --config /custom/path/config.yaml
-
-# Use proxy runtime directory (automatic detection)
-litellm --config /etc/litellm/config.yaml
-# Will look for /etc/litellm/ccproxy.yaml
-
-# Fallback to user directory
-# Will look for ~/.ccproxy/ccproxy.yaml
+Individual fields can be overridden via ``CCPROXY_`` prefixed env vars
+(e.g. ``CCPROXY_PORT=4001``).
 """
 
 import logging
@@ -110,8 +84,7 @@ class MitmproxyOptions(BaseModel):
     Typically set via InspectorConfig.cert_dir model validator."""
 
     ssl_insecure: bool = True
-    """Skip upstream TLS certificate verification. Required when mitmproxy
-    reverse-proxies to localhost LiteLLM."""
+    """Skip upstream TLS certificate verification."""
 
     stream_large_bodies: str = "1m"
     """Stream bodies larger than this threshold instead of buffering.
@@ -223,8 +196,11 @@ class CCProxyConfig(BaseSettings):
     model_config = SettingsConfigDict(
         case_sensitive=False,
         extra="ignore",
+        env_prefix="CCPROXY_",
     )
 
+    host: str = "127.0.0.1"
+    port: int = 4000
     debug: bool = False
 
     inspector: InspectorConfig = Field(default_factory=InspectorConfig)
@@ -266,9 +242,6 @@ class CCProxyConfig(BaseSettings):
 
     # Path to ccproxy config
     ccproxy_config_path: Path = Field(default_factory=lambda: Path("./ccproxy.yaml"))
-
-    # Path to LiteLLM config (for model lookups)
-    litellm_config_path: Path = Field(default_factory=lambda: Path("./config.yaml"))
 
     @property
     def oat_values(self) -> dict[str, str]:
@@ -510,23 +483,6 @@ class CCProxyConfig(BaseSettings):
             )
 
     @classmethod
-    def from_proxy_runtime(cls, **kwargs: Any) -> "CCProxyConfig":
-        """Load configuration from ccproxy.yaml file in the same directory as config.yaml.
-
-        This method looks for ccproxy.yaml in the same directory as the LiteLLM config.
-        """
-        instance = cls(**kwargs)
-
-        # Try to find ccproxy.yaml in the same directory as config.yaml
-        config_dir = instance.litellm_config_path.parent
-        ccproxy_yaml_path = config_dir / "ccproxy.yaml"
-
-        if ccproxy_yaml_path.exists():
-            instance = cls.from_yaml(ccproxy_yaml_path, **kwargs)
-
-        return instance
-
-    @classmethod
     def from_yaml(cls, yaml_path: Path, **kwargs: Any) -> "CCProxyConfig":
         """Load configuration from ccproxy.yaml file.
 
@@ -543,11 +499,18 @@ class CCProxyConfig(BaseSettings):
         instance = cls(ccproxy_config_path=yaml_path, **kwargs)
 
         if yaml_path.exists():
+            import os
+
             with yaml_path.open() as f:
                 data: dict[str, Any] = yaml.safe_load(f) or {}
 
                 ccproxy_data: dict[str, Any] = data.get("ccproxy", {})
 
+                # Env vars (via CCPROXY_ prefix) take precedence over YAML
+                if "host" in ccproxy_data and "CCPROXY_HOST" not in os.environ:
+                    instance.host = ccproxy_data["host"]
+                if "port" in ccproxy_data and "CCPROXY_PORT" not in os.environ:
+                    instance.port = int(ccproxy_data["port"])
                 if "debug" in ccproxy_data:
                     instance.debug = ccproxy_data["debug"]
                 if "oat_sources" in ccproxy_data:
@@ -562,30 +525,9 @@ class CCProxyConfig(BaseSettings):
                     if "debug" not in inspector_dict and instance.debug:
                         inspector_dict = {**inspector_dict, "debug": instance.debug}
                     instance.inspector = InspectorConfig(**inspector_dict)  # pyright: ignore[reportArgumentType]
-                # Migrate OTel fields from legacy inspector section
                 otel_data = ccproxy_data.get("otel")
                 if otel_data:
                     instance.otel = OtelConfig(**otel_data)
-
-                # Backwards compatibility: migrate deprecated 'credentials' field
-                if "credentials" in ccproxy_data:
-                    logger.error(
-                        "DEPRECATED: The 'credentials' field is deprecated and will be removed in a future version. "
-                        "Please migrate to 'oat_sources' in your ccproxy.yaml configuration. "
-                        "Example:\n"
-                        "  oat_sources:\n"
-                        "    anthropic: \"jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json\"\n"
-                        "The deprecated 'credentials' field has been automatically migrated to "
-                        "oat_sources['anthropic'] for this session."
-                    )
-                    # Migrate credentials to oat_sources for anthropic provider
-                    if "anthropic" not in instance.oat_sources:
-                        instance.oat_sources["anthropic"] = ccproxy_data["credentials"]
-                    else:
-                        logger.warning(
-                            "Both 'credentials' and 'oat_sources[\"anthropic\"]' are configured. "
-                            "Using 'oat_sources[\"anthropic\"]' and ignoring deprecated 'credentials' field."
-                        )
 
                 hooks_data = ccproxy_data.get("hooks", [])
                 if hooks_data:
@@ -610,56 +552,25 @@ def get_config() -> CCProxyConfig:
             if _config_instance is None:
                 import os
 
-                config_path = None
-                config_source = None
+                config_path: Path | None = None
 
-                # Priority 1: Environment variable
+                # Priority 1: CCPROXY_CONFIG_DIR env var
                 env_config_dir = os.environ.get("CCPROXY_CONFIG_DIR")
                 if env_config_dir:
                     config_path = Path(env_config_dir)
-                    config_source = f"ENV:CCPROXY_CONFIG_DIR={env_config_dir}"
                     logger.info(f"Using config directory from environment: {config_path}")
-                else:
-                    # Priority 2: LiteLLM proxy server runtime directory
-                    try:
-                        from litellm.proxy import proxy_server
 
-                        if proxy_server and hasattr(proxy_server, "config_path") and proxy_server.config_path:
-                            config_path = Path(proxy_server.config_path).parent
-                            config_source = f"PROXY_RUNTIME:{config_path}"
-                            logger.info(f"Using config directory from proxy runtime: {config_path}")
-                    except ImportError:
-                        logger.debug("LiteLLM proxy server not available for config discovery")
+                # Priority 2: ~/.ccproxy fallback
+                if config_path is None:
+                    config_path = Path.home() / ".ccproxy"
 
-                if config_path:
-                    # Try to load ccproxy.yaml from discovered path
-                    ccproxy_yaml_path = config_path / "ccproxy.yaml"
-                    if ccproxy_yaml_path.exists():
-                        logger.info(f"Loading ccproxy config from: {ccproxy_yaml_path} (source: {config_source})")
-                        _config_instance = CCProxyConfig.from_yaml(ccproxy_yaml_path)
-                        _config_instance.litellm_config_path = config_path / "config.yaml"
-                    else:
-                        logger.info(
-                            f"ccproxy.yaml not found at {ccproxy_yaml_path}, using default config "
-                            f"(source: {config_source})"
-                        )
-                        # Create default config with proper paths
-                        _config_instance = CCProxyConfig(
-                            litellm_config_path=config_path / "config.yaml", ccproxy_config_path=ccproxy_yaml_path
-                        )
+                ccproxy_yaml = config_path / "ccproxy.yaml"
+                if ccproxy_yaml.exists():
+                    logger.info(f"Loading config from: {ccproxy_yaml}")
+                    _config_instance = CCProxyConfig.from_yaml(ccproxy_yaml)
                 else:
-                    # Priority 3: Fallback to ~/.ccproxy directory
-                    fallback_config_dir = Path.home() / ".ccproxy"
-                    ccproxy_path = fallback_config_dir / "ccproxy.yaml"
-                    if ccproxy_path.exists():
-                        logger.info(f"Using fallback config directory: {fallback_config_dir}")
-                        _config_instance = CCProxyConfig.from_yaml(ccproxy_path)
-                        _config_instance.litellm_config_path = fallback_config_dir / "config.yaml"
-                    else:
-                        logger.info("No ccproxy.yaml found in any location, using proxy runtime defaults")
-                        # Use from_proxy_runtime which will look for ccproxy.yaml
-                        # in the same directory as config.yaml
-                        _config_instance = CCProxyConfig.from_proxy_runtime()
+                    logger.info("No ccproxy.yaml found, using defaults")
+                    _config_instance = CCProxyConfig()
 
     return _config_instance
 

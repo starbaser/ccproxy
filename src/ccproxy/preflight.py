@@ -16,10 +16,8 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Patterns that identify ccproxy-managed processes via /proc/*/cmdline
-_CCPROXY_PATTERNS = [
-    ("litellm", ".ccproxy/config.yaml"),
-]
+# No managed subprocesses in current architecture; mitmweb runs in-process.
+_CCPROXY_PATTERNS: list[tuple[str, str]] = []
 
 
 def _is_ccproxy_process(cmdline: str) -> bool:

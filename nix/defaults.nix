@@ -1,5 +1,7 @@
 {
   settings = {
+    host = "127.0.0.1";
+    port = 4000;
     debug = true;
     oauth_ttl = 28800;
     oauth_refresh_buffer = 0.1;
@@ -30,14 +32,8 @@
     };
     inspector = {
       port = 8083;
-      capture_bodies = true;
       cert_dir = "~/.ccproxy";
       debug = false;
     };
-  };
-
-  litellmSettings = {
-    host = "127.0.0.1";
-    port = 4000;
   };
 }

@@ -14,11 +14,14 @@ from ccproxy.config import (
 class TestCCProxyConfig:
     """Tests for main config class."""
 
-    def test_default_config(self) -> None:
+    def test_default_config(self, monkeypatch: mock.MagicMock) -> None:
         """Test default configuration values."""
+        monkeypatch.delenv("CCPROXY_HOST", raising=False)
+        monkeypatch.delenv("CCPROXY_PORT", raising=False)
         config = CCProxyConfig()
         assert config.debug is False
-        assert config.litellm_config_path == Path("./config.yaml")
+        assert config.host == "127.0.0.1"
+        assert config.port == 4000
         assert config.ccproxy_config_path == Path("./ccproxy.yaml")
 
     def test_config_attributes(self) -> None:
@@ -76,39 +79,48 @@ ccproxy:
         finally:
             yaml_path.unlink()
 
-    def test_model_loading_from_yaml(self) -> None:
-        """Test that model configuration can be loaded from YAML files."""
-        litellm_yaml_content = """
-model_list:
-  - model_name: default
-    litellm_params:
-      model: gpt-4
-  - model_name: background
-    litellm_params:
-      model: gpt-3.5-turbo
-"""
-        ccproxy_yaml_content = """
-ccproxy:
-  debug: false
-"""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as litellm_file:
-            litellm_file.write(litellm_yaml_content)
-            litellm_path = Path(litellm_file.name)
+    def test_host_port_from_yaml(self, monkeypatch: mock.MagicMock) -> None:
+        """Test that host and port are loaded from the ccproxy section of YAML."""
+        monkeypatch.delenv("CCPROXY_HOST", raising=False)
+        monkeypatch.delenv("CCPROXY_PORT", raising=False)
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as ccproxy_file:
-            ccproxy_file.write(ccproxy_yaml_content)
-            ccproxy_path = Path(ccproxy_file.name)
+        yaml_content = """
+ccproxy:
+  host: "0.0.0.0"
+  port: 9999
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(yaml_content)
+            yaml_path = Path(f.name)
 
         try:
-            config = CCProxyConfig.from_yaml(ccproxy_path, litellm_config_path=litellm_path)
+            config = CCProxyConfig.from_yaml(yaml_path)
 
-            # Config should have the litellm_config_path set
-            assert config.litellm_config_path == litellm_path
-            # Model lookup functionality has been moved to router.py
+            assert config.host == "0.0.0.0"
+            assert config.port == 9999
 
         finally:
-            litellm_path.unlink()
-            ccproxy_path.unlink()
+            yaml_path.unlink()
+
+    def test_host_port_env_override(self, monkeypatch: mock.MagicMock) -> None:
+        """Test that CCPROXY_PORT env var takes precedence over YAML value."""
+        monkeypatch.setenv("CCPROXY_PORT", "5555")
+
+        yaml_content = """
+ccproxy:
+  port: 9999
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(yaml_content)
+            yaml_path = Path(f.name)
+
+        try:
+            config = CCProxyConfig.from_yaml(yaml_path)
+
+            assert config.port == 5555
+
+        finally:
+            yaml_path.unlink()
 
 
 class TestConfigSingleton:
@@ -135,51 +147,8 @@ class TestConfigSingleton:
         finally:
             clear_config_instance()
 
-
-class TestProxyRuntimeConfig:
-    """Tests for loading configuration from proxy_server runtime."""
-
-    def test_from_proxy_runtime_without_ccproxy_yaml(self) -> None:
-        """Test loading config when ccproxy.yaml doesn't exist."""
-        # Create a temporary directory without ccproxy.yaml
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-            config_yaml = temp_path / "config.yaml"
-            config_yaml.write_text("model_list: []")
-
-            # Mock Path("config.yaml") to return our temp config.yaml
-            with mock.patch("ccproxy.config.Path") as mock_path:
-                mock_path.return_value = config_yaml
-                config = CCProxyConfig.from_proxy_runtime()
-
-                # Should use defaults
-                assert config.debug is False
-
-    def test_from_proxy_runtime_default_paths(self) -> None:
-        """Test loading config with default paths."""
-        # Create paths that don't exist
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-            config_yaml = temp_path / "config.yaml"  # Don't create it
-
-            # Mock Path to return our non-existent config.yaml
-            with mock.patch("ccproxy.config.Path") as mock_path:
-                mock_path.return_value = config_yaml
-                config = CCProxyConfig.from_proxy_runtime()
-
-                # Should use defaults
-                assert config.debug is False
-
-    def test_config_from_runtime(self) -> None:
-        """Test loading configuration from proxy_server runtime."""
-        config = CCProxyConfig.from_proxy_runtime()
-
-        # Config should be created successfully
-        assert config is not None
-        # Model lookup functionality has been moved to router.py
-
-    def test_get_config_uses_runtime_when_available(self) -> None:
-        """Test that get_config prefers runtime config when available."""
+    def test_get_config_uses_ccproxy_yaml(self) -> None:
+        """Test that get_config reads settings from ccproxy.yaml."""
         clear_config_instance()
 
         ccproxy_yaml_content = """
@@ -188,15 +157,10 @@ ccproxy:
 """
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-
-            config_yaml = temp_path / "config.yaml"
-            config_yaml.write_text("model_list: []")
-
-            ccproxy_yaml = temp_path / "ccproxy.yaml"
-            ccproxy_yaml.write_text(ccproxy_yaml_content)
-
             import os
+
+            ccproxy_yaml = Path(temp_dir) / "ccproxy.yaml"
+            ccproxy_yaml.write_text(ccproxy_yaml_content)
 
             original_cwd = Path.cwd()
             os.chdir(temp_dir)

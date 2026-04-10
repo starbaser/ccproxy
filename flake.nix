@@ -75,36 +75,27 @@
         mkConfig =
           {
             settings ? defaultSettings.settings,
-            litellmSettings ? defaultSettings.litellmSettings,
-            litellmConfig ? defaultSettings.litellmConfig,
             configDir ? ".ccproxy",
           }:
           let
-            ccproxyYaml = yaml.generate "ccproxy.yaml" (
-              { ccproxy = settings; }
-              // lib.optionalAttrs (litellmSettings != { }) { litellm = litellmSettings; }
-            );
-            litellmConfigYaml = yaml.generate "config.yaml" litellmConfig;
+            ccproxyYaml = yaml.generate "ccproxy.yaml" { ccproxy = settings; };
           in
           {
-            inherit ccproxyYaml litellmConfigYaml;
+            inherit ccproxyYaml;
 
             shellHook = ''
               mkdir -p ${configDir}
               ln -sfn ${ccproxyYaml} ${configDir}/ccproxy.yaml
-              ln -sfn ${litellmConfigYaml} ${configDir}/config.yaml
               export CCPROXY_CONFIG_DIR="$PWD/${configDir}"
             '';
           };
 
         devConfig = mkConfig {
           settings = defaultSettings.settings // {
+            port = 4001;
             inspector = defaultSettings.settings.inspector // {
               cert_dir = "./.ccproxy";
             };
-          };
-          litellmSettings = defaultSettings.litellmSettings // {
-            port = 4001;
           };
         };
         inspectDeps = pkgs.lib.makeBinPath [
