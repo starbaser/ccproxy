@@ -226,43 +226,40 @@ class HookDAG:
         return "\n".join(lines)
 
     def to_ascii(self) -> str:
-        """Generate ASCII representation of the DAG.
+        """Generate unicode box-drawing representation of the DAG."""
+        # Pre-compute all content lines per group to determine max width
+        group_contents: list[list[str]] = []
+        for group in self._parallel_groups:
+            group_hooks = sorted(group)
+            content: list[str] = []
+            if len(group_hooks) == 1:
+                spec = self._hooks[group_hooks[0]]
+                content.append(group_hooks[0])
+                if spec.reads:
+                    content.append(f"  reads: {', '.join(sorted(spec.reads))}")
+                if spec.writes:
+                    content.append(f"  writes: {', '.join(sorted(spec.writes))}")
+            else:
+                content.append(f"PARALLEL: {', '.join(group_hooks)}")
+            group_contents.append(content)
 
-        Returns:
-            ASCII art string showing hook dependencies
-        """
+        width = max((max(len(s) for s in c) for c in group_contents), default=20) + 2
+
         lines: list[str] = []
         deps = self._build_dependencies()
 
-        for i, group in enumerate(self._parallel_groups):
+        for i, (group, content) in enumerate(zip(self._parallel_groups, group_contents)):
             if i > 0:
-                # Draw arrows from previous group
                 prev_group = self._parallel_groups[i - 1]
-                for hook_name in group:
-                    hook_deps = deps[hook_name]
-                    from_prev = hook_deps & prev_group
-                    if from_prev:
-                        lines.append("       │")
-                        lines.append("       ▼")
+                has_dep = any(deps[h] & prev_group for h in group)
+                if has_dep:
+                    lines.append("  │")
+                    lines.append("  ▼")
 
-            # Draw group
-            group_hooks = sorted(group)
-            if len(group_hooks) == 1:
-                spec = self._hooks[group_hooks[0]]
-                lines.append(f"┌{'─' * 40}┐")
-                lines.append(f"│ {group_hooks[0]:<38} │")
-                if spec.reads:
-                    reads_str = ", ".join(sorted(spec.reads))
-                    lines.append(f"│   reads: {reads_str:<28} │")
-                if spec.writes:
-                    writes_str = ", ".join(sorted(spec.writes))
-                    lines.append(f"│   writes: {writes_str:<27} │")
-                lines.append(f"└{'─' * 40}┘")
-            else:
-                # Multiple hooks in parallel
-                lines.append(f"┌{'─' * 40}┐")
-                lines.append(f"│ PARALLEL: {', '.join(group_hooks):<27} │")
-                lines.append(f"└{'─' * 40}┘")
+            lines.append(f"┌{'─' * width}┐")
+            for text in content:
+                lines.append(f"│ {text:<{width - 1}}│")
+            lines.append(f"└{'─' * width}┘")
 
         return "\n".join(lines)
 
