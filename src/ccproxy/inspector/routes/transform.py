@@ -3,6 +3,11 @@
 Intercepts inbound flows matching configured transform rules, rewrites the
 request body from one provider format to another using lightllm, and redirects
 the flow to the destination provider — optionally bypassing LiteLLM entirely.
+
+Two modes:
+  - ``transform``: rewrite request body via lightllm dispatch
+  - ``passthrough``: bypass LiteLLM and forward to the original destination
+    unchanged (restores the pre-_maybe_forward host/port/scheme/path)
 """
 
 from __future__ import annotations
@@ -14,7 +19,7 @@ from urllib.parse import urlparse
 
 from mitmproxy.connection import Server
 
-from ccproxy.inspector.flow_store import InspectorMeta
+from ccproxy.inspector.flow_store import FlowRecord, InspectorMeta
 
 if TYPE_CHECKING:
     from mitmproxy.http import HTTPFlow
@@ -78,10 +83,56 @@ def _resolve_api_key(target: TransformRoute) -> str | None:
     return os.environ.get(target.dest_api_key_ref)
 
 
+def _handle_passthrough(flow: HTTPFlow, target: TransformRoute) -> None:
+    """Bypass LiteLLM — restore original destination from FlowRecord."""
+    record: FlowRecord | None = flow.metadata.get(InspectorMeta.RECORD)
+    if record is not None and record.original_request is not None:
+        orig = record.original_request
+        flow.request.host = orig.host
+        flow.request.port = orig.port
+        flow.request.scheme = orig.scheme
+        flow.request.path = orig.path
+        flow.server_conn = Server(address=(orig.host, orig.port))
+        logger.info("lightllm passthrough: → %s:%d%s", orig.host, orig.port, orig.path)
+    else:
+        logger.warning("lightllm passthrough: no OriginalRequest on record, cannot restore")
+
+
+def _handle_transform(flow: HTTPFlow, target: TransformRoute, body: dict[str, object]) -> None:
+    """Transform request body via lightllm dispatch and rewrite destination."""
+    from ccproxy.lightllm import transform_to_provider
+
+    url, headers, new_body = transform_to_provider(
+        model=target.dest_model,
+        provider=target.dest_provider,
+        messages=body.get("messages", []),
+        optional_params={k: v for k, v in body.items() if k != "messages"},
+        api_key=_resolve_api_key(target),
+        stream=bool(body.get("stream", False)),
+    )
+
+    parsed = urlparse(url)
+    flow.request.host = parsed.hostname or flow.request.host
+    flow.request.port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    flow.request.scheme = parsed.scheme or "https"
+    flow.request.path = parsed.path or "/"
+    flow.server_conn = Server(address=(flow.request.host, flow.request.port))
+    for k, v in headers.items():
+        flow.request.headers[k] = v
+    flow.request.content = new_body
+
+    log_url = url.split("?")[0]
+    logger.info(
+        "lightllm transform: %s → %s %s",
+        body.get("model", "?"),
+        target.dest_provider,
+        log_url,
+    )
+
+
 def register_transform_routes(router: InspectorRouter) -> None:
     """Register transform route handlers on the given router."""
     from ccproxy.inspector.router import RouteType
-    from ccproxy.lightllm import transform_to_provider
 
     @router.route("/{path}", rtype=RouteType.REQUEST)
     def handle_transform(flow: HTTPFlow, **kwargs: object) -> None:  # pyright: ignore[reportUnusedFunction]
@@ -91,36 +142,13 @@ def register_transform_routes(router: InspectorRouter) -> None:
         try:
             body = json.loads(flow.request.content or b"{}")
         except (json.JSONDecodeError, TypeError):
-            return
+            body = {}
 
         target = _resolve_transform_target(flow, body)
         if target is None:
             return
 
-        url, headers, new_body = transform_to_provider(
-            model=target.dest_model,
-            provider=target.dest_provider,
-            messages=body.get("messages", []),
-            optional_params={k: v for k, v in body.items() if k != "messages"},
-            api_key=_resolve_api_key(target),
-            stream=body.get("stream", False),
-        )
-
-        parsed = urlparse(url)
-        flow.request.host = parsed.hostname or flow.request.host
-        flow.request.port = parsed.port or (443 if parsed.scheme == "https" else 80)
-        flow.request.scheme = parsed.scheme or "https"
-        flow.request.path = parsed.path or "/"
-        flow.server_conn = Server(address=(flow.request.host, flow.request.port))
-        for k, v in headers.items():
-            flow.request.headers[k] = v
-        flow.request.content = new_body
-
-        # Strip query params (may contain API keys) from log output
-        log_url = url.split("?")[0]
-        logger.info(
-            "lightllm transform: %s → %s %s",
-            body.get("model", "?"),
-            target.dest_provider,
-            log_url,
-        )
+        if target.mode == "passthrough":
+            _handle_passthrough(flow, target)
+        else:
+            _handle_transform(flow, target, body)

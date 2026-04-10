@@ -147,6 +147,11 @@ class MitmproxyOptions(BaseModel):
 class TransformRoute(BaseModel):
     """A single lightllm transformation rule for the inspector."""
 
+    mode: str = "transform"
+    """``transform`` (default): rewrite request body via lightllm dispatch.
+    ``passthrough``: bypass LiteLLM and forward to the original destination
+    unchanged — restores the pre-``_maybe_forward`` host/port/scheme/path."""
+
     match_host: str | None = None
     """Hostname to match (e.g. ``api.openai.com``). Checked against
     ``pretty_host``, ``Host`` header, and ``X-Forwarded-Host``.
@@ -161,11 +166,13 @@ class TransformRoute(BaseModel):
     ``None`` matches any model. Most useful for reverse proxy flows where
     all traffic arrives at the same host."""
 
-    dest_provider: str
-    """Destination LiteLLM provider name (e.g. ``anthropic``, ``gemini``)."""
+    dest_provider: str = ""
+    """Destination LiteLLM provider name (e.g. ``anthropic``, ``gemini``).
+    Not used in ``passthrough`` mode."""
 
-    dest_model: str
-    """Destination model name as LiteLLM expects it."""
+    dest_model: str = ""
+    """Destination model name as LiteLLM expects it.
+    Not used in ``passthrough`` mode."""
 
     dest_api_key_ref: str | None = None
     """Provider name in ``oat_sources`` for credential lookup, or an
