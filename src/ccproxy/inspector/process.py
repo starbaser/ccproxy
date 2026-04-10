@@ -116,6 +116,17 @@ def _make_outbound_router() -> Any:
     return router
 
 
+def _make_transform_router() -> Any:
+    from ccproxy.inspector.router import InspectorRouter
+    from ccproxy.inspector.routes.transform import register_transform_routes
+
+    router = InspectorRouter(
+        name="ccproxy_transform", request_passthrough=True, response_passthrough=True,
+    )
+    register_transform_routes(router)
+    return router
+
+
 def _build_addons(
     litellm_port: int,
     wg_cli_port: int,
@@ -158,6 +169,7 @@ def _build_addons(
     return [
         addon,
         _make_inbound_router(),
+        _make_transform_router(),
         _make_outbound_router(),
     ]
 

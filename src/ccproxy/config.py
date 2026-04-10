@@ -144,6 +144,27 @@ class MitmproxyOptions(BaseModel):
     """Flow output verbosity: 0=none, 1=url+status, 2=headers, 3=truncated body, 4=full body."""
 
 
+class TransformRoute(BaseModel):
+    """A single lightllm transformation rule for the inspector."""
+
+    match_host: str
+    """Hostname to match (e.g. ``api.openai.com``)."""
+
+    match_path: str = "/"
+    """Path prefix to match (e.g. ``/v1/chat/completions``). Matches any
+    path that starts with this prefix."""
+
+    dest_provider: str
+    """Destination LiteLLM provider name (e.g. ``anthropic``, ``gemini``)."""
+
+    dest_model: str
+    """Destination model name as LiteLLM expects it."""
+
+    dest_api_key_ref: str | None = None
+    """Provider name in ``oat_sources`` for credential lookup, or an
+    environment variable name.  ``None`` skips API key injection."""
+
+
 class InspectorConfig(BaseModel):
     """Configuration for the inspector (traffic capture via mitmproxy)."""
 
@@ -181,6 +202,11 @@ class InspectorConfig(BaseModel):
         "openrouter.ai": "openrouter",
     })
     """Hostname → OTel gen_ai.system attribute mapping for provider identification."""
+
+    transforms: list[TransformRoute] = Field(default_factory=list)
+    """lightllm transformation rules. Each rule matches inbound flows by
+    host+path and rewrites them to a different provider format via the
+    lightllm dispatch, bypassing LiteLLM."""
 
     mitmproxy: MitmproxyOptions = Field(default_factory=MitmproxyOptions)
     """mitmproxy option overrides passed via --set flags."""
