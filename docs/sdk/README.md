@@ -180,20 +180,14 @@ uv run python docs/sdk/zai_anthropic_sdk.py
 All examples require ccproxy to be running:
 
 ```bash
-# Start ccproxy
-ccproxy start --detach
-
-# Optional: Enable MITM for redundant HTTP-layer safety net
-ccproxy start --detach --mitm
+# Start ccproxy (foreground — use process-compose or systemd for background)
+ccproxy start
 
 # Monitor logs (optional)
 ccproxy logs -f
 
 # Check status
 ccproxy status
-
-# Stop when done
-ccproxy stop
 ```
 
 ## Configuration
@@ -201,8 +195,7 @@ ccproxy stop
 Examples expect ccproxy running with:
 - **Proxy port**: 4000 (default)
 - **OAuth credentials**: Configured in `~/.ccproxy/ccproxy.yaml` under `oat_sources`
-- **Models**: Defined in `~/.ccproxy/config.yaml` for LiteLLM proxy
-- **MITM mode**: Optional (provides HTTP-layer redundancy for header injection)
+- **Model routing**: Configured via `inspector.transforms` in `~/.ccproxy/ccproxy.yaml`
 
 ### Example ccproxy.yaml OAuth Configuration
 
@@ -212,10 +205,6 @@ ccproxy:
     anthropic:
       command: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
       user_agent: "anthropic"
-
-  mitm:
-    enabled: true
-    port: 8081
 ```
 
 ## Troubleshooting
@@ -226,12 +215,11 @@ If examples fail:
 2. **Check OAuth credentials**: Verify `oat_sources` in `~/.ccproxy/ccproxy.yaml`
 3. **Review logs**: `ccproxy logs -f` for detailed error messages
 4. **Check pipeline hooks**: Ensure `inject_claude_code_identity`, `add_beta_headers`, and `forward_oauth` are enabled in hooks configuration
-5. **Optional MITM verification**: If using `--mitm`, status should show `mitm: reverse on 4000`
-6. **Verify port**: Default is 4000, ensure it's not blocked or in use
+5. **Verify port**: Default is 4000, ensure it's not blocked or in use
 
 ### Common Errors
 
-- **"This credential is only authorized for use with Claude Code"**: OAuth pipeline hooks not configured. Verify `inject_claude_code_identity` and `add_beta_headers` hooks are enabled in `ccproxy.yaml`. Optionally enable MITM mode for redundant safety.
+- **"This credential is only authorized for use with Claude Code"**: OAuth pipeline hooks not configured. Verify `inject_claude_code_identity` and `add_beta_headers` hooks are enabled in `ccproxy.yaml`.
 - **"invalid x-api-key"**: OAuth headers not being set correctly. Check `forward_oauth` hook configuration and logs.
 - **Connection refused**: ccproxy not running. Check `ccproxy status`.
 

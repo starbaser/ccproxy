@@ -81,26 +81,17 @@ async def main() -> None:
       * TokenCountRule - Evaluates based on token count threshold
     - router.py: Model configuration management from LiteLLM proxy
     - config.py: Pydantic-based configuration with multi-level discovery
-    - pipeline/hooks/: Built-in hooks for request processing:
-      * rule_evaluator - Evaluates rules and stores routing decision
-      * model_router - Routes to appropriate model
-      * forward_oauth - Forwards OAuth tokens to provider APIs
-      * extract_session_id - Extracts session identifiers
-      * capture_headers - Captures HTTP headers with sensitive redaction
-      * forward_apikey - Forwards x-api-key header
+    - hooks/: Built-in DAG pipeline hooks:
+      * forward_oauth - Substitutes sentinel key with real OAuth token
+      * extract_session_id - Extracts session identifiers from metadata.user_id
       * add_beta_headers - Adds anthropic-beta headers for Claude Code OAuth
       * inject_claude_code_identity - Injects required system message for OAuth
+      * inject_mcp_notifications - Injects buffered MCP events into requests
+      * verbose_mode - Debug logging for request/response bodies
     - cli.py: Tyro-based CLI interface for managing the proxy server
-    - utils.py: Template discovery and debug utilities
 
     Configuration Files:
-    - ~/.ccproxy/config.yaml - LiteLLM proxy configuration with model definitions
-    - ~/.ccproxy/ccproxy.yaml - ccproxy-specific configuration (rules, hooks, debug)
-    - ~/.ccproxy/ccproxy.py - Auto-generated handler file
-
-    The rule system evaluates rules in order from ccproxy.yaml. Each rule inherits
-    from ClassificationRule and implements evaluate(request, config) -> bool.
-    First matching rule's name becomes the routing label.
+    - ~/.ccproxy/ccproxy.yaml - ccproxy configuration (hooks, transforms, oat_sources)
 
     OAuth token refresh has two triggers:
     - TTL-based: Background task checks every 30 minutes, refreshes at 90% of oauth_ttl

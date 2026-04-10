@@ -1,18 +1,4 @@
 services:
-  # LiteLLM database for cost/spend tracking
-  litellm-db:
-    image: postgres:16-alpine
-    restart: always
-    container_name: litellm-db
-    environment:
-      POSTGRES_DB: litellm
-      POSTGRES_USER: ccproxy
-      POSTGRES_PASSWORD: test
-    ports:
-      - "127.0.0.1:5434:5432"
-    volumes:
-      - ccproxy-litellm-db:/var/lib/postgresql/data
-
   # Jaeger for OpenTelemetry trace collection and visualization
   ccproxy-jaeger:
     image: jaegertracing/all-in-one:latest
@@ -31,6 +17,3 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
-
-volumes:
-  ccproxy-litellm-db:

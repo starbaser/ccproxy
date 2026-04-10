@@ -138,11 +138,11 @@ class TransformRoute(BaseModel):
     all traffic arrives at the same host."""
 
     dest_provider: str = ""
-    """Destination LiteLLM provider name (e.g. ``anthropic``, ``gemini``).
+    """Destination provider name for lightllm dispatch (e.g. ``anthropic``, ``gemini``).
     Not used in ``passthrough`` mode."""
 
     dest_model: str = ""
-    """Destination model name as LiteLLM expects it.
+    """Destination model name for lightllm dispatch.
     Not used in ``passthrough`` mode."""
 
     dest_api_key_ref: str | None = None
@@ -178,7 +178,7 @@ class InspectorConfig(BaseModel):
     transforms: list[TransformRoute] = Field(default_factory=list)
     """lightllm transformation rules. Each rule matches inbound flows by
     host+path and rewrites them to a different provider format via the
-    lightllm dispatch, bypassing LiteLLM."""
+    lightllm dispatch."""
 
     mitmproxy: MitmproxyOptions = Field(default_factory=MitmproxyOptions)
     """mitmproxy option overrides passed via --set flags."""

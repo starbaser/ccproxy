@@ -271,7 +271,7 @@ def run_with_proxy(
     env = os.environ.copy()
 
     # Inspect mode: route subprocess traffic through a WireGuard namespace for transparent capture.
-    # No base URL env vars — the inspector addon forwards LLM API domain traffic to LiteLLM.
+    # No base URL env vars — traffic routes through the mitmweb addon pipeline.
     if inspect:
         from ccproxy.inspector.namespace import (
             check_namespace_capabilities,
@@ -294,7 +294,7 @@ def run_with_proxy(
         if not wg_conf_file.exists():
             print(
                 "Error: No WireGuard configuration found. "
-                "Start ccproxy with --inspect first: ccproxy start --inspect",
+                "Start ccproxy first: ccproxy start",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -681,8 +681,8 @@ def main(
 ) -> None:
     """ccproxy - Intercept and route Claude Code requests to LLM providers.
 
-    Intelligent request routing via LiteLLM proxy based on token count,
-    model type, tool usage, or custom rules.
+    Transparent mitmproxy-based pipeline with DAG-driven hooks for OAuth
+    injection, model transformation, and identity management.
     """
     if config_dir is None:
         env_config_dir = os.environ.get("CCPROXY_CONFIG_DIR")

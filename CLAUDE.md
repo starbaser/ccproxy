@@ -199,18 +199,18 @@ The `flake.nix` exports `lib.mkConfig` for other projects to generate ccproxy co
 
 ## Type Stubs (`stubs/`)
 
-Hand-written stubs for dependencies lacking `py.typed` or with incomplete types: `mitmproxy` (full hierarchy including ProxyMode subclasses), `opentelemetry` (optional, package not installed in dev), `langfuse`, `litellm`, `psutil`, `xepor`. On `mypy_path = "stubs"`.
+Hand-written stubs for dependencies lacking `py.typed` or with incomplete types: `mitmproxy` (full hierarchy including ProxyMode subclasses), `opentelemetry` (optional, package not installed in dev), `litellm`, `xepor`. On `mypy_path = "stubs"`.
 
 ## Dependencies
 
-- **litellm[proxy]** — Provider transformation pipeline (lightllm imports `BaseConfig`, `ProviderConfigManager` directly)
+- **litellm** — Provider transformation pipeline (lightllm imports `BaseConfig`, `ProviderConfigManager` directly)
 - **mitmproxy** — HTTP/HTTPS traffic interception
 - **xepor** — Flask-style route decorators for mitmproxy (vendored subclass in `inspector/router.py`)
 - **parse** — URL path template matching (NOT regex — `{param}` not `{param:.*}`)
 - **pydantic/pydantic-settings** — Configuration and validation
 - **tyro** + **attrs** — CLI subcommand generation
-- **tiktoken** — Token counting
 - **anthropic** — Anthropic API client (OAuth token refresh)
+- **fastapi** — MCP notification endpoint (`POST /mcp/notify`)
 
 ## Marketplace Plugin Sync
 

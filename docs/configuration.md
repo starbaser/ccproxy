@@ -1,613 +1,243 @@
-# Configuration Guide
-
-This guide covers `ccproxy`'s configuration system, including all configuration files and their purposes.
+# Configuration
 
 ## Overview
 
-`ccproxy` uses two main configuration files:
+ccproxy reads a single configuration file: `ccproxy.yaml`.
 
-1. **`config.yaml`** - LiteLLM proxy configuration (models, API keys, etc.)
-2. **`ccproxy.yaml`** - ccproxy-specific settings (rules, hooks, handler, debug options)
+**Discovery order** (highest to lowest precedence):
 
-Additionally, `ccproxy.py` is automatically generated when you start the proxy based on the `handler` configuration in `ccproxy.yaml`.
+1. `$CCPROXY_CONFIG_DIR/ccproxy.yaml`
+2. `~/.ccproxy/ccproxy.yaml`
 
 ## Installation
 
-### Prerequisites
-
-ccproxy requires LiteLLM to be installed in the same environment. This is handled automatically when using the recommended installation method:
+Install ccproxy via uv:
 
 ```bash
-# Install from PyPI
-uv tool install claude-ccproxy --with 'litellm[proxy]'
-
-# Or from GitHub (latest)
-uv tool install git+https://github.com/starbased-co/ccproxy.git --with 'litellm[proxy]'
+uv tool install claude-ccproxy
 ```
 
-### Install Configuration Files
+Generate the template config file:
 
 ```bash
 ccproxy install
 ```
 
-This creates:
-- `~/.ccproxy/ccproxy.yaml` - ccproxy configuration (rules, hooks, handler)
-- `~/.ccproxy/config.yaml` - LiteLLM proxy configuration (models, API keys)
+This writes `~/.ccproxy/ccproxy.yaml` with defaults. Use `--force` to overwrite an existing file.
 
-### Auto-Generated Files
-
-When you start the proxy, ccproxy automatically generates:
-- `~/.ccproxy/ccproxy.py` - Handler file that LiteLLM imports
-
-**Do not edit `ccproxy.py` manually** - it's regenerated on every `ccproxy start` based on your `handler` configuration.
-
-## Configuration Files
-
-### `config.yaml` (LiteLLM Configuration)
-
-This file configures the LiteLLM proxy server with model definitions and API settings.
+## Full Config Reference
 
 ```yaml
-# LiteLLM model configuration
-model_list:
-  # Default model for regular use
-  - model_name: default
-    litellm_params:
-      model: claude-sonnet-4-5-20250929
-
-  # Background model for low-cost operations
-  - model_name: background
-    litellm_params:
-      model: claude-haiku-4-5-20251001
-
-  # Thinking model for complex reasoning
-  - model_name: think
-    litellm_params:
-      model: claude-opus-4-5-20251101
-
-  # Anthropic provided claude models, no `api_key` needed
-  - model_name: claude-sonnet-4-5-20250929
-    litellm_params:
-      model: anthropic/claude-sonnet-4-5-20250929
-      api_base: https://api.anthropic.com
-
-  - model_name: claude-opus-4-5-20251101
-    litellm_params:
-      model: anthropic/claude-opus-4-5-20251101
-      api_base: https://api.anthropic.com
-
-  - model_name: claude-haiku-4-5-20251001
-    litellm_params:
-      model: anthropic/claude-haiku-4-5-20251001
-      api_base: https://api.anthropic.com
-
-# LiteLLM settings
-litellm_settings:
-  callbacks:
-    - ccproxy.handler
-
-general_settings:
-  forward_client_headers_to_llm_api: true
-```
-
-Each `model_name` can be either:
-
-- A configured LiteLLM model (e.g., `claude-sonnet-4-5-20250929`)
-- The name of a rule configured in `ccproxy.yaml` (e.g., `default`, `background`, `think`)
-
-Model names in `config.yaml` must correspond to rule names in `ccproxy.yaml`. When a rule matches, `ccproxy` routes to the model with the same `model_name`.
-
-- **Minimum requirements for Claude Code**: For Claude Code to function properly, your `config.yaml` must include at minimum:
-  - **Rule-based models**: `default`, `background`, and `think`
-  - **Claude models**: `claude-sonnet-4-5-20250929`, `claude-haiku-4-5-20251001`, and `claude-opus-4-5-20251101` (all with `api_base: https://api.anthropic.com`)
-
-See the [LiteLLM documentation](https://docs.litellm.ai/docs/proxy/configs) for more information.
-
-### `ccproxy.yaml` (ccproxy Configuration)
-
-This file configures `ccproxy`-specific behavior including routing rules and hooks.
-
-```yaml
-# LiteLLM proxy settings
-litellm:
-  host: 127.0.0.1
-  port: 4000
-  num_workers: 4
-  debug: true
-  detailed_debug: true
-
-# ccproxy-specific configuration
 ccproxy:
-  debug: true
+  host: 127.0.0.1           # Listen address
+  port: 4000                 # Reverse proxy listener port
+  debug: false               # Debug logging
 
-  # Handler class for LiteLLM callbacks (auto-generates ccproxy.py)
-  # Format: "module.path:ClassName" or just "module.path" (defaults to CCProxyHandler)
-  handler: "ccproxy.handler:CCProxyHandler"
+  oat_sources:               # OAuth token sources, keyed by provider name
+    anthropic:
+      command: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+      user_agent: "anthropic"
+      destinations: ["api.anthropic.com"]
 
-  # OAuth token sources - map provider names to shell commands
-  oat_sources:
-    anthropic: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+  oauth_ttl: 28800           # Token lifetime in seconds (default 8h)
+  oauth_refresh_buffer: 0.1  # Refresh at (1 - buffer) × TTL; default refreshes at 7.2h
 
-  # Processing hooks (executed in order)
   hooks:
-    - ccproxy.hooks.rule_evaluator # Evaluates rules
-    - ccproxy.hooks.model_router # Routes to models
+    inbound:
+      - ccproxy.hooks.forward_oauth
+      - ccproxy.hooks.extract_session_id
+    outbound:
+      - ccproxy.hooks.add_beta_headers
+      - ccproxy.hooks.inject_claude_code_identity
+      - ccproxy.hooks.inject_mcp_notifications
 
-    # Choose ONE:
-    - ccproxy.hooks.forward_oauth # subscription account
-    # - ccproxy.hooks.forward_apikey # api key
+  inspector:
+    port: 8083               # mitmweb UI port
+    transforms: []           # lightllm transform rules (see Transform Rules)
+    provider_map:            # Hostname → OTel gen_ai.system tag
+      api.anthropic.com: anthropic
+      api.openai.com: openai
 
-    # Required for OAuth with Claude Code
-    - ccproxy.hooks.add_beta_headers # OAuth support
-    - ccproxy.hooks.inject_claude_code_identity # OAuth validation
-
-  # Routing rules (evaluated in order)
-  rules:
-    # Route high-token requests to large context model
-    - name: token_count
-      rule: ccproxy.rules.TokenCountRule
-      params:
-        - threshold: 60000
-
-    # Route haiku model requests to background
-    - name: background
-      rule: ccproxy.rules.MatchModelRule
-      params:
-        - model_name: claude-haiku-4-5-20251001
-
-    # Route thinking requests to reasoning model
-    - name: think
-      rule: ccproxy.rules.ThinkingRule
-
-    # Route web search tool usage
-    - name: web_search
-      rule: ccproxy.rules.MatchToolRule
-      params:
-        - tool_name: WebSearch
+  otel:
+    enabled: false
+    endpoint: "http://localhost:4317"
 ```
 
-- **`litellm`**: LiteLLM proxy server process (See `litellm --help`)
-- **`ccproxy.oat_sources`**: Map of provider names to OAuth token retrieval commands
-- **`ccproxy.hooks`**: A list of hooks that are executed in series during the `async_pre_call_hook`
-- **`ccproxy.rules`**: Request routing rules (evaluated in order)
+### Top-level fields
 
-#### Built-in Rules
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `host` | string | `127.0.0.1` | Reverse proxy listen address |
+| `port` | int | `4000` | Reverse proxy listen port |
+| `debug` | bool | `false` | Enable debug logging |
+| `oat_sources` | map | `{}` | OAuth token sources by provider name |
+| `oauth_ttl` | int | `28800` | Token lifetime in seconds |
+| `oauth_refresh_buffer` | float | `0.1` | Fraction of TTL remaining at which to refresh |
+| `hooks` | object | — | Two-stage hook pipeline (inbound/outbound) |
+| `inspector` | object | — | mitmweb and transform settings |
+| `otel` | object | — | OpenTelemetry export settings |
 
-1. **TokenCountRule**: Routes based on token count threshold
-2. **MatchModelRule**: Routes specific model requests
-3. **ThinkingRule**: Routes requests with thinking fields
-4. **MatchToolRule**: Routes based on tool usage
+## OAuth Configuration
 
-#### Built-in Hooks
+### oat_sources
 
-1. **rule_evaluator**: Evaluates rules against the request to determine routing
-2. **model_router**: Maps rule names to model configurations
-3. **extract_session_id**: Extracts session_id from Claude Code's user_id for LangFuse session tracking
-4. **capture_headers**: Captures HTTP headers with sensitive value redaction (supports `headers` param)
-5. **forward_oauth**: Forwards OAuth tokens to Anthropic API (for subscription accounts with credentials fallback)
-6. **forward_apikey**: Forwards x-api-key headers from incoming requests (for API key authentication)
-7. **add_beta_headers**: Adds required `anthropic-beta` headers for Claude Code OAuth tokens
-8. **inject_claude_code_identity**: Injects required system message prefix for Anthropic OAuth authentication
+`oat_sources` maps provider names to token retrieval configuration. The `forward_oauth` hook uses this to inject Bearer tokens into outbound requests.
 
-**Note**: Use either `forward_oauth` (subscription account) OR `forward_apikey` (API key), depending on your Claude Code authentication method.
-
-#### Rule Parameters
-
-Rules accept parameters in various formats:
-
-```yaml
-# Single positional parameter
-params:
-  - threshold: 60000
-
-# Multiple parameters
-params:
-  - param1: value1
-    param2: value2
-
-# Mixed parameters
-params:
-  - "positional_value"
-  - keyword: "keyword_value"
-```
-
-### ccproxy.py (Auto-Generated Handler)
-
-**This file is auto-generated** by `ccproxy start` and should not be edited manually.
-
-The handler file imports and instantiates the configured handler class for LiteLLM callbacks. The handler class is specified in `ccproxy.yaml` using the `handler` configuration field.
-
-**Configuration:**
-```yaml
-ccproxy:
-  handler: "ccproxy.handler:CCProxyHandler"  # module_path:ClassName
-```
-
-**Generated structure:**
-```python
-# Auto-generated - DO NOT EDIT
-from ccproxy.handler import CCProxyHandler
-handler = CCProxyHandler()
-```
-
-The file is referenced in `config.yaml` under `litellm_settings.callbacks` as `ccproxy.handler`.
-
-**Custom Handlers:**
-
-To use a custom handler class, update `ccproxy.yaml`:
-```yaml
-ccproxy:
-  handler: "mypackage.custom:MyHandler"
-```
-
-Then run `ccproxy start` to regenerate the handler file with your custom handler.
-
-## Request Routing Flow
-
-1. **Request Received**: LiteLLM proxy receives request
-2. **Hook Processing**: `ccproxy` hooks process the request in order:
-   - `rule_evaluator`: Evaluates rules to determine routing
-   - `model_router`: Maps rule name to model configuration
-   - `forward_oauth`: Handles OAuth token forwarding
-3. **Model Selection**: Request routed to appropriate model
-4. **Response**: Response returned through LiteLLM proxy
-
-## OAuth Token Management
-
-The `oat_sources` field in `ccproxy.yaml` configures OAuth token retrieval for multiple providers. This is used with the `forward_oauth` hook for Claude Code subscription accounts or custom LLM providers requiring OAuth authentication.
-
-**Note**: If using Claude Code with an Anthropic API key, use `forward_apikey` hook instead (no `oat_sources` needed).
-
-### Configuration
-
-**Simple form (shell command):**
+**Simple form** — shell command only:
 
 ```yaml
 ccproxy:
   oat_sources:
     anthropic: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
-    gemini: "~/bin/get-gemini-token.sh"
 ```
 
-**Extended form (with user agent and destinations):**
+**Extended form** — with user agent and destination filtering:
 
 ```yaml
 ccproxy:
   oat_sources:
     anthropic:
       command: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
-      user_agent: "ClaudeCode/1.0"
+      user_agent: "anthropic"
       destinations: ["api.anthropic.com"]
 
-    custom_provider:
-      command: "~/bin/get-custom-token.sh"
-      user_agent: "MyApp/2.0"
-      destinations: ["api.z.ai", "custom.llm.com"]
+    gemini:
+      command: "~/bin/get-gemini-token.sh"
+      user_agent: "MyApp/1.0"
+      destinations: ["generativelanguage.googleapis.com"]
 ```
 
-**Field reference:**
-- **`command`** (mutually exclusive with `file`): Shell command to retrieve OAuth token
-- **`file`** (mutually exclusive with `command`): File path to read the OAuth token from (contents stripped of whitespace)
-- **`user_agent`** (optional): Custom User-Agent header for requests using this token
-- **`destinations`** (optional): List of URL patterns that should use this token (e.g., `["api.z.ai", "anthropic.com"]`)
+**oat_sources entry fields:**
+
+| Field | Description |
+|---|---|
+| `command` | Shell command whose stdout is the token (mutually exclusive with `file`) |
+| `file` | File path to read the token from, whitespace stripped (mutually exclusive with `command`) |
+| `user_agent` | `User-Agent` header value for requests using this token |
+| `destinations` | Hostname list; token only injected when the request host matches one of these |
 
 ### Sentinel Key Mechanism
 
-SDK clients (e.g., native Anthropic SDK) can use a sentinel key pattern to trigger OAuth token substitution:
+SDK clients can use a sentinel API key to trigger token substitution without modifying request logic:
 
 ```python
-# Sentinel key format: sk-ant-oat-ccproxy-{provider}
 client = Anthropic(api_key="sk-ant-oat-ccproxy-anthropic")
 ```
 
-When ccproxy detects this sentinel key, it:
-1. Substitutes it with the actual OAuth token from `oat_sources[provider]`
-2. Applies the configured `user_agent` and `destinations` for that provider
-3. Injects required headers and system message via the pipeline hooks (`inject_claude_code_identity`, `add_beta_headers`)
+When ccproxy sees a key matching `sk-ant-oat-ccproxy-{provider}`, it substitutes the actual token from `oat_sources[provider]` and applies the provider's `user_agent` and `destinations`.
 
-MITM mode is optional and provides a redundant safety net for header injection at the HTTP layer.
+### Token Refresh
 
-### Deprecation Notice
+Tokens refresh automatically on two triggers:
 
-The `credentials` field is deprecated and will be removed in a future version. It has been automatically migrated to `oat_sources['anthropic']`:
-
-```yaml
-# Old (deprecated):
-ccproxy:
-  credentials: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
-
-# New (recommended):
-ccproxy:
-  oat_sources:
-    anthropic: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
-```
-
-If both `credentials` and `oat_sources['anthropic']` are present, `oat_sources` takes precedence and a warning is logged.
-
-### Behavior
-
-- **Execution**: Shell commands execute once during config initialization
-- **Caching**: Results cached with timestamp for TTL-based refresh
-- **Validation**: Logs error if command fails (non-blocking for multi-provider setups)
-- **Refresh**: Automatic refresh via TTL monitoring and 401-triggered re-execution
-
-### OAuth Token Refresh
-
-ccproxy automatically refreshes OAuth tokens to prevent expiration.
-
-**How it works:**
-- Background task starts on first request and checks every 30 minutes
-- Tokens refresh when they reach 90% of their TTL (configurable via `oauth_refresh_buffer`)
-- 401 responses trigger immediate token refresh and request retry
-
-**Configuration options:**
-```yaml
-ccproxy:
-  oauth_ttl: 28800           # Token lifetime in seconds (default: 8 hours)
-  oauth_refresh_buffer: 0.1  # Buffer ratio (default: 10% - refresh at 90% of TTL)
-```
-
-**Refresh triggers:**
-1. **TTL-based**: Background task checks every 30 minutes, refreshes tokens approaching expiration
-2. **401-triggered**: Immediately refreshes token when API returns authentication error
-
-With default settings (8-hour TTL, 10% buffer), tokens refresh automatically at ~7.2 hours.
-
-**Custom configuration example:**
-```yaml
-ccproxy:
-  oauth_ttl: 14400           # 4 hours (for shorter-lived tokens)
-  oauth_refresh_buffer: 0.2  # 20% buffer - refresh at 80% of TTL
-```
-
-## Custom Rules
-
-Create custom routing rules by implementing the `ClassificationRule` interface:
-
-```python
-from typing import Any
-from ccproxy.rules import ClassificationRule
-from ccproxy.config import CCProxyConfig
-
-class CustomRule(ClassificationRule):
-    def __init__(self, custom_param: str) -> None:
-        self.custom_param = custom_param
-
-    def evaluate(self, request: dict[str, Any], config: CCProxyConfig) -> bool:
-        # Custom routing logic
-        return True  # Return True to use this rule's model
-```
-
-Add to `ccproxy.yaml`:
+1. **TTL-based**: A background task runs every 30 minutes and refreshes any token that has consumed `(1 - oauth_refresh_buffer)` of its TTL. With defaults (8h TTL, 0.1 buffer), refresh happens at ~7.2 hours.
+2. **401-triggered**: An upstream 401 response causes an immediate token refresh and request retry.
 
 ```yaml
 ccproxy:
-  rules:
-    - name: custom_model # Must match model_name in config.yaml
-      rule: myproject.CustomRule # Python import path
-      params:
-        - custom_param: "value"
+  oauth_ttl: 14400           # 4-hour TTL
+  oauth_refresh_buffer: 0.2  # Refresh at 80% of TTL (~3.2h)
 ```
 
-## Custom Hooks
+## Hook Pipeline
 
-`ccproxy` provides a hook system that allows you to extend and customize its behavior beyond the built-in rule routing system. Hooks are Python functions that can intercept and modify requests, implement custom logging, filtering, or integrate with external systems. The rule routing system is just itself a custom hook.
+Hooks run in two stages: `inbound` (before the request reaches the provider) and `outbound` (before the response reaches the client).
 
-**Required for Claude Code**: Either `forward_oauth` (subscription account) OR `forward_apikey` (API key) is required, depending on your authentication method.
+### Configuration syntax
 
-### Built-in Hook Details
-
-#### forward_oauth
-
-Forwards OAuth tokens to LLM provider API requests
-
-**Use when:** Claude Code is configured with a subscription account, or using custom providers requiring OAuth
-
-**Features:**
-
-- Forwards existing authorization headers from incoming requests
-- Falls back to cached token from `oat_sources` if no header present
-- Multi-provider support via `destinations` field in `oat_sources`
-- Sentinel key substitution: `sk-ant-oat-ccproxy-{provider}` → actual OAuth token
-- Automatically adds "Bearer" prefix if needed
-- Custom User-Agent per provider via `user_agent` field
-
-**Configuration:**
-
-```yaml
-ccproxy:
-  oat_sources:
-    anthropic: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
-  hooks:
-    - ccproxy.hooks.forward_oauth
-```
-
-**Multi-provider example:**
-
-```yaml
-ccproxy:
-  oat_sources:
-    anthropic:
-      command: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
-      destinations: ["api.anthropic.com"]
-
-    custom_provider:
-      command: "~/bin/get-token.sh"
-      user_agent: "MyApp/1.0"
-      destinations: ["api.z.ai"]
-
-  hooks:
-    - ccproxy.hooks.forward_oauth
-```
-
-#### forward_apikey
-
-Forwards x-api-key headers from incoming requests to proxied requests.
-
-**Use when:** Claude Code is configured with an Anthropic API key (not a subscription account)
-
-**Features:**
-
-- Forwards x-api-key header from request to proxied request
-- No credentials fallback mechanism
-- Simple header passthrough
-
-**Configuration:**
+**Simple form** — module path string:
 
 ```yaml
 ccproxy:
   hooks:
-    - ccproxy.hooks.forward_apikey
+    inbound:
+      - ccproxy.hooks.forward_oauth
+      - ccproxy.hooks.extract_session_id
+    outbound:
+      - ccproxy.hooks.add_beta_headers
 ```
 
-**Important**: Choose ONE of these hooks based on your Claude Code authentication method:
-
-- **Subscription account** → Use `forward_oauth`
-- **API key** → Use `forward_apikey`
-
-### Example: Request Logging Hook
-
-```python
-# ~/.ccproxy/my_hooks.py
-import logging
-from typing import Any
-
-logger = logging.getLogger(__name__)
-
-def request_logger(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
-    """Log detailed request information."""
-    metadata = data.get("metadata", {})
-    logger.info(f"Processing request for model: {data.get('model')}")
-    return data
-```
-
-Add to `ccproxy.yaml`:
+**Parameterized form** — dict with `hook` and `params` keys:
 
 ```yaml
 ccproxy:
   hooks:
-    - my_hooks.request_logger # Your custom hook
-    - ccproxy.hooks.forward_oauth # For subscription account
-    # - ccproxy.hooks.forward_apikey # Or this, for API key
+    outbound:
+      - hook: ccproxy.hooks.some_hook
+        params:
+          key: value
 ```
 
-### Hook Parameters
+### Built-in hooks
 
-Hooks can accept parameters via the `hook:` + `params:` format:
+| Hook | Stage | Purpose |
+|---|---|---|
+| `ccproxy.hooks.forward_oauth` | inbound | Substitutes sentinel keys with OAuth tokens from `oat_sources`; injects Bearer auth |
+| `ccproxy.hooks.extract_session_id` | inbound | Reads `metadata.user_id` from the request body and stores it on `flow.metadata` for downstream use |
+| `ccproxy.hooks.add_beta_headers` | outbound | Merges `ANTHROPIC_BETA_HEADERS` into the `anthropic-beta` header |
+| `ccproxy.hooks.inject_claude_code_identity` | outbound | Prepends the required system prompt prefix for Anthropic OAuth requests |
+| `ccproxy.hooks.inject_mcp_notifications` | outbound | Injects buffered MCP terminal events as synthetic tool_use/tool_result blocks |
+| `ccproxy.hooks.verbose_mode` | outbound | Strips `redact-thinking-*` flags from the `anthropic-beta` header |
+
+## Transform Rules
+
+`inspector.transforms` is an ordered list of `TransformRoute` entries. The first match wins.
 
 ```yaml
 ccproxy:
-  hooks:
-    # Simple form (no params)
-    - ccproxy.hooks.rule_evaluator
+  inspector:
+    transforms:
+      - mode: passthrough
+        match_host: cloudcode-pa.googleapis.com
 
-    # Dict form with params
-    - hook: ccproxy.hooks.capture_headers
-      params:
-        headers: [user-agent, x-request-id, content-type]
+      - match_path: /v1/messages
+        dest_provider: anthropic
+        dest_model: claude-sonnet-4-5-20250929
+        dest_api_key_ref: anthropic
+
+      - match_path: /v1/chat/completions
+        match_model: gpt-4o
+        dest_provider: anthropic
+        dest_model: claude-haiku-4-5-20251001
+        dest_api_key_ref: anthropic
 ```
 
-Parameters are passed to the hook function via `**kwargs`:
+### TransformRoute fields
 
-```python
-def my_hook(data: dict[str, Any], user_api_key_dict: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
-    # Access params from kwargs
-    threshold = kwargs.get("threshold", 1000)
-    return data
-```
+| Field | Type | Description |
+|---|---|---|
+| `mode` | string | `transform` (default) or `passthrough`. Passthrough forwards the request unchanged. |
+| `match_host` | string | Optional. Checked against the request's `Host` header and `pretty_host`. |
+| `match_path` | string | URL path prefix to match. |
+| `match_model` | string | Substring match against the `model` field in the request body. |
+| `dest_provider` | string | LiteLLM provider name (e.g. `anthropic`, `openai`, `gemini`). |
+| `dest_model` | string | Model identifier sent to the provider. |
+| `dest_api_key_ref` | string | Key name in `oat_sources` (or environment) used to authenticate with the provider. |
 
-### Claude Code OAuth Support
+All match fields are optional and ANDed together. A rule with no match fields matches every request — use as a catch-all at the end of the list.
 
-For Claude Max subscription accounts using OAuth tokens, add these hooks to enable full Claude Code functionality:
+## Inspector Settings
 
 ```yaml
 ccproxy:
-  hooks:
-    - ccproxy.hooks.rule_evaluator
-    - ccproxy.hooks.model_router
-    - ccproxy.hooks.forward_oauth
-    - ccproxy.hooks.add_beta_headers           # Required for OAuth
-    - ccproxy.hooks.inject_claude_code_identity # Required for OAuth
+  inspector:
+    port: 8083
+    transforms: []
+    provider_map:
+      api.anthropic.com: anthropic
+      api.openai.com: openai
+      generativelanguage.googleapis.com: google_ai_studio
 ```
 
-#### add_beta_headers
+| Field | Type | Description |
+|---|---|---|
+| `port` | int | mitmweb UI listen port (default `8083`) |
+| `transforms` | list | Transform rules (see above) |
+| `provider_map` | map | Hostname → `gen_ai.system` value for OTel span attributes |
 
-Adds `anthropic-beta` headers required for Claude Code feature access:
+## Environment Variables
 
-- `oauth-2025-04-20` - OAuth Bearer token authentication
-- `claude-code-20250219` - Claude Code client identification
-- `interleaved-thinking-2025-05-14` - Extended thinking support
-- `fine-grained-tool-streaming-2025-05-14` - Tool streaming
-
-#### inject_claude_code_identity
-
-Injects required system message prefix for Anthropic OAuth tokens. Anthropic validates that OAuth tokens are used only with Claude Code by checking the system message starts with "You are Claude Code".
-
-This hook automatically prepends the required prefix to requests using OAuth Bearer tokens (`sk-ant-oat-*`).
-
-## Debugging
-
-Enable debug output in `ccproxy.yaml`:
-
-```yaml
-litellm:
-  debug: true
-  detailed_debug: true
-
-ccproxy:
-  debug: true
-```
-
-This provides detailed logging for request processing and routing decisions.
-
-## Common Patterns
-
-### Token-Based Routing
-
-Route expensive requests to cost-effective models:
-
-```yaml
-rules:
-  - name: large_context
-    rule: ccproxy.rules.TokenCountRule
-    params:
-      - threshold: 50000
-
-  - name: default
-    rule: ccproxy.rules.DefaultRule
-```
-
-### Tool-Based Routing
-
-Route tool usage to specialized models:
-
-```yaml
-rules:
-  - name: web_search
-    rule: ccproxy.rules.MatchToolRule
-    params:
-      - tool_name: WebSearch
-
-  - name: code_execution
-    rule: ccproxy.rules.MatchToolRule
-    params:
-      - tool_name: CodeExecution
-```
-
-### Model-Specific Routing
-
-Route specific model requests:
-
-```yaml
-rules:
-  - name: background
-    rule: ccproxy.rules.MatchModelRule
-    params:
-      - model_name: claude-haiku-4-5-20251001
-
-  - name: reasoning
-    rule: ccproxy.rules.MatchModelRule
-    params:
-      - model_name: claude-opus-4-5-20251101
-```
+| Variable | Description |
+|---|---|
+| `CCPROXY_CONFIG_DIR` | Override the config directory (takes precedence over `~/.ccproxy`) |
+| `CCPROXY_PORT` | Override the listen port (takes precedence over `ccproxy.port` in the config file) |

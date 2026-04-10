@@ -113,14 +113,6 @@ class Context:
     def ccproxy_oauth_provider(self, value: str) -> None:
         self.metadata["ccproxy_oauth_provider"] = value
 
-    @property
-    def session_id(self) -> str:
-        return str(self.metadata.get("session_id", ""))
-
-    @session_id.setter
-    def session_id(self, value: str) -> None:
-        self.metadata["session_id"] = value
-
     # --- Commit ---
 
     def commit(self) -> None:

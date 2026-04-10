@@ -28,7 +28,7 @@ class TestFlowRecordDataclass:
 
     def test_original_headers_independent(self):
         r1 = FlowRecord("inbound")
-        r2 = FlowRecord("outbound")
+        r2 = FlowRecord("inbound")
         r1.original_headers["key"] = "value"
         assert "key" not in r2.original_headers
 
@@ -69,9 +69,6 @@ class TestCreateFlowRecord:
         _, record = create_flow_record("inbound")
         assert record.direction == "inbound"
 
-    def test_outbound_direction(self):
-        _, record = create_flow_record("outbound")
-        assert record.direction == "outbound"
 
 
 class TestGetFlowRecord:

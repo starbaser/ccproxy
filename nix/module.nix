@@ -18,12 +18,6 @@ in
       description = "The ccproxy package.";
     };
 
-    inspect = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "Enable inspect mode (--inspect flag).";
-    };
-
     configDir = lib.mkOption {
       type = lib.types.str;
       default = ".ccproxy";
@@ -52,7 +46,7 @@ in
       };
       Service = {
         Type = "simple";
-        ExecStart = "${cfg.package}/bin/ccproxy start${lib.optionalString cfg.inspect " --inspect"}";
+        ExecStart = "${cfg.package}/bin/ccproxy start";
         Restart = "on-failure";
         RestartSec = "5s";
         SyslogIdentifier = "ccproxy";

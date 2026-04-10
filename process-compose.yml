@@ -2,10 +2,10 @@ version: "0.5"
 
 processes:
   ccproxy:
-    command: "ccproxy start --inspect"
+    command: "ccproxy start"
     readiness_probe:
       exec:
-        command: "curl -sf --max-time 5 http://127.0.0.1:4001/health/liveliness > /dev/null"
+        command: "ccproxy status --proxy"
       initial_delay_seconds: 5
       period_seconds: 30
       timeout_seconds: 10

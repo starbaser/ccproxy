@@ -339,8 +339,8 @@ def main() -> None:
         err_console.print(f"[bold red]API Error:[/bold red] {e}")
         console.print(
             "\n[yellow]Troubleshooting:[/yellow]",
-            "1. Start ccproxy: [cyan]ccproxy start --detach[/cyan]",
-            "2. Verify glm-4.7 in ~/.ccproxy/config.yaml",
+            "1. Start ccproxy: [cyan]ccproxy start[/cyan]",
+            "2. Verify ZAI routing in ~/.ccproxy/ccproxy.yaml inspector.transforms",
             "3. Ensure ZAI_API_KEY is set in environment",
             sep="\n",
         )

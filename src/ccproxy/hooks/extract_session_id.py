@@ -1,8 +1,8 @@
 """Extract session ID from Claude Code's metadata.user_id field.
 
 Parses session_id from either JSON object or legacy compound string
-format and stores it in ``ctx.metadata["session_id"]``. Also forwards
-transparent metadata from the request body.
+format and stores it in ``flow.metadata["ccproxy.session_id"]`` for
+downstream hooks to consume without injecting fields into the request body.
 """
 
 from __future__ import annotations

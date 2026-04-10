@@ -1,9 +1,9 @@
-"""Thread-safe TTL store for cross-pass flow state in the inspector.
+"""Thread-safe TTL store for cross-phase flow state in the inspector.
 
-Bridges metadata between inbound flows (client → LiteLLM) and outbound flows
-(LiteLLM → provider), which are separate HTTPFlow objects in mitmproxy. A flow
-ID is propagated via the ``x-ccproxy-flow-id`` header so that inbound auth
-decisions are readable when the corresponding outbound flow fires.
+Bridges metadata between the request phase and response phase of a single
+logical flow through the mitmproxy addon chain. A flow ID is propagated via
+the ``x-ccproxy-flow-id`` header so that inbound auth decisions are readable
+when the corresponding response phase fires.
 """
 
 import threading
@@ -17,7 +17,7 @@ FLOW_ID_HEADER = "x-ccproxy-flow-id"
 
 @dataclass
 class AuthMeta:
-    """Auth decision record — written by inbound routes, readable by outbound."""
+    """Auth decision record — written during request phase, readable during response phase."""
 
     provider: str
     credential: str
@@ -36,7 +36,7 @@ class OtelMeta:
 
 @dataclass
 class OriginalRequest:
-    """Snapshot of the original request before LiteLLM forwarding rewrites it."""
+    """Snapshot of the original request before lightllm transform rewrites it."""
 
     host: str
     port: int
@@ -58,7 +58,7 @@ class TransformMeta:
 class FlowRecord:
     """Cross-pass state for a single logical request through the inspector."""
 
-    direction: Literal["inbound", "outbound"]
+    direction: Literal["inbound"]
     auth: AuthMeta | None = None
     otel: OtelMeta | None = None
     original_headers: dict[str, str] = field(default_factory=lambda: {})
@@ -82,7 +82,7 @@ _store_lock = threading.Lock()
 _STORE_TTL = 120.0
 
 
-def create_flow_record(direction: Literal["inbound", "outbound"]) -> tuple[str, FlowRecord]:
+def create_flow_record(direction: Literal["inbound"]) -> tuple[str, FlowRecord]:
     """Create a new FlowRecord and store it. Returns (flow_id, record)."""
     flow_id = str(uuid.uuid4())
     record = FlowRecord(direction=direction)

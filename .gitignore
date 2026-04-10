@@ -81,6 +81,3 @@ checkpoints/
 tensorboard/
 runs/
 
-# Prisma generated client
-prisma/migrations/
-node_modules/

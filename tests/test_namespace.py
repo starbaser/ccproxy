@@ -742,7 +742,7 @@ class TestCliInspectHardFailure:
 
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
-        assert "ccproxy start --inspect" in captured.err
+        assert "ccproxy start" in captured.err
 
     @patch("ccproxy.inspector.namespace.check_namespace_capabilities", return_value=[])
     @patch("ccproxy.inspector.namespace.create_namespace")

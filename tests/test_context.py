@@ -166,15 +166,6 @@ class TestMetadataConvenienceProperties:
         ctx.ccproxy_oauth_provider = "google"
         assert ctx.metadata["ccproxy_oauth_provider"] == "google"
 
-    def test_session_id_getter(self):
-        flow = _make_flow(body={"model": "m", "messages": [], "metadata": {"session_id": "sess-xyz"}})
-        ctx = Context.from_flow(flow)
-        assert ctx.session_id == "sess-xyz"
-
-    def test_session_id_setter(self):
-        ctx = Context.from_flow(_make_flow())
-        ctx.session_id = "sess-abc"
-        assert ctx.metadata["session_id"] == "sess-abc"
 
 
 class TestCommit:
