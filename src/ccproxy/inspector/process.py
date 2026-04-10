@@ -90,25 +90,16 @@ def _build_opts(
     return opts
 
 
-def _make_inbound_router() -> Any:
+def _make_pipeline_router(name: str, hook_entries: list[Any]) -> Any:
+    """Build a DAG-driven pipeline router from config hook entries."""
+    from ccproxy.inspector.pipeline import build_executor, register_pipeline_routes
     from ccproxy.inspector.router import InspectorRouter
-    from ccproxy.inspector.routes.inbound import register_inbound_routes
 
     router = InspectorRouter(
-        name="ccproxy_inbound", request_passthrough=True, response_passthrough=True,
+        name=name, request_passthrough=True, response_passthrough=True,
     )
-    register_inbound_routes(router)
-    return router
-
-
-def _make_outbound_router() -> Any:
-    from ccproxy.inspector.router import InspectorRouter
-    from ccproxy.inspector.routes.outbound import register_outbound_routes
-
-    router = InspectorRouter(
-        name="ccproxy_outbound", request_passthrough=True, response_passthrough=True,
-    )
-    register_outbound_routes(router)
+    executor = build_executor(hook_entries)
+    register_pipeline_routes(router, executor)
     return router
 
 
@@ -128,14 +119,16 @@ def _build_addons(
 ) -> list[Any]:
     """Build the addon chain from the singleton config.
 
-    Order matters: InspectorAddon (OTel spans, flow records) fires first,
-    then inbound (OAuth), transform (lightllm routing), outbound (last-mile fixups).
+    Order: InspectorAddon (OTel, flow records) → inbound pipeline (OAuth,
+    session extraction) → transform (lightllm) → outbound pipeline
+    (beta headers, identity injection).
     """
     from ccproxy.config import get_config
     from ccproxy.inspector.addon import InspectorAddon
 
     config = get_config()
     otel = config.otel
+    hooks_cfg = config.hooks
 
     addon = InspectorAddon(
         traffic_source=os.environ.get("CCPROXY_TRAFFIC_SOURCE") or None,
@@ -156,12 +149,21 @@ def _build_addons(
     except Exception as e:
         logger.warning("Failed to initialize OTel tracer: %s", e)
 
-    return [
-        addon,
-        _make_inbound_router(),
-        _make_transform_router(),
-        _make_outbound_router(),
-    ]
+    # Split hooks config into inbound/outbound stages
+    inbound_hooks = hooks_cfg.get("inbound", []) if isinstance(hooks_cfg, dict) else hooks_cfg
+    outbound_hooks = hooks_cfg.get("outbound", []) if isinstance(hooks_cfg, dict) else []
+
+    addons: list[Any] = [addon]
+
+    if inbound_hooks:
+        addons.append(_make_pipeline_router("ccproxy_inbound", inbound_hooks))
+
+    addons.append(_make_transform_router())
+
+    if outbound_hooks:
+        addons.append(_make_pipeline_router("ccproxy_outbound", outbound_hooks))
+
+    return addons
 
 
 def get_wg_client_conf(master: WebMaster, keypair_path: Path) -> str | None:

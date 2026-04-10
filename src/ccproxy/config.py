@@ -287,8 +287,21 @@ class CCProxyConfig(BaseSettings):
     # Cached OAuth user agents (loaded at startup) - dict mapping provider name to user-agent
     _oat_user_agents: dict[str, str] = PrivateAttr(default_factory=lambda: {})
 
-    # Hook configurations (function import paths or dict with params)
-    hooks: list[str | dict[str, Any]] = Field(default_factory=lambda: [])
+    # Hook configurations — either a flat list (all inbound) or a dict
+    # with ``inbound`` and ``outbound`` keys for two-stage pipeline.
+    hooks: list[str | dict[str, Any]] | dict[str, list[str | dict[str, Any]]] = Field(
+        default_factory=lambda: {
+            "inbound": [
+                "ccproxy.hooks.forward_oauth",
+                "ccproxy.hooks.extract_session_id",
+            ],
+            "outbound": [
+                "ccproxy.hooks.add_beta_headers",
+                "ccproxy.hooks.inject_claude_code_identity",
+                "ccproxy.hooks.inject_mcp_notifications",
+            ],
+        },
+    )
 
     # Patch modules applied at startup (module import paths with apply() function)
     patches: list[str] = Field(default_factory=lambda: [], validation_alias="ccproxy_patches")

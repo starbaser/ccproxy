@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import json
+from unittest.mock import MagicMock
+
+import pytest
+
 from ccproxy.pipeline.context import Context
 from ccproxy.pipeline.executor import PipelineExecutor
 from ccproxy.pipeline.hook import HookSpec, always_true
@@ -34,21 +39,37 @@ def make_spec(
     )
 
 
-def _make_data(**extra) -> dict:
-    base = {
-        "model": "test-model",
-        "messages": [{"role": "user", "content": "hi"}],
-        "metadata": {},
-    }
-    base.update(extra)
-    return base
+def _make_flow(body: dict | None = None) -> MagicMock:
+    flow = MagicMock()
+    flow.id = "test-flow-id"
+    flow.request.content = json.dumps(
+        body
+        or {
+            "model": "test-model",
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+    ).encode()
+    flow.request.headers = {}
+    return flow
+
+
+@pytest.fixture(autouse=True)
+def cleanup():
+    from ccproxy.config import clear_config_instance
+    from ccproxy.router import clear_router
+
+    yield
+    clear_config_instance()
+    clear_router()
 
 
 class TestPipelineExecutorBasic:
     def test_executes_empty_pipeline(self):
+        flow = _make_flow()
         executor = PipelineExecutor(hooks=[])
-        result = executor.execute(_make_data())
-        assert result["model"] == "test-model"
+        executor.execute(flow)
+        body = json.loads(flow.request.content)
+        assert body["model"] == "test-model"
 
     def test_executes_single_hook(self):
         calls = []
@@ -57,8 +78,9 @@ class TestPipelineExecutorBasic:
             calls.append("ran")
             return ctx
 
+        flow = _make_flow()
         executor = PipelineExecutor(hooks=[make_spec("h", handler=record)])
-        executor.execute(_make_data())
+        executor.execute(flow)
         assert calls == ["ran"]
 
     def test_error_isolation_continues(self):
@@ -69,13 +91,14 @@ class TestPipelineExecutorBasic:
             calls.append("after")
             return ctx
 
+        flow = _make_flow()
         executor = PipelineExecutor(
             hooks=[
                 make_spec("fail", handler=_failing),
                 make_spec("after", handler=after),
             ]
         )
-        executor.execute(_make_data())
+        executor.execute(flow)
         assert "after" in calls
 
     def test_passes_extra_params(self):
@@ -85,23 +108,13 @@ class TestPipelineExecutorBasic:
             received.update(params)
             return ctx
 
+        flow = _make_flow()
         executor = PipelineExecutor(
             hooks=[make_spec("h", handler=capture)],
             extra_params={"my_key": "my_val"},
         )
-        executor.execute(_make_data())
+        executor.execute(flow)
         assert received["my_key"] == "my_val"
-
-    def test_passes_user_api_key_dict(self):
-        received = {}
-
-        def capture(ctx, params):
-            received.update(params)
-            return ctx
-
-        executor = PipelineExecutor(hooks=[make_spec("h", handler=capture)])
-        executor.execute(_make_data(), user_api_key_dict={"token": "abc"})
-        assert received["user_api_key_dict"] == {"token": "abc"}
 
     def test_hook_override_force_skip(self):
         calls = []
@@ -110,11 +123,10 @@ class TestPipelineExecutorBasic:
             calls.append("ran")
             return ctx
 
+        flow = _make_flow()
+        flow.request.headers["x-ccproxy-hooks"] = "-h"
         executor = PipelineExecutor(hooks=[make_spec("h", handler=record)])
-        data = _make_data(
-            proxy_server_request={"headers": {"x-ccproxy-hooks": "-h"}}
-        )
-        executor.execute(data)
+        executor.execute(flow)
         assert calls == []
 
     def test_hook_override_force_run_skips_guard(self):
@@ -127,22 +139,20 @@ class TestPipelineExecutorBasic:
             calls.append("ran")
             return ctx
 
+        flow = _make_flow()
+        flow.request.headers["x-ccproxy-hooks"] = "+h"
         executor = PipelineExecutor(hooks=[make_spec("h", handler=record, guard=never_run)])
-        data = _make_data(
-            proxy_server_request={"headers": {"x-ccproxy-hooks": "+h"}}
-        )
-        executor.execute(data)
+        executor.execute(flow)
         assert calls == ["ran"]
 
     def test_hook_override_logs_debug(self, caplog):
         import logging
 
+        flow = _make_flow()
+        flow.request.headers["x-ccproxy-hooks"] = "+h"
         executor = PipelineExecutor(hooks=[make_spec("h")])
-        data = _make_data(
-            proxy_server_request={"headers": {"x-ccproxy-hooks": "+h"}}
-        )
         with caplog.at_level(logging.DEBUG, logger="ccproxy.pipeline.executor"):
-            executor.execute(data)
+            executor.execute(flow)
 
     def test_guard_skip_logs_debug(self, caplog):
         import logging
@@ -150,10 +160,36 @@ class TestPipelineExecutorBasic:
         def never_run(ctx: Context) -> bool:
             return False
 
+        flow = _make_flow()
         executor = PipelineExecutor(hooks=[make_spec("h", guard=never_run)])
         with caplog.at_level(logging.DEBUG, logger="ccproxy.pipeline.executor"):
-            executor.execute(_make_data())
+            executor.execute(flow)
         assert any("skipped" in r.message for r in caplog.records)
+
+    def test_hook_mutates_body_and_commits(self):
+        """Hook body mutations are flushed to flow.request.content."""
+
+        def touch_metadata(ctx, params):
+            ctx.metadata["touched"] = True
+            return ctx
+
+        flow = _make_flow()
+        executor = PipelineExecutor(hooks=[make_spec("touch", handler=touch_metadata)])
+        executor.execute(flow)
+        body = json.loads(flow.request.content)
+        assert body["metadata"]["touched"] is True
+
+    def test_hook_mutates_headers_live(self):
+        """Hook header mutations are applied to flow.request.headers immediately."""
+
+        def set_hdr(ctx, params):
+            ctx.set_header("x-test", "injected")
+            return ctx
+
+        flow = _make_flow()
+        executor = PipelineExecutor(hooks=[make_spec("hdr", handler=set_hdr)])
+        executor.execute(flow)
+        assert flow.request.headers["x-test"] == "injected"
 
 
 class TestPipelineExecutorIntrospection:
@@ -180,6 +216,10 @@ class TestPipelineExecutorIntrospection:
 
 
 class TestHookSpec:
+    def _make_flow_ctx(self, body: dict | None = None) -> Context:
+        flow = _make_flow(body)
+        return Context.from_flow(flow)
+
     def test_hash_by_name(self):
         s1 = make_spec("h")
         s2 = make_spec("h")
@@ -197,7 +237,7 @@ class TestHookSpec:
 
     def test_should_run_default_guard(self):
         s = make_spec("h")
-        ctx = Context.from_litellm_data(_make_data())
+        ctx = self._make_flow_ctx()
         assert s.should_run(ctx) is True
 
     def test_execute_passes_params(self):
@@ -212,7 +252,7 @@ class TestHookSpec:
             handler=capture,
             params={"base": "param"},
         )
-        ctx = Context.from_litellm_data(_make_data())
+        ctx = self._make_flow_ctx()
         s.execute(ctx, {"extra": "val"})
         assert received["base"] == "param"
         assert received["extra"] == "val"

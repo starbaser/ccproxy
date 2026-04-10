@@ -21,18 +21,10 @@ def is_oauth_request(ctx: Context) -> bool:
     return auth_header.startswith("bearer ")
 
 
-def routes_to_anthropic_provider(ctx: Context) -> bool:
-    """Check if request routes to Anthropic-compatible API (api_base, not model name).
+def is_anthropic_destination(ctx: Context) -> bool:
+    """Check if the flow targets an Anthropic API endpoint.
 
-    Handles api.anthropic.com, api.z.ai, and other Anthropic-compatible endpoints.
+    Detected by presence of the ``anthropic-version`` header, which is
+    set by all Anthropic SDKs and by lightllm's transform.
     """
-    config = ctx.ccproxy_model_config
-    litellm_params = config.get("litellm_params", {})
-    api_base = litellm_params.get("api_base", "")
-
-    anthropic_hosts = [
-        "anthropic.com",
-        "z.ai",
-    ]
-
-    return any(host in api_base for host in anthropic_hosts)
+    return ctx.get_header("anthropic-version") != ""

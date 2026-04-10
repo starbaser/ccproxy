@@ -1,6 +1,7 @@
 """Tests for inject_mcp_notifications pipeline hook."""
 
 import json
+from unittest.mock import MagicMock
 
 from ccproxy.hooks.inject_mcp_notifications import (
     inject_mcp_notifications,
@@ -11,13 +12,14 @@ from ccproxy.pipeline.context import Context
 
 
 def make_ctx(messages=None, session_id=None):
-    metadata = {}
+    body: dict = {"model": "test-model", "messages": messages if messages is not None else []}
     if session_id:
-        metadata["session_id"] = session_id
-    return Context(
-        messages=messages if messages is not None else [],
-        metadata=metadata,
-    )
+        body["metadata"] = {"session_id": session_id}
+    flow = MagicMock()
+    flow.id = "test-id"
+    flow.request.content = json.dumps(body).encode()
+    flow.request.headers = {}
+    return Context.from_flow(flow)
 
 
 def user_msg(text="hello"):

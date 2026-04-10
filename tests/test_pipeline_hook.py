@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from unittest.mock import MagicMock
+
 from ccproxy.pipeline.context import Context
 from ccproxy.pipeline.hook import (
     HookSpec,
@@ -13,11 +16,11 @@ from ccproxy.pipeline.hook import (
 
 
 def _make_ctx() -> Context:
-    return Context.from_litellm_data({
-        "model": "test-model",
-        "messages": [],
-        "metadata": {},
-    })
+    flow = MagicMock()
+    flow.id = "test-id"
+    flow.request.content = json.dumps({"model": "test-model", "messages": [], "metadata": {}}).encode()
+    flow.request.headers = {}
+    return Context.from_flow(flow)
 
 
 class TestHookRegistry:

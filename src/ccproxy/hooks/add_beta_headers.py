@@ -1,6 +1,7 @@
-"""Add beta headers hook for Claude Code impersonation.
+"""Add Anthropic beta headers for Claude Code OAuth impersonation.
 
-Adds anthropic-beta headers required for OAuth authentication.
+Merges required beta headers into the ``anthropic-beta`` header and
+sets ``anthropic-version``. Fires on all flows targeting Anthropic APIs.
 """
 
 from __future__ import annotations
@@ -8,10 +9,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from litellm.litellm_core_utils.get_llm_provider_logic import get_llm_provider
-
 from ccproxy.constants import ANTHROPIC_BETA_HEADERS
-from ccproxy.pipeline.guards import routes_to_anthropic_provider
 from ccproxy.pipeline.hook import hook
 
 if TYPE_CHECKING:
@@ -21,111 +19,22 @@ logger = logging.getLogger(__name__)
 
 
 def add_beta_headers_guard(ctx: Context) -> bool:
-    """Guard: Run if routing to Anthropic-type provider."""
-    if not ctx.ccproxy_litellm_model:
-        return False
-
-    # Check if routing to Anthropic-compatible API
-    return routes_to_anthropic_provider(ctx)
+    """Guard: run if the flow targets an Anthropic endpoint."""
+    return ctx.get_header("anthropic-version") != ""
 
 
 @hook(
-    reads=["ccproxy_litellm_model", "ccproxy_model_config"],
-    writes=["anthropic-beta", "anthropic-version", "provider_specific_header", "extra_headers"],
+    reads=["anthropic-beta"],
+    writes=["anthropic-beta", "anthropic-version"],
 )
 def add_beta_headers(ctx: Context, params: dict[str, Any]) -> Context:
-    """Add anthropic-beta headers for Claude Code impersonation.
-
-    When routing to Anthropic-type API, adds required beta headers that allow
-    Claude Max OAuth tokens to be accepted.
-
-    Args:
-        ctx: Pipeline context
-        params: Additional parameters (unused)
-
-    Returns:
-        Modified context with anthropic-beta and anthropic-version headers
-    """
-    routed_model = ctx.ccproxy_litellm_model
-    if not routed_model:
-        return ctx
-
-    # Detect provider
-    model_config = ctx.ccproxy_model_config or {}
-    litellm_params = model_config.get("litellm_params", {})
-    api_base = litellm_params.get("api_base")
-    custom_provider = litellm_params.get("custom_llm_provider")
-
-    provider_name = _detect_provider(routed_model, custom_provider, api_base)
-    if provider_name != "anthropic":
-        return ctx
-
-    # Skip beta headers if model has its own api_key configured
-    # Beta headers are for Claude Code OAuth impersonation, not for models using their own keys
-    configured_api_key = litellm_params.get("api_key")
-    if configured_api_key:
-        logger.debug(
-            "add_beta_headers: Model '%s' has configured api_key, skipping beta headers",
-            routed_model,
-        )
-        return ctx
-
-    # Build merged beta headers from pipeline state and client request
-    existing = ""
-    if "extra_headers" in ctx.provider_headers:
-        existing = ctx.provider_headers["extra_headers"].get("anthropic-beta", "")
-    elif "extra_headers" in ctx._raw_data:  # pyright: ignore[reportPrivateUsage]
-        existing = ctx._raw_data["extra_headers"].get("anthropic-beta", "")  # pyright: ignore[reportPrivateUsage]
-
-    client_beta = ctx.headers.get("anthropic-beta", "")
-    if client_beta:
-        existing = f"{existing},{client_beta}" if existing else client_beta
-
-    existing_list = [b.strip() for b in existing.split(",") if b.strip()]
+    """Merge required Anthropic beta headers."""
+    existing = ctx.get_header("anthropic-beta")
+    existing_list = [h.strip() for h in existing.split(",") if h.strip()] if existing else []
     merged = list(dict.fromkeys(ANTHROPIC_BETA_HEADERS + existing_list))
+    ctx.set_header("anthropic-beta", ",".join(merged))
 
-    merged_str = ",".join(merged)
-
-    # Method 1: provider_specific_header (for proxy router)
-    if "custom_llm_provider" not in ctx.provider_headers:
-        ctx.provider_headers["custom_llm_provider"] = "anthropic"
-    if "extra_headers" not in ctx.provider_headers:
-        ctx.provider_headers["extra_headers"] = {}
-
-    ctx.provider_headers["extra_headers"]["anthropic-beta"] = merged_str
-    ctx.provider_headers["extra_headers"]["anthropic-version"] = "2023-06-01"
-
-    # Method 2: extra_headers (direct to completion call)
-    if "extra_headers" not in ctx._raw_data:  # pyright: ignore[reportPrivateUsage]
-        ctx._raw_data["extra_headers"] = {}  # pyright: ignore[reportPrivateUsage]
-    ctx._raw_data["extra_headers"]["anthropic-beta"] = merged_str  # pyright: ignore[reportPrivateUsage]
-    ctx._raw_data["extra_headers"]["anthropic-version"] = "2023-06-01"  # pyright: ignore[reportPrivateUsage]
-
-    logger.info(
-        "Added anthropic-beta headers for Claude Code impersonation",
-        extra={"event": "beta_headers_added", "model": routed_model},
-    )
+    if not ctx.get_header("anthropic-version"):
+        ctx.set_header("anthropic-version", "2023-06-01")
 
     return ctx
-
-
-def _detect_provider(
-    routed_model: str,
-    custom_provider: str | None,
-    api_base: str | None,
-) -> str | None:
-    """Detect provider from model/api_base."""
-    try:
-        _, provider_name, _, _ = get_llm_provider(
-            model=routed_model,
-            custom_llm_provider=custom_provider,
-            api_base=api_base,
-        )
-        return provider_name
-    except Exception:
-        # Fallback: check if this is Anthropic-type API
-        if api_base and ("anthropic.com" in api_base or "z.ai" in api_base):
-            return "anthropic"
-        if "claude" in routed_model.lower():
-            return "anthropic"
-        return None

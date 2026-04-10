@@ -1,6 +1,8 @@
-"""Inject Claude Code identity hook.
+"""Inject Claude Code identity — required system message for Anthropic OAuth.
 
-Injects required system message for OAuth authentication with Anthropic.
+Prepends ``CLAUDE_CODE_SYSTEM_PREFIX`` to the ``system`` field in the
+request body when the flow is OAuth-authenticated and targets Anthropic.
+Handles both string and list (content-block) system message formats.
 """
 
 from __future__ import annotations
@@ -9,10 +11,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from ccproxy.constants import CLAUDE_CODE_SYSTEM_PREFIX
-from ccproxy.pipeline.guards import (
-    is_oauth_request,
-    routes_to_anthropic_provider,
-)
+from ccproxy.pipeline.guards import is_oauth_request
 from ccproxy.pipeline.hook import hook
 
 if TYPE_CHECKING:
@@ -22,72 +21,34 @@ logger = logging.getLogger(__name__)
 
 
 def inject_claude_code_identity_guard(ctx: Context) -> bool:
-    """Guard: Run if OAuth request to Anthropic-type provider.
-
-    Detects OAuth via:
-    1. Original Authorization: Bearer header (client-provided OAuth)
-    2. Metadata flag set by forward_oauth (cached OAuth token injection)
-    """
-    has_oauth = is_oauth_request(ctx) or bool(ctx.metadata.get("ccproxy_oauth_provider"))
-    if not has_oauth:
+    """Guard: run if OAuth is active and targeting Anthropic."""
+    if not is_oauth_request(ctx) and not ctx.ccproxy_oauth_provider:
         return False
-    return routes_to_anthropic_provider(ctx)
+    return ctx.get_header("anthropic-version") != ""
 
 
 @hook(
-    reads=["authorization", "ccproxy_litellm_model", "ccproxy_model_config", "ccproxy_oauth_provider", "system"],
+    reads=["authorization", "ccproxy_oauth_provider", "system"],
     writes=["system"],
 )
 def inject_claude_code_identity(ctx: Context, params: dict[str, Any]) -> Context:
-    """Inject Claude Code identity prefix into system message for Anthropic OAuth.
+    """Prepend Claude Code system prefix to system message."""
+    system = ctx.system
 
-    Anthropic's OAuth tokens are scoped to Claude Code and require the system message
-    to start with "You are Claude Code". Only applies to api.anthropic.com — other
-    Anthropic-compatible APIs (e.g., ZAI) don't require this prefix.
-    """
-    # Check if model has its own api_key - if so, don't inject identity
-    model_config = ctx.ccproxy_model_config or {}
-    litellm_params = model_config.get("litellm_params", {})
-    configured_api_key = litellm_params.get("api_key")
-    if configured_api_key:
-        logger.debug("inject_claude_code_identity: Model has configured api_key, skipping identity injection")
-        return ctx
-
-    # Check if this is going to api.anthropic.com vs other Anthropic-compatible APIs
-    api_base = litellm_params.get("api_base", "")
-    if api_base and "anthropic.com" not in api_base.lower():
-        logger.debug(
-            "inject_claude_code_identity: Skipping for api_base '%s' (not api.anthropic.com)",
-            api_base,
-        )
-        return ctx
-
-    system_msg = ctx.system
-
-    if system_msg is not None:
-        if isinstance(system_msg, str):
-            # String system message
-            if CLAUDE_CODE_SYSTEM_PREFIX not in system_msg:
-                ctx.system = f"{CLAUDE_CODE_SYSTEM_PREFIX}\n\n{system_msg}"
-        elif isinstance(system_msg, list):  # pyright: ignore[reportUnnecessaryIsInstance]
-            # Array of content blocks
-            has_prefix = any(
-                isinstance(block, dict)  # pyright: ignore[reportUnnecessaryIsInstance]
-                and block.get("type") == "text"
-                and CLAUDE_CODE_SYSTEM_PREFIX in block.get("text", "")
-                for block in system_msg
-            )
-            if not has_prefix:
-                prefix_block = {"type": "text", "text": CLAUDE_CODE_SYSTEM_PREFIX}
-                ctx.system = [prefix_block, *system_msg]
-    else:
-        # No system message - add one
+    if system is None:
         ctx.system = CLAUDE_CODE_SYSTEM_PREFIX
-
-    routed_model = ctx.ccproxy_litellm_model
-    logger.info(
-        "Injected Claude Code identity for OAuth authentication",
-        extra={"event": "claude_code_identity_injected", "model": routed_model},
-    )
+    elif isinstance(system, str):
+        if not system.startswith(CLAUDE_CODE_SYSTEM_PREFIX):
+            ctx.system = CLAUDE_CODE_SYSTEM_PREFIX + "\n\n" + system
+    elif isinstance(system, list):
+        has_prefix = any(
+            isinstance(block, dict)
+            and block.get("type") == "text"
+            and isinstance(block.get("text"), str)
+            and block["text"].startswith(CLAUDE_CODE_SYSTEM_PREFIX)
+            for block in system
+        )
+        if not has_prefix:
+            ctx.system = [{"type": "text", "text": CLAUDE_CODE_SYSTEM_PREFIX}, *system]
 
     return ctx
