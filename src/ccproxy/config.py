@@ -35,7 +35,6 @@ litellm --config /etc/litellm/config.yaml
 # Will look for ~/.ccproxy/ccproxy.yaml
 """
 
-import importlib
 import logging
 import subprocess
 import threading
@@ -218,40 +217,6 @@ class InspectorConfig(BaseModel):
         return self
 
 
-class RuleConfig:
-    """Configuration for a single classification rule."""
-
-    def __init__(self, name: str, rule_path: str, params: list[Any] | None = None) -> None:
-        self.model_name = name
-        self.rule_path = rule_path
-        self.params = params or []
-
-    def create_instance(self) -> Any:
-        """Create an instance of the rule class.
-
-        Returns:
-            An instance of the ClassificationRule
-
-        Raises:
-            ImportError: If the rule class cannot be imported
-            TypeError: If the rule class cannot be instantiated with provided params
-        """
-        # Import the rule class
-        module_path, class_name = self.rule_path.rsplit(".", 1)
-        module = importlib.import_module(module_path)
-        rule_class = getattr(module, class_name)
-
-        if not self.params:
-            return rule_class()
-
-        if all(isinstance(p, dict) for p in self.params):
-            kwargs: dict[str, Any] = {}
-            for p in self.params:
-                kwargs.update(cast(dict[str, Any], p))
-            return rule_class(**kwargs)
-        return rule_class(*self.params)
-
-
 class CCProxyConfig(BaseSettings):
     """Main configuration for ccproxy that reads from ccproxy.yaml."""
 
@@ -261,10 +226,6 @@ class CCProxyConfig(BaseSettings):
     )
 
     debug: bool = False
-    default_model_passthrough: bool = True
-
-    # Handler import path (e.g., "ccproxy.handler:CCProxyHandler")
-    handler: str = "ccproxy.handler:CCProxyHandler"
 
     inspector: InspectorConfig = Field(default_factory=InspectorConfig)
 
@@ -289,8 +250,8 @@ class CCProxyConfig(BaseSettings):
 
     # Hook configurations — either a flat list (all inbound) or a dict
     # with ``inbound`` and ``outbound`` keys for two-stage pipeline.
-    hooks: list[str | dict[str, Any]] | dict[str, list[str | dict[str, Any]]] = Field(
-        default_factory=lambda: {
+    hooks: dict[str, list[str | dict[str, Any]]] = Field(
+        default_factory=lambda: {  # type: ignore[arg-type]
             "inbound": [
                 "ccproxy.hooks.forward_oauth",
                 "ccproxy.hooks.extract_session_id",
@@ -302,12 +263,6 @@ class CCProxyConfig(BaseSettings):
             ],
         },
     )
-
-    # Patch modules applied at startup (module import paths with apply() function)
-    patches: list[str] = Field(default_factory=lambda: [], validation_alias="ccproxy_patches")
-
-    # Rule configurations
-    rules: list[RuleConfig] = Field(default_factory=lambda: [])
 
     # Path to ccproxy config
     ccproxy_config_path: Path = Field(default_factory=lambda: Path("./ccproxy.yaml"))
@@ -595,8 +550,6 @@ class CCProxyConfig(BaseSettings):
 
                 if "debug" in ccproxy_data:
                     instance.debug = ccproxy_data["debug"]
-                if "default_model_passthrough" in ccproxy_data:
-                    instance.default_model_passthrough = ccproxy_data["default_model_passthrough"]
                 if "oat_sources" in ccproxy_data:
                     instance.oat_sources = ccproxy_data["oat_sources"]
                 if "oauth_ttl" in ccproxy_data:
@@ -637,22 +590,6 @@ class CCProxyConfig(BaseSettings):
                 hooks_data = ccproxy_data.get("hooks", [])
                 if hooks_data:
                     instance.hooks = hooks_data
-
-                patches_data = ccproxy_data.get("patches", [])
-                if patches_data:
-                    instance.patches = patches_data
-
-                rules_data = ccproxy_data.get("rules", [])
-                instance.rules = []
-                for rule_data in rules_data:
-                    if isinstance(rule_data, dict):
-                        rule_dict = cast(dict[str, Any], rule_data)
-                        name: str = cast(str, rule_dict.get("name", ""))
-                        rule_path: str = cast(str, rule_dict.get("rule", ""))
-                        params: list[Any] = cast(list[Any], rule_dict.get("params", []))
-                        if name and rule_path:
-                            rule_config = RuleConfig(name, rule_path, params)
-                            instance.rules.append(rule_config)
 
         instance._load_credentials()
 

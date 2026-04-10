@@ -56,11 +56,9 @@ def _make_flow(body: dict | None = None) -> MagicMock:
 @pytest.fixture(autouse=True)
 def cleanup():
     from ccproxy.config import clear_config_instance
-    from ccproxy.router import clear_router
 
     yield
     clear_config_instance()
-    clear_router()
 
 
 class TestPipelineExecutorBasic:

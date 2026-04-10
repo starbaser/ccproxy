@@ -13,100 +13,13 @@ from ccproxy.cli import (
     Run,
     Start,
     Status,
-    generate_handler_file,
     install_config,
     main,
     run_with_proxy,
     show_status,
-    start_litellm,
+    start_server,
     view_logs,
 )
-
-
-class TestStartProxy:
-    """Test suite for start_proxy function."""
-
-    def test_litellm_no_config(self, tmp_path: Path, capsys) -> None:
-        """Test litellm when config doesn't exist."""
-        with pytest.raises(SystemExit) as exc_info:
-            start_litellm(tmp_path)
-
-        assert exc_info.value.code == 1
-        captured = capsys.readouterr()
-        assert "Configuration not found" in captured.err
-        assert "Run 'ccproxy install' first" in captured.err
-
-    @patch("ccproxy.preflight.run_preflight_checks")
-    @patch("subprocess.run")
-    def test_start_proxy_success(self, mock_run: Mock, mock_preflight: Mock, tmp_path: Path) -> None:
-        """Test successful litellm execution."""
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text("litellm: config")
-
-        mock_run.return_value = Mock(returncode=0)
-
-        with pytest.raises(SystemExit) as exc_info:
-            start_litellm(tmp_path)
-
-        assert exc_info.value.code == 0
-        # Check the command structure - first arg is the litellm executable path
-        call_args = mock_run.call_args[0][0]
-        assert call_args[0].endswith("litellm")
-        # Now includes --host and --port by default
-        assert call_args[1:5] == ["--config", str(config_file), "--host", "127.0.0.1"]
-        assert "--port" in call_args
-
-    @patch("ccproxy.preflight.run_preflight_checks")
-    @patch("subprocess.run")
-    def test_litellm_with_args(self, mock_run: Mock, mock_preflight: Mock, tmp_path: Path) -> None:
-        """Test litellm with additional arguments."""
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text("litellm: config")
-
-        mock_run.return_value = Mock(returncode=0)
-
-        with pytest.raises(SystemExit) as exc_info:
-            start_litellm(tmp_path, args=["--debug", "--port", "8080"])
-
-        assert exc_info.value.code == 0
-        # Check the command structure - first arg is the litellm executable path
-        call_args = mock_run.call_args[0][0]
-        assert call_args[0].endswith("litellm")
-        # Now includes --host and --port by default, plus user args appended
-        assert "--config" in call_args
-        assert "--host" in call_args
-        assert "--debug" in call_args
-        # User port should override default
-        assert call_args[-2:] == ["--port", "8080"]
-
-    @patch("ccproxy.preflight.run_preflight_checks")
-    @patch("subprocess.run")
-    def test_litellm_command_not_found(self, mock_run: Mock, mock_preflight: Mock, tmp_path: Path, capsys) -> None:
-        """Test litellm when command is not found."""
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text("litellm: config")
-
-        mock_run.side_effect = FileNotFoundError()
-
-        with pytest.raises(SystemExit) as exc_info:
-            start_litellm(tmp_path)
-
-        assert exc_info.value.code == 1
-        captured = capsys.readouterr()
-        assert "litellm command not found" in captured.err
-        assert "pip install litellm" in captured.err
-
-    @patch("ccproxy.preflight.run_preflight_checks")
-    @patch("subprocess.run")
-    def test_litellm_keyboard_interrupt(self, mock_run: Mock, mock_preflight: Mock, tmp_path: Path) -> None:
-        """Test litellm with keyboard interrupt — returns normally after cleanup."""
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text("litellm: config")
-
-        mock_run.side_effect = KeyboardInterrupt()
-
-        # KeyboardInterrupt is caught, function returns normally after cleanup
-        start_litellm(tmp_path)
 
 
 class TestInstallConfig:
@@ -211,312 +124,6 @@ class TestInstallConfig:
 
         # Verify file wasn't overwritten
         assert (config_dir / "ccproxy.yaml").read_text() == "existing content"
-
-
-class TestHandlerGeneration:
-    """Test suite for generate_handler_file function."""
-
-    def test_generate_handler_default(self, tmp_path: Path) -> None:
-        """Test handler generation with default configuration."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-
-        # Create minimal ccproxy.yaml with default handler
-        (config_dir / "ccproxy.yaml").write_text(
-            """
-ccproxy:
-  handler: "ccproxy.handler:CCProxyHandler"
-"""
-        )
-
-        generate_handler_file(config_dir)
-
-        handler_file = config_dir / "ccproxy.py"
-        assert handler_file.exists()
-
-        content = handler_file.read_text()
-        assert "from ccproxy.handler import CCProxyHandler" in content
-        assert "handler = CCProxyHandler()" in content
-        assert "Auto-generated" in content
-        assert "DO NOT EDIT" in content
-
-    def test_generate_handler_custom(self, tmp_path: Path) -> None:
-        """Test handler generation with custom handler class."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-
-        # Create ccproxy.yaml with custom handler
-        (config_dir / "ccproxy.yaml").write_text(
-            """
-ccproxy:
-  handler: "mypackage.custom:MyCustomHandler"
-"""
-        )
-
-        generate_handler_file(config_dir)
-
-        handler_file = config_dir / "ccproxy.py"
-        content = handler_file.read_text()
-        assert "from mypackage.custom import MyCustomHandler" in content
-        assert "handler = MyCustomHandler()" in content
-
-    def test_generate_handler_no_colon(self, tmp_path: Path) -> None:
-        """Test handler generation with module path only (no colon)."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-
-        # Handler without colon should use CCProxyHandler as class name
-        (config_dir / "ccproxy.yaml").write_text(
-            """
-ccproxy:
-  handler: "ccproxy.handler"
-"""
-        )
-
-        generate_handler_file(config_dir)
-
-        handler_file = config_dir / "ccproxy.py"
-        content = handler_file.read_text()
-        assert "from ccproxy.handler import CCProxyHandler" in content
-        assert "handler = CCProxyHandler()" in content
-
-    def test_generate_handler_missing_config(self, tmp_path: Path) -> None:
-        """Test handler generation when ccproxy.yaml doesn't exist."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-
-        # Should use default handler when config is missing
-        generate_handler_file(config_dir)
-
-        handler_file = config_dir / "ccproxy.py"
-        assert handler_file.exists()
-        content = handler_file.read_text()
-        assert "from ccproxy.handler import CCProxyHandler" in content
-        assert "handler = CCProxyHandler()" in content
-
-    def test_generate_handler_malformed_yaml(self, tmp_path: Path) -> None:
-        """Test handler generation with malformed YAML."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-
-        # Create malformed YAML
-        (config_dir / "ccproxy.yaml").write_text("invalid: {yaml: [")
-
-        # Should fall back to default handler
-        generate_handler_file(config_dir)
-
-        handler_file = config_dir / "ccproxy.py"
-        assert handler_file.exists()
-        content = handler_file.read_text()
-        assert "from ccproxy.handler import CCProxyHandler" in content
-
-    def test_generate_handler_missing_handler_key(self, tmp_path: Path) -> None:
-        """Test handler generation when handler key is missing from config."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-
-        # Config without handler key
-        (config_dir / "ccproxy.yaml").write_text(
-            """
-ccproxy:
-  debug: true
-"""
-        )
-
-        # Should fall back to default handler
-        generate_handler_file(config_dir)
-
-        handler_file = config_dir / "ccproxy.py"
-        content = handler_file.read_text()
-        assert "from ccproxy.handler import CCProxyHandler" in content
-
-    def test_generate_handler_preserve_custom(self, tmp_path: Path) -> None:
-        """Test that custom handler files are preserved (not overwritten)."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-
-        handler_file = config_dir / "ccproxy.py"
-        handler_file.write_text("# custom user content")
-
-        (config_dir / "ccproxy.yaml").write_text(
-            """
-ccproxy:
-  handler: "new.module:NewHandler"
-"""
-        )
-
-        generate_handler_file(config_dir)
-
-        # Custom file should be preserved
-        content = handler_file.read_text()
-        assert "# custom user content" in content
-        assert "from new.module import NewHandler" not in content
-
-    def test_generate_handler_overwrite_autogenerated(self, tmp_path: Path) -> None:
-        """Test that auto-generated files get overwritten with new content."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-
-        # Create an auto-generated file with the marker
-        handler_file = config_dir / "ccproxy.py"
-        old_autogen_content = '''"""
-Auto-generated handler file for LiteLLM callbacks.
-This file is generated by ccproxy on startup.
-DO NOT EDIT - changes will be overwritten.
-"""
-import sys
-
-from ccproxy.handler import CCProxyHandler
-
-handler = CCProxyHandler()
-'''
-        handler_file.write_text(old_autogen_content)
-
-        # Configure new handler
-        (config_dir / "ccproxy.yaml").write_text(
-            """
-ccproxy:
-  handler: "new.module:NewHandler"
-"""
-        )
-
-        # Generate handler file
-        generate_handler_file(config_dir)
-
-        # Verify it was overwritten with new content
-        content = handler_file.read_text()
-        assert "from new.module import NewHandler" in content
-        assert "handler = NewHandler()" in content
-        assert "Auto-generated handler file" in content
-        assert "DO NOT EDIT" in content
-        assert "from ccproxy.handler import CCProxyHandler" not in content
-
-    def test_generate_handler_preserve_custom_file(self, tmp_path: Path, capsys) -> None:
-        """Test that custom files (without auto-generated marker) are preserved."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-
-        # Create a custom handler file WITHOUT the auto-generated marker
-        handler_file = config_dir / "ccproxy.py"
-        custom_content = '''"""
-Custom handler file written by user.
-"""
-from ccproxy.handler import CCProxyHandler
-
-class CustomHandler(CCProxyHandler):
-    def custom_method(self):
-        pass
-
-handler = CustomHandler()
-'''
-        handler_file.write_text(custom_content)
-
-        # Configure handler
-        (config_dir / "ccproxy.yaml").write_text(
-            """
-ccproxy:
-  handler: "ccproxy.handler:CCProxyHandler"
-"""
-        )
-
-        # Generate handler file
-        generate_handler_file(config_dir)
-
-        # Verify file was NOT overwritten
-        content = handler_file.read_text()
-        assert content == custom_content
-        assert "Custom handler file written by user" in content
-        assert "custom_method" in content
-
-        # Verify warning was printed to stderr
-        captured = capsys.readouterr()
-        assert "Custom ccproxy.py file detected" in captured.err
-        assert "will NOT be overwritten" in captured.err
-
-    def test_generate_handler_no_file_creates_new(self, tmp_path: Path) -> None:
-        """Test that handler generation creates new file when none exists."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-
-        handler_file = config_dir / "ccproxy.py"
-        assert not handler_file.exists()
-
-        # Configure handler
-        (config_dir / "ccproxy.yaml").write_text(
-            """
-ccproxy:
-  handler: "ccproxy.handler:CCProxyHandler"
-"""
-        )
-
-        # Generate handler file
-        generate_handler_file(config_dir)
-
-        # Verify file was created
-        assert handler_file.exists()
-        content = handler_file.read_text()
-        assert "from ccproxy.handler import CCProxyHandler" in content
-        assert "handler = CCProxyHandler()" in content
-        assert "Auto-generated handler file" in content
-
-    def test_generate_handler_empty_file_treated_as_custom(self, tmp_path: Path, capsys) -> None:
-        """Test that empty file is treated as custom and preserved."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-
-        # Create empty file
-        handler_file = config_dir / "ccproxy.py"
-        handler_file.write_text("")
-
-        # Configure handler
-        (config_dir / "ccproxy.yaml").write_text(
-            """
-ccproxy:
-  handler: "ccproxy.handler:CCProxyHandler"
-"""
-        )
-
-        # Generate handler file
-        generate_handler_file(config_dir)
-
-        # Verify empty file was preserved (treated as custom)
-        content = handler_file.read_text()
-        assert content == ""
-
-        # Verify warning was printed
-        captured = capsys.readouterr()
-        assert "Custom ccproxy.py file detected" in captured.err
-        assert "will NOT be overwritten" in captured.err
-
-    def test_generate_handler_whitespace_only_treated_as_custom(self, tmp_path: Path, capsys) -> None:
-        """Test that whitespace-only file is treated as custom and preserved."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-
-        # Create file with only whitespace
-        handler_file = config_dir / "ccproxy.py"
-        whitespace_content = "   \n\n\t\n  "
-        handler_file.write_text(whitespace_content)
-
-        # Configure handler
-        (config_dir / "ccproxy.yaml").write_text(
-            """
-ccproxy:
-  handler: "ccproxy.handler:CCProxyHandler"
-"""
-        )
-
-        # Generate handler file
-        generate_handler_file(config_dir)
-
-        # Verify whitespace file was preserved
-        content = handler_file.read_text()
-        assert content == whitespace_content
-
-        # Verify warning was printed
-        captured = capsys.readouterr()
-        assert "Custom ccproxy.py file detected" in captured.err
-        assert "will NOT be overwritten" in captured.err
 
 
 class TestRunWithProxy:
@@ -887,21 +494,13 @@ litellm_settings:
 class TestMainFunction:
     """Test suite for main CLI function using Tyro."""
 
-    @patch("ccproxy.cli.start_litellm")
-    def test_main_litellm_command(self, mock_litellm: Mock, tmp_path: Path) -> None:
-        """Test main with litellm command."""
-        cmd = Start(args=["--debug", "--port", "8080"])
-        main(cmd, config_dir=tmp_path)
-
-        mock_litellm.assert_called_once_with(tmp_path, args=["--debug", "--port", "8080"], inspect=False)
-
-    @patch("ccproxy.cli.start_litellm")
-    def test_main_litellm_no_args(self, mock_litellm: Mock, tmp_path: Path) -> None:
-        """Test main with litellm command without args."""
+    @patch("ccproxy.cli.start_server")
+    def test_main_start_command(self, mock_start: Mock, tmp_path: Path) -> None:
+        """Test main with start command."""
         cmd = Start()
         main(cmd, config_dir=tmp_path)
 
-        mock_litellm.assert_called_once_with(tmp_path, args=None, inspect=False)
+        mock_start.assert_called_once_with(tmp_path)
 
     @patch("ccproxy.cli.install_config")
     def test_main_install_command(self, mock_install: Mock, tmp_path: Path) -> None:
@@ -937,13 +536,13 @@ class TestMainFunction:
         with (
             patch.dict(os.environ, {}, clear=False),
             patch.object(Path, "home", return_value=tmp_path),
-            patch("ccproxy.cli.start_litellm") as mock_litellm,
+            patch("ccproxy.cli.start_server") as mock_start,
         ):
             os.environ.pop("CCPROXY_CONFIG_DIR", None)
             cmd = Start()
             main(cmd)
 
-            mock_litellm.assert_called_once_with(default_dir, args=None, inspect=False)
+            mock_start.assert_called_once_with(default_dir)
 
     @patch("ccproxy.cli.view_logs")
     def test_main_logs_command(self, mock_logs: Mock, tmp_path: Path) -> None:

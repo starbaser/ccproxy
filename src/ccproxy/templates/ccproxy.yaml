@@ -1,6 +1,5 @@
 ccproxy:
   debug: true
-  handler: "ccproxy.handler:CCProxyHandler"
 
   # OAuth token sources - shell commands to retrieve tokens for each provider.
   # Supports any header via the `auth_header` field: `auth_header: x-api-key`
@@ -13,66 +12,23 @@ ccproxy:
     gemini:
       command: "jq -r '.access_token' ~/.gemini/oauth_creds.json"
 
-    # File-based token (reads file contents directly, mutually exclusive with command)
-    # openrouter:
-    #   file: "~/.config/ccproxy/openrouter-key"
-    #   destinations:
-    #     - "openrouter.ai"
-
-    # Extended form with destinations (auto-inject token for matching api_base URLs)
-    # zai:
-    #   command: "cat ~/.config/ccproxy/zai-key"
-    #   destinations:
-    #     - "z.ai"
-    #   auth_header: x-api-key  # send token as this header instead of Authorization: Bearer
-
-  # Hooks are executed in the order determined via dependency analysis via @hook():
-  # @hook(
-  #     reads=["proxy_server_request", "secret_fields"],
-  #     writes=["trace_metadata"],
-  # )
-  # This forms a dependency graph (DAG), enabling hook parallelism
+  # Two-stage hook pipeline. Hooks are DAG-ordered within each stage.
+  # Each entry is a module path or {hook: <path>, params: <dict>}.
   hooks:
-    - ccproxy.hooks.rule_evaluator        # evaluates rules against request
-    - ccproxy.hooks.model_router          # routes to appropriate model
-    # - ccproxy.hooks.extract_session_id  # extracts session_id for Langfuse grouping
-    - ccproxy.hooks.capture_headers       # captures HTTP headers with sensitive value redaction
-    # Example: hook with parameters: src/ccproxy/hooks/capture_headers.py#L46
-    # - hook: ccproxy.hooks.capture_headers
-    #   params:
-    #     headers: [user-agent, x-request-id, content-type]
-    - ccproxy.hooks.forward_oauth               # forwards OAuth
-    - ccproxy.hooks.add_beta_headers            # adds beta headers
-    - ccproxy.hooks.inject_claude_code_identity # injects required system message
-    # - ccproxy.hooks.forward_apikey            # forwards x-api-key header from request
-    # - ccproxy.hooks.inject_mcp_notifications  # MCP spec compliant (beta)
+    inbound:
+      - ccproxy.hooks.forward_oauth
+      - ccproxy.hooks.extract_session_id
+    outbound:
+      - ccproxy.hooks.add_beta_headers
+      - ccproxy.hooks.inject_claude_code_identity
+      - ccproxy.hooks.inject_mcp_notifications
 
-  # uses the original model that Claude Code requested when no routing rule matches.
-  # NOTE: model deployments in config.yaml are still required
-  default_model_passthrough: true
-
-  rules: []
-
-  # Inspector settings (enable with --inspect flag)
+  # Inspector settings
   inspector:
     port: 8083
-    capture_bodies: true
     cert_dir: ~/.ccproxy
     debug: false
-    graphql:
-      host: localhost
-      port: 5435
 
 litellm:
   host: 127.0.0.1
   port: 4000
-  num_workers: 4
-  debug: true
-  detailed_debug: true
-
-  # Environment variables passed to LiteLLM subprocess
-  # Supports ${VAR} and ${VAR:-default} substitution from shell environment
-  # environment:
-  #   CCPROXY_DATABASE_URL: "postgresql://ccproxy:${CCPROXY_DB_PASSWORD:-test}@localhost:5433/ccproxy_mitm"
-  #   STORE_MODEL_IN_DB: "true"
-  #   DATABASE_URL: "postgresql://ccproxy:${CCPROXY_DB_PASSWORD:-test}@localhost:5434/litellm"

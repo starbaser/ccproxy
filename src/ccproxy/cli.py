@@ -10,7 +10,6 @@ import shutil
 import signal
 import subprocess
 import sys
-import threading
 from builtins import print as builtin_print
 from pathlib import Path
 from typing import Annotated, Any, cast
@@ -75,33 +74,13 @@ def _read_proxy_settings(config_dir: Path) -> tuple[str, int]:
     return host, port
 
 
-def _expand_env_vars(value: str) -> str:
-    """Expand environment variables in a string.
-
-    Supports ${VAR} and ${VAR:-default} patterns.
-    """
-    import re
-
-    def replace_var(match: re.Match[str]) -> str:
-        var_expr = match.group(1)
-        if ":-" in var_expr:
-            var_name, default = var_expr.split(":-", 1)
-            return os.environ.get(var_name, default)
-        return os.environ.get(var_expr, match.group(0))
-
-    return re.sub(r"\$\{([^}]+)\}", replace_var, value)
-
-
 # Subcommand definitions using attrs
 @attrs.define
 class Start:
-    """Start the LiteLLM proxy server with ccproxy configuration."""
+    """Start the ccproxy inspector server."""
 
     args: Annotated[list[str] | None, tyro.conf.Positional] = None
-    """Additional arguments to pass to litellm command."""
-
-    inspect: Annotated[bool, tyro.conf.arg(aliases=["-i"])] = False
-    """Start mitmproxy for traffic capture with browser-based flow inspection."""
+    """Additional arguments (reserved for future use)."""
 
 
 @attrs.define
@@ -323,14 +302,11 @@ def run_with_proxy(
 ) -> None:
     """Run a command with ccproxy environment variables set.
 
-    The main port (default 4000) is always the entry point:
-    - Without --inspect: LiteLLM runs on port 4000
-    - With --inspect: mitmweb runs on port 4000, forwards to LiteLLM on a random port
+    Without --inspect: sets ANTHROPIC_BASE_URL etc. to point at ccproxy's
+    reverse proxy listener so SDK clients route through the inspector.
 
-    Args:
-        config_dir: Configuration directory
-        command: Command and arguments to execute
-        inspect: Route subprocess traffic through a WireGuard namespace for transparent capture
+    With --inspect: confines the subprocess in a WireGuard namespace jail
+    for transparent traffic capture (all traffic routes through mitmweb).
     """
     # Load config to get proxy settings
     ccproxy_config_path = config_dir / "ccproxy.yaml"
@@ -426,82 +402,6 @@ def run_with_proxy(
         sys.exit(1)
     except KeyboardInterrupt:
         sys.exit(130)
-
-
-def generate_handler_file(config_dir: Path) -> None:
-    """Generate the ccproxy.py handler file that LiteLLM will import.
-
-    Args:
-        config_dir: Configuration directory where ccproxy.py will be generated
-    """
-    import yaml
-
-    # Load ccproxy.yaml to get handler configuration
-    ccproxy_config_path = config_dir / "ccproxy.yaml"
-    handler_import = "ccproxy.handler:CCProxyHandler"  # default
-
-    if ccproxy_config_path.exists():
-        try:
-            with ccproxy_config_path.open() as f:
-                config: dict[str, Any] | None = yaml.safe_load(f)
-                if config and "ccproxy" in config and "handler" in config["ccproxy"]:
-                    handler_import = config["ccproxy"]["handler"]
-        except Exception:
-            logger.debug("Could not load ccproxy config for handler import, using default")
-
-    # Parse handler import path (format: "module.path:ClassName")
-    if ":" in handler_import:
-        module_path, class_name = handler_import.split(":", 1)
-    else:
-        # Fallback: assume it's just the module path
-        module_path = handler_import
-        class_name = "CCProxyHandler"
-
-    # Check if handler file exists and is a user's custom file
-    handler_file = config_dir / "ccproxy.py"
-    if handler_file.exists():
-        try:
-            existing_content = handler_file.read_text()
-            # Check if this is an auto-generated file
-            if "Auto-generated handler file" not in existing_content:
-                # This is a user's custom file - preserve it
-                err_console = Console(stderr=True)
-                err_console.print(
-                    Panel(
-                        "[yellow]Warning:[/yellow] Custom ccproxy.py file detected!\n\n"
-                        f"Found existing file at: [cyan]{handler_file}[/cyan]\n\n"
-                        "This file appears to be custom (not auto-generated).\n"
-                        "It will NOT be overwritten.\n\n"
-                        "To use auto-generation:\n"
-                        f"  1. Remove the file: [dim]rm {handler_file}[/dim]\n"
-                        "  2. Restart the proxy: [dim]ccproxy start[/dim]\n\n"
-                        "To use your custom handler:\n"
-                        f"  • Set [bold]handler:[/bold] in [cyan]{ccproxy_config_path}[/cyan]\n"
-                        "  • Example: [dim]handler: your_module.path:YourHandler[/dim]",
-                        title="[bold red]Custom Handler Preserved[/bold red]",
-                        border_style="yellow",
-                    )
-                )
-                return
-        except OSError:
-            pass  # If we can't read the file, proceed with generation
-
-    # Generate the handler file
-    content = f'''"""
-Auto-generated handler file for LiteLLM callbacks.
-This file is generated by ccproxy on startup.
-DO NOT EDIT - changes will be overwritten.
-"""
-import sys
-
-# Import the handler class from the configured module
-from {module_path} import {class_name}
-
-# Create the handler instance that LiteLLM will use
-handler = {class_name}()
-'''
-
-    handler_file.write_text(content)
 
 
 async def _run_inspect(
@@ -607,148 +507,35 @@ async def _run_inspect(
     return 0
 
 
-def start_litellm(
+def start_server(
     config_dir: Path,
-    args: list[str] | None = None,
-    inspect: bool = False,
 ) -> None:
-    """Start the proxy server with ccproxy configuration.
+    """Start the ccproxy inspector server.
 
-    In inspect mode: runs mitmweb with the three-stage addon chain
-    (inbound → transform → outbound) — no LiteLLM subprocess.
-
-    In non-inspect mode: runs LiteLLM proxy as a subprocess (legacy).
+    Runs mitmweb with the three-stage addon chain (inbound → transform →
+    outbound). All request routing is handled via lightllm.
 
     Runs in the foreground. Use process-compose or systemd for supervision.
     """
-    config_path = config_dir / "config.yaml"
+    import asyncio
 
-    litellm_host, main_port = _read_proxy_settings(config_dir)
+    _litellm_host, main_port = _read_proxy_settings(config_dir)
 
+    from ccproxy.config import get_config
     from ccproxy.preflight import run_preflight_checks
 
-    ports_to_check = [main_port]
-    if inspect:
-        from ccproxy.config import get_config
-
-        ports_to_check.append(get_config().inspector.port)
+    ports_to_check = [main_port, get_config().inspector.port]
     run_preflight_checks(ports=ports_to_check, config_dir=config_dir)
 
-    if inspect:
-        import asyncio
-
-        litellm_port_file = config_dir / ".litellm_port"
-        if litellm_port_file.exists():
-            litellm_port_file.unlink()
-
-        exit_code = asyncio.run(_run_inspect(
-            config_dir=config_dir,
-            main_port=main_port,
-        ))
-        sys.exit(exit_code)
-
-    # Non-inspect mode: run LiteLLM proxy (legacy path)
-    if not config_path.exists():
-        print(f"Error: Configuration not found at {config_path}", file=sys.stderr)
-        print("Run 'ccproxy install' first to set up configuration.", file=sys.stderr)
-        sys.exit(1)
-
-    ccproxy_config_path = config_dir / "ccproxy.yaml"
-    ccproxy_config: dict[str, Any] | None = None
-    if ccproxy_config_path.exists():
-        with ccproxy_config_path.open() as f:
-            ccproxy_config = yaml.safe_load(f)
-
-    try:
-        generate_handler_file(config_dir)
-    except Exception as e:
-        print(f"Error generating handler file: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    litellm_port = main_port
     litellm_port_file = config_dir / ".litellm_port"
     if litellm_port_file.exists():
         litellm_port_file.unlink()
 
-    env = os.environ.copy()
-    env["CCPROXY_CONFIG_DIR"] = str(config_dir.absolute())
-
-    if ccproxy_config_path.exists() and ccproxy_config:
-        litellm_env = ccproxy_config.get("litellm", {}).get("environment", {})
-        for key, value in litellm_env.items():
-            expanded = _expand_env_vars(str(value))
-            env[key] = expanded
-            os.environ[key] = expanded
-
-    if "SSL_CERT_FILE" not in env or not Path(env["SSL_CERT_FILE"]).exists():
-        ssl_cert = None
-        try:
-            import certifi
-
-            ssl_cert = certifi.where()
-        except ImportError:
-            pass
-        if ssl_cert and Path(ssl_cert).exists():
-            env["SSL_CERT_FILE"] = ssl_cert
-        elif Path("/etc/ssl/certs/ca-certificates.crt").exists():
-            env["SSL_CERT_FILE"] = "/etc/ssl/certs/ca-certificates.crt"
-
-    venv_bin = Path(sys.executable).parent
-    litellm_path = venv_bin / "litellm"
-
-    if not litellm_path.exists():
-        print(
-            f"Error: litellm not found in virtual environment at {litellm_path}",
-            file=sys.stderr,
-        )
-        print(
-            "Make sure ccproxy is installed with: uv tool install claude-ccproxy --with 'litellm[proxy]'",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    litellm_cmd = [
-        str(litellm_path),
-        "--config",
-        str(config_path),
-        "--host",
-        litellm_host,
-        "--port",
-        str(litellm_port),
-    ]
-
-    if args:
-        litellm_cmd.extend(args)
-
-    try:
-        log_file = config_dir / "ccproxy.log"
-        if log_file.exists():
-            litellm_logger = logging.getLogger("ccproxy.subprocess.litellm")
-            proc = subprocess.Popen(litellm_cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)  # noqa: S603
-
-            def _litellm_reader() -> None:
-                assert proc.stdout is not None
-                for raw_line in proc.stdout:
-                    line = raw_line.rstrip(b"\n\r").decode("utf-8", errors="replace")
-                    if line:
-                        litellm_logger.info("%s", line)
-
-            reader_thread = threading.Thread(target=_litellm_reader, daemon=True)
-            reader_thread.start()
-            proc.wait()
-            sys.exit(proc.returncode)
-        else:
-            result = subprocess.run(litellm_cmd, env=env)  # noqa: S603
-            sys.exit(result.returncode)
-    except FileNotFoundError:
-        print("Error: litellm command not found.", file=sys.stderr)
-        print(
-            "Please ensure LiteLLM is installed: pip install litellm",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    except KeyboardInterrupt:
-        pass
+    exit_code = asyncio.run(_run_inspect(
+        config_dir=config_dir,
+        main_port=main_port,
+    ))
+    sys.exit(exit_code)
 
 
 def view_logs(follow: bool = False, lines: int = 100, config_dir: Path | None = None) -> None:
@@ -1075,7 +862,7 @@ def main(
 
     # Handle each command type
     if isinstance(cmd, Start):
-        start_litellm(config_dir, args=cmd.args, inspect=cmd.inspect)
+        start_server(config_dir)
 
     elif isinstance(cmd, Install):
         install_config(config_dir, force=cmd.force)
@@ -1090,9 +877,9 @@ def main(
             print("Run a command with ccproxy environment.")
             print()
             print("options:")
-            print("  --inspect, -i       Route subprocess traffic through a WireGuard namespace")
+            print("  --inspect, -i       Route subprocess traffic through a WireGuard namespace jail")
             print("                      for transparent capture of all TCP/UDP traffic.")
-            print("                      Requires ccproxy start --inspect to be running.")
+            print("                      Requires ccproxy start to be running.")
             print("  command ...         Command and arguments to execute with proxy settings")
             sys.exit(0)
 
@@ -1136,12 +923,10 @@ def handle_dag_viz(cmd: DagViz) -> None:
     # Import all hooks to register them
     from ccproxy.hooks import (  # noqa: F401
         add_beta_headers,  # pyright: ignore[reportUnusedImport]
-        capture_headers,  # pyright: ignore[reportUnusedImport]
         extract_session_id,  # pyright: ignore[reportUnusedImport]
         forward_oauth,  # pyright: ignore[reportUnusedImport]
         inject_claude_code_identity,  # pyright: ignore[reportUnusedImport]
-        model_router,  # pyright: ignore[reportUnusedImport]
-        rule_evaluator,  # pyright: ignore[reportUnusedImport]
+        inject_mcp_notifications,  # pyright: ignore[reportUnusedImport]
     )
     from ccproxy.pipeline import PipelineExecutor
     from ccproxy.pipeline.hook import get_registry
