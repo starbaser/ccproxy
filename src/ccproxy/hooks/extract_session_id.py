@@ -30,25 +30,22 @@ def extract_session_id_guard(ctx: Context) -> bool:
     writes=["session_id"],
 )
 def extract_session_id(ctx: Context, params: dict[str, Any]) -> Context:
-    """Extract session_id from metadata.user_id and forward transparent metadata."""
+    """Extract session_id from metadata.user_id into flow metadata.
+
+    Stores session_id on ``flow.metadata`` (mitmproxy per-flow dict), NOT
+    on the body's metadata dict — writing into the body would inject fields
+    that upstream APIs reject (e.g. Anthropic: "metadata.session_id: Extra
+    inputs are not permitted").
+    """
     metadata = ctx.metadata
 
-    # Forward transparent metadata (skip protected namespace)
-    for key, value in list(metadata.items()):
-        if key.startswith("ccproxy_") or key == "user_id":
-            continue
-        # Don't overwrite existing values
-        if key not in ctx.metadata:
-            ctx.metadata[key] = value
-
-    # Parse user_id for session information
     user_id = str(metadata.get("user_id", ""))
     if not user_id:
         return ctx
 
     session_id = parse_session_id(user_id)
     if session_id:
-        ctx.session_id = session_id
+        ctx.flow.metadata["ccproxy.session_id"] = session_id
         logger.debug("Extracted session_id: %s", session_id)
 
     return ctx

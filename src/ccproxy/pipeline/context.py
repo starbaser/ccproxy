@@ -124,5 +124,13 @@ class Context:
     # --- Commit ---
 
     def commit(self) -> None:
-        """Flush body mutations back to flow.request.content."""
-        self.flow.request.content = json.dumps(self._body).encode()
+        """Flush body mutations back to flow.request.content.
+
+        Strips empty ``metadata`` dicts injected by property access —
+        upstream APIs reject unknown fields (e.g. Google: "Unknown name
+        metadata").
+        """
+        body = self._body
+        if "metadata" in body and isinstance(body["metadata"], dict) and not body["metadata"]:
+            del body["metadata"]
+        self.flow.request.content = json.dumps(body).encode()
