@@ -158,23 +158,74 @@ class InspectorAddon:
             if not response:
                 return
 
+            if response.status_code == 401 and flow.request.headers.get("x-ccproxy-oauth-injected") == "1":
+                retried = await self._retry_with_refreshed_token(flow)
+                if retried:
+                    response = flow.response
+
             started = flow.request.timestamp_start
-            ended = response.timestamp_end
+            ended = response.timestamp_end if response else None
             duration_ms = (ended - started) * 1000 if started and ended else None
 
-            if self.tracer:
+            if self.tracer and response:
                 self.tracer.finish_span(flow, response.status_code, duration_ms)
 
             logger.debug(
                 "Captured response: %s (status: %d, duration: %.2fms, trace_id: %s)",
                 flow.request.pretty_url,
-                response.status_code,
+                response.status_code if response else 0,
                 duration_ms or 0.0,
                 flow.id,
             )
 
         except Exception as e:
             logger.error("Error capturing response: %s", e, exc_info=True)
+
+    async def _retry_with_refreshed_token(self, flow: http.HTTPFlow) -> bool:
+        """On 401, re-resolve the OAuth credential. Retry if the token changed."""
+        import json
+
+        import httpx
+
+        from ccproxy.config import get_config
+
+        body = json.loads(flow.request.content) if flow.request.content else {}
+        provider = body.get("metadata", {}).get("ccproxy_oauth_provider", "")
+        if not provider:
+            return False
+
+        config = get_config()
+        new_token, changed = config.refresh_oauth_token(provider)
+        if not changed or not new_token:
+            logger.warning("OAuth 401 for provider '%s' — token unchanged, not retrying", provider)
+            return False
+
+        logger.info("OAuth 401 for provider '%s' — token refreshed, retrying request", provider)
+
+        headers = dict(flow.request.headers)
+        target_header = config.get_auth_header(provider)
+        if target_header:
+            headers[target_header] = new_token
+        else:
+            headers["authorization"] = f"Bearer {new_token}"
+
+        headers.pop("x-ccproxy-oauth-injected", None)
+
+        async with httpx.AsyncClient(verify=False) as client:
+            retry_resp = await client.request(
+                method=flow.request.method,
+                url=flow.request.pretty_url,
+                headers=headers,
+                content=flow.request.content,
+            )
+
+        assert flow.response is not None
+        flow.response.status_code = retry_resp.status_code
+        flow.response.headers.clear()
+        for key, value in retry_resp.headers.multi_items():
+            flow.response.headers.add(key, value)
+        flow.response.content = retry_resp.content
+        return True
 
     async def error(self, flow: http.HTTPFlow) -> None:
         try:

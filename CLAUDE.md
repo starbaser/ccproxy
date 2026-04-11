@@ -158,7 +158,7 @@ Matching fields: `match_host` (optional, checked against pretty_host + Host head
 
 - **Sentinel key**: `sk-ant-oat-ccproxy-{provider}` triggers token substitution from `oat_sources` config
 - **Token sources**: `oat_sources` entries with `command` (shell) or `file` (path) to obtain tokens
-- **Refresh**: TTL-based (background check every 30 min, refresh at 90% of `oauth_ttl` default 8h) + 401-triggered immediate refresh
+- **Refresh**: On 401, re-resolves the credential source. If the token changed, retries the request with the fresh token. If unchanged, fails (credential is truly stale).
 - `forward_oauth` hook sets `x-ccproxy-oauth-injected: 1` to signal downstream
 
 ### Key Constants (`constants.py`)

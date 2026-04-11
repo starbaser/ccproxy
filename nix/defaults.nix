@@ -3,8 +3,6 @@
     host = "127.0.0.1";
     port = 4000;
     debug = true;
-    oauth_ttl = 28800;
-    oauth_refresh_buffer = 0.1;
     oat_sources = {
       anthropic = {
         command = "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json";

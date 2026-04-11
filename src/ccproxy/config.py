@@ -12,7 +12,6 @@ Individual fields can be overridden via ``CCPROXY_`` prefixed env vars
 import logging
 import subprocess
 import threading
-import time
 from pathlib import Path
 from typing import Any, cast
 
@@ -212,14 +211,8 @@ class CCProxyConfig(BaseSettings):
     # Extended: {"gemini": {"command": "jq -r '.token' ~/.gemini/creds.json", "user_agent": "MyApp/1.0"}}
     oat_sources: dict[str, str | OAuthSource | dict[str, Any]] = Field(default_factory=lambda: {})
 
-    # OAuth TTL in seconds (default 8 hours)
-    oauth_ttl: int = 28800
-
-    # OAuth refresh buffer (refresh at 90% of TTL by default)
-    oauth_refresh_buffer: float = 0.1
-
-    # Cached OAuth tokens (loaded at startup) - dict mapping provider name to (token, timestamp)
-    _oat_values: dict[str, tuple[str, float]] = PrivateAttr(default_factory=lambda: {})
+    # Cached OAuth tokens (loaded at startup)
+    _oat_values: dict[str, str] = PrivateAttr(default_factory=lambda: {})
 
     # Cached OAuth user agents (loaded at startup) - dict mapping provider name to user-agent
     _oat_user_agents: dict[str, str] = PrivateAttr(default_factory=lambda: {})
@@ -245,41 +238,12 @@ class CCProxyConfig(BaseSettings):
 
     @property
     def oat_values(self) -> dict[str, str]:
-        """Get the cached OAuth token values.
-
-        Returns:
-            Dict mapping provider name to OAuth token
-        """
-        return {provider: token for provider, (token, _) in self._oat_values.items()}
+        """Get the cached OAuth token values."""
+        return dict(self._oat_values)
 
     def get_oauth_token(self, provider: str) -> str | None:
-        """Get OAuth token for a specific provider.
-
-        Args:
-            provider: Provider name (e.g., "anthropic", "gemini")
-
-        Returns:
-            OAuth token string or None if not configured for this provider
-        """
-        entry = self._oat_values.get(provider)
-        return entry[0] if entry else None
-
-    def is_token_expired(self, provider: str) -> bool:
-        """Check if OAuth token for provider needs refresh using TTL buffer rule.
-
-        Args:
-            provider: Provider name (e.g., "anthropic", "gemini")
-
-        Returns:
-            True if token is missing or has exceeded TTL buffer threshold
-        """
-        entry = self._oat_values.get(provider)
-        if not entry:
-            return True
-        _, loaded_at = entry
-        # Refresh at (1 - buffer) of TTL (e.g., 90% through TTL with 0.1 buffer)
-        refresh_threshold = self.oauth_ttl * (1 - self.oauth_refresh_buffer)
-        return time.time() - loaded_at >= refresh_threshold
+        """Get cached OAuth token for a specific provider."""
+        return self._oat_values.get(provider)
 
     def _resolve_oauth_token(self, provider: str) -> tuple[str, str | None] | None:
         """Resolve OAuth token for a provider via command or file.
@@ -355,28 +319,26 @@ class CCProxyConfig(BaseSettings):
             logger.error(f"Failed to execute OAuth command for provider '{provider}': {e}")
             return None
 
-    def refresh_oauth_token(self, provider: str) -> str | None:
-        """Refresh OAuth token for a specific provider by re-resolving its source.
+    def refresh_oauth_token(self, provider: str) -> tuple[str | None, bool]:
+        """Re-resolve OAuth token for a provider and update cache if changed.
 
-        Thread-safe method that updates the cached token with new value and timestamp.
-
-        Args:
-            provider: Provider name (e.g., "anthropic", "gemini")
-
-        Returns:
-            New token string on success, None on failure
+        Thread-safe. Returns (new_token, changed) — changed is True only when
+        the freshly resolved token differs from the cached value.
         """
         with _config_lock:
             result = self._resolve_oauth_token(provider)
             if result is None:
-                return None
+                return None, False
 
             token, user_agent = result
-            self._oat_values[provider] = (token, time.time())
+            old_token = self._oat_values.get(provider)
+            changed = token != old_token
+            self._oat_values[provider] = token
             if user_agent:
                 self._oat_user_agents[provider] = user_agent
-            logger.debug(f"Refreshed OAuth token for provider '{provider}'")
-            return token
+            if changed:
+                logger.info("OAuth token changed for provider '%s'", provider)
+            return token, changed
 
     def get_auth_provider_ua(self, provider: str) -> str | None:
         """Get custom User-Agent for a specific provider.
@@ -446,10 +408,9 @@ class CCProxyConfig(BaseSettings):
             self._oat_user_agents = {}
             return
 
-        loaded_tokens: dict[str, tuple[str, float]] = {}
+        loaded_tokens: dict[str, str] = {}
         loaded_user_agents: dict[str, str] = {}
         errors: list[str] = []
-        current_time = time.time()
 
         for provider in self.oat_sources:
             result = self._resolve_oauth_token(provider)
@@ -458,7 +419,7 @@ class CCProxyConfig(BaseSettings):
                 continue
 
             token, user_agent = result
-            loaded_tokens[provider] = (token, current_time)
+            loaded_tokens[provider] = token
             logger.debug(f"Successfully loaded OAuth token for provider '{provider}'")
 
             if user_agent:
@@ -515,10 +476,6 @@ class CCProxyConfig(BaseSettings):
                     instance.debug = ccproxy_data["debug"]
                 if "oat_sources" in ccproxy_data:
                     instance.oat_sources = ccproxy_data["oat_sources"]
-                if "oauth_ttl" in ccproxy_data:
-                    instance.oauth_ttl = ccproxy_data["oauth_ttl"]
-                if "oauth_refresh_buffer" in ccproxy_data:
-                    instance.oauth_refresh_buffer = ccproxy_data["oauth_refresh_buffer"]
                 inspector_data = ccproxy_data.get("inspector")
                 if inspector_data:
                     inspector_dict = cast(dict[str, Any], inspector_data)

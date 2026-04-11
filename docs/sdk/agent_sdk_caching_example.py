@@ -93,12 +93,8 @@ async def main() -> None:
     Configuration Files:
     - ~/.ccproxy/ccproxy.yaml - ccproxy configuration (hooks, transforms, oat_sources)
 
-    OAuth token refresh has two triggers:
-    - TTL-based: Background task checks every 30 minutes, refreshes at 90% of oauth_ttl
-    - 401-triggered: Immediate refresh when API returns authentication error
-
-    Request metadata is stored by litellm_call_id with 60-second TTL auto-cleanup
-    since LiteLLM doesn't preserve custom metadata.
+    OAuth tokens are cached at startup. On 401, the credential source is
+    re-resolved — if the token changed, the request is retried automatically.
 
     The project uses pytest with comprehensive fixtures (18 test files, 90% coverage).
     Singleton patterns (CCProxyConfig, ModelRouter) use clear_config_instance() and

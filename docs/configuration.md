@@ -39,9 +39,6 @@ ccproxy:
       user_agent: "anthropic"
       destinations: ["api.anthropic.com"]
 
-  oauth_ttl: 28800           # Token lifetime in seconds (default 8h)
-  oauth_refresh_buffer: 0.1  # Refresh at (1 - buffer) × TTL; default refreshes at 7.2h
-
   hooks:
     inbound:
       - ccproxy.hooks.forward_oauth
@@ -71,8 +68,6 @@ ccproxy:
 | `port` | int | `4000` | Reverse proxy listen port |
 | `debug` | bool | `false` | Enable debug logging |
 | `oat_sources` | map | `{}` | OAuth token sources by provider name |
-| `oauth_ttl` | int | `28800` | Token lifetime in seconds |
-| `oauth_refresh_buffer` | float | `0.1` | Fraction of TTL remaining at which to refresh |
 | `hooks` | object | — | Two-stage hook pipeline (inbound/outbound) |
 | `inspector` | object | — | mitmweb and transform settings |
 | `otel` | object | — | OpenTelemetry export settings |
@@ -128,16 +123,7 @@ When ccproxy sees a key matching `sk-ant-oat-ccproxy-{provider}`, it substitutes
 
 ### Token Refresh
 
-Tokens refresh automatically on two triggers:
-
-1. **TTL-based**: A background task runs every 30 minutes and refreshes any token that has consumed `(1 - oauth_refresh_buffer)` of its TTL. With defaults (8h TTL, 0.1 buffer), refresh happens at ~7.2 hours.
-2. **401-triggered**: An upstream 401 response causes an immediate token refresh and request retry.
-
-```yaml
-ccproxy:
-  oauth_ttl: 14400           # 4-hour TTL
-  oauth_refresh_buffer: 0.2  # Refresh at 80% of TTL (~3.2h)
-```
+Tokens are loaded at startup and cached in memory. On a 401 response from the provider, ccproxy re-resolves the credential source (re-reads the file or re-runs the command). If the new token differs from the cached value, the request is retried with the fresh token. If the token is unchanged, the 401 is returned to the client.
 
 ## Hook Pipeline
 
