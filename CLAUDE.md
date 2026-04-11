@@ -110,10 +110,17 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 |------|-------|---------|
 | `forward_oauth` | inbound | Sentinel key (`sk-ant-oat-ccproxy-{provider}`) substitution from `oat_sources` |
 | `extract_session_id` | inbound | Parses `metadata.user_id` → stores session_id on `flow.metadata` (NOT body metadata) |
-| `add_beta_headers` | outbound | Merges `ANTHROPIC_BETA_HEADERS` into `anthropic-beta` header |
-| `inject_claude_code_identity` | outbound | Prepends system prompt prefix for OAuth requests to Anthropic |
 | `inject_mcp_notifications` | outbound | Injects buffered MCP terminal events as synthetic tool_use/tool_result |
 | `verbose_mode` | outbound | Strips `redact-thinking-*` from `anthropic-beta` header |
+| `apply_compliance` | outbound | Applies learned compliance profile (headers, body envelope, system prompt) to reverse proxy flows |
+
+**`compliance/`** — Provider-agnostic compliance profile learning system:
+- `models.py` — `ComplianceProfile`, `ObservationAccumulator`, feature dataclasses
+- `classifier.py` — Feature classification (content vs envelope vs auth vs dynamic)
+- `extractor.py` — Feature extraction from `ClientRequest` snapshots
+- `store.py` — `ProfileStore` singleton with JSON persistence at `{config_dir}/compliance_profiles.json`
+- `merger.py` — Idempotent profile application: headers (add if missing), body envelope, system prompt wrapping, session metadata synthesis
+- Observation is built into `InspectorAddon.request()` pre-pipeline, triggered by WireGuard flows or configured UA patterns. Profiles keyed by `(provider, user_agent)` with stability detection across N observations.
 
 **`mcp/`** — Thread-safe notification buffer (`NotificationBuffer` singleton) + `POST /mcp/notify` FastAPI endpoint for MCP terminal event ingestion.
 
@@ -130,10 +137,9 @@ hooks:
     - ccproxy.hooks.forward_oauth
     - ccproxy.hooks.extract_session_id
   outbound:
-    - ccproxy.hooks.add_beta_headers
-    - hook: ccproxy.hooks.some_hook
-      params:
-        key: value
+    - ccproxy.hooks.inject_mcp_notifications
+    - ccproxy.hooks.verbose_mode
+    - ccproxy.hooks.apply_compliance
 ```
 
 **Transform config** — `inspector.transforms` list, first match wins:
@@ -153,7 +159,7 @@ Matching fields: `match_host` (optional, checked against pretty_host + Host head
 
 ### Singleton Patterns
 
-`CCProxyConfig`, `NotificationBuffer`, and `FlowStore` use thread-safe singletons. Tests reset them via the `cleanup` autouse fixture (`clear_config_instance()`, `clear_buffer()`, `clear_flow_store()`).
+`CCProxyConfig`, `NotificationBuffer`, `FlowStore`, and `ProfileStore` use thread-safe singletons. Tests reset them via the `cleanup` autouse fixture (`clear_config_instance()`, `clear_buffer()`, `clear_flow_store()`, `clear_store_instance()`).
 
 ### OAuth
 
