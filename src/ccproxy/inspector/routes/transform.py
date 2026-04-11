@@ -4,8 +4,9 @@ Intercepts inbound flows matching configured transform rules, rewrites the
 request body from one provider format to another using lightllm, and redirects
 the flow to the destination provider.
 
-Two modes:
-  - ``transform``: rewrite request body via lightllm dispatch
+Three modes:
+  - ``transform``: rewrite request body via lightllm dispatch (cross-format)
+  - ``redirect``: rewrite destination host but preserve body (same-format)
   - ``passthrough``: forward to the original destination unchanged
 
 Unmatched flows: WireGuard flows pass through to their original destination;
@@ -91,6 +92,45 @@ def _handle_passthrough(flow: HTTPFlow) -> None:
     logger.info("lightllm passthrough: → %s:%d%s", flow.request.host, flow.request.port, flow.request.path)
 
 
+def _handle_redirect(flow: HTTPFlow, target: TransformRoute, body: dict[str, object]) -> None:
+    """Redirect to destination host without transforming the body.
+
+    For same-format flows (e.g. Anthropic → Anthropic, Gemini → Gemini)
+    where the request body is already in the correct provider format.
+    Only rewrites the destination and injects auth.
+    """
+    dest_host = target.dest_host
+    if not dest_host:
+        logger.error("redirect mode requires dest_host, falling back to passthrough")
+        return
+
+    is_streaming = bool(body.get("stream", False))
+
+    # Persist transform context for compliance hook
+    record = flow.metadata.get(InspectorMeta.RECORD)
+    if record is not None:
+        record.transform = TransformMeta(
+            provider=target.dest_provider,
+            model=target.dest_model or str(body.get("model", "")),
+            request_data={**body},
+            is_streaming=is_streaming,
+        )
+
+    flow.request.host = dest_host
+    flow.request.port = 443
+    flow.request.scheme = "https"
+    flow.server_conn = Server(address=(dest_host, 443))
+
+    # Inject auth from oat_sources if configured
+    api_key = _resolve_api_key(target)
+    if api_key:
+        flow.request.headers["authorization"] = f"Bearer {api_key}"
+
+    flow.comment = f"redirect → {target.dest_provider}/{dest_host}"
+
+    logger.info("redirect: → %s %s%s", target.dest_provider, dest_host, flow.request.path)
+
+
 def _handle_transform(flow: HTTPFlow, target: TransformRoute, body: dict[str, object]) -> None:
     """Transform request body via lightllm dispatch and rewrite destination."""
     from ccproxy.lightllm import transform_to_provider
@@ -166,6 +206,8 @@ def register_transform_routes(router: InspectorRouter) -> None:
 
         if target.mode == "passthrough":
             _handle_passthrough(flow)
+        elif target.mode == "redirect":
+            _handle_redirect(flow, target, body)
         else:
             _handle_transform(flow, target, body)
 

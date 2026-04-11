@@ -407,6 +407,7 @@ class TestTransformMetaPersistence:
         from ccproxy.inspector.routes.transform import register_transform_routes
 
         transform_routes = [TransformRoute(
+            mode="transform",
             match_host="api.openai.com",
             match_path="/v1/chat/completions",
             dest_provider="anthropic",

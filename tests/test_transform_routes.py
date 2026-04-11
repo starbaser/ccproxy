@@ -221,6 +221,7 @@ class TestHandleTransform:
     @patch("ccproxy.lightllm.transform_to_provider")
     def test_rewrites_matched_flow(self, mock_transform: MagicMock, cleanup: None) -> None:
         _make_config_with_transforms([{
+            "mode": "transform",
             "match_host": "api.openai.com",
             "match_path": "/v1/chat/completions",
             "dest_provider": "anthropic",
@@ -250,6 +251,7 @@ class TestHandleTransform:
     @patch("ccproxy.lightllm.transform_to_provider")
     def test_passes_messages_and_params(self, mock_transform: MagicMock, cleanup: None) -> None:
         _make_config_with_transforms([{
+            "mode": "transform",
             "match_host": "api.openai.com",
             "match_path": "/",
             "dest_provider": "anthropic",

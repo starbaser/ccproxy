@@ -181,8 +181,9 @@ class MitmproxyOptions(BaseModel):
 class TransformRoute(BaseModel):
     """A single lightllm transformation rule for the inspector."""
 
-    mode: str = "transform"
-    """``transform`` (default): rewrite request body via lightllm dispatch.
+    mode: str = "redirect"
+    """``redirect`` (default): rewrite destination host, preserve request body (same-format).
+    ``transform``: rewrite both destination and body via lightllm (cross-format).
     ``passthrough``: forward to the original destination unchanged."""
 
     match_host: str | None = None
@@ -200,12 +201,18 @@ class TransformRoute(BaseModel):
     all traffic arrives at the same host."""
 
     dest_provider: str = ""
-    """Destination provider name for lightllm dispatch (e.g. ``anthropic``, ``gemini``).
-    Not used in ``passthrough`` mode."""
+    """Destination provider name (e.g. ``anthropic``, ``gemini``).
+    Used by ``transform`` for lightllm dispatch and ``redirect`` for
+    compliance profile lookup. Not used in ``passthrough`` mode."""
 
     dest_model: str = ""
     """Destination model name for lightllm dispatch.
-    Not used in ``passthrough`` mode."""
+    Only used in ``transform`` mode."""
+
+    dest_host: str | None = None
+    """Explicit destination host for ``redirect`` mode
+    (e.g. ``generativelanguage.googleapis.com``). If not set, ``redirect``
+    mode is invalid."""
 
     dest_api_key_ref: str | None = None
     """Provider name in ``oat_sources`` for credential lookup, or an
