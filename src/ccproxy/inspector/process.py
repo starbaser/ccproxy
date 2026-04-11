@@ -154,6 +154,16 @@ def _build_addons(
     except Exception as e:
         logger.warning("Failed to initialize OTel tracer: %s", e)
 
+    # Initialize compliance profile store (fail-fast if path is unwritable)
+    if config.compliance.enabled:
+        try:
+            from ccproxy.compliance.store import get_store
+
+            get_store()
+            logger.info("Compliance profile store initialized")
+        except Exception as e:
+            logger.warning("Failed to initialize compliance profile store: %s", e)
+
     # Split hooks config into inbound/outbound stages
     inbound_hooks = hooks_cfg.get("inbound", []) if isinstance(hooks_cfg, dict) else hooks_cfg
     outbound_hooks = hooks_cfg.get("outbound", []) if isinstance(hooks_cfg, dict) else []

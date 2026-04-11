@@ -103,6 +103,22 @@ class OAuthSource(CredentialSource):
 
 
 
+class ComplianceConfig(BaseModel):
+    """Configuration for the compliance profile learning system."""
+
+    enabled: bool = True
+    """Master switch for compliance observation and application."""
+
+    min_observations: int = 3
+    """Observations before a profile is finalized."""
+
+    reference_user_agents: list[str] = Field(default_factory=list)
+    """Additional User-Agent patterns that trigger observation (beyond WireGuard detection)."""
+
+    seed_anthropic: bool = True
+    """Seed an Anthropic v0 profile from existing constants on first run."""
+
+
 class OtelConfig(BaseModel):
     """OpenTelemetry configuration for span export."""
 
@@ -253,6 +269,8 @@ class CCProxyConfig(BaseSettings):
 
     otel: OtelConfig = Field(default_factory=OtelConfig)
 
+    compliance: ComplianceConfig = Field(default_factory=ComplianceConfig)
+
     # OAuth token sources - dict mapping provider name to shell command or OAuthSource
     # Example: {"anthropic": "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"}
     # Extended: {"gemini": {"command": "jq -r '.token' ~/.gemini/creds.json", "user_agent": "MyApp/1.0"}}
@@ -273,9 +291,9 @@ class CCProxyConfig(BaseSettings):
                 "ccproxy.hooks.extract_session_id",
             ],
             "outbound": [
-                "ccproxy.hooks.add_beta_headers",
-                "ccproxy.hooks.inject_claude_code_identity",
                 "ccproxy.hooks.inject_mcp_notifications",
+                "ccproxy.hooks.verbose_mode",
+                "ccproxy.hooks.apply_compliance",
             ],
         },
     )
@@ -478,6 +496,10 @@ class CCProxyConfig(BaseSettings):
                 otel_data = ccproxy_data.get("otel")
                 if otel_data:
                     instance.otel = OtelConfig(**otel_data)
+
+                compliance_data = ccproxy_data.get("compliance")
+                if compliance_data:
+                    instance.compliance = ComplianceConfig(**compliance_data)
 
                 hooks_data = ccproxy_data.get("hooks", [])
                 if hooks_data:

@@ -1,0 +1,63 @@
+"""Apply learned compliance profile to outbound requests.
+
+Runs last in the outbound pipeline. For reverse proxy flows that have
+been transformed by lightllm, loads the best compliance profile for the
+destination provider and merges it onto the request.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING, Any
+
+from mitmproxy.proxy.mode_specs import ReverseMode
+
+from ccproxy.compliance.merger import merge_profile
+from ccproxy.compliance.store import get_store
+from ccproxy.inspector.flow_store import InspectorMeta
+from ccproxy.pipeline.hook import hook
+
+if TYPE_CHECKING:
+    from ccproxy.pipeline.context import Context
+
+logger = logging.getLogger(__name__)
+
+
+def apply_compliance_guard(ctx: Context) -> bool:
+    """Guard: run on reverse proxy flows with a completed transform."""
+    if not isinstance(ctx.flow.client_conn.proxy_mode, ReverseMode):
+        return False
+
+    record = ctx.flow.metadata.get(InspectorMeta.RECORD)
+    return record is not None and getattr(record, "transform", None) is not None
+
+
+@hook(
+    reads=["system", "metadata"],
+    writes=["system", "metadata"],
+)
+def apply_compliance(ctx: Context, params: dict[str, Any]) -> Context:
+    """Apply the best compliance profile for the destination provider."""
+    record = ctx.flow.metadata.get(InspectorMeta.RECORD)
+    transform = getattr(record, "transform", None)
+    if transform is None:
+        return ctx
+
+    provider = transform.provider
+    store = get_store()
+    profile = store.get_best_profile(provider)
+
+    if profile is None:
+        logger.debug("No compliance profile for provider %s", provider)
+        return ctx
+
+    logger.info(
+        "Applying compliance profile for %s (ua=%s, %d headers, %d body fields)",
+        provider,
+        profile.user_agent[:30],
+        len(profile.headers),
+        len(profile.body_fields),
+    )
+
+    merge_profile(ctx, profile)
+    return ctx

@@ -8,11 +8,8 @@ class OAuthConfigError(ValueError):
     swallowed by error isolation.
     """
 
-# Beta headers required for Claude Code impersonation (Claude Max OAuth support)
-# - oauth-2025-04-20: Enable OAuth Bearer token authentication
-# - claude-code-20250219: Identify as Claude Code client
-# - interleaved-thinking-2025-05-14: Enable extended thinking in responses
-# - fine-grained-tool-streaming-2025-05-14: Enable tool streaming
+# DEPRECATED: Used only to seed the v0 Anthropic compliance profile.
+# Real values are now learned dynamically from observed CLI traffic.
 ANTHROPIC_BETA_HEADERS = [
     "oauth-2025-04-20",
     "claude-code-20250219",
@@ -34,5 +31,6 @@ SENSITIVE_PATTERNS: dict[str, str | None] = {
     "cookie": None,
 }
 
-# Required system message prefix for Anthropic OAuth authentication
+# DEPRECATED: Used only to seed the v0 Anthropic compliance profile.
+# Real value is now learned dynamically from observed CLI traffic.
 CLAUDE_CODE_SYSTEM_PREFIX = "You are Claude Code, Anthropic's official CLI for Claude."

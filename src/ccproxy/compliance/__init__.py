@@ -1,0 +1,88 @@
+"""Compliance profile learning and application system.
+
+Passively learns the compliance contract from legitimate CLI traffic
+(via WireGuard observation) and applies it to non-compliant SDK
+requests (via outbound pipeline hook).
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING
+
+from mitmproxy.proxy.mode_specs import WireGuardMode
+
+from ccproxy.compliance.extractor import extract_observation
+from ccproxy.compliance.store import get_store
+
+if TYPE_CHECKING:
+    from mitmproxy.http import HTTPFlow
+
+    from ccproxy.inspector.flow_store import ClientRequest
+
+logger = logging.getLogger(__name__)
+
+
+def observe_flow(flow: HTTPFlow, client_request: ClientRequest) -> None:
+    """Observe a flow for compliance profile learning.
+
+    Called from InspectorAddon.request() after the ClientRequest
+    snapshot is created. Only processes WireGuard flows (or flows
+    matching configured reference UA patterns).
+    """
+    if not _should_observe(flow, client_request):
+        return
+
+    provider = _resolve_provider(client_request.host)
+    if not provider:
+        logger.debug("Compliance: no provider for host %s, skipping observation", client_request.host)
+        return
+
+    bundle = extract_observation(client_request, provider)
+
+    try:
+        store = get_store()
+        store.submit_observation(bundle)
+    except Exception:
+        logger.exception("Compliance: failed to submit observation for %s", provider)
+
+
+def _should_observe(flow: HTTPFlow, client_request: ClientRequest) -> bool:
+    """Determine if this flow should be observed as reference traffic."""
+    if isinstance(flow.client_conn.proxy_mode, WireGuardMode):
+        return True
+
+    # Check configured reference UA patterns
+    try:
+        from ccproxy.config import get_config
+
+        config = get_config()
+        if config.compliance.reference_user_agents:
+            ua = client_request.headers.get("user-agent", "")
+            return any(pattern in ua for pattern in config.compliance.reference_user_agents)
+    except Exception:
+        logger.debug("Failed to check reference UA patterns", exc_info=True)
+
+    return False
+
+
+def _resolve_provider(host: str) -> str | None:
+    """Resolve a hostname to a provider name.
+
+    Checks oat_sources.*.destinations first, then inspector.provider_map.
+    """
+    try:
+        from ccproxy.config import get_config
+
+        config = get_config()
+
+        # Check oat_sources destinations
+        provider = config.get_provider_for_destination(host)
+        if provider:
+            return provider
+
+        # Fall back to inspector.provider_map
+        return config.inspector.provider_map.get(host)
+    except Exception:
+        logger.exception("Compliance: failed to resolve provider for %s", host)
+        return None
