@@ -42,8 +42,10 @@ def _make_flow(
     flow.metadata = {InspectorMeta.DIRECTION: direction}
     flow.server_conn = MagicMock()
     flow.response = None
-    if proxy_mode is not None:
-        flow.client_conn.proxy_mode = proxy_mode
+    # Default to ReverseMode (transform/redirect only apply to reverse proxy)
+    if proxy_mode is None:
+        proxy_mode = ProxyMode.parse("reverse:http://localhost:1@4001")
+    flow.client_conn.proxy_mode = proxy_mode
     return flow
 
 

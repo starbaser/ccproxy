@@ -206,10 +206,15 @@ def register_transform_routes(router: InspectorRouter) -> None:
 
         if target.mode == "passthrough":
             _handle_passthrough(flow)
-        elif target.mode == "redirect":
-            _handle_redirect(flow, target, body)
+        elif isinstance(flow.client_conn.proxy_mode, ReverseMode):
+            # Transform and redirect only apply to reverse proxy flows.
+            # WireGuard flows already have the correct destination.
+            if target.mode == "redirect":
+                _handle_redirect(flow, target, body)
+            else:
+                _handle_transform(flow, target, body)
         else:
-            _handle_transform(flow, target, body)
+            _handle_passthrough(flow)
 
     @router.route("/{path}", rtype=RouteType.RESPONSE)
     def handle_transform_response(flow: HTTPFlow, **kwargs: object) -> None:  # pyright: ignore[reportUnusedFunction]

@@ -423,6 +423,8 @@ class TestTransformMetaPersistence:
         )
         register_transform_routes(router)
 
+        from mitmproxy.proxy.mode_specs import ProxyMode
+
         record = FlowRecord(direction="inbound")
         flow = MagicMock()
         flow.request.pretty_host = "api.openai.com"
@@ -442,6 +444,7 @@ class TestTransformMetaPersistence:
         }
         flow.server_conn = MagicMock()
         flow.response = None
+        flow.client_conn.proxy_mode = ProxyMode.parse("reverse:http://localhost:1@4001")
 
         router.request(flow)
 
