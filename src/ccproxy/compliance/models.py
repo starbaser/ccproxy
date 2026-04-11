@@ -70,6 +70,9 @@ class ComplianceProfile:
     headers: list[ProfileFeatureHeader] = field(default_factory=list)
     body_fields: list[ProfileFeatureBodyField] = field(default_factory=list)
     system: ProfileFeatureSystem | None = None
+    body_wrapper: str | None = None
+    """If set, the user's request body is nested inside this field name.
+    e.g. 'request' means the body becomes {request: {<original body>}}."""
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -82,6 +85,7 @@ class ComplianceProfile:
             "headers": [h.to_dict() for h in self.headers],
             "body_fields": [f.to_dict() for f in self.body_fields],
             "system": self.system.to_dict() if self.system else None,
+            "body_wrapper": self.body_wrapper,
         }
         return d
 
@@ -97,6 +101,7 @@ class ComplianceProfile:
             headers=[ProfileFeatureHeader.from_dict(h) for h in d.get("headers", [])],
             body_fields=[ProfileFeatureBodyField.from_dict(f) for f in d.get("body_fields", [])],
             system=ProfileFeatureSystem.from_dict(d["system"]) if d.get("system") else None,
+            body_wrapper=d.get("body_wrapper"),
         )
 
 
@@ -109,6 +114,8 @@ class ObservationBundle:
     headers: dict[str, str]
     body_envelope: dict[str, Any]
     system: Any = None
+    body_wrapper: str | None = None
+    """Field name that wraps the actual API payload (e.g. 'request' for cloudcode-pa)."""
 
 
 @dataclass
@@ -126,6 +133,7 @@ class ObservationAccumulator:
     header_candidates: dict[str, list[str]] = field(default_factory=dict)
     body_candidates: dict[str, list[Any]] = field(default_factory=dict)
     system_observations: list[Any] = field(default_factory=list)
+    body_wrapper_observations: list[str | None] = field(default_factory=list)
     last_seen: float = 0.0
 
     def submit(self, bundle: ObservationBundle) -> None:
@@ -141,6 +149,8 @@ class ObservationAccumulator:
 
         if bundle.system is not None:
             self.system_observations.append(bundle.system)
+
+        self.body_wrapper_observations.append(bundle.body_wrapper)
 
     def finalize(self) -> ComplianceProfile:
         """Produce a ComplianceProfile from accumulated observations.
@@ -173,6 +183,10 @@ class ObservationAccumulator:
                         structure=[{"type": "text", "text": system_val}]
                     )
 
+        # body_wrapper is stable if all observations agree
+        wrapper_values = [w for w in self.body_wrapper_observations if w is not None]
+        body_wrapper = wrapper_values[0] if wrapper_values and len(set(wrapper_values)) == 1 else None
+
         return ComplianceProfile(
             provider=self.provider,
             user_agent=self.user_agent,
@@ -183,6 +197,7 @@ class ObservationAccumulator:
             headers=stable_headers,
             body_fields=stable_body,
             system=system_feature,
+            body_wrapper=body_wrapper,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -193,6 +208,7 @@ class ObservationAccumulator:
             "header_candidates": self.header_candidates,
             "body_candidates": self.body_candidates,
             "system_observations": self.system_observations,
+            "body_wrapper_observations": self.body_wrapper_observations,
             "last_seen": self.last_seen,
         }
 
@@ -205,6 +221,7 @@ class ObservationAccumulator:
             header_candidates=d.get("header_candidates", {}),
             body_candidates=d.get("body_candidates", {}),
             system_observations=d.get("system_observations", []),
+            body_wrapper_observations=d.get("body_wrapper_observations", []),
             last_seen=d.get("last_seen", 0.0),
         )
 

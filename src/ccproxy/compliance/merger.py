@@ -28,8 +28,37 @@ def merge_profile(ctx: Context, profile: ComplianceProfile) -> None:
     """
     _merge_headers(ctx, profile)
     _merge_session_metadata(ctx, profile)
+    _wrap_body(ctx, profile)
     _merge_body_fields(ctx, profile)
     _merge_system(ctx, profile)
+
+
+def _wrap_body(ctx: Context, profile: ComplianceProfile) -> None:
+    """Wrap the request body inside a wrapper field if the profile requires it.
+
+    For cloudcode-pa style APIs where the body format is:
+    {model: X, project: Y, request: {<actual API payload>}}
+    """
+    if not profile.body_wrapper:
+        return
+
+    body = ctx._body  # noqa: SLF001
+    wrapper_field = profile.body_wrapper
+
+    # Already wrapped (idempotent)
+    if wrapper_field in body:
+        return
+
+    # Move the entire current body into the wrapper field
+    # Preserve 'model' at the top level (needed by the wrapper)
+    model = body.pop("model", None)
+    wrapped = dict(body)
+    body.clear()
+    if model:
+        body["model"] = model
+    body[wrapper_field] = wrapped
+
+    logger.debug("Compliance: wrapped body in '%s'", wrapper_field)
 
 
 def _merge_headers(ctx: Context, profile: ComplianceProfile) -> None:
@@ -48,16 +77,27 @@ _BODY_MERGE_EXCLUSIONS = frozenset({
     "output_config",
 })
 
+# Body fields that need fresh generation per-request (like session_id)
+_BODY_GENERATE_FIELDS = frozenset({
+    "user_prompt_id",
+})
+
 
 def _merge_body_fields(ctx: Context, profile: ComplianceProfile) -> None:
     """Add compliance-relevant body envelope fields that are missing.
 
     Skips feature config fields (thinking, context_management, output_config)
-    which are user choices, not compliance requirements.
+    which are user choices, not compliance requirements. Generates fresh
+    values for per-request fields (user_prompt_id).
     """
     body = ctx._body
     for feature in profile.body_fields:
         if feature.path in _BODY_MERGE_EXCLUSIONS:
+            continue
+        if feature.path in _BODY_GENERATE_FIELDS:
+            if feature.path not in body:
+                body[feature.path] = uuid.uuid4().hex[:13]
+                logger.debug("Compliance: generated %s", feature.path)
             continue
         if feature.path not in body:
             body[feature.path] = feature.value

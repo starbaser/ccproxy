@@ -35,9 +35,10 @@ def extract_observation(client_request: ClientRequest, provider: str) -> Observa
         if not should_skip_header(name):
             headers[name] = value
 
-    # Extract body envelope fields
+    # Extract body envelope fields and detect wrapper pattern
     body_envelope: dict[str, Any] = {}
     system: Any = None
+    body_wrapper: str | None = None
 
     if client_request.body:
         try:
@@ -47,7 +48,16 @@ def extract_observation(client_request: ClientRequest, provider: str) -> Observa
                     if key == "system":
                         system = value
                     elif not should_skip_body_field(key):
-                        body_envelope[key] = value
+                        # Detect wrapper: a dict field containing primary payload fields
+                        _PAYLOAD_MARKERS = ("contents", "messages", "prompt")
+                        if (
+                            body_wrapper is None
+                            and isinstance(value, dict)
+                            and any(k in value for k in _PAYLOAD_MARKERS)
+                        ):
+                            body_wrapper = key
+                        else:
+                            body_envelope[key] = value
         except (json.JSONDecodeError, UnicodeDecodeError):
             logger.debug("Non-JSON body, skipping body extraction for %s", provider)
 
@@ -57,4 +67,5 @@ def extract_observation(client_request: ClientRequest, provider: str) -> Observa
         headers=headers,
         body_envelope=body_envelope,
         system=system,
+        body_wrapper=body_wrapper,
     )
