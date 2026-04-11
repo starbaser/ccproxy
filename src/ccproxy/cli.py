@@ -20,6 +20,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from ccproxy.tools.flows import Flows, handle_flows
 from ccproxy.utils import get_templates_dir
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,7 @@ Command = (
     | Annotated[Logs, tyro.conf.subcommand(name="logs")]
     | Annotated[Status, tyro.conf.subcommand(name="status")]
     | Annotated[DagViz, tyro.conf.subcommand(name="dag-viz")]
+    | Annotated[Flows, tyro.conf.subcommand(name="flows")]
 )
 
 
@@ -764,8 +766,11 @@ def main(
             check_inspect=cmd.inspect,
         )
 
-    elif isinstance(cmd, DagViz):  # pyright: ignore[reportUnnecessaryIsInstance]
+    elif isinstance(cmd, DagViz):
         handle_dag_viz(cmd)
+
+    elif isinstance(cmd, Flows):  # pyright: ignore[reportUnnecessaryIsInstance]
+        handle_flows(cmd, config_dir)
 
 
 def handle_dag_viz(cmd: DagViz) -> None:
@@ -887,6 +892,7 @@ def entry_point() -> None:
         "logs",
         "status",
         "run",
+        "flows",
     }
 
     run_idx = None

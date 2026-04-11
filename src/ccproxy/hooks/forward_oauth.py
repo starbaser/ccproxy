@@ -100,12 +100,10 @@ def _inject_token(ctx: Context, provider: str, token: str) -> None:
         ctx.set_header(target_header, token)
     else:
         ctx.set_header("authorization", f"Bearer {token}")
-        ctx.set_header("x-api-key", "")
 
-    # Clear sentinel from any auth header it might have arrived in
-    ctx.set_header("x-goog-api-key", "")
+    # Clear sentinel headers that are NOT the auth target
+    for sentinel in ("x-goog-api-key", "x-api-key"):
+        if sentinel != target_header:
+            ctx.set_header(sentinel, "")
+
     ctx.set_header("x-ccproxy-oauth-injected", "1")
-
-    custom_ua = config.get_auth_provider_ua(provider)
-    if custom_ua:
-        ctx.set_header("user-agent", custom_ua)

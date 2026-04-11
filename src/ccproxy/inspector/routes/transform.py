@@ -87,6 +87,31 @@ def _resolve_api_key(target: TransformRoute) -> str | None:
     return os.environ.get(target.dest_api_key_ref)
 
 
+import re
+
+# Gemini SDK path → cloudcode-pa path mapping
+# /v1beta/models/{model}:generateContent → /v1internal:generateContent
+# /v1beta/models/{model}:streamGenerateContent → /v1internal:streamGenerateContent?alt=sse
+_GEMINI_ACTION_RE = re.compile(r":(\w+)$")
+
+
+def _rewrite_path(stripped: str, target: TransformRoute) -> str | None:
+    """Rewrite a prefix-stripped path for the destination host.
+
+    For Gemini: maps standard SDK paths to cloudcode-pa's /v1internal endpoint.
+    Returns None if no rewrite applies (caller keeps the stripped path).
+    """
+    if target.dest_provider != "gemini":
+        return None
+    m = _GEMINI_ACTION_RE.search(stripped.split("?")[0])
+    if not m:
+        return None
+    action = m.group(1)
+    if action == "streamGenerateContent":
+        return f"/v1internal:{action}?alt=sse"
+    return f"/v1internal:{action}"
+
+
 def _handle_passthrough(flow: HTTPFlow) -> None:
     """Forward to original destination unchanged."""
     logger.info("lightllm passthrough: → %s:%d%s", flow.request.host, flow.request.port, flow.request.path)
@@ -130,6 +155,12 @@ def _handle_redirect(flow: HTTPFlow, target: TransformRoute, body: dict[str, obj
     flow.request.scheme = "https"
     if target.dest_path:
         flow.request.path = target.dest_path
+    elif target.match_path and target.match_path != "/":
+        # Strip the routing prefix and rewrite the path for the destination
+        prefix = target.match_path.rstrip("/")
+        if flow.request.path.startswith(prefix):
+            stripped = flow.request.path[len(prefix):] or "/"
+            flow.request.path = _rewrite_path(stripped, target) or stripped
     flow.server_conn = Server(address=(dest_host, 443))
 
     # Inject auth from oat_sources if configured
@@ -234,10 +265,10 @@ def register_transform_routes(router: InspectorRouter) -> None:
             return
 
         meta = record.transform
-        if meta.is_streaming:
+        if not flow.response or flow.response.status_code >= 400:
             return
 
-        if not flow.response or flow.response.status_code >= 400:
+        if meta.is_streaming:
             return
 
         try:

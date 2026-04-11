@@ -193,6 +193,10 @@ class InspectorAddon:
                 if retried:
                     response = flow.response
 
+            # Unwrap cloudcode-pa response envelope for Gemini redirect flows
+            if response and response.status_code < 400:
+                self._unwrap_gemini_response(flow, response)
+
             started = flow.request.timestamp_start
             ended = response.timestamp_end if response else None
             duration_ms = (ended - started) * 1000 if started and ended else None
@@ -210,6 +214,23 @@ class InspectorAddon:
 
         except Exception as e:
             logger.error("Error capturing response: %s", e, exc_info=True)
+
+    @staticmethod
+    def _unwrap_gemini_response(flow: http.HTTPFlow, response: http.Response) -> None:
+        """Strip cloudcode-pa's {response: {...}} envelope so the genai SDK sees standard format."""
+        import json as _json
+
+        record = flow.metadata.get(InspectorMeta.RECORD)
+        transform = getattr(record, "transform", None) if record else None
+        if not transform or transform.provider != "gemini" or transform.is_streaming:
+            return
+        try:
+            body = _json.loads(response.content or b"{}")
+            inner = body.get("response")
+            if isinstance(inner, dict):
+                response.content = _json.dumps(inner).encode()
+        except (ValueError, TypeError):
+            pass
 
     async def _retry_with_refreshed_token(self, flow: http.HTTPFlow) -> bool:
         """On 401, re-resolve the OAuth credential. Retry if the token changed."""

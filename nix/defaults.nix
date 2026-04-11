@@ -10,6 +10,11 @@
       };
       gemini = {
         command = "jq -r '.access_token' ~/.gemini/oauth_creds.json";
+        destinations = [
+          "generativelanguage.googleapis.com"
+          "cloudcode-pa.googleapis.com"
+        ];
+        user_agent = "GeminiCLI";
       };
     };
     hooks = {
@@ -28,10 +33,20 @@
       endpoint = "http://localhost:4317";
       service_name = "ccproxy";
     };
+    compliance = {
+      enabled = true;
+      min_observations = 1;
+    };
     inspector = {
       port = 8083;
       cert_dir = "~/.ccproxy";
       debug = false;
+      transforms = [
+        { match_host = "cloudcode-pa.googleapis.com"; mode = "passthrough"; }
+        { match_path = "/v1/messages"; mode = "redirect"; dest_provider = "anthropic"; dest_host = "api.anthropic.com"; dest_api_key_ref = "anthropic"; }
+        { match_path = "/v1internal"; mode = "redirect"; dest_provider = "gemini"; dest_host = "cloudcode-pa.googleapis.com"; dest_api_key_ref = "gemini"; }
+        { match_path = "/gemini/"; mode = "redirect"; dest_provider = "gemini"; dest_host = "cloudcode-pa.googleapis.com"; dest_api_key_ref = "gemini"; }
+      ];
     };
   };
 }
