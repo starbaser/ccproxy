@@ -116,18 +116,18 @@ class TestMergeSystem:
         assert ctx.system[0] == {"type": "text", "text": "You are Claude"}
         assert ctx.system[1] == {"type": "text", "text": "Be helpful"}
 
-    def test_prepends_to_list_system(self):
+    def test_skips_list_system(self):
+        """List system blocks indicate a client that manages its own identity — skip injection."""
         ctx = _make_context(body={"system": [{"type": "text", "text": "User block"}]})
         profile = _make_profile(system=ProfileFeatureSystem(
             structure=[{"type": "text", "text": "You are Claude"}],
         ))
         merge_profile(ctx, profile)
         assert isinstance(ctx.system, list)
-        assert len(ctx.system) == 2
-        assert ctx.system[0]["text"] == "You are Claude"
-        assert ctx.system[1]["text"] == "User block"
+        assert len(ctx.system) == 1
+        assert ctx.system[0]["text"] == "User block"
 
-    def test_idempotent_already_has_prefix(self):
+    def test_skips_list_system_with_existing_prefix(self):
         ctx = _make_context(body={"system": [
             {"type": "text", "text": "You are Claude"},
             {"type": "text", "text": "User block"},

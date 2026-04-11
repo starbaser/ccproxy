@@ -123,7 +123,12 @@ def _merge_body_fields(ctx: Context, profile: ComplianceProfile) -> None:
 
 
 def _merge_system(ctx: Context, profile: ComplianceProfile) -> None:
-    """Wrap the user's system prompt in the profile's learned structure."""
+    """Inject the profile's system prompt when the request lacks one.
+
+    Structured system blocks (list) indicate a client that manages its
+    own identity (Claude CLI, Agent SDK) — skip injection entirely.
+    String or absent system prompts get the profile's blocks prepended.
+    """
     if profile.system is None:
         return
 
@@ -137,29 +142,11 @@ def _merge_system(ctx: Context, profile: ComplianceProfile) -> None:
         ctx.system = profile_blocks
         return
 
-    if isinstance(current, str):
-        ctx.system = [*profile_blocks, {"type": "text", "text": current}]
+    if isinstance(current, list):
         return
 
-    if isinstance(current, list):
-        if _system_has_prefix(current, profile_blocks):
-            return
-        ctx.system = [*profile_blocks, *current]
-
-
-def _system_has_prefix(current: list[dict[str, Any]], prefix: list[dict[str, Any]]) -> bool:
-    """Check if current system blocks already start with the profile prefix."""
-    if len(current) < len(prefix):
-        return False
-
-    for i, pblock in enumerate(prefix):
-        cblock = current[i]
-        if pblock.get("type") != cblock.get("type"):
-            return False
-        if pblock.get("text") != cblock.get("text"):
-            return False
-
-    return True
+    if isinstance(current, str):
+        ctx.system = [*profile_blocks, {"type": "text", "text": current}]
 
 
 def _merge_session_metadata(ctx: Context, profile: ComplianceProfile) -> None:
