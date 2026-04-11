@@ -41,10 +41,24 @@ def _merge_headers(ctx: Context, profile: ComplianceProfile) -> None:
             logger.debug("Compliance: added header %s", feature.name)
 
 
+# Body fields that are feature config, not compliance — never stamped
+_BODY_MERGE_EXCLUSIONS = frozenset({
+    "thinking",
+    "context_management",
+    "output_config",
+})
+
+
 def _merge_body_fields(ctx: Context, profile: ComplianceProfile) -> None:
-    """Add profile body envelope fields that are missing."""
+    """Add compliance-relevant body envelope fields that are missing.
+
+    Skips feature config fields (thinking, context_management, output_config)
+    which are user choices, not compliance requirements.
+    """
     body = ctx._body
     for feature in profile.body_fields:
+        if feature.path in _BODY_MERGE_EXCLUSIONS:
+            continue
         if feature.path not in body:
             body[feature.path] = feature.value
             logger.debug("Compliance: added body field %s", feature.path)

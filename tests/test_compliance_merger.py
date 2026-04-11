@@ -66,21 +66,34 @@ class TestMergeHeaders:
 
 
 class TestMergeBodyFields:
-    def test_adds_missing_fields(self):
+    def test_adds_missing_compliance_fields(self):
+        ctx = _make_context(body={"model": "test"})
+        profile = _make_profile(body_fields=[
+            ProfileFeatureBodyField(path="some_envelope", value={"key": "val"}),
+        ])
+        merge_profile(ctx, profile)
+        assert ctx._body["some_envelope"] == {"key": "val"}
+
+    def test_does_not_overwrite_existing(self):
+        ctx = _make_context(body={"some_envelope": {"key": "old"}})
+        profile = _make_profile(body_fields=[
+            ProfileFeatureBodyField(path="some_envelope", value={"key": "new"}),
+        ])
+        merge_profile(ctx, profile)
+        assert ctx._body["some_envelope"] == {"key": "old"}
+
+    def test_excludes_feature_config_fields(self):
         ctx = _make_context(body={"model": "test"})
         profile = _make_profile(body_fields=[
             ProfileFeatureBodyField(path="thinking", value={"type": "enabled"}),
+            ProfileFeatureBodyField(path="context_management", value={"edits": []}),
+            ProfileFeatureBodyField(path="output_config", value={"effort": "max"}),
+            ProfileFeatureBodyField(path="metadata", value={"user_id": "test"}),
         ])
         merge_profile(ctx, profile)
-        assert ctx._body["thinking"] == {"type": "enabled"}
-
-    def test_does_not_overwrite_existing(self):
-        ctx = _make_context(body={"thinking": {"type": "disabled"}})
-        profile = _make_profile(body_fields=[
-            ProfileFeatureBodyField(path="thinking", value={"type": "enabled"}),
-        ])
-        merge_profile(ctx, profile)
-        assert ctx._body["thinking"] == {"type": "disabled"}
+        assert "thinking" not in ctx._body
+        assert "context_management" not in ctx._body
+        assert "output_config" not in ctx._body
 
 
 class TestMergeSystem:
@@ -169,7 +182,7 @@ class TestMergeSessionMetadata:
     def test_no_identity_fields_no_op(self):
         ctx = _make_context(body={"model": "test"})
         profile = _make_profile(body_fields=[
-            ProfileFeatureBodyField(path="thinking", value={"type": "enabled"}),
+            ProfileFeatureBodyField(path="some_field", value="val"),
         ])
         merge_profile(ctx, profile)
         assert "metadata" not in ctx._body or "user_id" not in ctx._body.get("metadata", {})
@@ -181,7 +194,7 @@ class TestIdempotency:
         profile = _make_profile(
             headers=[ProfileFeatureHeader(name="x-app", value="cli")],
             system=ProfileFeatureSystem(structure=[{"type": "text", "text": "Prefix"}]),
-            body_fields=[ProfileFeatureBodyField(path="thinking", value=True)],
+            body_fields=[ProfileFeatureBodyField(path="some_env", value=True)],
         )
         merge_profile(ctx, profile)
         first_system = ctx.system
@@ -189,5 +202,5 @@ class TestIdempotency:
 
         merge_profile(ctx, profile)
         assert ctx.system == first_system
-        assert ctx._body["thinking"] == first_body["thinking"]
+        assert ctx._body["some_env"] == first_body["some_env"]
         assert ctx.get_header("x-app") == "cli"
