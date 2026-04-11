@@ -18,9 +18,9 @@
         "ccproxy.hooks.extract_session_id"
       ];
       outbound = [
-        "ccproxy.hooks.add_beta_headers"
-        "ccproxy.hooks.inject_claude_code_identity"
         "ccproxy.hooks.inject_mcp_notifications"
+        "ccproxy.hooks.verbose_mode"
+        "ccproxy.hooks.apply_compliance"
       ];
     };
     otel = {

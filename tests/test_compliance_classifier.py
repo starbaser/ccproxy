@@ -12,6 +12,7 @@ class TestHeaderExclusions:
     def test_auth_headers_excluded(self):
         assert should_skip_header("authorization")
         assert should_skip_header("x-api-key")
+        assert should_skip_header("x-goog-api-key")
         assert should_skip_header("Authorization")
 
     def test_transport_headers_excluded(self):

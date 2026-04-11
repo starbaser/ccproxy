@@ -28,6 +28,7 @@ BODY_CONTENT_FIELDS = frozenset({
 HEADER_EXCLUSIONS = frozenset({
     "authorization",
     "x-api-key",
+    "x-goog-api-key",
     "cookie",
     "content-length",
     "transfer-encoding",
