@@ -37,7 +37,7 @@ ccproxy run <command> [args...]   # Run command with proxy env vars
 ccproxy run --inspect -- <cmd>    # Run command in WireGuard namespace jail
 ccproxy status [--json]           # Show running state
 ccproxy install [--force]         # Install template config files
-ccproxy logs [-f] [-n LINES]      # View logs
+ccproxy logs [-f] [-n LINES]     # View logs
 ccproxy dag-viz [-o ascii|mermaid|json]  # Visualize hook DAG
 ```
 
@@ -179,7 +179,7 @@ Matching fields: `match_host` (optional, checked against pretty_host + Host head
 - **Body metadata footgun**: `ctx.metadata` uses `setdefault` — reading it creates an empty `metadata` key in the body. `commit()` strips empty metadata dicts to prevent upstream API rejections (Google: "Unknown name metadata"). Hooks that need flow-level state should use `ctx.flow.metadata["ccproxy.key"]`, NOT `ctx.metadata["key"]` which writes into the request body.
 - **SSE streaming**: `flow.response.stream` must be set in `responseheaders` (before body arrives). xepor does not implement `responseheaders` — it lives on `InspectorAddon`. Setting `stream` in `response` is too late, mitmproxy has already buffered.
 - **Provider model**: Providers are generic — URL + auth method + API format. LiteLLM's `ProviderConfigManager` resolves actual hosts/paths. The lightllm dispatch module has a small set of provider name strings as dispatch keys (`_GEMINI_PROVIDERS`, `_PATH_SUFFIXES`) but URL targets themselves are resolved by LiteLLM.
-- **Docker services** (`docker-compose.yaml`): `litellm-db` (postgres, port 5434) and `ccproxy-jaeger` (Jaeger, ports 4317/4318/16686) for OTel trace collection.
+- **Docker services** (`docker-compose.yaml`): `ccproxy-jaeger` (Jaeger, ports 4317/4318/16686) for OTel trace collection.
 - **Namespace lifecycle**: `--ready-fd`/`--exit-fd` pipes for clean slirp4netns lifecycle. `PortForwarder` background thread polls `/proc/{pid}/net/tcp` every 0.5s for dynamic `add_hostfwd` port forwarding.
 
 ## Testing Patterns
@@ -199,7 +199,7 @@ The `flake.nix` exports `lib.mkConfig` for other projects to generate ccproxy co
 
 ## Type Stubs (`stubs/`)
 
-Hand-written stubs for dependencies lacking `py.typed` or with incomplete types: `mitmproxy` (full hierarchy including ProxyMode subclasses), `opentelemetry` (optional, package not installed in dev), `litellm`, `xepor`. On `mypy_path = "stubs"`.
+Hand-written stubs for dependencies lacking `py.typed` or with incomplete types: `litellm`, `opentelemetry` (optional, package not installed in dev), `xepor`. On `mypy_path = "stubs"`.
 
 ## Dependencies
 
