@@ -86,6 +86,9 @@ class TestApplyCompliance:
     @pytest.fixture()
     def store(self, tmp_path: Path) -> ProfileStore:
         from ccproxy.compliance.store import _store_lock
+        from ccproxy.config import CCProxyConfig, set_config_instance
+
+        set_config_instance(CCProxyConfig())
 
         store = ProfileStore(tmp_path / "profiles.json", min_observations=1, seed_anthropic=False)
 

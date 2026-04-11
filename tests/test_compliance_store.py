@@ -32,13 +32,13 @@ def _bundle(provider: str = "anthropic", ua: str = "cli/1.0", **kwargs) -> Obser
 class TestSubmitObservation:
     def test_accumulates_observations(self, store: ProfileStore):
         store.submit_observation(_bundle())
-        assert store.get_best_profile("anthropic") is None
+        assert store.get_profile("anthropic") is None
 
     def test_finalizes_after_min_observations(self, store: ProfileStore):
         for _ in range(3):
             store.submit_observation(_bundle())
 
-        profile = store.get_best_profile("anthropic")
+        profile = store.get_profile("anthropic")
         assert profile is not None
         assert profile.is_complete is True
         assert profile.provider == "anthropic"
@@ -48,7 +48,7 @@ class TestSubmitObservation:
         for _ in range(3):
             store.submit_observation(_bundle(headers={"x-app": "cli", "beta": "flag1"}))
 
-        profile = store.get_best_profile("anthropic")
+        profile = store.get_profile("anthropic")
         assert profile is not None
         names = {h.name for h in profile.headers}
         assert "x-app" in names
@@ -58,7 +58,7 @@ class TestSubmitObservation:
         for i in range(3):
             store.submit_observation(_bundle(headers={"x-app": "cli", "x-req-id": f"r{i}"}))
 
-        profile = store.get_best_profile("anthropic")
+        profile = store.get_profile("anthropic")
         assert profile is not None
         names = {h.name for h in profile.headers}
         assert "x-app" in names
@@ -67,12 +67,12 @@ class TestSubmitObservation:
 
 class TestGetBestProfile:
     def test_returns_none_when_empty(self, store: ProfileStore):
-        assert store.get_best_profile("anthropic") is None
+        assert store.get_profile("anthropic") is None
 
     def test_returns_none_for_wrong_provider(self, store: ProfileStore):
         for _ in range(3):
             store.submit_observation(_bundle(provider="gemini"))
-        assert store.get_best_profile("anthropic") is None
+        assert store.get_profile("anthropic") is None
 
     def test_returns_most_recent(self, store: ProfileStore):
         for _ in range(3):
@@ -80,7 +80,7 @@ class TestGetBestProfile:
         for _ in range(3):
             store.submit_observation(_bundle(ua="cli/2.0"))
 
-        profile = store.get_best_profile("anthropic")
+        profile = store.get_profile("anthropic")
         assert profile is not None
         assert profile.user_agent == "cli/2.0"
 
@@ -89,9 +89,9 @@ class TestGetBestProfile:
             store.submit_observation(_bundle(provider="anthropic"))
             store.submit_observation(_bundle(provider="gemini"))
 
-        assert store.get_best_profile("anthropic") is not None
-        assert store.get_best_profile("gemini") is not None
-        assert store.get_best_profile("openai") is None
+        assert store.get_profile("anthropic") is not None
+        assert store.get_profile("gemini") is not None
+        assert store.get_profile("openai") is None
 
 
 class TestPersistence:
@@ -111,19 +111,19 @@ class TestPersistence:
             store1.submit_observation(_bundle())
 
         store2 = ProfileStore(store_path, min_observations=3, seed_anthropic=False)
-        profile = store2.get_best_profile("anthropic")
+        profile = store2.get_profile("anthropic")
         assert profile is not None
         assert profile.is_complete is True
 
     def test_handles_malformed_file(self, store_path: Path):
         store_path.write_text("not json")
         store = ProfileStore(store_path, min_observations=3, seed_anthropic=False)
-        assert store.get_best_profile("anthropic") is None
+        assert store.get_profile("anthropic") is None
 
     def test_handles_wrong_version(self, store_path: Path):
         store_path.write_text(json.dumps({"format_version": 99}))
         store = ProfileStore(store_path, min_observations=3, seed_anthropic=False)
-        assert store.get_best_profile("anthropic") is None
+        assert store.get_profile("anthropic") is None
 
     def test_persists_accumulators(self, store_path: Path):
         store1 = ProfileStore(store_path, min_observations=3, seed_anthropic=False)
@@ -133,14 +133,14 @@ class TestPersistence:
             store1.submit_observation(_bundle())
 
         store2 = ProfileStore(store_path, min_observations=3, seed_anthropic=False)
-        profile = store2.get_best_profile("anthropic")
+        profile = store2.get_profile("anthropic")
         assert profile is not None
 
 
 class TestAnthropicSeed:
     def test_seeds_on_first_run(self, store_path: Path):
         store = ProfileStore(store_path, min_observations=3, seed_anthropic=True)
-        profile = store.get_best_profile("anthropic")
+        profile = store.get_profile("anthropic")
         assert profile is not None
         assert profile.user_agent == "v0-seed"
         names = {h.name for h in profile.headers}
@@ -153,13 +153,13 @@ class TestAnthropicSeed:
         store1.submit_observation(_bundle(provider="anthropic", ua="real-cli"))
 
         store2 = ProfileStore(store_path, min_observations=1, seed_anthropic=True)
-        profile = store2.get_best_profile("anthropic")
+        profile = store2.get_profile("anthropic")
         assert profile is not None
         assert profile.user_agent == "real-cli"
 
     def test_seed_disabled(self, store_path: Path):
         store = ProfileStore(store_path, min_observations=3, seed_anthropic=False)
-        assert store.get_best_profile("anthropic") is None
+        assert store.get_profile("anthropic") is None
 
 
 class TestGetAllProfiles:

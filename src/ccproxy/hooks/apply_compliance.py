@@ -23,6 +23,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _get_provider_ua_hint(provider: str) -> str | None:
+    """Get the user_agent from OAuthSource config for profile selection."""
+    try:
+        from ccproxy.config import get_config
+
+        return get_config().get_auth_provider_ua(provider)
+    except Exception:
+        return None
+
+
 def apply_compliance_guard(ctx: Context) -> bool:
     """Guard: run on reverse proxy flows with a completed transform."""
     if not isinstance(ctx.flow.client_conn.proxy_mode, ReverseMode):
@@ -45,7 +55,10 @@ def apply_compliance(ctx: Context, params: dict[str, Any]) -> Context:
 
     provider = transform.provider
     store = get_store()
-    profile = store.get_best_profile(provider)
+
+    # Use the OAuthSource.user_agent as a hint to select the right profile
+    ua_hint = _get_provider_ua_hint(provider)
+    profile = store.get_profile(provider, ua_hint=ua_hint)
 
     if profile is None:
         logger.debug("No compliance profile for provider %s", provider)

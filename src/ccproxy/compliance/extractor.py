@@ -25,13 +25,15 @@ def extract_observation(client_request: ClientRequest, provider: str) -> Observa
     Filters out content fields (messages, tools, etc.), auth tokens,
     and transport headers. Everything else is candidate envelope.
     """
-    user_agent = client_request.headers.get("user-agent", "unknown")
+    # Build lowercased header map (ClientRequest preserves original case)
+    lc_headers = {k.lower(): v for k, v in client_request.headers.items()}
+    user_agent = lc_headers.get("user-agent", "unknown")
 
     # Extract profiled headers
     headers: dict[str, str] = {}
-    for name, value in client_request.headers.items():
+    for name, value in lc_headers.items():
         if not should_skip_header(name):
-            headers[name.lower()] = value
+            headers[name] = value
 
     # Extract body envelope fields
     body_envelope: dict[str, Any] = {}

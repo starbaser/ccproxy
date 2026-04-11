@@ -74,18 +74,23 @@ class ProfileStore:
             elif acc.observation_count % 10 == 0:
                 self._flush()
 
-    def get_best_profile(self, provider: str) -> ComplianceProfile | None:
-        """Return the most recently updated complete profile for a provider."""
+    def get_profile(self, provider: str, ua_hint: str | None = None) -> ComplianceProfile | None:
+        """Look up a complete profile for a provider.
+
+        If ``ua_hint`` is given, only profiles whose user_agent contains
+        the hint (substring match) are considered. Returns the most
+        recently updated match, or None.
+        """
         with self._lock:
-            best: ComplianceProfile | None = None
+            match: ComplianceProfile | None = None
             for profile in self._profiles.values():
-                if (
-                    profile.provider == provider
-                    and profile.is_complete
-                    and (best is None or profile.updated_at > best.updated_at)
-                ):
-                    best = profile
-            return best
+                if profile.provider != provider or not profile.is_complete:
+                    continue
+                if ua_hint and ua_hint not in profile.user_agent:
+                    continue
+                if match is None or profile.updated_at > match.updated_at:
+                    match = profile
+            return match
 
     def get_all_profiles(self) -> dict[str, ComplianceProfile]:
         """Return all stored profiles (for debugging/inspection)."""
