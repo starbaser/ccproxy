@@ -219,8 +219,7 @@ class InspectorAddon:
 
         from ccproxy.config import get_config
 
-        body = json.loads(flow.request.content) if flow.request.content else {}
-        provider = body.get("metadata", {}).get("ccproxy_oauth_provider", "")
+        provider = flow.metadata.get("ccproxy.oauth_provider", "")
         if not provider:
             return False
 

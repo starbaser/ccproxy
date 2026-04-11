@@ -28,7 +28,7 @@ def forward_oauth_guard(ctx: Context) -> bool:
 
 @hook(
     reads=["authorization", "x-api-key"],
-    writes=["authorization", "x-api-key", "ccproxy_oauth_provider"],
+    writes=["authorization", "x-api-key"],
 )
 def forward_oauth(ctx: Context, params: dict[str, Any]) -> Context:
     """Forward OAuth Bearer token to provider.
@@ -53,7 +53,7 @@ def forward_oauth(ctx: Context, params: dict[str, Any]) -> Context:
             )
 
         _inject_token(ctx, provider, token)
-        ctx.ccproxy_oauth_provider = provider
+        ctx.flow.metadata["ccproxy.oauth_provider"] = provider
         logger.info("OAuth token injected for provider '%s' (sentinel)", provider)
         return ctx
 
@@ -62,7 +62,7 @@ def forward_oauth(ctx: Context, params: dict[str, Any]) -> Context:
         cached_provider, cached_token = _try_cached_token()
         if cached_provider and cached_token:
             _inject_token(ctx, cached_provider, cached_token)
-            ctx.ccproxy_oauth_provider = cached_provider
+            ctx.flow.metadata["ccproxy.oauth_provider"] = cached_provider
             logger.info("OAuth token injected for provider '%s' (cached)", cached_provider)
 
     return ctx
