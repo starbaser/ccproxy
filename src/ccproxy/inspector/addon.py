@@ -11,13 +11,15 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from mitmproxy import http
+from mitmproxy import command, flow, http
 from mitmproxy.proxy.mode_specs import ReverseMode, WireGuardMode
 
 from ccproxy.inspector.flow_store import (
     FLOW_ID_HEADER,
+    ClientRequest,
     InspectorMeta,
     create_flow_record,
     get_flow_record,
@@ -91,7 +93,16 @@ class InspectorAddon:
         if record is None:
             flow_id, record = create_flow_record(direction)
             flow.request.headers[FLOW_ID_HEADER] = flow_id
-            record.original_headers = dict(flow.request.headers.items())  # type: ignore[no-untyped-call]
+            record.client_request = ClientRequest(
+                method=flow.request.method,
+                scheme=flow.request.scheme,
+                host=flow.request.pretty_host,
+                port=flow.request.port,
+                path=flow.request.path,
+                headers=dict(flow.request.headers.items()),  # type: ignore[no-untyped-call]
+                body=flow.request.content or b"",
+                content_type=flow.request.headers.get("content-type", ""),
+            )
 
         flow.metadata[InspectorMeta.DIRECTION] = direction
         flow.metadata[InspectorMeta.RECORD] = record
@@ -240,3 +251,27 @@ class InspectorAddon:
 
         except Exception as e:
             logger.error("Error handling flow error: %s", e, exc_info=True)
+
+    @command.command("ccproxy.clientrequest")  # type: ignore[untyped-decorator]
+    def get_client_request(self, flows: Sequence[flow.Flow]) -> str:
+        """Return the pre-pipeline client request for each flow as JSON."""
+        results: list[dict[str, object]] = []
+        for f in flows:
+            record = f.metadata.get(InspectorMeta.RECORD)
+            cr = getattr(record, "client_request", None) if record else None
+            if cr is None:
+                results.append({"flow_id": f.id, "error": "no snapshot"})
+                continue
+            body_parsed: object
+            try:
+                body_parsed = json.loads(cr.body) if cr.body else None
+            except Exception:
+                body_parsed = cr.body.decode("utf-8", errors="replace")
+            results.append({
+                "flow_id": f.id,
+                "method": cr.method,
+                "url": f"{cr.scheme}://{cr.host}:{cr.port}{cr.path}",
+                "headers": cr.headers,
+                "body": body_parsed,
+            })
+        return json.dumps(results)

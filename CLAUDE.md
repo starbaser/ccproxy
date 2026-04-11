@@ -93,13 +93,14 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 - `x-ccproxy-hooks: +hook,-hook` header for per-request force-run/force-skip.
 
 **`inspector/`** — mitmproxy addon layer:
-- `addon.py` — `InspectorAddon`: OTel span lifecycle, FlowRecord creation, direction detection. All flows are `"inbound"`. `responseheaders()` hook enables SSE streaming for all `text/event-stream` responses — sets `flow.response.stream` to `True` (passthrough) or `SseTransformer` (cross-provider transform).
+- `addon.py` — `InspectorAddon`: OTel span lifecycle, FlowRecord creation, direction detection, client request snapshot. All flows are `"inbound"`. Snapshots the full pre-pipeline request (`ClientRequest`) before any hooks mutate the flow. `responseheaders()` hook enables SSE streaming for all `text/event-stream` responses — sets `flow.response.stream` to `True` (passthrough) or `SseTransformer` (cross-provider transform). Exposes `ccproxy.clientrequest` mitmproxy command for structured JSON access to client requests.
 - `process.py` — In-process mitmweb via WebMaster API. Two listeners (reverse + WireGuard). Options applied via `update_defer()`.
 - `pipeline.py` — `build_executor()` bridges hook registry with mitmproxy addons. `register_pipeline_routes()` wires DAG executors as xepor route handlers.
 - `router.py` — Vendored xepor `InterceptedAPI` subclass with mitmproxy 12.x fixes (keyword `Server(address=...)`, `name` dedup, `host=None` wildcard).
 - `routes/transform.py` — REQUEST handler: two modes, `transform` (rewrite via lightllm dispatch, redirect to provider) and `passthrough` (forward unchanged). Unmatched reverse proxy flows get 501; unmatched WireGuard flows pass through. RESPONSE handler: transforms non-streaming provider responses back to OpenAI format via `transform_to_openai()`. `TransformMeta` persisted on `FlowRecord` during request phase for response handler access.
 - `namespace.py` — Rootless user+net namespace via `unshare` + `slirp4netns` + WireGuard. `PortForwarder` polls `/proc/{pid}/net/tcp` for dynamic port forwarding. Requires `slirp4netns`, `wg`, `unshare`, `nsenter`, `ip`.
-- `flow_store.py` — TTL store keyed by `x-ccproxy-flow-id` header for cross-addon state. `TransformMeta` dataclass on `FlowRecord` carries provider/model/request_data/is_streaming from request phase to response phase.
+- `contentview.py` — Custom mitmproxy content view "Client-Request" showing the pre-pipeline request (method, URL, headers, body). Registered via `contentviews.add()`. Accessible at `GET /flows/{id}/request/content/client-request`.
+- `flow_store.py` — TTL store keyed by `x-ccproxy-flow-id` header for cross-addon state. `ClientRequest` dataclass snapshots the full client request (method, scheme, host, port, path, headers, body) before pipeline mutation. `TransformMeta` carries provider/model/request_data/is_streaming from request phase to response phase.
 - `telemetry.py` — Three-mode OTel: real OTLP export, no-op, or stub.
 - `wg_keylog.py` — Writes Wireshark-compatible keylog for WireGuard tunnel decryption.
 

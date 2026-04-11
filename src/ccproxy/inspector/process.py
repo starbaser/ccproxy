@@ -123,8 +123,13 @@ def _build_addons(
     session extraction) → transform (lightllm) → outbound pipeline
     (beta headers, identity injection).
     """
+    from mitmproxy import contentviews
+
     from ccproxy.config import get_config
     from ccproxy.inspector.addon import InspectorAddon
+    from ccproxy.inspector.contentview import ClientRequestContentview
+
+    contentviews.add(ClientRequestContentview())
 
     config = get_config()
     otel = config.otel

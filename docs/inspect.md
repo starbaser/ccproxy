@@ -168,8 +168,7 @@ class FlowRecord:
     direction: Literal["inbound"]
     auth: AuthMeta | None = None
     otel: OtelMeta | None = None
-    original_headers: dict[str, str] = field(default_factory=lambda: {})
-    original_request: OriginalRequest | None = None
+    client_request: ClientRequest | None = None
     transform: TransformMeta | None = None
 ```
 
@@ -178,8 +177,7 @@ class FlowRecord:
 | `direction` | `InspectorAddon.request()` | Pipeline route guards |
 | `auth` | `forward_oauth` hook | (logging context) |
 | `otel` | `InspectorAddon.request()` via tracer | `InspectorAddon.response()` / `.error()` |
-| `original_headers` | `InspectorAddon.request()` | Debugging, telemetry |
-| `original_request` | `ccproxy_transform` REQUEST handler | (future use) |
+| `client_request` | `InspectorAddon.request()` | "Client Request" content view, `ccproxy.clientrequest` command |
 | `transform` | `ccproxy_transform` REQUEST handler | `ccproxy_transform` RESPONSE handler, `responseheaders` |
 
 ### InspectorMeta keys
@@ -231,18 +229,28 @@ class TransformMeta:
     is_streaming: bool          # True if stream=True in the original request
 ```
 
-### OriginalRequest
+### ClientRequest
 
-Snapshot of the original request host/port/scheme/path before lightllm rewrites it:
+Full snapshot of the client request before the addon pipeline mutates it. Captured by
+`InspectorAddon.request()` as the first addon in the chain, before inbound hooks,
+transform, or outbound hooks touch the flow:
 
 ```python
 @dataclass
-class OriginalRequest:
+class ClientRequest:
+    method: str
+    scheme: str
     host: str
     port: int
-    scheme: str
     path: str
+    headers: dict[str, str]
+    body: bytes
+    content_type: str
 ```
+
+Accessible via:
+- **Content view**: `GET /flows/{id}/request/content/client%20request` — renders full request line, headers, and body
+- **Command**: `POST /commands/ccproxy.clientrequest` with `{"arguments": ["@all"]}` — returns structured JSON
 
 ---
 
@@ -559,7 +567,7 @@ on port 16686.
 |------|------|
 | `src/ccproxy/inspector/process.py` | `run_inspector()`, `_build_opts()`, `_build_addons()`, `ReadySignal`, `get_wg_client_conf()` |
 | `src/ccproxy/inspector/addon.py` | `InspectorAddon` — direction detection, flow record lifecycle, SSE streaming setup, OTel delegation |
-| `src/ccproxy/inspector/flow_store.py` | `FlowRecord`, `AuthMeta`, `OtelMeta`, `TransformMeta`, `OriginalRequest`, `InspectorMeta`, TTL store |
+| `src/ccproxy/inspector/flow_store.py` | `FlowRecord`, `AuthMeta`, `OtelMeta`, `TransformMeta`, `ClientRequest`, `InspectorMeta`, TTL store |
 | `src/ccproxy/inspector/router.py` | `InspectorRouter` — xepor subclass with mitmproxy 12.x fixes and wildcard host support |
 | `src/ccproxy/inspector/pipeline.py` | `build_executor()`, `register_pipeline_routes()` — DAG executor wiring |
 | `src/ccproxy/inspector/routes/transform.py` | `register_transform_routes()` — REQUEST transform dispatch, RESPONSE format conversion |

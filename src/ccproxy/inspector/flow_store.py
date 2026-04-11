@@ -9,7 +9,7 @@ when the corresponding response phase fires.
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Literal
 
 FLOW_ID_HEADER = "x-ccproxy-flow-id"
@@ -35,13 +35,17 @@ class OtelMeta:
 
 
 @dataclass
-class OriginalRequest:
-    """Snapshot of the original request before lightllm transform rewrites it."""
+class ClientRequest:
+    """Snapshot of the client request before the pipeline mutates it."""
 
+    method: str
+    scheme: str
     host: str
     port: int
-    scheme: str
     path: str
+    headers: dict[str, str]
+    body: bytes
+    content_type: str
 
 
 @dataclass
@@ -61,8 +65,7 @@ class FlowRecord:
     direction: Literal["inbound"]
     auth: AuthMeta | None = None
     otel: OtelMeta | None = None
-    original_headers: dict[str, str] = field(default_factory=lambda: {})
-    original_request: OriginalRequest | None = None
+    client_request: ClientRequest | None = None
     transform: TransformMeta | None = None
 
 

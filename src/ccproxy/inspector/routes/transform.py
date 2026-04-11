@@ -126,6 +126,8 @@ def _handle_transform(flow: HTTPFlow, target: TransformRoute, body: dict[str, ob
         flow.request.headers[k] = v
     flow.request.content = new_body
 
+    flow.comment = f"{body.get('model', '?')} → {target.dest_provider}/{target.dest_model}"
+
     log_url = url.split("?")[0]
     logger.info(
         "lightllm transform: %s → %s %s",

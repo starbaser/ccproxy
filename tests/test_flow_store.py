@@ -24,13 +24,7 @@ class TestFlowRecordDataclass:
         record = FlowRecord("inbound")
         assert record.auth is None
         assert record.otel is None
-        assert record.original_headers == {}
-
-    def test_original_headers_independent(self):
-        r1 = FlowRecord("inbound")
-        r2 = FlowRecord("inbound")
-        r1.original_headers["key"] = "value"
-        assert "key" not in r2.original_headers
+        assert record.client_request is None
 
     def test_auth_meta_defaults(self):
         auth = AuthMeta(provider="anthropic", credential="tok", auth_header="Authorization")
