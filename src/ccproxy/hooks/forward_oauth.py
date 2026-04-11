@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 
 
 def forward_oauth_guard(ctx: Context) -> bool:
-    """Guard: run if there's an x-api-key or authorization header."""
-    return bool(ctx.x_api_key or ctx.authorization)
+    """Guard: run if there's an auth header with a potential sentinel key."""
+    return bool(ctx.x_api_key or ctx.authorization or ctx.get_header("x-goog-api-key"))
 
 
 @hook(
@@ -34,11 +34,11 @@ def forward_oauth(ctx: Context, params: dict[str, Any]) -> Context:
     """Forward OAuth Bearer token to provider.
 
     Three paths:
-    1. Sentinel key in x-api-key -> substitute real token from oat_sources
+    1. Sentinel key in x-api-key/x-goog-api-key -> substitute real token from oat_sources
     2. No auth at all -> try cached token from oat_sources
     3. Real key present -> pass through
     """
-    api_key = ctx.x_api_key
+    api_key = ctx.x_api_key or ctx.get_header("x-goog-api-key")
     auth = ctx.authorization
 
     # Path 1: sentinel key substitution
@@ -102,6 +102,8 @@ def _inject_token(ctx: Context, provider: str, token: str) -> None:
         ctx.set_header("authorization", f"Bearer {token}")
         ctx.set_header("x-api-key", "")
 
+    # Clear sentinel from any auth header it might have arrived in
+    ctx.set_header("x-goog-api-key", "")
     ctx.set_header("x-ccproxy-oauth-injected", "1")
 
     custom_ua = config.get_auth_provider_ua(provider)

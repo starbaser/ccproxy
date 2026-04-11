@@ -49,9 +49,18 @@ def _wrap_body(ctx: Context, profile: ComplianceProfile) -> None:
     if wrapper_field in body:
         return
 
-    # Move the entire current body into the wrapper field
-    # Preserve 'model' at the top level (needed by the wrapper)
+    # Extract model from body, TransformMeta, or request path
     model = body.pop("model", None)
+    if not model:
+        from ccproxy.inspector.flow_store import InspectorMeta
+
+        record = ctx.flow.metadata.get(InspectorMeta.RECORD)
+        if record and getattr(record, "transform", None):
+            model = record.transform.model or None
+    if not model:
+        model = _extract_model_from_path(ctx)
+
+    # Move the entire current body into the wrapper field
     wrapped = dict(body)
     body.clear()
     if model:
@@ -59,6 +68,15 @@ def _wrap_body(ctx: Context, profile: ComplianceProfile) -> None:
     body[wrapper_field] = wrapped
 
     logger.debug("Compliance: wrapped body in '%s'", wrapper_field)
+
+
+def _extract_model_from_path(ctx: Context) -> str | None:
+    """Extract model name from URL path patterns like /models/{model}:method."""
+    import re
+
+    path = ctx.flow.request.path
+    match = re.search(r"/models/([^/:]+)", path)
+    return match.group(1) if match else None
 
 
 def _merge_headers(ctx: Context, profile: ComplianceProfile) -> None:

@@ -106,12 +106,21 @@ def _handle_redirect(flow: HTTPFlow, target: TransformRoute, body: dict[str, obj
 
     is_streaming = bool(body.get("stream", False))
 
+    # Resolve model from config, body, or path
+    model = target.dest_model or str(body.get("model", ""))
+    if not model:
+        import re
+
+        match = re.search(r"/models/([^/:]+)", flow.request.path)
+        if match:
+            model = match.group(1)
+
     # Persist transform context for compliance hook
     record = flow.metadata.get(InspectorMeta.RECORD)
     if record is not None:
         record.transform = TransformMeta(
             provider=target.dest_provider,
-            model=target.dest_model or str(body.get("model", "")),
+            model=model,
             request_data={**body},
             is_streaming=is_streaming,
         )
@@ -119,6 +128,8 @@ def _handle_redirect(flow: HTTPFlow, target: TransformRoute, body: dict[str, obj
     flow.request.host = dest_host
     flow.request.port = 443
     flow.request.scheme = "https"
+    if target.dest_path:
+        flow.request.path = target.dest_path
     flow.server_conn = Server(address=(dest_host, 443))
 
     # Inject auth from oat_sources if configured

@@ -214,6 +214,10 @@ class TransformRoute(BaseModel):
     (e.g. ``generativelanguage.googleapis.com``). If not set, ``redirect``
     mode is invalid."""
 
+    dest_path: str | None = None
+    """Override the request path in ``redirect`` mode. If not set, the
+    original path is preserved."""
+
     dest_api_key_ref: str | None = None
     """Provider name in ``oat_sources`` for credential lookup, or an
     environment variable name.  ``None`` skips API key injection."""
