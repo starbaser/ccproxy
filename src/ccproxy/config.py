@@ -22,20 +22,72 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 logger = logging.getLogger(__name__)
 
 
-class OAuthSource(BaseModel):
-    """OAuth token source configuration.
-
-    Can be specified as either a simple string (shell command) or
-    an object with command/file and optional user_agent.
+class CredentialSource(BaseModel):
+    """Credential resolved from a file or shell command.
 
     Exactly one of ``command`` or ``file`` must be provided.
     """
 
     command: str | None = None
-    """Shell command to retrieve the OAuth token"""
+    """Shell command that outputs the credential value."""
 
     file: str | None = None
-    """File path to read the OAuth token from (contents stripped of whitespace)"""
+    """File path to read (contents stripped of whitespace)."""
+
+    @model_validator(mode="after")
+    def _validate_source(self) -> "CredentialSource":
+        if self.command and self.file:
+            raise ValueError("Specify either 'command' or 'file', not both")
+        if not self.command and not self.file:
+            raise ValueError("Must specify either 'command' or 'file'")
+        return self
+
+    def resolve(self, label: str = "credential") -> str | None:
+        """Resolve the credential value. Returns None on failure."""
+        if self.file:
+            return _read_credential_file(self.file, label)
+        if self.command:
+            return _run_credential_command(self.command, label)
+        return None
+
+
+def _read_credential_file(path_str: str, label: str) -> str | None:
+    try:
+        path = Path(path_str).expanduser().resolve()
+        if not path.is_file():
+            logger.error("%s file not found: %s", label, path)
+            return None
+        value = path.read_text().strip()
+        if not value:
+            logger.error("%s file is empty: %s", label, path)
+            return None
+        return value
+    except Exception as e:
+        logger.error("Failed to read %s file: %s", label, e)
+        return None
+
+
+def _run_credential_command(cmd: str, label: str) -> str | None:
+    try:
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=5)  # noqa: S602
+        if result.returncode != 0:
+            logger.error("%s command failed (exit %d): %s", label, result.returncode, result.stderr.strip())
+            return None
+        value = result.stdout.strip()
+        if not value:
+            logger.error("%s command returned empty output", label)
+            return None
+        return value
+    except subprocess.TimeoutExpired:
+        logger.error("%s command timed out after 5 seconds", label)
+        return None
+    except Exception as e:
+        logger.error("Failed to execute %s command: %s", label, e)
+        return None
+
+
+class OAuthSource(CredentialSource):
+    """OAuth token source with provider-specific fields."""
 
     user_agent: str | None = None
     """Optional custom User-Agent header to send with requests using this token"""
@@ -49,13 +101,6 @@ class OAuthSource(BaseModel):
     When set, sends raw token as this header instead of Authorization: Bearer.
     """
 
-    @model_validator(mode="after")
-    def validate_source(self) -> "OAuthSource":
-        if self.command and self.file:
-            raise ValueError("'command' and 'file' are mutually exclusive — specify one, not both")
-        if not self.command and not self.file:
-            raise ValueError("Either 'command' or 'file' must be specified")
-        return self
 
 
 class OtelConfig(BaseModel):
@@ -96,8 +141,10 @@ class MitmproxyOptions(BaseModel):
     web_host: str = "127.0.0.1"
     """mitmweb browser UI bind address."""
 
-    web_password: str | None = None
-    """mitmweb UI password. None means no authentication (open UI)."""
+    web_password: str | CredentialSource | dict[str, str] | None = None
+    """mitmweb UI password. Accepts a plain string, or a ``file``/``command``
+    credential source (same format as ``oat_sources``). None generates a
+    random token on each startup."""
 
     web_open_browser: bool = False
     """Auto-open browser when mitmweb starts."""
@@ -246,17 +293,10 @@ class CCProxyConfig(BaseSettings):
         return self._oat_values.get(provider)
 
     def _resolve_oauth_token(self, provider: str) -> tuple[str, str | None] | None:
-        """Resolve OAuth token for a provider via command or file.
-
-        Args:
-            provider: Provider name to fetch token for
-
-        Returns:
-            Tuple of (token, user_agent) on success, None on failure
-        """
+        """Resolve OAuth token for a provider via its credential source."""
         source = self.oat_sources.get(provider)
         if not source:
-            logger.warning(f"No OAuth source configured for provider '{provider}'")
+            logger.warning("No OAuth source configured for provider '%s'", provider)
             return None
 
         oauth_source: OAuthSource
@@ -267,57 +307,10 @@ class CCProxyConfig(BaseSettings):
         else:
             oauth_source = OAuthSource(**source)
 
-        if oauth_source.file:
-            return self._read_oauth_file(oauth_source, provider)
-        return self._run_oauth_command(oauth_source, provider)
-
-    def _read_oauth_file(self, source: OAuthSource, provider: str) -> tuple[str, str | None] | None:
-        """Read OAuth token from a file path."""
-        try:
-            path = Path(source.file).expanduser().resolve()  # type: ignore[arg-type]
-            if not path.is_file():
-                logger.error(f"OAuth file for provider '{provider}' not found: {path}")
-                return None
-            token = path.read_text().strip()
-            if not token:
-                logger.error(f"OAuth file for provider '{provider}' is empty: {path}")
-                return None
-            return (token, source.user_agent)
-        except Exception as e:
-            logger.error(f"Failed to read OAuth file for provider '{provider}': {e}")
+        token = oauth_source.resolve(f"OAuth/{provider}")
+        if token is None:
             return None
-
-    def _run_oauth_command(self, source: OAuthSource, provider: str) -> tuple[str, str | None] | None:
-        """Execute a shell command to retrieve an OAuth token."""
-        try:
-            result = subprocess.run(  # noqa: S602
-                source.command or "",
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-
-            if result.returncode != 0:
-                logger.error(
-                    f"OAuth command for provider '{provider}' failed with exit code "
-                    f"{result.returncode}: {result.stderr.strip()}"
-                )
-                return None
-
-            token = result.stdout.strip()
-            if not token:
-                logger.error(f"OAuth command for provider '{provider}' returned empty output")
-                return None
-
-            return (token, source.user_agent)
-
-        except subprocess.TimeoutExpired:
-            logger.error(f"OAuth command for provider '{provider}' timed out after 5 seconds")
-            return None
-        except Exception as e:
-            logger.error(f"Failed to execute OAuth command for provider '{provider}': {e}")
-            return None
+        return (token, oauth_source.user_agent)
 
     def refresh_oauth_token(self, provider: str) -> tuple[str | None, bool]:
         """Re-resolve OAuth token for a provider and update cache if changed.

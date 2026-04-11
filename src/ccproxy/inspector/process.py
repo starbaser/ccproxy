@@ -56,7 +56,6 @@ def _build_opts(
     wg_cli_conf_path: Path,
     reverse_port: int,
     wg_cli_port: int,
-    web_token: str,
 ) -> Any:
     """Build mitmproxy Options from the singleton config."""
     from mitmproxy.options import Options
@@ -78,12 +77,13 @@ def _build_opts(
     # Defer ALL non-mode options so they resolve after addon registration.
     deferred: dict[str, Any] = {}
     for field_name in MitmproxyOptions.model_fields:
+        if field_name == "web_password":
+            continue
         value = getattr(inspector.mitmproxy, field_name)
         if value is not None:
             deferred[field_name] = value
 
     deferred["web_port"] = inspector.port
-    deferred["web_password"] = web_token
 
     opts.update_defer(**deferred)  # type: ignore[no-untyped-call]
 
@@ -225,15 +225,28 @@ async def run_inspector(
     inspector = config.inspector
 
     wg_cli_port = _find_free_udp_port()
-    web_token = inspector.mitmproxy.web_password or secrets.token_hex(16)
+    web_password_cfg = inspector.mitmproxy.web_password
+    if isinstance(web_password_cfg, str):
+        web_token = web_password_cfg
+    elif web_password_cfg is not None:
+        from ccproxy.config import CredentialSource
+        source = web_password_cfg if isinstance(web_password_cfg, CredentialSource) else CredentialSource(**web_password_cfg)
+        web_token = source.resolve("mitmweb web_password") or secrets.token_hex(16)
+        logger.info("Resolved mitmweb web_password from credential source")
+    else:
+        web_token = secrets.token_hex(16)
+        logger.info("Generated random mitmweb web_password")
 
     opts = _build_opts(
         wg_cli_conf_path,
         reverse_port, wg_cli_port,
-        web_token,
     )
 
     master = WebMaster(opts, with_termlog=False)
+
+    # web_password must be set via opts.update() AFTER WebMaster creation —
+    # update_defer doesn't trigger WebAuth.configure for this option.
+    opts.update(web_password=web_token)
 
     mitmproxy_level = logging.DEBUG if config.debug else logging.WARNING
     logging.getLogger("mitmproxy").setLevel(mitmproxy_level)

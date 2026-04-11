@@ -576,6 +576,22 @@ def show_status(
     proxy_running = _check_alive(host, main_port)
     combined_running = _check_alive("127.0.0.1", inspect_port)
 
+    # Build inspector URL — resolve web_password from config if set
+    inspect_url: str | None = None
+    if combined_running:
+        from ccproxy.config import CredentialSource
+
+        base = f"http://127.0.0.1:{inspect_port}"
+        web_password_cfg = cfg.inspector.mitmproxy.web_password
+        if isinstance(web_password_cfg, str):
+            inspect_url = f"{base}/?token={web_password_cfg}"
+        elif web_password_cfg is not None:
+            source = web_password_cfg if isinstance(web_password_cfg, CredentialSource) else CredentialSource(**web_password_cfg)
+            resolved = source.resolve("mitmweb web_password")
+            inspect_url = f"{base}/?token={resolved}" if resolved else base
+        else:
+            inspect_url = base
+
     status_data: dict[str, Any] = {
         "proxy": proxy_running,
         "url": proxy_url,
@@ -586,7 +602,7 @@ def show_status(
             "running": combined_running,
             "entry_port": main_port,
             "inspect_port": inspect_port,
-            "inspect_url": f"http://127.0.0.1:{inspect_port}" if combined_running else None,
+            "inspect_url": inspect_url,
         },
     }
 

@@ -95,6 +95,11 @@
             port = 4001;
             inspector = defaultSettings.settings.inspector // {
               cert_dir = "./.ccproxy";
+              mitmproxy = {
+                web_password = {
+                  command = "opc secret op://dev/ccproxy/web_password";
+                };
+              };
             };
           };
         };
