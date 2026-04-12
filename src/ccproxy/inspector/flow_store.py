@@ -56,6 +56,7 @@ class TransformMeta:
     model: str
     request_data: dict[str, Any]
     is_streaming: bool
+    mode: Literal["redirect", "transform"] = "redirect"
 
 
 @dataclass

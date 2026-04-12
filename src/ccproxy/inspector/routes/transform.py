@@ -196,6 +196,7 @@ def _handle_transform(flow: HTTPFlow, target: TransformRoute, body: dict[str, ob
             model=target.dest_model,
             request_data={**body},
             is_streaming=is_streaming,
+            mode="transform",
         )
 
     parsed = urlparse(url)
@@ -265,6 +266,8 @@ def register_transform_routes(router: InspectorRouter) -> None:
             return
 
         meta = record.transform
+        if meta.mode != "transform":
+            return
         if not flow.response or flow.response.status_code >= 400:
             return
 

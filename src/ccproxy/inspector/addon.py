@@ -163,7 +163,11 @@ class InspectorAddon:
         record = flow.metadata.get(InspectorMeta.RECORD)
         transform = getattr(record, "transform", None) if record else None
 
-        if transform is not None and transform.is_streaming:
+        if (
+            transform is not None
+            and transform.is_streaming
+            and transform.mode == "transform"
+        ):
             from ccproxy.lightllm.dispatch import make_sse_transformer
 
             optional_params = {
