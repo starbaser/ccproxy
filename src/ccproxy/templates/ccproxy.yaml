@@ -3,8 +3,8 @@ ccproxy:
   port: 4000
   debug: true
 
-  # OAuth token sources - shell commands to retrieve tokens for each provider.
-  # Supports any header via the `auth_header` field: `auth_header: x-api-key`
+  # OAuth token sources - shell commands that output tokens.
+  # Sentinel key sk-ant-oat-ccproxy-{name} triggers lookup.
   oat_sources:
     anthropic:
       command: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
@@ -13,6 +13,10 @@ ccproxy:
 
     gemini:
       command: "jq -r '.access_token' ~/.gemini/oauth_creds.json"
+      destinations:
+        - "generativelanguage.googleapis.com"
+        - "cloudcode-pa.googleapis.com"
+      user_agent: "GeminiCLI"
 
   # Two-stage hook pipeline. Hooks are DAG-ordered within each stage.
   # Each entry is a module path or {hook: <path>, params: <dict>}.
@@ -21,9 +25,16 @@ ccproxy:
       - ccproxy.hooks.forward_oauth
       - ccproxy.hooks.extract_session_id
     outbound:
-      - ccproxy.hooks.add_beta_headers
-      - ccproxy.hooks.inject_claude_code_identity
       - ccproxy.hooks.inject_mcp_notifications
+      - ccproxy.hooks.verbose_mode
+      - ccproxy.hooks.apply_compliance
+
+  # Compliance learning: observes WireGuard reference traffic, applies
+  # learned headers/body/system to reverse proxy flows.
+  compliance:
+    enabled: true
+    min_observations: 3
+    seed_anthropic: true
 
   # Inspector settings
   inspector:

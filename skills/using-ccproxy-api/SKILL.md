@@ -3,14 +3,209 @@ name: using-ccproxy-api
 description: >-
   Guides users through ccproxy as an OpenAI-compatible and Anthropic-compatible LLM API server
   with SDK integration, OAuth authentication, sentinel key substitution, model routing, and
-  troubleshooting. Use when configuring SDK clients (Anthropic, OpenAI, LiteLLM, Agent SDK)
-  against ccproxy, debugging authentication errors, setting up OAuth token forwarding,
-  or understanding the hook pipeline, beta headers, and sentinel key mechanism.
+  troubleshooting. Use when installing ccproxy, configuring SDK clients (Anthropic, OpenAI,
+  LiteLLM, Agent SDK) against ccproxy, setting up per-project instances, debugging authentication
+  errors, setting up OAuth token forwarding, or understanding the hook pipeline and compliance system.
 ---
 
 # Using ccproxy as an LLM API Server
 
-ccproxy exposes an OpenAI-compatible and Anthropic-compatible API on `http://localhost:4000`. Any SDK or HTTP client that supports custom `base_url` can use it.
+ccproxy exposes an OpenAI-compatible and Anthropic-compatible API via a mitmproxy-based interceptor. Any SDK or HTTP client that supports custom `base_url` can use it.
+
+## Installation
+
+### System-wide (Home Manager)
+
+Add ccproxy as a flake input and enable the Home Manager module:
+
+```nix
+# flake.nix
+inputs.ccproxy.url = "github:starbaser/ccproxy";
+
+# home configuration
+programs.ccproxy = {
+  enable = true;
+  settings = {
+    # Override defaults here (port, oat_sources, transforms, etc.)
+  };
+};
+```
+
+This installs the `ccproxy` binary, generates `~/.ccproxy/ccproxy.yaml` from Nix, and creates a `systemd --user` service that auto-restarts on config changes.
+
+### Standalone (any Linux)
+
+```bash
+# Clone and enter devShell
+git clone https://github.com/starbaser/ccproxy
+cd ccproxy
+nix develop   # or: direnv allow
+
+# Install template config
+ccproxy install          # copies template to ~/.ccproxy/ccproxy.yaml
+ccproxy install --force  # overwrites existing config
+
+# Edit config
+$EDITOR ~/.ccproxy/ccproxy.yaml
+
+# Start
+ccproxy start
+```
+
+### Per-project instance
+
+Each project can run its own ccproxy with isolated config, port, and transforms via the flake's `mkConfig`:
+
+```nix
+# project flake.nix
+{
+  inputs.ccproxy.url = "github:starbaser/ccproxy";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+  inputs.flake-utils.url = "github:numtide/flake-utils";
+
+  outputs = { self, nixpkgs, flake-utils, ccproxy }:
+    flake-utils.lib.eachDefaultSystem (system:
+      let
+        pkgs = nixpkgs.legacyPackages.${system};
+        proxyConfig = ccproxy.lib.${system}.mkConfig {
+          settings = {
+            port = 4001;
+            oat_sources.anthropic = {
+              command = "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json";
+              destinations = [ "api.anthropic.com" ];
+            };
+            inspector.transforms = [
+              { match_path = "/v1/messages"; mode = "redirect";
+                dest_provider = "anthropic"; dest_host = "api.anthropic.com";
+                dest_path = "/v1/messages"; dest_api_key_ref = "anthropic"; }
+            ];
+          };
+        };
+      in {
+        devShells.default = pkgs.mkShell {
+          packages = with pkgs; [
+            ccproxy.packages.${system}.default
+            just process-compose
+          ];
+          shellHook = proxyConfig.shellHook;
+        };
+      });
+}
+```
+
+`mkConfig` generates a Nix store `ccproxy.yaml`, and its `shellHook` symlinks it into `.ccproxy/` and exports `CCPROXY_CONFIG_DIR`. The `.envrc` just needs `use flake`.
+
+### Running the instance
+
+```bash
+# Foreground
+ccproxy start
+
+# Via process-compose (recommended for dev)
+just up       # process-compose up --detached
+just down     # process-compose down
+
+# Check health
+ccproxy status              # Rich panel
+ccproxy status --json       # Machine-readable
+ccproxy status --proxy      # Exit 0 if proxy up, 1 if down
+ccproxy status --inspect    # Exit 0 if inspector up, 2 if down
+```
+
+## Configuration
+
+All config lives in `$CCPROXY_CONFIG_DIR/ccproxy.yaml` (default `~/.ccproxy/ccproxy.yaml`).
+
+```yaml
+ccproxy:
+  host: 127.0.0.1
+  port: 4000
+
+  oat_sources:
+    anthropic:
+      command: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+      destinations: ["api.anthropic.com"]
+    gemini:
+      command: "jq -r '.access_token' ~/.gemini/oauth_creds.json"
+      destinations: ["generativelanguage.googleapis.com", "cloudcode-pa.googleapis.com"]
+      user_agent: "GeminiCLI"
+
+  hooks:
+    inbound:
+      - ccproxy.hooks.forward_oauth
+      - ccproxy.hooks.extract_session_id
+    outbound:
+      - ccproxy.hooks.inject_mcp_notifications
+      - ccproxy.hooks.verbose_mode
+      - ccproxy.hooks.apply_compliance
+
+  compliance:
+    enabled: true
+    min_observations: 3
+    seed_anthropic: true
+
+  inspector:
+    port: 8083
+    cert_dir: ~/.ccproxy
+    transforms:
+      - match_path: /v1/messages
+        mode: redirect
+        dest_provider: anthropic
+        dest_host: api.anthropic.com
+        dest_path: /v1/messages
+        dest_api_key_ref: anthropic
+```
+
+See [reference/routing-and-config.md](reference/routing-and-config.md) for transform rules, oat_sources patterns, and hook parameters.
+
+## How authentication works
+
+**OAuth mode** (subscription accounts -- Claude Max, Team, Enterprise):
+1. Client sends sentinel key `sk-ant-oat-ccproxy-{provider}` as API key
+2. `forward_oauth` hook detects sentinel prefix, looks up real token from `oat_sources`
+3. `apply_compliance` hook stamps learned headers (`anthropic-beta`, `anthropic-version`), system prompt, and body envelope fields from a compliance profile
+4. Request reaches provider API with valid OAuth Bearer token and full compliance contract
+
+**API key mode** (direct API keys):
+1. Client sends real API key via `x-api-key` or `Authorization` header
+2. Key passes through to the provider unchanged
+
+### Sentinel key format
+
+```
+sk-ant-oat-ccproxy-{provider}
+```
+
+Where `{provider}` matches a key in `oat_sources` config. Common values:
+- `sk-ant-oat-ccproxy-anthropic` -- uses `oat_sources.anthropic` token
+- `sk-ant-oat-ccproxy-gemini` -- uses `oat_sources.gemini` token
+
+### Default hooks
+
+```yaml
+hooks:
+  inbound:
+    - ccproxy.hooks.forward_oauth
+    - ccproxy.hooks.extract_session_id
+  outbound:
+    - ccproxy.hooks.inject_mcp_notifications
+    - ccproxy.hooks.verbose_mode
+    - ccproxy.hooks.apply_compliance
+```
+
+- `forward_oauth` -- substitutes sentinel key with real token, sets `Authorization: Bearer {token}`, clears `x-api-key`
+- `extract_session_id` -- parses `metadata.user_id` for MCP notification routing
+- `inject_mcp_notifications` -- injects buffered MCP terminal events as tool_use/tool_result pairs
+- `verbose_mode` -- strips `redact-thinking-*` from `anthropic-beta` to enable full thinking output
+- `apply_compliance` -- stamps learned compliance headers, body fields, and system prompt
+
+### Compliance-based headers and identity
+
+Instead of explicit hooks for beta headers and identity injection, ccproxy uses a **compliance learning system**. It passively observes legitimate CLI traffic (via WireGuard) and learns the exact headers, body fields, and system prompt that constitute a compliant request. This learned profile is then stamped onto SDK requests by `apply_compliance`.
+
+The compliance system automatically handles `anthropic-beta`, `anthropic-version`, system prompt injection, and body envelope fields. An Anthropic v0 seed profile provides baseline coverage on first startup before any real traffic is observed.
+
+See the `using-ccproxy-inspector` skill for details on seeding and inspecting compliance profiles.
 
 ## Quick start
 
@@ -29,58 +224,6 @@ client = OpenAI(
     base_url="http://localhost:4000",
 )
 ```
-
-## How authentication works
-
-ccproxy supports two authentication modes:
-
-**OAuth mode** (subscription accounts — Claude Max, Team, Enterprise):
-1. Client sends sentinel key `sk-ant-oat-ccproxy-{provider}` as API key
-2. `forward_oauth` hook detects sentinel prefix, looks up real token from `oat_sources`
-3. `apply_compliance` hook stamps learned headers (`anthropic-beta`, `anthropic-version`), system prompt, and body envelope fields from a compliance profile
-4. Request reaches provider API with valid OAuth Bearer token and full compliance contract
-
-**API key mode** (direct API keys):
-1. Client sends real API key via `x-api-key` or `Authorization` header
-2. Key passes through to the provider unchanged
-
-### Sentinel key format
-
-```
-sk-ant-oat-ccproxy-{provider}
-```
-
-Where `{provider}` matches a key in `oat_sources` config. Common values:
-- `sk-ant-oat-ccproxy-anthropic` — uses `oat_sources.anthropic` token
-- `sk-ant-oat-ccproxy-zai` — uses `oat_sources.zai` token
-- `sk-ant-oat-ccproxy-gemini` — uses `oat_sources.gemini` token
-
-### Default hooks
-
-```yaml
-hooks:
-  inbound:
-    - ccproxy.hooks.forward_oauth
-    - ccproxy.hooks.extract_session_id
-  outbound:
-    - ccproxy.hooks.inject_mcp_notifications
-    - ccproxy.hooks.verbose_mode
-    - ccproxy.hooks.apply_compliance
-```
-
-- `forward_oauth` — substitutes sentinel key with real token, sets `Authorization: Bearer {token}`, clears `x-api-key`
-- `extract_session_id` — parses `metadata.user_id` for MCP notification routing
-- `inject_mcp_notifications` — injects buffered MCP terminal events as tool_use/tool_result pairs
-- `verbose_mode` — strips `redact-thinking-*` from `anthropic-beta` to enable full thinking output
-- `apply_compliance` — stamps learned compliance headers, body fields, and system prompt (see below)
-
-### Compliance-based headers and identity
-
-Instead of explicit hooks for beta headers and identity injection, ccproxy uses a **compliance learning system**. It passively observes legitimate CLI traffic (via WireGuard) and learns the exact headers, body fields, and system prompt that constitute a compliant request. This learned profile is then stamped onto SDK requests by `apply_compliance`.
-
-The compliance system automatically handles `anthropic-beta`, `anthropic-version`, system prompt injection, and body envelope fields. An Anthropic v0 seed profile provides baseline coverage on first startup before any real traffic is observed.
-
-See the `using-ccproxy-inspector` skill for details on seeding and inspecting compliance profiles.
 
 ## SDK integration
 
@@ -101,7 +244,7 @@ response = client.messages.create(
 )
 ```
 
-No extra headers needed — the pipeline hooks handle `anthropic-beta`, `anthropic-version`, and system message injection automatically.
+No extra headers needed -- the compliance system handles `anthropic-beta`, `anthropic-version`, and system prompt injection automatically.
 
 Streaming:
 ```python
@@ -130,7 +273,7 @@ response = client.chat.completions.create(
 )
 ```
 
-LiteLLM translates OpenAI format to Anthropic format internally.
+Requires a transform rule to rewrite from OpenAI format to the destination provider format via lightllm.
 
 ### LiteLLM SDK
 
@@ -185,7 +328,6 @@ export OPENAI_API_BASE="http://localhost:4000"
 ### curl (raw HTTP)
 
 ```bash
-# Anthropic /v1/messages endpoint
 curl http://localhost:4000/v1/messages \
   -H "Content-Type: application/json" \
   -H "x-api-key: sk-ant-oat-ccproxy-anthropic" \
@@ -199,7 +341,7 @@ curl http://localhost:4000/v1/messages \
 
 ## Model routing
 
-Model routing is configured via `inspector.transforms` in `ccproxy.yaml`. Each transform rule matches by `match_host`, `match_path`, and/or `match_model`, then rewrites to `dest_provider`/`dest_model` via the lightllm dispatch. First match wins. Unmatched flows pass through unchanged.
+Model routing is configured via `inspector.transforms` in `ccproxy.yaml`. Each transform rule matches by `match_host`, `match_path`, and/or `match_model`, then rewrites to `dest_provider`/`dest_model` via the lightllm dispatch. First match wins. Unmatched reverse proxy flows get a 501 error; unmatched WireGuard flows pass through unchanged.
 
 See [reference/routing-and-config.md](reference/routing-and-config.md) for transform configuration patterns.
 
@@ -211,12 +353,12 @@ Authentication failures are the most common issue. Follow this decision tree:
 Error message?
 │
 ├─ "This credential is only authorized for use with Claude Code"
-│  ▶ See: Missing identity injection
+│  ▶ See: Missing compliance profile (system prompt not injected)
 │
 ├─ "OAuth is not supported" / "invalid x-api-key"
-│  ▶ See: Missing beta headers
+│  ▶ See: Missing compliance headers (anthropic-beta not stamped)
 │
-├─ 401 Unauthorized / "authentication" / token errors
+├─ 401 Unauthorized / token errors
 │  ▶ See: Token issues
 │
 ├─ Connection refused / timeout
@@ -235,9 +377,10 @@ ccproxy status              # Verify proxy is running
 ccproxy status --json       # Machine-readable status with URL
 ccproxy logs -f             # Stream logs in real-time
 ccproxy logs -n 50          # Last 50 lines
+ccproxy dag-viz             # Visualize hook pipeline
 ```
 
 ## Reference files
 
-- [reference/troubleshooting.md](reference/troubleshooting.md) — Full diagnostic decision tree with error-specific resolution steps
-- [reference/routing-and-config.md](reference/routing-and-config.md) — Model routing, config.yaml patterns, hook pipeline details
+- [reference/troubleshooting.md](reference/troubleshooting.md) -- Full diagnostic decision tree with error-specific resolution steps
+- [reference/routing-and-config.md](reference/routing-and-config.md) -- Model routing, config.yaml patterns, hook pipeline details

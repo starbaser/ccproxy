@@ -8,14 +8,13 @@
 - [Error: 401 Unauthorized / token errors](#error-401-unauthorized--token-errors)
 - [Error: Connection refused / timeout](#error-connection-refused--timeout)
 - [General diagnostics](#general-diagnostics)
-- [LiteLLM internal behaviors](#litellm-internal-behaviors)
 - [Provider-specific notes](#provider-specific-notes)
 
 ---
 
 ## Diagnostic checklist
 
-Run these first for any authentication issue:
+Run these first for any issue:
 
 ```bash
 # 1. Is ccproxy running?
@@ -24,103 +23,83 @@ ccproxy status
 # 2. Stream logs while reproducing the issue
 ccproxy logs -f
 
-# 3. Verify hook pipeline in ccproxy.yaml
-grep -A 20 'hooks:' ~/.ccproxy/ccproxy.yaml
+# 3. Verify hook pipeline
+ccproxy dag-viz
 
-# 4. Verify oat_sources configured
-grep -A 5 'oat_sources:' ~/.ccproxy/ccproxy.yaml
+# 4. Verify config
+cat $CCPROXY_CONFIG_DIR/ccproxy.yaml   # or: cat ~/.ccproxy/ccproxy.yaml
 
 # 5. Test OAuth command manually
 jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json
 # Should output a token starting with "sk-ant-oat"
+
+# 6. Check compliance profile status
+uv run python scripts/compliance_status.py  # from ccproxy project root
 ```
 
 ---
 
 ## Error: "This credential is only authorized for use with Claude Code"
 
-**Cause**: Anthropic's API validates that OAuth tokens (from Claude Max/Team/Enterprise subscriptions) are only used by Claude Code. It checks that the system message starts with "You are Claude Code, Anthropic's official CLI for Claude."
+**Cause**: Anthropic's API validates that OAuth tokens are only used by Claude Code. It checks that the system message starts with "You are Claude Code, Anthropic's official CLI for Claude."
 
 **Resolution**:
 
-1. Verify `inject_claude_code_identity` hook is enabled in `ccproxy.yaml`:
-   ```yaml
-   hooks:
-     # ... other hooks ...
-     - ccproxy.hooks.inject_claude_code_identity
-   ```
-
-2. Verify hook ordering — `inject_claude_code_identity` must come AFTER `forward_oauth` (the hook checks for OAuth token presence before injecting):
-   ```yaml
-   hooks:
-     - ccproxy.hooks.rule_evaluator
-     - ccproxy.hooks.model_router
-     - ccproxy.hooks.forward_oauth              # Must be before identity injection
-     - ccproxy.hooks.add_beta_headers
-     - ccproxy.hooks.inject_claude_code_identity # Checks for "Bearer sk-ant-oat" in auth header
-   ```
-
-3. Check logs for the injection event:
+1. Check compliance profile status — the system prompt should be learned and stamped:
    ```bash
-   ccproxy logs -f
-   # Look for: "Injected Claude Code identity for OAuth authentication"
-   # If missing: hook is not triggering — check auth_header detection
+   uv run python scripts/compliance_status.py --provider anthropic
+   # Verify has_system: true
    ```
 
-4. The hook only injects for requests going to `api.anthropic.com`. If using a non-Anthropic api_base, the identity injection is skipped (ZAI and other compatible APIs don't require it).
+2. If no learned profile exists yet, check if the v0 seed is active:
+   ```bash
+   uv run python scripts/compliance_status.py --seed-status
+   ```
+   The seed provides the system prompt prefix. If it's missing, verify `compliance.seed_anthropic: true` in config.
 
-5. If using a custom system message, verify the hook prepends rather than replaces. The hook behavior:
-   - String system: prepends prefix with `\n\n` separator
-   - List system: inserts `{"type": "text", "text": "You are Claude Code..."}` at index 0
-   - No system: sets system to just the prefix string
+3. If a profile exists but the system prompt isn't being stamped, check the `apply_compliance` hook:
+   - Is it in the `outbound` hooks list?
+   - Does the flow have a `TransformMeta`? (requires a matching transform rule)
+   - Is the flow coming through reverse proxy? (compliance only fires on reverse proxy, not WireGuard)
+
+4. If the client sends a `list`-type system prompt (structured content blocks), compliance **skips** system injection — it assumes the client manages its own identity. Send `system` as a string or omit it.
+
+5. To seed a fresh profile from real CLI traffic:
+   ```bash
+   ccproxy run --inspect -- claude
+   # Make 3+ requests, then check:
+   uv run python scripts/compliance_status.py --seed-status
+   ```
 
 ---
 
 ## Error: "OAuth is not supported" or "invalid x-api-key"
 
-**Cause**: Anthropic's API requires the `oauth-2025-04-20` beta header to accept OAuth Bearer tokens. Without it, the API sees an OAuth token where it expects an API key and rejects it.
+**Cause**: Anthropic's API requires `anthropic-beta: oauth-2025-04-20` to accept OAuth Bearer tokens. Without it, the API rejects the OAuth token.
 
 **Resolution**:
 
-1. Verify `add_beta_headers` hook is enabled:
-   ```yaml
-   hooks:
-     - ccproxy.hooks.add_beta_headers
-   ```
-
-2. Verify it runs AFTER `model_router` (needs routing metadata to detect Anthropic provider):
-   ```yaml
-   hooks:
-     - ccproxy.hooks.rule_evaluator
-     - ccproxy.hooks.model_router       # Sets ccproxy_litellm_model and ccproxy_model_config
-     - ccproxy.hooks.forward_oauth
-     - ccproxy.hooks.add_beta_headers   # Reads ccproxy_litellm_model to detect provider
-     - ccproxy.hooks.inject_claude_code_identity
-   ```
-
-3. Check logs for the beta headers event:
+1. Check compliance profile headers:
    ```bash
-   ccproxy logs -f
-   # Look for: "Added anthropic-beta headers for Claude Code impersonation"
-   # If missing: provider detection failed — check model config has api_base
+   uv run python scripts/compliance_status.py --provider anthropic
+   # Verify anthropic-beta header is in the profile
    ```
 
-4. The hook skips beta headers if the model has its own `api_key` in config.yaml. Beta headers are only for OAuth, not for API key auth. Check:
-   ```yaml
-   # This model gets beta headers (no api_key — uses OAuth):
-   - model_name: claude-sonnet-4-5-20250929
-     litellm_params:
-       model: anthropic/claude-sonnet-4-5-20250929
-       api_base: https://api.anthropic.com
+2. The v0 seed profile includes `anthropic-beta` with all required values. If it's not applying:
+   - Verify `apply_compliance` is in `hooks.outbound`
+   - Verify `compliance.enabled: true`
+   - Verify `compliance.seed_anthropic: true`
 
-   # This model does NOT get beta headers (has its own api_key):
-   - model_name: claude-sonnet-4-5-20250929
-     litellm_params:
-       model: anthropic/claude-sonnet-4-5-20250929
-       api_key: sk-ant-api03-...
+3. Inspect the forwarded request to see what headers are actually being sent:
+   ```bash
+   ccproxy flows list
+   ccproxy flows req <flow-id>    # Check for anthropic-beta header
    ```
 
-5. The hook merges with existing `anthropic-beta` headers from the original request. It does not clobber client-provided betas.
+4. Compare client vs forwarded to see if compliance stamped headers:
+   ```bash
+   uv run python scripts/inspect_flow.py <flow-id>
+   ```
 
 ---
 
@@ -130,7 +109,7 @@ Multiple causes — work through in order:
 
 ### Token expired
 
-OAuth tokens from `~/.claude/.credentials.json` expire (default TTL: 8 hours).
+OAuth tokens from `~/.claude/.credentials.json` expire.
 
 ```bash
 # Check token age — is Claude Code signed in?
@@ -142,20 +121,9 @@ jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json
 
 # Force token refresh by signing into Claude Code
 claude
-# Then restart ccproxy
-ccproxy restart --detach
 ```
 
-ccproxy auto-refreshes tokens via:
-- **TTL-based**: Background task checks every 30 minutes, refreshes at 90% of `oauth_ttl`
-- **401-triggered**: Immediate refresh on authentication error, retries the request once
-
-Config options:
-```yaml
-ccproxy:
-  oauth_ttl: 28800           # Token lifetime (seconds), default 8 hours
-  oauth_refresh_buffer: 0.1  # Refresh at 90% of TTL (10% buffer)
-```
+ccproxy auto-refreshes on 401: `InspectorAddon.response()` detects HTTP 401 with `x-ccproxy-oauth-injected: 1`, calls `refresh_oauth_token(provider)`, and retries with the new token if it changed.
 
 ### Wrong sentinel key provider name
 
@@ -164,12 +132,12 @@ The provider name after `sk-ant-oat-ccproxy-` must exactly match a key in `oat_s
 ```yaml
 oat_sources:
   anthropic: "..."  # Matches: sk-ant-oat-ccproxy-anthropic
-  zai: "..."        # Matches: sk-ant-oat-ccproxy-zai
+  gemini: "..."     # Matches: sk-ant-oat-ccproxy-gemini
 ```
 
-Using `sk-ant-oat-ccproxy-claude` when the source is named `anthropic` will fail with a log warning:
+Using `sk-ant-oat-ccproxy-claude` when the source is named `anthropic` raises a fatal `OAuthConfigError`:
 ```
-Sentinel key for provider 'claude' but no OAuth token configured in oat_sources
+OAuthConfigError: Sentinel key for provider 'claude' but no OAuth token configured in oat_sources
 ```
 
 ### oat_sources command failing
@@ -177,29 +145,25 @@ Sentinel key for provider 'claude' but no OAuth token configured in oat_sources
 ```bash
 # Copy your oat_sources command from ccproxy.yaml and run it directly:
 jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json
-# Should output a token starting with "sk-ant-oat"
+# Should output a token
 
 # Common failures:
 # - jq not installed
 # - File doesn't exist: ~/.claude/.credentials.json
 # - JSON path wrong (accessToken vs access_token)
-# - Command timeout (ccproxy gives 5 seconds)
+# - Command returns empty string or null
 ```
 
-### x-api-key / Authorization header conflict
+### Auth header injection
 
-LiteLLM internally converts `Authorization: Bearer {token}` to `x-api-key: {token}` for Anthropic. The `forward_oauth` hook counteracts this by:
-1. Setting `Authorization: Bearer {token}` in extra_headers
-2. Setting `x-api-key: ""` (empty) in extra_headers
+`forward_oauth` injects auth via the configured header:
+- Default: `Authorization: Bearer {token}`
+- If `oat_sources.{provider}.auth_header` is set: uses that header name with raw token value (e.g. `x-goog-api-key: {token}`)
 
-ccproxy also patches LiteLLM's `AnthropicModelInfo.validate_environment()` to preserve the empty `x-api-key` when OAuth mode is detected. If this patch fails, you'll see:
-```
-Failed to patch Anthropic validate_environment for OAuth header support
-```
-
-If patching fails, enable MITM mode as a fallback safety net:
+Check the forwarded request headers:
 ```bash
-ccproxy start --detach --mitm
+ccproxy flows req <flow-id>
+# Verify Authorization or x-api-key header is present and non-empty
 ```
 
 ---
@@ -210,11 +174,13 @@ ccproxy start --detach --mitm
 # Check proxy status
 ccproxy status
 
-# Check if port 4000 is in use
-ss -tlnp | grep 4000
+# Check ports
+ss -tlnp | grep 4000    # proxy port
+ss -tlnp | grep 8083    # inspector UI port
 
 # Start if not running
-ccproxy start --detach
+ccproxy start            # foreground
+just up                  # or: process-compose up --detached
 
 # Check for startup errors
 ccproxy logs -n 30
@@ -222,50 +188,59 @@ ccproxy logs -n 30
 
 Common causes:
 - ccproxy not started
-- Port 4000 already in use by another process
-- LiteLLM failed to start (check logs for import errors)
+- Port already in use (check for another ccproxy instance or stale process)
+- Startup failure in mitmproxy (check logs for import errors or port conflicts)
 
 ---
 
 ## General diagnostics
 
-### Verify hook pipeline execution
+### Verify hook pipeline
+
+```bash
+# Visualize the hook DAG
+ccproxy dag-viz                # ASCII
+ccproxy dag-viz -o mermaid     # Mermaid format
+```
 
 With `debug: true` in `ccproxy.yaml`, logs show each hook's execution:
 
 ```
-ccproxy.hooks:DEBUG: forward_oauth: Detected provider 'anthropic' for model '...'
-ccproxy.hooks:INFO: Forwarding request with OAuth authentication for provider 'anthropic'
-ccproxy.hooks:INFO: Added anthropic-beta headers for Claude Code impersonation
-ccproxy.hooks:INFO: Injected Claude Code identity for OAuth authentication
+ccproxy.pipeline:DEBUG: Executing hook forward_oauth
+ccproxy.hooks:INFO: Forwarding request with OAuth for provider 'anthropic'
+ccproxy.pipeline:DEBUG: Executing hook apply_compliance
+ccproxy.compliance:INFO: Compliance: added header anthropic-beta
 ```
 
-If any of these log lines are missing, the corresponding hook is either:
-- Not in the hooks list
-- Skipping due to a condition (model has api_key, provider not detected, no OAuth token)
+If a hook is not firing:
+- Check that it's in the `hooks.inbound` or `hooks.outbound` list
+- Check the guard condition (e.g. `apply_compliance` requires `ReverseMode` + `TransformMeta`)
+- Check per-request overrides via `x-ccproxy-hooks` header
 
-### Verify model routing
-
-Debug mode shows routing panels:
-```
-[ccproxy] Request Routed
-├─ Type: PASSTHROUGH
-├─ Model Name: default
-├─ Original: claude-sonnet-4-5-20250929
-└─ Routed to: claude-sonnet-4-5-20250929
-```
-
-If transforms are configured but not matching, check `match_host`, `match_path`, and `match_model` fields in `ccproxy.yaml`.
-
-### Check config files
+### Verify transform routing
 
 ```bash
-# Verify config file exists
-ls -la ~/.ccproxy/ccproxy.yaml
+# List recent flows to see if they're being matched
+ccproxy flows list
 
-# Verify hooks and transforms
-cat ~/.ccproxy/ccproxy.yaml
+# Check if a flow was transformed
+ccproxy flows client <id>   # Pre-pipeline URL
+ccproxy flows req <id>      # Post-pipeline URL (should differ if transformed)
 ```
+
+If transforms are configured but not matching, check:
+- `match_host` — matches against `pretty_host`, `Host` header, `X-Forwarded-Host`
+- `match_path` — prefix match (must start with the same path)
+- `match_model` — substring match on the `model` field in the JSON body
+- Rule order — first match wins
+
+### Inspect the mitmweb UI
+
+The inspector UI runs at `http://127.0.0.1:{inspector.port}/?token={web_token}`. The URL with token is printed to logs on startup.
+
+- Select a flow to see full request/response headers and body
+- Switch to "Client-Request" content view to see the pre-pipeline snapshot
+- Filter flows by host, path, or response code
 
 ---
 
@@ -273,42 +248,20 @@ cat ~/.ccproxy/ccproxy.yaml
 
 ### api.anthropic.com
 
-- Requires ALL four beta headers (`oauth-2025-04-20`, `claude-code-20250219`, `interleaved-thinking-2025-05-14`, `fine-grained-tool-streaming-2025-05-14`)
-- Requires "You are Claude Code" system message prefix
+- Requires `anthropic-beta` headers including `oauth-2025-04-20` for OAuth
+- Requires "You are Claude Code" system prompt prefix for OAuth tokens
+- Both are handled automatically by the compliance system (seed or learned profile)
 - OAuth tokens have `sk-ant-oat` prefix
-- `x-api-key` must be empty (not absent) when using OAuth Bearer
+- On 401: ccproxy auto-refreshes and retries once
 
-### api.z.ai (ZAI)
+### Google (Gemini / cloudcode-pa)
 
-- Does NOT require "You are Claude Code" system message (`inject_claude_code_identity` skips non-anthropic.com api_base)
-- May require its own `oat_sources` entry with `destinations: ["api.z.ai"]`
-- Use extended oat_sources form:
-  ```yaml
-  oat_sources:
-    zai:
-      command: "jq -r '.accessToken' ~/.zai/credentials.json"
-      user_agent: "MyApp/1.0"
-      destinations: ["api.z.ai"]
-  ```
+- cloudcode-pa flows use a body wrapper: `{model: X, request: {<body>}}` — handled by compliance `body_wrapper`
+- Gemini auth uses `x-goog-api-key` header — set via `oat_sources.gemini.auth_header: "x-goog-api-key"` or let `forward_oauth` handle it
+- Configure `destinations` to include both `generativelanguage.googleapis.com` and `cloudcode-pa.googleapis.com`
 
-### Other providers (OpenAI, Gemini)
+### Other providers
 
-- Beta headers and system message injection only apply to Anthropic provider
-- Other providers just need OAuth token forwarding via `forward_oauth`
-- Provider detection: LiteLLM's `get_llm_provider()` → destination matching → model name fallback
-
----
-
-## Inspector mode debugging
-
-The mitmweb UI provides HTTP-layer visibility into all proxied requests:
-
-```bash
-# Start ccproxy (always runs in inspector mode)
-ccproxy start
-
-# Open mitmweb UI (default port 8083)
-# View flows, inspect headers, and debug request/response bodies
-```
-
-The inspector captures all traffic flowing through the addon chain, showing OAuth token injection, beta header addition, and system message prepending in real-time.
+- Compliance profiles are per-provider — each provider's contract is learned independently
+- Provider detection uses `oat_sources.*.destinations` (substring match) then `inspector.provider_map` (exact hostname)
+- Transform rules handle cross-provider format conversion via lightllm
