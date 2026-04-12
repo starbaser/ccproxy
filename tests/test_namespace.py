@@ -1129,15 +1129,66 @@ class TestCreateNamespacePortForwarding:
 
         create_namespace(SAMPLE_WG_CLIENT_CONF)
 
-        # Two nsenter calls: WG setup + iptables DNAT
-        assert mock_run.call_count == 2
-        dnat_call = mock_run.call_args_list[1]
-        dnat_cmd_args = dnat_call[0][0]
-        assert "nsenter" in dnat_cmd_args[0]
-        # The shell command should contain iptables DNAT
-        sh_cmd = dnat_cmd_args[-1]
-        assert "iptables" in sh_cmd
-        assert "DNAT" in sh_cmd
+        # nsenter calls: WG setup + iptables DNAT rules (PREROUTING + OUTPUT)
+        assert mock_run.call_count == 3
+        for dnat_call in mock_run.call_args_list[1:]:
+            dnat_cmd_args = dnat_call[0][0]
+            assert "nsenter" in dnat_cmd_args[0]
+            sh_cmd = dnat_cmd_args[-1]
+            assert "iptables" in sh_cmd
+            assert "DNAT" in sh_cmd
+
+    @patch("ccproxy.inspector.namespace.subprocess.run")
+    @patch("ccproxy.inspector.namespace.subprocess.Popen")
+    @patch("ccproxy.inspector.namespace.os.pipe")
+    @patch("ccproxy.inspector.namespace.os.fdopen")
+    @patch("ccproxy.inspector.namespace.os.close")
+    @patch("ccproxy.inspector.namespace.tempfile.mkstemp")
+    @patch("ccproxy.inspector.namespace.shutil.which")
+    @patch("ccproxy.inspector.namespace.PortForwarder")
+    def test_port_remap_rule_added_when_port_differs(
+        self,
+        mock_forwarder_cls: Mock,
+        mock_which: Mock,
+        mock_mkstemp: Mock,
+        mock_close: Mock,
+        mock_fdopen: Mock,
+        mock_pipe: Mock,
+        mock_popen: Mock,
+        mock_run: Mock,
+        tmp_path: Path,
+    ) -> None:
+        """Port remap DNAT rule redirects default port to running port."""
+        mock_which.return_value = "/usr/bin/iptables"
+        conf_path = tmp_path / "wg.conf"
+        mock_mkstemp.return_value = (10, str(conf_path))
+        mock_pipe.side_effect = [(100, 101), (200, 201)]
+
+        sentinel_proc = MagicMock(pid=42)
+        slirp_proc = MagicMock(pid=43)
+        mock_popen.side_effect = [sentinel_proc, slirp_proc]
+
+        write_ctx = MagicMock()
+        write_ctx.__enter__ = Mock(return_value=MagicMock())
+        write_ctx.__exit__ = Mock(return_value=False)
+        ready_file = MagicMock()
+        ready_file.read.return_value = "1"
+        ready_ctx = MagicMock()
+        ready_ctx.__enter__ = Mock(return_value=ready_file)
+        ready_ctx.__exit__ = Mock(return_value=False)
+        mock_fdopen.side_effect = [write_ctx, ready_ctx]
+
+        mock_run.return_value = MagicMock(returncode=0, stderr="")
+        mock_forwarder_cls.return_value = MagicMock()
+
+        create_namespace(SAMPLE_WG_CLIENT_CONF, proxy_port=4001)
+
+        # WG setup + 3 iptables rules (port remap + PREROUTING + OUTPUT)
+        assert mock_run.call_count == 4
+        # First iptables call should be the port remap
+        remap_cmd = mock_run.call_args_list[1][0][0][-1]
+        assert "--dport 4000" in remap_cmd
+        assert "10.0.2.2:4001" in remap_cmd
 
     @patch("ccproxy.inspector.namespace.subprocess.run")
     @patch("ccproxy.inspector.namespace.subprocess.Popen")

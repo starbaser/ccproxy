@@ -226,8 +226,14 @@ def _rewrite_wg_endpoint(client_conf: str, gateway: str) -> str:
     )
 
 
-def create_namespace(wg_client_conf: str) -> NamespaceContext:
+def create_namespace(wg_client_conf: str, *, proxy_port: int = 4000) -> NamespaceContext:
     """Create a user+net namespace with WireGuard routing through mitmproxy.
+
+    Args:
+        wg_client_conf: WireGuard client configuration text.
+        proxy_port: The running ccproxy port. Used to DNAT the default port
+            (4000) to this port so tools configured for the default port
+            reach the current instance from inside the namespace.
 
     Network topology (slirp4netns --configure):
       - Namespace TAP IP: 10.0.2.100/24
@@ -306,6 +312,7 @@ def create_namespace(wg_client_conf: str) -> NamespaceContext:
         # Configure WireGuard inside the namespace
         # lo and tap0 are already configured by slirp4netns --configure
         wg_setup = (
+            f"sysctl -qw net.ipv4.conf.all.route_localnet=1 && "
             f"ip link add wg0 type wireguard && "
             f"wg setconf wg0 {conf_path} && "
             f"ip addr add 10.0.0.1/32 dev wg0 && "
@@ -327,28 +334,51 @@ def create_namespace(wg_client_conf: str) -> NamespaceContext:
 
         logger.info("Namespace created: WireGuard tunnel active via %s", gateway)
 
-        # Set up iptables DNAT so slirp4netns hostfwd traffic reaches localhost servers
+        # Set up iptables DNAT rules for namespace ↔ host connectivity:
+        # 1. PREROUTING: hostfwd inbound (tap0 → localhost) for port forwarding
+        # 2. OUTPUT: localhost outbound (127.0.0.1 → gateway) so processes inside
+        #    the namespace can reach host services via localhost addresses
+        # 3. OUTPUT port remap: redirect default port (4000) to the running
+        #    instance's port so tools hardcoded to the default reach us
         if shutil.which("iptables"):
-            dnat_cmd = (
-                "iptables -t nat -A PREROUTING -i tap0 -p tcp "
-                "-j DNAT --to-destination 127.0.0.1"
-            )
-            dnat_result = subprocess.run(  # noqa: S603
-                ["nsenter", "-t", str(ns_pid), "--net", "--user",  # noqa: S607
-                 "--preserve-credentials", "--", "sh", "-c", dnat_cmd],
-                capture_output=True,
-                text=True,
-            )
-            if dnat_result.returncode != 0:
-                logger.warning(
-                    "iptables DNAT setup failed (port forwarding disabled): %s",
-                    dnat_result.stderr.strip(),
+            default_port = 4000
+            dnat_cmds = [
+                # Inbound: slirp4netns hostfwd traffic → namespace localhost
+                (
+                    "iptables -t nat -A PREROUTING -i tap0 -p tcp "
+                    "-j DNAT --to-destination 127.0.0.1"
+                ),
+                # Outbound: namespace localhost → host via gateway
+                (
+                    f"iptables -t nat -A OUTPUT -d 127.0.0.1 -p tcp "
+                    f"-j DNAT --to-destination {gateway}"
+                ),
+            ]
+            # Remap default port → running port when they differ
+            if proxy_port != default_port:
+                dnat_cmds.insert(0, (
+                    f"iptables -t nat -A OUTPUT -d 127.0.0.1 -p tcp "
+                    f"--dport {default_port} "
+                    f"-j DNAT --to-destination {gateway}:{proxy_port}"
+                ))
+            for dnat_cmd in dnat_cmds:
+                dnat_result = subprocess.run(  # noqa: S603
+                    ["nsenter", "-t", str(ns_pid), "--net", "--user",  # noqa: S607
+                     "--preserve-credentials", "--", "sh", "-c", dnat_cmd],
+                    capture_output=True,
+                    text=True,
                 )
-            else:
-                logger.debug("iptables DNAT rule installed on tap0")
+                if dnat_result.returncode != 0:
+                    logger.warning(
+                        "iptables DNAT setup failed: %s — %s",
+                        dnat_cmd.split("-A ")[1].split(" -")[0],
+                        dnat_result.stderr.strip(),
+                    )
+                else:
+                    logger.debug("iptables rule installed: %s", dnat_cmd)
         else:
             logger.warning(
-                "iptables not found — OAuth callback port forwarding unavailable"
+                "iptables not found — port forwarding unavailable"
             )
 
         # Start port monitor to dynamically forward namespace listen ports to host

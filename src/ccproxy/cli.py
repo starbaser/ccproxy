@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -9,6 +10,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 from builtins import print as builtin_print
 from pathlib import Path
 from typing import Annotated, Any
@@ -220,7 +222,17 @@ def _ensure_combined_ca_bundle(
     try:
         proxy_ca_data = proxy_ca.read_text()
         base_ca_data = Path(base_ca).read_text() if Path(base_ca).exists() else ""
-        combined_bundle.write_text(proxy_ca_data + "\n" + base_ca_data)
+        content = proxy_ca_data + "\n" + base_ca_data
+        fd, tmp_path = tempfile.mkstemp(dir=str(config_dir), prefix=".ca-bundle-")
+        try:
+            os.write(fd, content.encode())
+            os.close(fd)
+            Path(tmp_path).rename(combined_bundle)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.close(fd)
+            Path(tmp_path).unlink(missing_ok=True)
+            raise
         return combined_bundle
     except OSError:
         return None
@@ -299,7 +311,7 @@ def run_with_proxy(
 
         ctx = None
         try:
-            ctx = create_namespace(wg_client_conf)
+            ctx = create_namespace(wg_client_conf, proxy_port=port)
             exit_code = run_in_namespace(ctx, command, env)
             sys.exit(exit_code)
         except RuntimeError as e:
