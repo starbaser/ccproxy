@@ -65,16 +65,18 @@ def check_namespace_capabilities() -> list[str]:
         except OSError:
             pass
 
-    required_tools = {
-        "slirp4netns": "nix profile install nixpkgs#slirp4netns",
-        "unshare": "nix profile install nixpkgs#util-linux",
-        "nsenter": "nix profile install nixpkgs#util-linux",
-        "ip": "nix profile install nixpkgs#iproute2",
-        "wg": "nix profile install nixpkgs#wireguard-tools",
+    _is_nix = shutil.which("nix") is not None
+    required_tools: dict[str, tuple[str, str]] = {
+        "slirp4netns": ("slirp4netns", "nixpkgs#slirp4netns"),
+        "unshare": ("util-linux", "nixpkgs#util-linux"),
+        "nsenter": ("util-linux", "nixpkgs#util-linux"),
+        "ip": ("iproute2", "nixpkgs#iproute2"),
+        "wg": ("wireguard-tools", "nixpkgs#wireguard-tools"),
     }
-    for tool, install_hint in required_tools.items():
+    for tool, (pkg, nix_pkg) in required_tools.items():
         if not shutil.which(tool):
-            problems.append(f"{tool} not found. Install with: {install_hint}")
+            hint = f"nix profile install {nix_pkg}" if _is_nix else f"install {pkg} via your package manager"
+            problems.append(f"{tool} not found. {hint}")
 
     return problems
 

@@ -325,8 +325,8 @@ class TestResponseRetryPath:
         flow.response.timestamp_end = 1000.5
         flow.request.timestamp_start = 1000.0
         flow.request.pretty_url = "https://api.anthropic.com/v1/messages"
-        flow.request.headers = {"x-ccproxy-oauth-injected": "1"}
-        flow.metadata = {InspectorMeta.RECORD: FlowRecord(direction="inbound")}
+        flow.request.headers = {}
+        flow.metadata = {InspectorMeta.RECORD: FlowRecord(direction="inbound"), "ccproxy.oauth_injected": True}
         flow.id = "retry-flow"
 
         with patch.object(addon, "_retry_with_refreshed_token", new_callable=AsyncMock, return_value=True):
@@ -716,7 +716,7 @@ class TestRetryWithRefreshedToken:
         flow.metadata = {"ccproxy.oauth_provider": provider}
         flow.request.method = method
         flow.request.pretty_url = url
-        flow.request.headers = {"authorization": "Bearer old-token", "x-ccproxy-oauth-injected": "1"}
+        flow.request.headers = {"authorization": "Bearer old-token"}
         flow.request.content = content
         flow.response = MagicMock()
         flow.response.status_code = 401
@@ -833,8 +833,8 @@ class TestRetryWithRefreshedToken:
         assert sent_headers.get("x-goog-api-key") == "new-gemini-token"
 
     @pytest.mark.asyncio
-    async def test_retry_strips_oauth_injected_header(self) -> None:
-        """The x-ccproxy-oauth-injected sentinel is stripped before retrying."""
+    async def test_retry_does_not_send_internal_headers(self) -> None:
+        """Internal ccproxy headers are not forwarded on retry."""
         flow = self._make_oauth_flow(provider="anthropic")
         mock_config = MagicMock()
         mock_config.refresh_oauth_token.return_value = ("new-token", True)

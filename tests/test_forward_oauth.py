@@ -65,7 +65,7 @@ class TestForwardOAuthSentinelPath:
 
         assert result is ctx
         assert ctx.get_header("authorization") == "Bearer real-token-xyz"
-        assert ctx.get_header("x-ccproxy-oauth-injected") == "1"
+        assert ctx.flow.metadata["ccproxy.oauth_injected"] is True
         assert ctx.flow.metadata["ccproxy.oauth_provider"] == "anthropic"
 
     def test_sentinel_clears_x_api_key(self, clean_config: CCProxyConfig) -> None:
@@ -111,7 +111,7 @@ class TestForwardOAuthCachedPath:
 
         assert result is ctx
         assert ctx.get_header("authorization") == "Bearer cached-tok"
-        assert ctx.get_header("x-ccproxy-oauth-injected") == "1"
+        assert ctx.flow.metadata["ccproxy.oauth_injected"] is True
         assert ctx.flow.metadata["ccproxy.oauth_provider"] == "fallback"
 
     def test_first_provider_with_token_used(self, clean_config: CCProxyConfig) -> None:
@@ -133,7 +133,7 @@ class TestForwardOAuthCachedPath:
         result = forward_oauth(ctx, {})
 
         assert result is ctx
-        assert ctx.get_header("x-ccproxy-oauth-injected") == ""
+        assert "ccproxy.oauth_injected" not in ctx.flow.metadata
         assert "ccproxy.oauth_provider" not in ctx.flow.metadata
 
     def test_no_oat_sources_noop(self, clean_config: CCProxyConfig) -> None:
@@ -142,7 +142,7 @@ class TestForwardOAuthCachedPath:
         result = forward_oauth(ctx, {})
 
         assert result is ctx
-        assert ctx.get_header("x-ccproxy-oauth-injected") == ""
+        assert "ccproxy.oauth_injected" not in ctx.flow.metadata
 
     def test_try_cached_token_config_exception_handled(self) -> None:
         ctx = _make_ctx()
@@ -151,7 +151,7 @@ class TestForwardOAuthCachedPath:
             result = forward_oauth(ctx, {})
 
         assert result is ctx
-        assert ctx.get_header("x-ccproxy-oauth-injected") == ""
+        assert "ccproxy.oauth_injected" not in ctx.flow.metadata
 
 
 class TestForwardOAuthPassthrough:
@@ -161,7 +161,7 @@ class TestForwardOAuthPassthrough:
         result = forward_oauth(ctx, {})
 
         assert result is ctx
-        assert ctx.get_header("x-ccproxy-oauth-injected") == ""
+        assert "ccproxy.oauth_injected" not in ctx.flow.metadata
         assert "ccproxy.oauth_provider" not in ctx.flow.metadata
 
     def test_real_auth_header_no_cached_injection(self, clean_config: CCProxyConfig) -> None:
@@ -174,7 +174,7 @@ class TestForwardOAuthPassthrough:
 
         assert result is ctx
         assert ctx.get_header("authorization") == "Bearer real-existing-token"
-        assert ctx.get_header("x-ccproxy-oauth-injected") == ""
+        assert "ccproxy.oauth_injected" not in ctx.flow.metadata
 
 
 class TestInjectToken:
@@ -184,7 +184,7 @@ class TestInjectToken:
         _inject_token(ctx, "anthropic", "my-token")
 
         assert ctx.get_header("authorization") == "Bearer my-token"
-        assert ctx.get_header("x-ccproxy-oauth-injected") == "1"
+        assert ctx.flow.metadata["ccproxy.oauth_injected"] is True
         assert ctx.get_header("x-api-key") == ""
         assert ctx.get_header("x-goog-api-key") == ""
 
@@ -197,7 +197,7 @@ class TestInjectToken:
         _inject_token(ctx, "google", "goog-token")
 
         assert ctx.get_header("x-goog-api-key") == "goog-token"
-        assert ctx.get_header("x-ccproxy-oauth-injected") == "1"
+        assert ctx.flow.metadata["ccproxy.oauth_injected"] is True
         # x-api-key cleared (not the target)
         assert ctx.get_header("x-api-key") == ""
         # authorization not touched
@@ -213,12 +213,12 @@ class TestInjectToken:
 
         assert ctx.get_header("x-api-key") == "my-secret"
         assert ctx.get_header("x-goog-api-key") == ""
-        assert ctx.get_header("x-ccproxy-oauth-injected") == "1"
+        assert ctx.flow.metadata["ccproxy.oauth_injected"] is True
 
     def test_always_sets_injected_flag(self, clean_config: CCProxyConfig) -> None:
         ctx = _make_ctx()
         _inject_token(ctx, "any", "any-token")
-        assert ctx.get_header("x-ccproxy-oauth-injected") == "1"
+        assert ctx.flow.metadata["ccproxy.oauth_injected"] is True
 
     def test_inject_preserves_other_headers(self, clean_config: CCProxyConfig) -> None:
         ctx = _make_ctx({"content-type": "application/json", "anthropic-version": "2023-06-01"})

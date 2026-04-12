@@ -761,7 +761,6 @@ def handle_dag_viz(cmd: DagViz) -> None:
     """Handle dag-viz subcommand to visualize the pipeline DAG."""
     # Import all hooks to register them
     from ccproxy.hooks import (  # noqa: F401
-        add_beta_headers,  # pyright: ignore[reportUnusedImport]
         extract_session_id,  # pyright: ignore[reportUnusedImport]
         forward_oauth,  # pyright: ignore[reportUnusedImport]
         inject_claude_code_identity,  # pyright: ignore[reportUnusedImport]

@@ -90,7 +90,7 @@ class TestApplyCompliance:
 
         set_config_instance(CCProxyConfig())
 
-        store = ProfileStore(tmp_path / "profiles.json", min_observations=1, seed_anthropic=False)
+        store = ProfileStore(tmp_path / "profiles.json", min_observations=1, seed_profiles=None)
 
         import ccproxy.compliance.store as store_mod
 

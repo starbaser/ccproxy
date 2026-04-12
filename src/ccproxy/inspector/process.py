@@ -143,6 +143,7 @@ def _build_addons(
             enabled=otel.enabled,
             otlp_endpoint=otel.endpoint,
             service_name=otel.service_name,
+            provider_map=config.inspector.provider_map,
         )
         addon.set_tracer(tracer)
         if otel.enabled:

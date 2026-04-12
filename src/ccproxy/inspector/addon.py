@@ -192,7 +192,7 @@ class InspectorAddon:
             if not response:
                 return
 
-            if response.status_code == 401 and flow.request.headers.get("x-ccproxy-oauth-injected") == "1":
+            if response.status_code == 401 and flow.metadata.get("ccproxy.oauth_injected"):
                 retried = await self._retry_with_refreshed_token(flow)
                 if retried:
                     response = flow.response
@@ -262,7 +262,7 @@ class InspectorAddon:
         else:
             headers["authorization"] = f"Bearer {new_token}"
 
-        headers.pop("x-ccproxy-oauth-injected", None)
+        headers.pop("x-ccproxy-oauth-injected", None)  # strip if somehow present from old flows
 
         async with httpx.AsyncClient(verify=False) as client:
             retry_resp = await client.request(

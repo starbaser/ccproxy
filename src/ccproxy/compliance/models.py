@@ -8,11 +8,13 @@ observations) are finalized into a ComplianceProfile.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
 
+# Need to add header order as well, all fingerprintable fields
 @dataclass
 class ProfileFeatureHeader:
     """A learned header that should be present on compliant requests."""
@@ -222,8 +224,6 @@ class ObservationAccumulator:
 
 def _serialize_for_comparison(value: Any) -> str:
     """Serialize a value for set-based deduplication."""
-    import json
-
     if isinstance(value, (dict, list)):
         return json.dumps(value, sort_keys=True, default=str)
     return str(value)

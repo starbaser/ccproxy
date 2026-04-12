@@ -2,9 +2,38 @@
 
 Drains the notification buffer for the current session and inserts
 synthetic tool_use/tool_result message pairs before the final user message,
-giving the model awareness of terminal changes without explicit polling.
-"""
+giving the model awareness of MCP notifications without explicit polling.
 
+Integration flow::
+
+    1. External MCP tool posts a notification:
+
+       POST /mcp/notify
+       {"task_id": "task-abc123", "session_id": "sess-xyz",
+        "event": {"type": "status", "status": "running", "message": "building..."}}
+
+       The endpoint returns 200 (fire-and-forget). Events accumulate in
+       ``NotificationBuffer`` keyed by (task_id, session_id).
+
+    2. On the next outbound ``/v1/messages`` request matching that session,
+       this hook drains all buffered events and synthesizes message pairs::
+
+           {"role": "assistant", "content": [
+               {"type": "tool_use", "id": "toolu_notify_<uuid>",
+                "name": "tasks_get", "input": {"taskId": "task-abc123"}}]}
+
+           {"role": "user", "content": [
+               {"type": "tool_result", "tool_use_id": "toolu_notify_<uuid>",
+                "content": "[{\"type\": \"status\", ...}]"}]}
+
+       Pairs are inserted immediately before the final user message.
+
+    3. Session linkage: ``ccproxy.session_id`` in ``flow.metadata`` (set by
+       the ``extract_session_id`` inbound hook) must match the ``session_id``
+       from the notification POST.
+
+See also: ``ccproxy.mcp.buffer``, ``ccproxy.mcp.routes``.
+"""
 from __future__ import annotations
 
 import json

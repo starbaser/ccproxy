@@ -38,7 +38,23 @@ def observe_flow(flow: HTTPFlow, client_request: ClientRequest) -> None:
         logger.debug("Compliance: no provider for host %s, skipping observation", client_request.host)
         return
 
-    bundle = extract_observation(client_request, provider)
+    extra_headers: frozenset[str] = frozenset()
+    extra_fields: frozenset[str] = frozenset()
+    try:
+        from ccproxy.config import get_config
+
+        cfg = get_config()
+        extra_headers = frozenset(h.lower() for h in cfg.compliance.additional_header_exclusions)
+        extra_fields = frozenset(cfg.compliance.additional_body_content_fields)
+    except Exception:
+        logger.debug("Failed to load classifier config additions", exc_info=True)
+
+    bundle = extract_observation(
+        client_request,
+        provider,
+        additional_header_exclusions=extra_headers,
+        additional_body_content_fields=extra_fields,
+    )
 
     try:
         store = get_store()

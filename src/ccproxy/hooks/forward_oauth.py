@@ -23,14 +23,14 @@ logger = logging.getLogger(__name__)
 
 def forward_oauth_guard(ctx: Context) -> bool:
     """Guard: run if there's an auth header with a potential sentinel key."""
-    return bool(ctx.x_api_key or ctx.authorization or ctx.get_header("x-goog-api-key"))
+    return bool(ctx.x_api_key or ctx.authorization or ctx.get_header("x-goog-api-key") or ctx.get_header("api-key"))
 
 
 @hook(
     reads=["authorization", "x-api-key"],
     writes=["authorization", "x-api-key"],
 )
-def forward_oauth(ctx: Context, params: dict[str, Any]) -> Context:
+def forward_oauth(ctx: Context, _: dict[str, Any]) -> Context:
     """Forward OAuth Bearer token to provider."""
     api_key = ctx.x_api_key or ctx.get_header("x-goog-api-key")
     auth = ctx.authorization
@@ -98,4 +98,4 @@ def _inject_token(ctx: Context, provider: str, token: str) -> None:
         if sentinel != target_header:
             ctx.set_header(sentinel, "")
 
-    ctx.set_header("x-ccproxy-oauth-injected", "1")
+    ctx.flow.metadata["ccproxy.oauth_injected"] = True

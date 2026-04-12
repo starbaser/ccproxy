@@ -277,8 +277,6 @@ def _make_response_iterator(provider: str, model: str, optional_params: dict[str
     return None
 
 
-# DEFER: Known issues — _process_event ignores multi-line SSE data fields, parse errors leak
-# provider-native SSE to OpenAI-expecting clients, model_dump() emits nulls without exclude_none.
 class SseTransformer:
     """Stateful SSE chunk transformer for flow.response.stream.
 
@@ -307,6 +305,7 @@ class SseTransformer:
         return bytes(out)
 
     def _process_event(self, event: bytes) -> bytes:
+        payloads: list[bytes] = []
         for line in event.split(b"\n"):
             line = line.strip()
             if not line.startswith(b"data:"):
@@ -314,20 +313,26 @@ class SseTransformer:
             payload = line[5:].strip()
             if payload == b"[DONE]":
                 return b""
-            try:
-                chunk_dict = json.loads(payload)
-            except json.JSONDecodeError:
-                logger.debug("SSE transform: skipping unparseable chunk")
-                return line + b"\n\n"
-            try:
-                model_chunk = self._iterator.chunk_parser(chunk_dict)
-            except Exception:
-                logger.debug("SSE transform: chunk_parser failed, passing through", exc_info=True)
-                return line + b"\n\n"
-            if model_chunk is None:
-                return b""
-            return b"data: " + json.dumps(model_chunk.model_dump()).encode() + b"\n\n"
-        return b""
+            payloads.append(payload)
+
+        if not payloads:
+            return b""
+
+        raw = b"\n".join(payloads)
+        try:
+            chunk_dict = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.debug("SSE transform: skipping unparseable chunk")
+            return b""
+        try:
+            model_chunk = self._iterator.chunk_parser(chunk_dict)
+        except Exception:
+            logger.debug("SSE transform: chunk_parser failed", exc_info=True)
+            err = json.dumps({"error": {"message": "stream chunk parse error", "type": "server_error"}})
+            return b"data: " + err.encode() + b"\n\n"
+        if model_chunk is None:
+            return b""
+        return b"data: " + json.dumps(model_chunk.model_dump(mode="json", exclude_none=True)).encode() + b"\n\n"
 
 
 def make_sse_transformer(

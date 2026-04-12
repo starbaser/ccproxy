@@ -2,8 +2,11 @@
 
 Strips ``redact-thinking-*`` from the ``anthropic-beta`` header so
 thinking blocks arrive unredacted in API responses.
+
 """
 
+# NOTE: Stripping is kept active — it is cheap (string split + filter) and harmless when
+# absent. Live traffic verification needed to confirm whether Claude Code still emits this.
 from __future__ import annotations
 
 import logging

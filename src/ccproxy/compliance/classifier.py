@@ -36,16 +36,20 @@ HEADER_EXCLUSIONS = frozenset({
     "connection",
     "accept-encoding",
     "x-ccproxy-flow-id",
-    "x-ccproxy-oauth-injected",
     "x-ccproxy-hooks",
 })
 
 
-def should_skip_header(name: str) -> bool:
+def should_skip_header(
+    name: str, additional_exclusions: frozenset[str] = frozenset(),
+) -> bool:
     """Return True if this header should NOT be included in profiles."""
-    return name.lower() in HEADER_EXCLUSIONS
+    lc = name.lower()
+    return lc in HEADER_EXCLUSIONS or lc in additional_exclusions
 
 
-def should_skip_body_field(key: str) -> bool:
+def should_skip_body_field(
+    key: str, additional_content_fields: frozenset[str] = frozenset(),
+) -> bool:
     """Return True if this top-level body field is content, not envelope."""
-    return key in BODY_CONTENT_FIELDS
+    return key in BODY_CONTENT_FIELDS or key in additional_content_fields

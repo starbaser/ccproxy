@@ -23,7 +23,6 @@ class TestHeaderExclusions:
 
     def test_internal_headers_excluded(self):
         assert should_skip_header("x-ccproxy-flow-id")
-        assert should_skip_header("x-ccproxy-oauth-injected")
         assert should_skip_header("x-ccproxy-hooks")
 
     def test_profile_headers_included(self):
@@ -36,6 +35,10 @@ class TestHeaderExclusions:
     def test_exclusion_set_complete(self):
         assert "cookie" in HEADER_EXCLUSIONS
         assert "accept-encoding" in HEADER_EXCLUSIONS
+
+    def test_additional_header_exclusion(self):
+        assert should_skip_header("x-custom-internal", frozenset({"x-custom-internal"}))
+        assert not should_skip_header("x-custom-internal")
 
 
 class TestBodyFieldClassification:
@@ -54,6 +57,10 @@ class TestBodyFieldClassification:
         assert not should_skip_body_field("generationConfig")
         assert not should_skip_body_field("safetySettings")
         assert not should_skip_body_field("systemInstruction")
+
+    def test_additional_body_content_field(self):
+        assert should_skip_body_field("custom_content", frozenset({"custom_content"}))
+        assert not should_skip_body_field("custom_content")
 
     def test_content_fields_set_completeness(self):
         expected = {

@@ -117,3 +117,17 @@ class TestExtractObservation:
         cr = _make_client_request(headers={})
         bundle = extract_observation(cr, "test")
         assert bundle.user_agent == "unknown"
+
+    def test_additional_exclusions_respected(self):
+        cr = _make_client_request(
+            headers={"user-agent": "cli/1.0", "x-internal": "secret"},
+            body={"model": "test", "messages": [], "extra_content": "noise"},
+        )
+        bundle = extract_observation(
+            cr,
+            "anthropic",
+            additional_header_exclusions=frozenset({"x-internal"}),
+            additional_body_content_fields=frozenset({"extra_content"}),
+        )
+        assert "x-internal" not in bundle.headers
+        assert "extra_content" not in bundle.body_envelope

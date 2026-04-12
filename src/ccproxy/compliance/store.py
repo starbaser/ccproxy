@@ -28,18 +28,32 @@ _FORMAT_VERSION = 1
 class ProfileStore:
     """Thread-safe persistent store for compliance profiles."""
 
-    def __init__(self, store_path: Path, min_observations: int = 3, seed_anthropic: bool = True) -> None:
+    def __init__(
+        self,
+        store_path: Path,
+        min_observations: int = 3,
+        seed_profiles: list[ComplianceProfile] | None = None,
+    ) -> None:
         self._path = store_path
         self._min_observations = min_observations
         self._lock = threading.Lock()
 
         self._profiles: dict[str, ComplianceProfile] = {}
         self._accumulators: dict[str, ObservationAccumulator] = {}
+        self._is_degraded: bool = False
 
         self._load()
 
-        if seed_anthropic and not any(p.provider == "anthropic" for p in self._profiles.values()):
-            self._create_anthropic_seed()
+        if seed_profiles:
+            seeded = False
+            for profile in seed_profiles:
+                key = _make_key(profile.provider, profile.user_agent)
+                if key not in self._profiles:
+                    self._profiles[key] = profile
+                    logger.info("Seeded compliance profile for %s (ua=%s)", profile.provider, profile.user_agent)
+                    seeded = True
+            if seeded:
+                self._flush()
 
     def submit_observation(self, bundle: ObservationBundle) -> None:
         key = _make_key(bundle.provider, bundle.user_agent)
@@ -56,7 +70,7 @@ class ProfileStore:
                 acc.observation_count,
                 self._min_observations,
                 bundle.provider,
-                _truncate_ua(bundle.user_agent),
+                bundle.user_agent,
             )
 
             if acc.observation_count >= self._min_observations:
@@ -95,30 +109,10 @@ class ProfileStore:
         with self._lock:
             return dict(self._profiles)
 
-    def _create_anthropic_seed(self) -> None:
-        from ccproxy.constants import ANTHROPIC_BETA_HEADERS, CLAUDE_CODE_SYSTEM_PREFIX
-
-        seed = ComplianceProfile(
-            provider="anthropic",
-            user_agent="v0-seed",
-            created_at="1970-01-01T00:00:00+00:00",
-            updated_at="1970-01-01T00:00:00+00:00",
-            observation_count=0,
-            is_complete=True,
-            headers=[
-                ProfileFeatureHeader(name="anthropic-beta", value=",".join(ANTHROPIC_BETA_HEADERS)),
-                ProfileFeatureHeader(name="anthropic-version", value="2023-06-01"),
-            ],
-            body_fields=[],
-            system=ProfileFeatureSystem(
-                structure=[{"type": "text", "text": CLAUDE_CODE_SYSTEM_PREFIX}]
-            ),
-        )
-
-        key = _make_key("anthropic", "v0-seed")
-        self._profiles[key] = seed
-        logger.info("Seeded Anthropic v0 compliance profile from constants")
-        self._flush()
+    @property
+    def is_degraded(self) -> bool:
+        """True when the store discarded profiles due to a format version mismatch."""
+        return self._is_degraded
 
     def _load(self) -> None:
         if not self._path.exists():
@@ -127,7 +121,22 @@ class ProfileStore:
         try:
             data = json.loads(self._path.read_text())
             if data.get("format_version") != _FORMAT_VERSION:
-                logger.warning("Unknown compliance profile format version, starting fresh")
+                has_data = bool(data.get("profiles") or data.get("accumulators"))
+                if has_data:
+                    self._is_degraded = True
+                    logger.warning(
+                        "Compliance profile format version %r (expected %r) — "
+                        "profiles discarded. Delete %s to start fresh.",
+                        data.get("format_version"),
+                        _FORMAT_VERSION,
+                        self._path,
+                    )
+                else:
+                    logger.debug(
+                        "Compliance profile format version %r (expected %r), no data present",
+                        data.get("format_version"),
+                        _FORMAT_VERSION,
+                    )
                 return
 
             for key, pd in data.get("profiles", {}).items():
@@ -166,8 +175,26 @@ def _make_key(provider: str, user_agent: str) -> str:
     return f"{provider}/{user_agent}"
 
 
-def _truncate_ua(ua: str, max_len: int = 40) -> str:
-    return ua[:max_len] + "..." if len(ua) > max_len else ua
+def _build_anthropic_seed_profile() -> ComplianceProfile:
+    """Construct the Anthropic v0 seed ComplianceProfile from known constants."""
+    from ccproxy.constants import ANTHROPIC_BETA_HEADERS, CLAUDE_CODE_SYSTEM_PREFIX
+
+    return ComplianceProfile(
+        provider="anthropic",
+        user_agent="v0-seed",
+        created_at="1970-01-01T00:00:00+00:00",
+        updated_at="1970-01-01T00:00:00+00:00",
+        observation_count=0,
+        is_complete=True,
+        headers=[
+            ProfileFeatureHeader(name="anthropic-beta", value=",".join(ANTHROPIC_BETA_HEADERS)),
+            ProfileFeatureHeader(name="anthropic-version", value="2023-06-01"),
+        ],
+        body_fields=[],
+        system=ProfileFeatureSystem(
+            structure=[{"type": "text", "text": CLAUDE_CODE_SYSTEM_PREFIX}]
+        ),
+    )
 
 
 # --- Singleton ---
@@ -197,10 +224,14 @@ def _create_store() -> ProfileStore:
 
     store_path = config_dir / "compliance_profiles.json"
 
+    seed_profiles: list[ComplianceProfile] | None = None
+    if config.compliance.seed_anthropic:
+        seed_profiles = [_build_anthropic_seed_profile()]
+
     return ProfileStore(
         store_path=store_path,
         min_observations=config.compliance.min_observations,
-        seed_anthropic=config.compliance.seed_anthropic,
+        seed_profiles=seed_profiles,
     )
 
 

@@ -47,7 +47,7 @@ def apply_compliance_guard(ctx: Context) -> bool:
     writes=["system", "metadata"],
 )
 def apply_compliance(ctx: Context, params: dict[str, Any]) -> Context:
-    """Apply the best compliance profile for the destination provider."""
+    """Apply the compliance profile for the destination provider."""
     record = ctx.flow.metadata.get(InspectorMeta.RECORD)
     transform = getattr(record, "transform", None)
     if transform is None:
@@ -55,6 +55,13 @@ def apply_compliance(ctx: Context, params: dict[str, Any]) -> Context:
 
     provider = transform.provider
     store = get_store()
+
+    if store.is_degraded:
+        logger.warning(
+            "Compliance store is degraded (format version mismatch). "
+            "Compliance headers will NOT be applied until profiles are re-learned. "
+            "Delete the compliance_profiles.json file to force a fresh start."
+        )
 
     ua_hint = _get_provider_ua_hint(provider)
     profile = store.get_profile(provider, ua_hint=ua_hint)
@@ -66,7 +73,7 @@ def apply_compliance(ctx: Context, params: dict[str, Any]) -> Context:
     logger.info(
         "Applying compliance profile for %s (ua=%s, %d headers, %d body fields)",
         provider,
-        profile.user_agent[:30],
+        profile.user_agent,
         len(profile.headers),
         len(profile.body_fields),
     )

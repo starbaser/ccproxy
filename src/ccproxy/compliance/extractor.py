@@ -19,7 +19,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def extract_observation(client_request: ClientRequest, provider: str) -> ObservationBundle:
+def extract_observation(
+    client_request: ClientRequest,
+    provider: str,
+    *,
+    additional_header_exclusions: frozenset[str] = frozenset(),
+    additional_body_content_fields: frozenset[str] = frozenset(),
+) -> ObservationBundle:
     """Extract an ObservationBundle from a raw ClientRequest snapshot.
 
     Filters out content fields (messages, tools, etc.), auth tokens,
@@ -30,7 +36,7 @@ def extract_observation(client_request: ClientRequest, provider: str) -> Observa
 
     headers: dict[str, str] = {}
     for name, value in lc_headers.items():
-        if not should_skip_header(name):
+        if not should_skip_header(name, additional_header_exclusions):
             headers[name] = value
 
     body_envelope: dict[str, Any] = {}
@@ -44,7 +50,7 @@ def extract_observation(client_request: ClientRequest, provider: str) -> Observa
                 for key, value in body.items():
                     if key == "system":
                         system = value
-                    elif not should_skip_body_field(key):
+                    elif not should_skip_body_field(key, additional_body_content_fields):
                         # Detect wrapper: a dict field containing primary payload fields
                         _PAYLOAD_MARKERS = ("contents", "messages", "prompt")
                         if (

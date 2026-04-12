@@ -118,6 +118,12 @@ class ComplianceConfig(BaseModel):
     seed_anthropic: bool = True
     """Seed an Anthropic v0 profile from existing constants on first run."""
 
+    additional_header_exclusions: list[str] = Field(default_factory=list)
+    """Additional header names to exclude from compliance profiling."""
+
+    additional_body_content_fields: list[str] = Field(default_factory=list)
+    """Additional top-level body field names to treat as content (not envelope)."""
+
 
 class OtelConfig(BaseModel):
     """OpenTelemetry configuration for span export."""

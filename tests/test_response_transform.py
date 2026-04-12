@@ -134,7 +134,7 @@ class TestSseTransformer:
         result_eos = transformer(b"")
         assert result_eos == b"data: [DONE]\n\n"
 
-    def test_chunk_parser_exception_passes_through(self) -> None:
+    def test_chunk_parser_exception_emits_openai_error(self) -> None:
         mock_iterator = MagicMock()
         mock_iterator.chunk_parser.side_effect = RuntimeError("boom")
 
@@ -143,8 +143,47 @@ class TestSseTransformer:
 
         event = b'data: {"type":"bad"}\n\n'
         result = transformer(event)
-        # Should pass through the original line on failure
-        assert b"data:" in result
+        assert result.startswith(b"data: ")
+        assert result.endswith(b"\n\n")
+        parsed = json.loads(result[6:-2])
+        assert parsed["error"]["type"] == "server_error"
+
+    def test_json_decode_error_drops_silently(self) -> None:
+        mock_iterator = MagicMock()
+
+        with patch("ccproxy.lightllm.dispatch._make_response_iterator", return_value=mock_iterator):
+            transformer = SseTransformer("anthropic", "claude-3", {})
+
+        result = transformer(b"data: not-json\n\n")
+        assert result == b""
+        mock_iterator.chunk_parser.assert_not_called()
+
+    def test_multi_line_data_concatenation(self) -> None:
+        mock_iterator = MagicMock()
+        mock_chunk = MagicMock()
+        mock_chunk.model_dump.return_value = {"choices": [{"delta": {"content": "hi"}}]}
+        mock_iterator.chunk_parser.return_value = mock_chunk
+
+        with patch("ccproxy.lightllm.dispatch._make_response_iterator", return_value=mock_iterator):
+            transformer = SseTransformer("anthropic", "claude-3", {})
+
+        event = b'data: {"type":\ndata: "ping"}\n\n'
+        result = transformer(event)
+        call_arg = mock_iterator.chunk_parser.call_args[0][0]
+        assert call_arg == {"type": "ping"}
+        assert result.startswith(b"data: ")
+
+    def test_model_dump_uses_exclude_none(self) -> None:
+        mock_iterator = MagicMock()
+        mock_chunk = MagicMock()
+        mock_chunk.model_dump.return_value = {"id": "1", "choices": []}
+        mock_iterator.chunk_parser.return_value = mock_chunk
+
+        with patch("ccproxy.lightllm.dispatch._make_response_iterator", return_value=mock_iterator):
+            transformer = SseTransformer("anthropic", "claude-3", {})
+
+        transformer(b'data: {"type":"delta"}\n\n')
+        mock_chunk.model_dump.assert_called_once_with(mode="json", exclude_none=True)
 
     def test_chunk_parser_returns_none(self) -> None:
         mock_iterator = MagicMock()

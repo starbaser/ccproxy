@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from ccproxy.compliance.models import ObservationBundle
-from ccproxy.compliance.store import ProfileStore
+from ccproxy.compliance.models import ComplianceProfile, ObservationBundle
+from ccproxy.compliance.store import ProfileStore, _build_anthropic_seed_profile
 
 
 @pytest.fixture()
@@ -16,7 +16,7 @@ def store_path(tmp_path: Path) -> Path:
 
 @pytest.fixture()
 def store(store_path: Path) -> ProfileStore:
-    return ProfileStore(store_path, min_observations=3, seed_anthropic=False)
+    return ProfileStore(store_path, min_observations=3, seed_profiles=None)
 
 
 def _bundle(provider: str = "anthropic", ua: str = "cli/1.0", **kwargs) -> ObservationBundle:
@@ -96,7 +96,7 @@ class TestGetBestProfile:
 
 class TestPersistence:
     def test_persists_to_disk(self, store_path: Path):
-        store = ProfileStore(store_path, min_observations=3, seed_anthropic=False)
+        store = ProfileStore(store_path, min_observations=3, seed_profiles=None)
         for _ in range(3):
             store.submit_observation(_bundle())
 
@@ -106,40 +106,62 @@ class TestPersistence:
         assert len(data["profiles"]) == 1
 
     def test_loads_from_disk(self, store_path: Path):
-        store1 = ProfileStore(store_path, min_observations=3, seed_anthropic=False)
+        store1 = ProfileStore(store_path, min_observations=3, seed_profiles=None)
         for _ in range(3):
             store1.submit_observation(_bundle())
 
-        store2 = ProfileStore(store_path, min_observations=3, seed_anthropic=False)
+        store2 = ProfileStore(store_path, min_observations=3, seed_profiles=None)
         profile = store2.get_profile("anthropic")
         assert profile is not None
         assert profile.is_complete is True
 
     def test_handles_malformed_file(self, store_path: Path):
         store_path.write_text("not json")
-        store = ProfileStore(store_path, min_observations=3, seed_anthropic=False)
+        store = ProfileStore(store_path, min_observations=3, seed_profiles=None)
         assert store.get_profile("anthropic") is None
 
     def test_handles_wrong_version(self, store_path: Path):
         store_path.write_text(json.dumps({"format_version": 99}))
-        store = ProfileStore(store_path, min_observations=3, seed_anthropic=False)
+        store = ProfileStore(store_path, min_observations=3, seed_profiles=None)
         assert store.get_profile("anthropic") is None
 
+    def test_degraded_on_version_mismatch_with_data(self, store_path: Path):
+        store_path.write_text(json.dumps({
+            "format_version": 99,
+            "profiles": {"anthropic/v0": {}},
+            "accumulators": {},
+        }))
+        store = ProfileStore(store_path, min_observations=3, seed_profiles=None)
+        assert store.is_degraded is True
+        assert store.get_profile("anthropic") is None
+
+    def test_not_degraded_on_version_mismatch_without_data(self, store_path: Path):
+        store_path.write_text(json.dumps({"format_version": 99}))
+        store = ProfileStore(store_path, min_observations=3, seed_profiles=None)
+        assert store.is_degraded is False
+
+    def test_not_degraded_on_valid_file(self, store_path: Path):
+        store = ProfileStore(store_path, min_observations=3, seed_profiles=None)
+        for _ in range(3):
+            store.submit_observation(_bundle())
+        store2 = ProfileStore(store_path, min_observations=3, seed_profiles=None)
+        assert store2.is_degraded is False
+
     def test_persists_accumulators(self, store_path: Path):
-        store1 = ProfileStore(store_path, min_observations=3, seed_anthropic=False)
+        store1 = ProfileStore(store_path, min_observations=3, seed_profiles=None)
         store1.submit_observation(_bundle())
         # Force flush by submitting 10 observations
         for _ in range(9):
             store1.submit_observation(_bundle())
 
-        store2 = ProfileStore(store_path, min_observations=3, seed_anthropic=False)
+        store2 = ProfileStore(store_path, min_observations=3, seed_profiles=None)
         profile = store2.get_profile("anthropic")
         assert profile is not None
 
 
 class TestAnthropicSeed:
     def test_seeds_on_first_run(self, store_path: Path):
-        store = ProfileStore(store_path, min_observations=3, seed_anthropic=True)
+        store = ProfileStore(store_path, min_observations=3, seed_profiles=[_build_anthropic_seed_profile()])
         profile = store.get_profile("anthropic")
         assert profile is not None
         assert profile.user_agent == "v0-seed"
@@ -149,22 +171,41 @@ class TestAnthropicSeed:
         assert profile.system is not None
 
     def test_skips_seed_if_profile_exists(self, store_path: Path):
-        store1 = ProfileStore(store_path, min_observations=1, seed_anthropic=False)
+        store1 = ProfileStore(store_path, min_observations=1, seed_profiles=None)
         store1.submit_observation(_bundle(provider="anthropic", ua="real-cli"))
 
-        store2 = ProfileStore(store_path, min_observations=1, seed_anthropic=True)
+        store2 = ProfileStore(store_path, min_observations=1, seed_profiles=[_build_anthropic_seed_profile()])
         profile = store2.get_profile("anthropic")
         assert profile is not None
         assert profile.user_agent == "real-cli"
 
     def test_seed_disabled(self, store_path: Path):
-        store = ProfileStore(store_path, min_observations=3, seed_anthropic=False)
+        store = ProfileStore(store_path, min_observations=3, seed_profiles=None)
         assert store.get_profile("anthropic") is None
+
+    def test_multiple_seed_profiles(self, store_path: Path):
+        seed_openai = ComplianceProfile(
+            provider="openai",
+            user_agent="v0-seed",
+            created_at="1970-01-01T00:00:00+00:00",
+            updated_at="1970-01-01T00:00:00+00:00",
+            observation_count=0,
+            is_complete=True,
+            headers=[],
+            body_fields=[],
+        )
+        store = ProfileStore(
+            store_path,
+            min_observations=3,
+            seed_profiles=[_build_anthropic_seed_profile(), seed_openai],
+        )
+        assert store.get_profile("anthropic") is not None
+        assert store.get_profile("openai") is not None
 
 
 class TestGetAllProfiles:
     def test_returns_all(self, store_path: Path):
-        store = ProfileStore(store_path, min_observations=1, seed_anthropic=False)
+        store = ProfileStore(store_path, min_observations=1, seed_profiles=None)
         store.submit_observation(_bundle(provider="a"))
         store.submit_observation(_bundle(provider="b"))
         profiles = store.get_all_profiles()
