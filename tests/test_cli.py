@@ -41,21 +41,29 @@ class TestInstallConfig:
         assert (config_dir / "ccproxy.yaml").exists()
 
         captured = capsys.readouterr()
-        assert "Installation complete!" in captured.out
+        assert "Configuration installed to:" in captured.out
         assert "Next steps:" in captured.out
 
-    def test_install_exists_no_force(self, tmp_path: Path, capsys) -> None:
-        """Test install when config already exists without force."""
+    @patch("ccproxy.cli.get_templates_dir")
+    def test_install_exists_no_force(self, mock_get_templates: Mock, tmp_path: Path, capsys) -> None:
+        """Test install skips existing files without force and reports nothing to install."""
+        templates_dir = tmp_path / "templates"
+        templates_dir.mkdir()
+        (templates_dir / "ccproxy.yaml").write_text("template content")
+
+        mock_get_templates.return_value = templates_dir
+
         config_dir = tmp_path / "config"
         config_dir.mkdir()
+        (config_dir / "ccproxy.yaml").write_text("existing content")
 
-        with pytest.raises(SystemExit) as exc_info:
-            install_config(config_dir, force=False)
+        install_config(config_dir, force=False)
 
-        assert exc_info.value.code == 1
+        assert (config_dir / "ccproxy.yaml").read_text() == "existing content"
         captured = capsys.readouterr()
-        assert "already" in captured.out and "exists" in captured.out
-        assert "Use --force to overwrite" in captured.out
+        assert "already exists" in captured.out
+        assert "use --force" in captured.out
+        assert "Nothing to install" in captured.out
 
     @patch("ccproxy.cli.get_templates_dir")
     def test_install_with_force(self, mock_get_templates: Mock, tmp_path: Path, capsys) -> None:
@@ -74,7 +82,7 @@ class TestInstallConfig:
 
         assert (config_dir / "ccproxy.yaml").read_text() == "new: config"
         captured = capsys.readouterr()
-        assert "Copied ccproxy.yaml" in captured.out
+        assert "Installed ccproxy.yaml" in captured.out
 
     @patch("ccproxy.cli.get_templates_dir")
     def test_install_template_not_found(self, mock_get_templates: Mock, tmp_path: Path, capsys) -> None:
@@ -100,7 +108,7 @@ class TestInstallConfig:
                 install_config(config_dir)
             assert exc_info.value.code == 1
 
-    def test_install_skip_existing_file(self, tmp_path: Path, capsys) -> None:  # pyright: ignore[reportUnusedParameter]
+    def test_install_skip_existing_file(self, tmp_path: Path, capsys) -> None:
         """Test install skips existing files without force flag."""
         templates_dir = tmp_path / "templates"
         templates_dir.mkdir()
@@ -111,11 +119,12 @@ class TestInstallConfig:
         (config_dir / "ccproxy.yaml").write_text("existing content")
 
         with patch("ccproxy.cli.get_templates_dir", return_value=templates_dir):
-            with pytest.raises(SystemExit) as exc_info:
-                install_config(config_dir)
-            assert exc_info.value.code == 1
+            install_config(config_dir)
 
         assert (config_dir / "ccproxy.yaml").read_text() == "existing content"
+        captured = capsys.readouterr()
+        assert "Skipping ccproxy.yaml" in captured.out
+        assert "Nothing to install" in captured.out
 
 
 class TestRunWithProxy:

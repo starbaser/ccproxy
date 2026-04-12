@@ -214,6 +214,7 @@ class TestResponseHeaders:
             model="claude-3",
             request_data={"messages": [], "max_tokens": 100},
             is_streaming=True,
+            mode="transform",
         )
         flow = self._make_flow(transform=meta)
 
@@ -307,6 +308,7 @@ class TestResponseRouteHandler:
             model="claude-3",
             request_data={"messages": [{"role": "user", "content": "hi"}], "max_tokens": 100},
             is_streaming=False,
+            mode="transform",
         )
         flow = self._make_flow_with_response(
             {"content": [{"type": "text", "text": "hello"}]},
