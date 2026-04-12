@@ -39,6 +39,12 @@ ccproxy status [--json]           # Show running state
 ccproxy install [--force]         # Install template config files
 ccproxy logs [-f] [-n LINES]     # View logs
 ccproxy dag-viz [-o ascii|mermaid|json]  # Visualize hook DAG
+ccproxy flows list [--filter PAT] [--json]  # List captured flows
+ccproxy flows req <id-prefix>     # Inspect forwarded request (post-pipeline)
+ccproxy flows res <id-prefix>     # Inspect provider response
+ccproxy flows client <id-prefix>  # Inspect client request (pre-pipeline)
+ccproxy flows diff <id1> <id2>    # Unified diff of two request bodies
+ccproxy flows --clear             # Clear all captured flows
 ```
 
 ## Architecture
@@ -98,7 +104,7 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 - `pipeline.py` — `build_executor()` bridges hook registry with mitmproxy addons. `register_pipeline_routes()` wires DAG executors as xepor route handlers.
 - `router.py` — Vendored xepor `InterceptedAPI` subclass with mitmproxy 12.x fixes (keyword `Server(address=...)`, `name` dedup, `host=None` wildcard).
 - `routes/transform.py` — REQUEST handler: two modes, `transform` (rewrite via lightllm dispatch, redirect to provider) and `passthrough` (forward unchanged). Unmatched reverse proxy flows get 501; unmatched WireGuard flows pass through. RESPONSE handler: transforms non-streaming provider responses back to OpenAI format via `transform_to_openai()`. `TransformMeta` persisted on `FlowRecord` during request phase for response handler access.
-- `namespace.py` — Rootless user+net namespace via `unshare` + `slirp4netns` + WireGuard. `PortForwarder` polls `/proc/{pid}/net/tcp` for dynamic port forwarding. Requires `slirp4netns`, `wg`, `unshare`, `nsenter`, `ip`.
+- `namespace.py` — Rootless user+net namespace via `unshare` + `slirp4netns` + WireGuard. Network topology: namespace TAP IP `10.0.2.100/24`, gateway (host) `10.0.2.2`, DNS `10.0.2.3`. Default route replaced with `wg0` so all internet traffic goes through WireGuard tunnel → mitmproxy. `route_localnet` sysctl enabled for iptables OUTPUT DNAT on loopback. Three DNAT rules: PREROUTING inbound (tap0→localhost), OUTPUT outbound (localhost→gateway), OUTPUT port remap (default port→running port). `PortForwarder` polls `/proc/{pid}/net/tcp` for dynamic `add_hostfwd` port forwarding. Requires `slirp4netns`, `wg`, `unshare`, `nsenter`, `ip`, `iptables`, `sysctl`.
 - `contentview.py` — Custom mitmproxy content view "Client-Request" showing the pre-pipeline request (method, URL, headers, body). Registered via `contentviews.add()`. Accessible at `GET /flows/{id}/request/content/client-request`.
 - `flow_store.py` — TTL store keyed by `x-ccproxy-flow-id` header for cross-addon state. `ClientRequest` dataclass snapshots the full client request (method, scheme, host, port, path, headers, body) before pipeline mutation. `TransformMeta` carries provider/model/request_data/is_streaming from request phase to response phase.
 - `telemetry.py` — Three-mode OTel: real OTLP export, no-op, or stub.
@@ -123,6 +129,8 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 - Observation is built into `InspectorAddon.request()` pre-pipeline, triggered by WireGuard flows or configured UA patterns. Profiles keyed by `(provider, user_agent)` with stability detection across N observations.
 
 **`mcp/`** — Thread-safe notification buffer (`NotificationBuffer` singleton) + `POST /mcp/notify` FastAPI endpoint for MCP terminal event ingestion.
+
+**`tools/flows.py`** — `MitmwebClient` for programmatic mitmweb REST API access + `ccproxy flows` CLI subcommand. Client authenticates via Bearer token resolved from `inspector.mitmproxy.web_password` config. Supports `list_flows()`, `get_request_body(id)`, `get_response_body(id)`, `get_client_request(id)`, `clear()`. The `_make_client()` factory reads auth from ccproxy config. `scripts/` directory contains Python scripts that import `MitmwebClient` directly for richer analysis (e.g. `verify_cch.py`).
 
 ### Configuration
 
@@ -188,6 +196,8 @@ Matching fields: `match_host` (optional, checked against pretty_host + Host head
 - **Provider model**: Providers are generic — URL + auth method + API format. LiteLLM's `ProviderConfigManager` resolves actual hosts/paths. The lightllm dispatch module has a small set of provider name strings as dispatch keys (`_GEMINI_PROVIDERS`, `_PATH_SUFFIXES`) but URL targets themselves are resolved by LiteLLM.
 - **Docker services** (`docker-compose.yaml`): `ccproxy-jaeger` (Jaeger, ports 4317/4318/16686) for OTel trace collection.
 - **Namespace lifecycle**: `--ready-fd`/`--exit-fd` pipes for clean slirp4netns lifecycle. `PortForwarder` background thread polls `/proc/{pid}/net/tcp` every 0.5s for dynamic `add_hostfwd` port forwarding.
+- **Namespace localhost routing**: Inside the WireGuard namespace, `127.0.0.1` is isolated loopback — host services are at `10.0.2.2` (slirp4netns gateway). `route_localnet` sysctl + iptables OUTPUT DNAT rules transparently redirect namespace localhost→gateway so tools with hardcoded `127.0.0.1` base URLs work. A port remap rule maps the default ccproxy port (4000) to the running instance's port when they differ.
+- **Gemini through inspector**: Gemini CLI uses `cloudcode-pa.googleapis.com/v1internal:*` endpoints. These match the `passthrough` transform rule (`match_host: cloudcode-pa.googleapis.com`). PAL MCP server uses the google-genai Python SDK which connects to `generativelanguage.googleapis.com`, but its MCP config sets `GEMINI_BASE_URL=http://127.0.0.1:4000/gemini` with sentinel key `sk-ant-oat-ccproxy-gemini`. In inspect mode, the DNAT rules redirect this through the running ccproxy instance where `forward_oauth` resolves the sentinel to a real OAuth token. The Gemini `redirect` transform rules (`match_path: /v1internal`, `/gemini/`) rewrite paths to cloudcode-pa endpoints via `_rewrite_path()`.
 
 ## Testing Patterns
 
@@ -200,7 +210,9 @@ Matching fields: `match_host` (optional, checked against pretty_host + Host head
 
 ## Dev Instance
 
-The Nix devShell configures a local dev instance via `mkConfig` at port 4001 (production default: 4000). Inspector UI at 8083. Entering the devShell auto-symlinks Nix-generated config files to `.ccproxy/` and sets `CCPROXY_CONFIG_DIR=$PWD/.ccproxy`, `CCPROXY_PORT=4001`. Inspector cert store at `./.ccproxy` (project-local, not `~/.mitmproxy`).
+The Nix devShell configures a local dev instance via `mkConfig` at port 4001 (production default: 4000). Inspector UI at 8084. Entering the devShell auto-symlinks Nix-generated config files to `.ccproxy/` and sets `CCPROXY_CONFIG_DIR=$PWD/.ccproxy`, `CCPROXY_PORT=4001`. Inspector cert store at `./.ccproxy` (project-local, not `~/.mitmproxy`).
+
+Production instance runs at port 4000 via systemd. Both instances can run simultaneously — dev on 4001, production on 4000.
 
 The `flake.nix` exports `lib.mkConfig` for other projects to generate ccproxy config with custom port/settings overrides, and `homeModules.ccproxy` (Home Manager module with `programs.ccproxy` options and systemd user service).
 
