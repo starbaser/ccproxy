@@ -37,13 +37,12 @@ ccproxy supports two authentication modes:
 **OAuth mode** (subscription accounts — Claude Max, Team, Enterprise):
 1. Client sends sentinel key `sk-ant-oat-ccproxy-{provider}` as API key
 2. `forward_oauth` hook detects sentinel prefix, looks up real token from `oat_sources`
-3. `add_beta_headers` injects required `anthropic-beta` headers
-4. `inject_claude_code_identity` prepends system message with "You are Claude Code" prefix
-5. Request reaches provider API with valid OAuth Bearer token
+3. `apply_compliance` hook stamps learned headers (`anthropic-beta`, `anthropic-version`), system prompt, and body envelope fields from a compliance profile
+4. Request reaches provider API with valid OAuth Bearer token and full compliance contract
 
 **API key mode** (direct API keys):
 1. Client sends real API key via `x-api-key` or `Authorization` header
-2. `forward_apikey` hook passes it through to the provider
+2. Key passes through to the provider unchanged
 
 ### Sentinel key format
 
@@ -56,9 +55,7 @@ Where `{provider}` matches a key in `oat_sources` config. Common values:
 - `sk-ant-oat-ccproxy-zai` — uses `oat_sources.zai` token
 - `sk-ant-oat-ccproxy-gemini` — uses `oat_sources.gemini` token
 
-### Required hooks for OAuth
-
-These hooks MUST be present in `ccproxy.yaml`:
+### Default hooks
 
 ```yaml
 hooks:
@@ -66,26 +63,24 @@ hooks:
     - ccproxy.hooks.forward_oauth
     - ccproxy.hooks.extract_session_id
   outbound:
-    - ccproxy.hooks.add_beta_headers
-    - ccproxy.hooks.inject_claude_code_identity
+    - ccproxy.hooks.inject_mcp_notifications
+    - ccproxy.hooks.verbose_mode
+    - ccproxy.hooks.apply_compliance
 ```
 
 - `forward_oauth` — substitutes sentinel key with real token, sets `Authorization: Bearer {token}`, clears `x-api-key`
-- `add_beta_headers` — adds `anthropic-beta` and `anthropic-version` headers (only for Anthropic provider)
-- `inject_claude_code_identity` — prepends "You are Claude Code, Anthropic's official CLI for Claude." to system message (only for `api.anthropic.com`, only when OAuth token detected)
+- `extract_session_id` — parses `metadata.user_id` for MCP notification routing
+- `inject_mcp_notifications` — injects buffered MCP terminal events as tool_use/tool_result pairs
+- `verbose_mode` — strips `redact-thinking-*` from `anthropic-beta` to enable full thinking output
+- `apply_compliance` — stamps learned compliance headers, body fields, and system prompt (see below)
 
-### Beta headers explained
+### Compliance-based headers and identity
 
-The `add_beta_headers` hook sets `anthropic-beta` to a comma-separated list:
+Instead of explicit hooks for beta headers and identity injection, ccproxy uses a **compliance learning system**. It passively observes legitimate CLI traffic (via WireGuard) and learns the exact headers, body fields, and system prompt that constitute a compliant request. This learned profile is then stamped onto SDK requests by `apply_compliance`.
 
-| Beta value | Purpose |
-|---|---|
-| `oauth-2025-04-20` | Enables OAuth Bearer token authentication on Anthropic's API |
-| `claude-code-20250219` | Identifies client as Claude Code (required for OAuth tokens) |
-| `interleaved-thinking-2025-05-14` | Enables extended thinking in responses |
-| `fine-grained-tool-streaming-2025-05-14` | Enables granular tool result streaming |
+The compliance system automatically handles `anthropic-beta`, `anthropic-version`, system prompt injection, and body envelope fields. An Anthropic v0 seed profile provides baseline coverage on first startup before any real traffic is observed.
 
-All four are required for OAuth tokens. The hook also sets `anthropic-version: 2023-06-01`.
+See the `using-ccproxy-inspector` skill for details on seeding and inspecting compliance profiles.
 
 ## SDK integration
 

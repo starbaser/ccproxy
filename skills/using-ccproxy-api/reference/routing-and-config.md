@@ -29,8 +29,9 @@ ccproxy_transform (lightllm dispatch)
   │
   ▼
 ccproxy_outbound (DAG hooks)
-  add_beta_headers: Injects anthropic-beta headers (OAuth only).
-  inject_claude_code_identity: Prepends system message prefix.
+  inject_mcp_notifications: Injects buffered MCP events.
+  verbose_mode: Strips redact-thinking from beta header.
+  apply_compliance: Stamps learned headers, body fields, system prompt.
   │
   ▼
 Provider API directly
@@ -51,15 +52,24 @@ ccproxy:
   debug: true
 
   oat_sources:
-    anthropic: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+    anthropic:
+      command: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+      user_agent: "claude-code"
+      destinations: ["api.anthropic.com"]
 
   hooks:
     inbound:
       - ccproxy.hooks.forward_oauth
       - ccproxy.hooks.extract_session_id
     outbound:
-      - ccproxy.hooks.add_beta_headers
-      - ccproxy.hooks.inject_claude_code_identity
+      - ccproxy.hooks.inject_mcp_notifications
+      - ccproxy.hooks.verbose_mode
+      - ccproxy.hooks.apply_compliance
+
+  compliance:
+    enabled: true
+    min_observations: 3
+    seed_anthropic: true
 
   inspector:
     port: 8083
@@ -97,12 +107,14 @@ Transform rules are configured under `inspector.transforms`. Each rule is a `Tra
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `mode` | `transform` \| `passthrough` | Default: `transform`. Passthrough forwards unchanged. |
+| `mode` | `redirect` \| `transform` \| `passthrough` | Default: `redirect`. Redirect rewrites host/auth only. Transform rewrites body format. Passthrough forwards unchanged. |
 | `match_host` | `str?` | Hostname to match (checked against `pretty_host` + `Host` header). |
 | `match_path` | `str` | Path prefix to match (default: `/`). |
 | `match_model` | `str?` | Model name substring to match in the request body. |
 | `dest_provider` | `str` | Provider name for lightllm dispatch (e.g. `anthropic`, `gemini`). |
 | `dest_model` | `str` | Model name for lightllm dispatch. |
+| `dest_host` | `str?` | Target hostname (redirect mode). |
+| `dest_path` | `str?` | Override path (redirect mode). |
 | `dest_api_key_ref` | `str?` | Provider name in `oat_sources` for credential lookup. |
 
 ### Examples
@@ -164,15 +176,11 @@ Fields:
 
 ### Token refresh
 
-Two automatic refresh triggers:
-1. **TTL-based**: Background task every 30 minutes, refreshes at `oauth_ttl * (1 - oauth_refresh_buffer)`
-2. **401-triggered**: Immediate refresh on authentication error, retries the failed request once
-
-Default: 8h TTL, 10% buffer = refresh at ~7.2 hours.
+On HTTP 401 with `x-ccproxy-oauth-injected: 1`, the inspector addon calls `refresh_oauth_token(provider)` to re-resolve the credential source. If the token changed, the request is retried with the fresh token. If unchanged, the error propagates (credential is truly stale).
 
 ### Destination matching
 
-When `forward_oauth` and `add_beta_headers` need to determine which provider a request targets, they use this priority:
+When `forward_oauth` needs to determine which provider a request targets, it uses this priority:
 
 1. `destinations` patterns in `oat_sources` (checks if host contains pattern)
-2. Model name fallback ("claude" -> anthropic, "gpt" -> openai, "gemini" -> gemini)
+2. `inspector.provider_map` (exact hostname lookup)
