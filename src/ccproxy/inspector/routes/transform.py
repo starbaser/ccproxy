@@ -194,8 +194,9 @@ def _handle_transform(flow: HTTPFlow, target: TransformRoute, body: dict[str, ob
         except Exception:
             logger.warning("Context cache resolution failed, proceeding without", exc_info=True)
 
+    model = target.dest_model or str(body.get("model", ""))
     url, headers, new_body = transform_to_provider(
-        model=target.dest_model,
+        model=model,
         provider=target.dest_provider,
         messages=messages,  # type: ignore[arg-type]
         optional_params=optional_params,

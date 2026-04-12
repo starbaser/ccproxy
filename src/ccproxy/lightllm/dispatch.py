@@ -1,8 +1,11 @@
-"""Orchestrates LiteLLM's BaseConfig transformation pipeline.
+"""Orchestrates LiteLLM's BaseConfig transformation pipeline without
+importing any LiteLLM proxy depedencies.
 
-Sequences the canonical LiteLLM method chain — validate_environment →
-get_complete_url → transform_request → sign_request → transform_response —
-without pulling in cost tracking, callbacks, caching, or the Logging class.
+The canonical LiteLLM method chain:
+validate_environment → get_complete_url →
+   transform_request → sign_request → transform_response
+→ to outbound ccproxy pipeline
+
 
 Gemini/Vertex AI has a custom code path that bypasses BaseConfig.transform_request()
 entirely.  We import ``_transform_request_body`` and ``_get_gemini_url`` directly.
@@ -140,6 +143,14 @@ def transform_to_provider(
     api_base = _resolve_api_base(provider, model, api_base)
     litellm_params: dict[str, Any] = {"api_key": api_key, "api_base": api_base}
 
+    # Convert OpenAI-format params (tool_choice, tools, etc.) to provider-native format.
+    optional_params = config.map_openai_params(
+        non_default_params=optional_params,
+        optional_params={},
+        model=model,
+        drop_params=True,
+    )
+
     headers = config.validate_environment(
         headers={},
         model=model,
@@ -171,18 +182,17 @@ def transform_to_provider(
     if stream and config.supports_stream_param_in_request_body:
         data["stream"] = True
 
-    headers, signed_body = config.sign_request(
+    headers = config.sign_request(
         headers=headers,
         optional_params=optional_params,
         request_data=data,
         api_base=url,
-        api_key=api_key,
         stream=stream,
         fake_stream=False,
         model=model,
     )
 
-    body = signed_body if signed_body is not None else json.dumps(data).encode()
+    body = json.dumps(data).encode()
     return url, headers, body
 
 
@@ -267,6 +277,8 @@ def _make_response_iterator(provider: str, model: str, optional_params: dict[str
     return None
 
 
+# DEFER: Known issues — _process_event ignores multi-line SSE data fields, parse errors leak
+# provider-native SSE to OpenAI-expecting clients, model_dump() emits nulls without exclude_none.
 class SseTransformer:
     """Stateful SSE chunk transformer for flow.response.stream.
 
