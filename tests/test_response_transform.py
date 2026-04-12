@@ -8,8 +8,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from mitmproxy.proxy.mode_specs import ProxyMode
+
 from ccproxy.inspector.flow_store import FlowRecord, InspectorMeta, TransformMeta
-from ccproxy.lightllm.dispatch import MitmResponseShim, SseTransformer, make_sse_transformer
+from ccproxy.lightllm.dispatch import (
+    MitmResponseShim,
+    SseTransformer,
+    _make_response_iterator,
+    make_sse_transformer,
+)
 
 # --- MitmResponseShim ---
 
@@ -456,6 +463,59 @@ class TestTransformMetaPersistence:
         assert record.transform.is_streaming is True
         assert "messages" in record.transform.request_data
 
+    def test_redirect_does_not_store_transform_mode(self, cleanup: None) -> None:
+        """Redirect mode sets TransformMeta with mode='redirect', not 'transform'."""
+        from ccproxy.config import (
+            CCProxyConfig,
+            InspectorConfig,
+            TransformRoute,
+            set_config_instance,
+        )
+        from ccproxy.inspector.router import InspectorRouter
+        from ccproxy.inspector.routes.transform import register_transform_routes
+
+        transform_routes = [TransformRoute(
+            mode="redirect",
+            match_host="api.openai.com",
+            match_path="/v1/",
+            dest_provider="anthropic",
+            dest_host="api.anthropic.com",
+        )]
+        config = CCProxyConfig(inspector=InspectorConfig(transforms=transform_routes))
+        set_config_instance(config)
+
+        router = InspectorRouter(
+            name="test_transform", request_passthrough=True, response_passthrough=True,
+        )
+        register_transform_routes(router)
+
+        record = FlowRecord(direction="inbound")
+        flow = MagicMock()
+        flow.request.pretty_host = "api.openai.com"
+        flow.request.host = "api.openai.com"
+        flow.request.path = "/v1/chat/completions"
+        flow.request.port = 443
+        flow.request.scheme = "https"
+        flow.request.headers = {}
+        flow.request.content = json.dumps({"model": "claude-3", "messages": []}).encode()
+        flow.metadata = {InspectorMeta.DIRECTION: "inbound", InspectorMeta.RECORD: record}
+        flow.server_conn = MagicMock()
+        flow.response = None
+        flow.client_conn.proxy_mode = ProxyMode.parse("reverse:http://localhost:1@4001")
+
+        router.request(flow)
+
+        assert record.transform is not None
+        assert record.transform.mode == "redirect"
+
+        # Response handler should skip redirect mode (only processes transform mode)
+        flow.response = MagicMock()
+        flow.response.status_code = 200
+        flow.response.content = b'{"original": true}'
+        original_content = flow.response.content
+        router.response(flow)
+        assert flow.response.content == original_content
+
     def test_passthrough_does_not_store_transform_meta(self, cleanup: None) -> None:
         from ccproxy.config import (
             CCProxyConfig,
@@ -499,3 +559,27 @@ class TestTransformMetaPersistence:
         router.request(flow)
 
         assert record.transform is None
+
+
+class TestMakeResponseIterator:
+    """Tests for _make_response_iterator — provider dispatch."""
+
+    def test_gemini_returns_gemini_iterator(self) -> None:
+        iterator = _make_response_iterator("gemini", "gemini-2.0-flash", {})
+        assert iterator is not None
+        assert "Gemini" in type(iterator).__qualname__ or "ModelResponseIterator" in type(iterator).__name__
+
+    def test_anthropic_returns_anthropic_iterator(self) -> None:
+        iterator = _make_response_iterator("anthropic", "claude-3", {})
+        assert iterator is not None
+        assert "ModelResponseIterator" in type(iterator).__name__
+
+    def test_vertex_ai_returns_gemini_iterator(self) -> None:
+        iterator = _make_response_iterator("vertex_ai", "gemini-2.0-flash", {})
+        assert iterator is not None
+
+    def test_generic_provider_fallback(self) -> None:
+        # OpenAI natively outputs OpenAI-format SSE, so iterator may be None
+        iterator = _make_response_iterator("openai", "gpt-4o", {})
+        # Either returns an iterator or None (both valid for OpenAI)
+        assert iterator is None or hasattr(iterator, "chunk_parser")

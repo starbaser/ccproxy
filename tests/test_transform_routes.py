@@ -11,11 +11,12 @@ import pytest
 from mitmproxy.proxy.mode_specs import ProxyMode
 
 from ccproxy.config import InspectorConfig, TransformRoute, set_config_instance
-from ccproxy.inspector.flow_store import InspectorMeta
+from ccproxy.inspector.flow_store import FlowRecord, InspectorMeta
 from ccproxy.inspector.router import InspectorRouter
 from ccproxy.inspector.routes.transform import (
     _resolve_api_key,
     _resolve_transform_target,
+    _rewrite_path,
     register_transform_routes,
 )
 
@@ -345,3 +346,288 @@ class TestHandleTransform:
         assert flow.request.path == original_path
         assert flow.request.content == original_content
         assert flow.response is None
+
+
+class TestRewritePath:
+    """Tests for _rewrite_path — Gemini action extraction and path rewriting."""
+
+    def test_non_gemini_provider_returns_none(self) -> None:
+        target = TransformRoute(dest_provider="anthropic", match_path="/v1/")
+        assert _rewrite_path("/models/claude:chat", target) is None
+
+    def test_gemini_generate_content(self) -> None:
+        target = TransformRoute(dest_provider="gemini", match_path="/v1beta/")
+        result = _rewrite_path("/models/gemini-pro:generateContent", target)
+        assert result == "/v1internal:generateContent"
+
+    def test_gemini_stream_generate_content(self) -> None:
+        target = TransformRoute(dest_provider="gemini", match_path="/v1beta/")
+        result = _rewrite_path("/models/gemini-pro:streamGenerateContent", target)
+        assert result == "/v1internal:streamGenerateContent?alt=sse"
+
+    def test_gemini_stream_with_query_params(self) -> None:
+        target = TransformRoute(dest_provider="gemini", match_path="/v1beta/")
+        result = _rewrite_path("/models/gemini-pro:streamGenerateContent?alt=sse", target)
+        assert result == "/v1internal:streamGenerateContent?alt=sse"
+
+    def test_gemini_no_action_returns_none(self) -> None:
+        target = TransformRoute(dest_provider="gemini", match_path="/v1beta/")
+        assert _rewrite_path("/some/path/without/action", target) is None
+
+
+class TestHandleRedirect:
+    """Tests for redirect mode — host rewriting, path override, auth injection."""
+
+    def _make_redirect_config(self, overrides: dict[str, Any] | None = None) -> None:
+        base = {
+            "mode": "redirect",
+            "match_host": "proxy.local",
+            "match_path": "/v1/",
+            "dest_provider": "anthropic",
+            "dest_host": "api.anthropic.com",
+        }
+        base.update(overrides or {})
+        _make_config_with_transforms([base])
+
+    def _make_redirect_flow(self, path: str = "/v1/messages", host: str = "proxy.local") -> MagicMock:
+        record = FlowRecord(direction="inbound")
+        flow = _make_flow(host=host, path=path)
+        flow.metadata[InspectorMeta.RECORD] = record
+        return flow
+
+    def test_redirect_rewrites_host_and_port(self, cleanup: None) -> None:
+        self._make_redirect_config()
+        router = InspectorRouter(name="test_redir", request_passthrough=True, response_passthrough=True)
+        register_transform_routes(router)
+
+        flow = self._make_redirect_flow()
+        router.request(flow)
+
+        assert flow.request.host == "api.anthropic.com"
+        assert flow.request.port == 443
+        assert flow.request.scheme == "https"
+
+    def test_redirect_with_dest_path_override(self, cleanup: None) -> None:
+        self._make_redirect_config({"dest_path": "/v2/override"})
+        router = InspectorRouter(name="test_redir", request_passthrough=True, response_passthrough=True)
+        register_transform_routes(router)
+
+        flow = self._make_redirect_flow(path="/v1/messages")
+        router.request(flow)
+
+        assert flow.request.path == "/v2/override"
+
+    def test_redirect_strips_match_prefix(self, cleanup: None) -> None:
+        self._make_redirect_config({"match_path": "/gemini/"})
+        router = InspectorRouter(name="test_redir", request_passthrough=True, response_passthrough=True)
+        register_transform_routes(router)
+
+        flow = self._make_redirect_flow(path="/gemini/v1beta/models/gemini-pro:generateContent")
+        router.request(flow)
+
+        # Prefix /gemini stripped, remainder preserved
+        assert flow.request.path.startswith("/v1beta/")
+
+    def test_redirect_gemini_path_rewrite(self, cleanup: None) -> None:
+        self._make_redirect_config({
+            "match_path": "/gemini/",
+            "dest_provider": "gemini",
+            "dest_host": "cloudcode-pa.googleapis.com",
+        })
+        router = InspectorRouter(name="test_redir", request_passthrough=True, response_passthrough=True)
+        register_transform_routes(router)
+
+        flow = self._make_redirect_flow(path="/gemini/models/gemini-pro:generateContent")
+        router.request(flow)
+
+        assert flow.request.path == "/v1internal:generateContent"
+        assert flow.request.host == "cloudcode-pa.googleapis.com"
+
+    def test_redirect_missing_dest_host_passthrough(self, cleanup: None) -> None:
+        _make_config_with_transforms([{
+            "mode": "redirect",
+            "match_host": "proxy.local",
+            "match_path": "/v1/",
+            "dest_provider": "anthropic",
+            # dest_host intentionally missing
+        }])
+        router = InspectorRouter(name="test_redir", request_passthrough=True, response_passthrough=True)
+        register_transform_routes(router)
+
+        flow = self._make_redirect_flow()
+        original_host = flow.request.host
+        router.request(flow)
+
+        # Falls back to passthrough (host unchanged)
+        assert flow.request.host == original_host
+
+    def test_redirect_stores_transform_meta(self, cleanup: None) -> None:
+        self._make_redirect_config()
+        router = InspectorRouter(name="test_redir", request_passthrough=True, response_passthrough=True)
+        register_transform_routes(router)
+
+        flow = self._make_redirect_flow()
+        router.request(flow)
+
+        record = flow.metadata[InspectorMeta.RECORD]
+        assert record.transform is not None
+        assert record.transform.provider == "anthropic"
+
+    def test_redirect_injects_api_key(self, cleanup: None) -> None:
+        from ccproxy.config import CCProxyConfig, OAuthSource
+
+        config = CCProxyConfig(
+            inspector=InspectorConfig(transforms=[TransformRoute(
+                mode="redirect",
+                match_host="proxy.local",
+                match_path="/v1/",
+                dest_provider="anthropic",
+                dest_host="api.anthropic.com",
+                dest_api_key_ref="anthropic",
+            )]),
+            oat_sources={"anthropic": OAuthSource(command="echo tok")},
+        )
+        config._oat_values["anthropic"] = "injected-token"
+        set_config_instance(config)
+
+        router = InspectorRouter(name="test_redir", request_passthrough=True, response_passthrough=True)
+        register_transform_routes(router)
+
+        flow = self._make_redirect_flow()
+        router.request(flow)
+
+        assert flow.request.headers.get("authorization") == "Bearer injected-token"
+
+
+class TestContextCacheInTransform:
+    """Tests for Gemini context cache integration in _handle_transform."""
+
+    @patch("ccproxy.lightllm.transform_to_provider")
+    @patch("ccproxy.lightllm.context_cache.resolve_cached_content")
+    def test_gemini_calls_resolve_cached_content(
+        self, mock_cache: MagicMock, mock_transform: MagicMock, cleanup: None,
+    ) -> None:
+        _make_config_with_transforms([{
+            "mode": "transform",
+            "match_host": "api.openai.com",
+            "match_path": "/",
+            "dest_provider": "gemini",
+            "dest_model": "gemini-2.0-flash",
+        }])
+
+        mock_cache.return_value = (
+            [{"role": "user", "content": "filtered"}],
+            {"model": "gemini-2.0-flash"},
+            "cachedContents/abc123",
+        )
+        mock_transform.return_value = ("https://gemini.googleapis.com/v1", {}, b"{}")
+
+        router = InspectorRouter(name="test_cache", request_passthrough=True, response_passthrough=True)
+        register_transform_routes(router)
+
+        flow = _make_flow(body={
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "hello"}],
+        })
+        router.request(flow)
+
+        mock_cache.assert_called_once()
+        mock_transform.assert_called_once()
+        # cached_content should be passed to transform_to_provider
+        assert mock_transform.call_args.kwargs.get("cached_content") == "cachedContents/abc123"
+
+    @patch("ccproxy.lightllm.transform_to_provider")
+    @patch("ccproxy.lightllm.context_cache.resolve_cached_content", side_effect=RuntimeError("cache boom"))
+    def test_gemini_cache_failure_graceful(
+        self, mock_cache: MagicMock, mock_transform: MagicMock, cleanup: None,
+    ) -> None:
+        _make_config_with_transforms([{
+            "mode": "transform",
+            "match_host": "api.openai.com",
+            "match_path": "/",
+            "dest_provider": "gemini",
+            "dest_model": "gemini-2.0-flash",
+        }])
+
+        mock_transform.return_value = ("https://gemini.googleapis.com/v1", {}, b"{}")
+
+        router = InspectorRouter(name="test_cache", request_passthrough=True, response_passthrough=True)
+        register_transform_routes(router)
+
+        flow = _make_flow(body={
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "hello"}],
+        })
+        router.request(flow)
+
+        # Transform still proceeds despite cache failure
+        mock_transform.assert_called_once()
+        assert mock_transform.call_args.kwargs.get("cached_content") is None
+
+    @patch("ccproxy.lightllm.transform_to_provider")
+    def test_non_gemini_skips_context_cache(
+        self, mock_transform: MagicMock, cleanup: None,
+    ) -> None:
+        _make_config_with_transforms([{
+            "mode": "transform",
+            "match_host": "api.openai.com",
+            "match_path": "/",
+            "dest_provider": "anthropic",
+            "dest_model": "claude-3",
+        }])
+
+        mock_transform.return_value = ("https://api.anthropic.com/v1/messages", {}, b"{}")
+
+        router = InspectorRouter(name="test_cache", request_passthrough=True, response_passthrough=True)
+        register_transform_routes(router)
+
+        flow = _make_flow()
+        with patch("ccproxy.lightllm.context_cache.resolve_cached_content") as mock_cache:
+            router.request(flow)
+            mock_cache.assert_not_called()
+
+
+class TestResponseTransformExceptionHandling:
+    """Tests for response-phase exception handling."""
+
+    @patch("ccproxy.lightllm.transform_to_openai", side_effect=RuntimeError("transform exploded"))
+    def test_transform_exception_passes_through(self, mock_transform: MagicMock, cleanup: None) -> None:
+        from ccproxy.config import CCProxyConfig
+
+        config = CCProxyConfig()
+        set_config_instance(config)
+
+        from ccproxy.inspector.flow_store import TransformMeta
+
+        router = InspectorRouter(name="test_resp", request_passthrough=True, response_passthrough=True)
+        register_transform_routes(router)
+
+        meta = TransformMeta(
+            provider="anthropic",
+            model="claude-3",
+            request_data={"messages": [{"role": "user", "content": "hi"}], "max_tokens": 100},
+            is_streaming=False,
+            mode="transform",
+        )
+        record = FlowRecord(direction="inbound", transform=meta)
+
+        flow = MagicMock()
+        flow.request.pretty_host = "api.anthropic.com"
+        flow.request.path = "/v1/messages"
+        flow.request.content = b"{}"
+        flow.request.headers = {}
+        flow.client_conn.proxy_mode = ProxyMode.parse("reverse:http://localhost:1@4001")
+        flow.response = MagicMock()
+        flow.response.status_code = 200
+        flow.response.content = b'{"original": true}'
+        resp_headers = MagicMock()
+        resp_headers.items.return_value = [("content-type", "application/json")]
+        flow.response.headers = resp_headers
+        flow.metadata = {InspectorMeta.DIRECTION: "inbound", InspectorMeta.RECORD: record}
+        flow.server_conn = MagicMock()
+
+        original_content = flow.response.content
+        router.response(flow)
+
+        # Response content unchanged — exception was caught
+        assert flow.response.content == original_content

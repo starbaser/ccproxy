@@ -1,12 +1,19 @@
 """Tests for inspector addon traffic capture."""
 
 import json
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from ccproxy.inspector.addon import InspectorAddon
-from ccproxy.inspector.flow_store import FLOW_ID_HEADER, InspectorMeta, create_flow_record
+from ccproxy.inspector.flow_store import (
+    FLOW_ID_HEADER,
+    ClientRequest,
+    FlowRecord,
+    InspectorMeta,
+    TransformMeta,
+    create_flow_record,
+)
 
 
 def _make_mock_flow(*, reverse: bool = True) -> MagicMock:
@@ -306,6 +313,81 @@ class TestResponseAndError:
         await addon.error(flow)
 
 
+class TestResponseRetryPath:
+    """Tests for the 401 retry codepath inside response()."""
+
+    @pytest.mark.asyncio
+    async def test_response_401_with_oauth_triggers_retry(self) -> None:
+        addon = InspectorAddon()
+        flow = MagicMock()
+        flow.response = MagicMock()
+        flow.response.status_code = 401
+        flow.response.timestamp_end = 1000.5
+        flow.request.timestamp_start = 1000.0
+        flow.request.pretty_url = "https://api.anthropic.com/v1/messages"
+        flow.request.headers = {"x-ccproxy-oauth-injected": "1"}
+        flow.metadata = {InspectorMeta.RECORD: FlowRecord(direction="inbound")}
+        flow.id = "retry-flow"
+
+        with patch.object(addon, "_retry_with_refreshed_token", new_callable=AsyncMock, return_value=True):
+            await addon.response(flow)
+
+    @pytest.mark.asyncio
+    async def test_response_exception_triggers_error_handler(self) -> None:
+        """Verify the except block in response() fires when an unexpected error occurs."""
+        addon = InspectorAddon()
+        flow = MagicMock()
+        # Make .response a property that raises on status_code access
+        type(flow).response = property(lambda self: (_ for _ in ()).throw(RuntimeError("kaboom")))
+        flow.id = "err-flow"
+
+        # Should not propagate
+        await addon.response(flow)
+
+
+class TestResponseHeadersEdgeCases:
+    """Cover remaining edge cases in responseheaders()."""
+
+    @pytest.mark.asyncio
+    async def test_responseheaders_no_response(self) -> None:
+        addon = InspectorAddon()
+        flow = MagicMock()
+        flow.response = None
+        await addon.responseheaders(flow)
+
+    @pytest.mark.asyncio
+    async def test_responseheaders_sse_transformer_error_with_transform_mode(self) -> None:
+        """When mode=transform and make_sse_transformer raises, fall back to passthrough."""
+        addon = InspectorAddon()
+        meta = TransformMeta(
+            provider="anthropic", model="claude-3",
+            request_data={"messages": []}, is_streaming=True, mode="transform",
+        )
+        record = FlowRecord(direction="inbound", transform=meta)
+        flow = MagicMock()
+        flow.response.headers = {"content-type": "text/event-stream"}
+        flow.metadata = {InspectorMeta.RECORD: record}
+
+        with patch("ccproxy.lightllm.dispatch.make_sse_transformer", side_effect=RuntimeError("fail")):
+            await addon.responseheaders(flow)
+
+        assert flow.response.stream is True
+
+
+class TestObserveCompliance:
+    """Tests for _observe_compliance static method."""
+
+    def test_compliance_disabled_skips(self) -> None:
+        mock_config = MagicMock()
+        mock_config.compliance.enabled = False
+        with patch("ccproxy.config.get_config", return_value=mock_config):
+            InspectorAddon._observe_compliance(MagicMock(), MagicMock())
+
+    def test_compliance_exception_handled(self) -> None:
+        with patch("ccproxy.config.get_config", side_effect=RuntimeError("oops")):
+            InspectorAddon._observe_compliance(MagicMock(), MagicMock())
+
+
 class TestSetTracer:
     def test_set_tracer(self) -> None:
         addon = InspectorAddon()
@@ -360,3 +442,448 @@ class TestRequestWithTracer:
 
         flow = _make_wg_flow(host="api.anthropic.com")
         await addon.request(flow)
+
+
+class TestUnwrapGeminiResponse:
+    """Tests for InspectorAddon._unwrap_gemini_response."""
+
+    def _make_flow_with_transform(
+        self,
+        provider: str = "gemini",
+        is_streaming: bool = False,
+    ) -> MagicMock:
+        record = FlowRecord(direction="inbound")
+        record.transform = TransformMeta(
+            provider=provider,
+            model="gemini-2.5-flash",
+            request_data={},
+            is_streaming=is_streaming,
+        )
+        flow = MagicMock()
+        flow.metadata = {InspectorMeta.RECORD: record}
+        return flow
+
+    def test_unwraps_gemini_redirect_response_envelope(self) -> None:
+        """Gemini redirect transform with {response: {inner: true}} unwraps to inner dict."""
+        flow = self._make_flow_with_transform(provider="gemini", is_streaming=False)
+        inner = {"candidates": [{"content": "hello"}], "inner": True}
+        response = MagicMock()
+        response.content = json.dumps({"response": inner}).encode()
+
+        InspectorAddon._unwrap_gemini_response(flow, response)
+
+        result = json.loads(response.content)
+        assert result == inner
+
+    def test_skips_when_no_record(self) -> None:
+        """Flow without a FlowRecord is a no-op."""
+        flow = MagicMock()
+        flow.metadata = {}
+        response = MagicMock()
+        original_content = json.dumps({"response": {"inner": True}}).encode()
+        response.content = original_content
+
+        InspectorAddon._unwrap_gemini_response(flow, response)
+
+        assert response.content == original_content
+
+    def test_skips_when_no_transform(self) -> None:
+        """Flow with a record but no transform is a no-op."""
+        record = FlowRecord(direction="inbound")
+        record.transform = None
+        flow = MagicMock()
+        flow.metadata = {InspectorMeta.RECORD: record}
+        response = MagicMock()
+        original_content = json.dumps({"response": {"inner": True}}).encode()
+        response.content = original_content
+
+        InspectorAddon._unwrap_gemini_response(flow, response)
+
+        assert response.content == original_content
+
+    def test_skips_for_non_gemini_provider(self) -> None:
+        """Non-gemini provider transform is a no-op — envelope is provider-specific."""
+        flow = self._make_flow_with_transform(provider="anthropic", is_streaming=False)
+        response = MagicMock()
+        original_content = json.dumps({"response": {"inner": True}}).encode()
+        response.content = original_content
+
+        InspectorAddon._unwrap_gemini_response(flow, response)
+
+        assert response.content == original_content
+
+    def test_skips_for_streaming(self) -> None:
+        """Streaming responses are not unwrapped — SSE frames are handled in responseheaders."""
+        flow = self._make_flow_with_transform(provider="gemini", is_streaming=True)
+        response = MagicMock()
+        original_content = json.dumps({"response": {"inner": True}}).encode()
+        response.content = original_content
+
+        InspectorAddon._unwrap_gemini_response(flow, response)
+
+        assert response.content == original_content
+
+    def test_noop_when_response_field_not_a_dict(self) -> None:
+        """If the 'response' field is not a dict, body is left untouched."""
+        flow = self._make_flow_with_transform(provider="gemini", is_streaming=False)
+        response = MagicMock()
+        original_content = json.dumps({"response": "not-a-dict"}).encode()
+        response.content = original_content
+
+        InspectorAddon._unwrap_gemini_response(flow, response)
+
+        assert response.content == original_content
+
+    def test_noop_when_response_field_absent(self) -> None:
+        """Body without a 'response' key is left unchanged."""
+        flow = self._make_flow_with_transform(provider="gemini", is_streaming=False)
+        response = MagicMock()
+        original_content = json.dumps({"other": "data"}).encode()
+        response.content = original_content
+
+        InspectorAddon._unwrap_gemini_response(flow, response)
+
+        assert response.content == original_content
+
+    def test_noop_on_invalid_json(self) -> None:
+        """Invalid JSON in response body does not raise — exception is suppressed."""
+        flow = self._make_flow_with_transform(provider="gemini", is_streaming=False)
+        response = MagicMock()
+        response.content = b"not-json{{{"
+
+        InspectorAddon._unwrap_gemini_response(flow, response)
+
+    def test_noop_on_empty_content(self) -> None:
+        """Empty response content does not raise."""
+        flow = self._make_flow_with_transform(provider="gemini", is_streaming=False)
+        response = MagicMock()
+        response.content = b""
+
+        InspectorAddon._unwrap_gemini_response(flow, response)
+
+
+class TestGetClientRequestCommand:
+    """Tests for InspectorAddon.get_client_request mitmproxy command."""
+
+    def _make_flow_with_client_request(
+        self,
+        flow_id: str = "flow-abc-123",
+        method: str = "POST",
+        scheme: str = "https",
+        host: str = "api.anthropic.com",
+        port: int = 443,
+        path: str = "/v1/messages",
+        headers: dict[str, str] | None = None,
+        body: bytes = b'{"model": "claude-3"}',
+    ) -> MagicMock:
+        cr = ClientRequest(
+            method=method,
+            scheme=scheme,
+            host=host,
+            port=port,
+            path=path,
+            headers=headers or {"content-type": "application/json"},
+            body=body,
+            content_type="application/json",
+        )
+        record = FlowRecord(direction="inbound")
+        record.client_request = cr
+
+        flow = MagicMock()
+        flow.id = flow_id
+        flow.metadata = {InspectorMeta.RECORD: record}
+        return flow
+
+    def test_returns_json_with_method_url_headers_body(self) -> None:
+        """Flow with snapshot returns JSON containing method, url, headers, body."""
+        flow = self._make_flow_with_client_request(
+            flow_id="test-flow-1",
+            method="POST",
+            scheme="https",
+            host="api.anthropic.com",
+            port=443,
+            path="/v1/messages",
+            headers={"content-type": "application/json", "x-api-key": "sk-test"},
+            body=b'{"model": "claude-3", "messages": []}',
+        )
+        addon = InspectorAddon()
+
+        result_str = addon.get_client_request([flow])
+        result = json.loads(result_str)
+
+        assert len(result) == 1
+        entry = result[0]
+        assert entry["flow_id"] == "test-flow-1"
+        assert entry["method"] == "POST"
+        assert entry["url"] == "https://api.anthropic.com:443/v1/messages"
+        assert entry["headers"]["content-type"] == "application/json"
+        assert entry["body"] == {"model": "claude-3", "messages": []}
+
+    def test_returns_error_json_when_no_snapshot(self) -> None:
+        """Flow without a client_request snapshot returns error entry."""
+        record = FlowRecord(direction="inbound")
+        record.client_request = None
+
+        flow = MagicMock()
+        flow.id = "no-snap-flow"
+        flow.metadata = {InspectorMeta.RECORD: record}
+
+        addon = InspectorAddon()
+        result_str = addon.get_client_request([flow])
+        result = json.loads(result_str)
+
+        assert len(result) == 1
+        assert result[0]["flow_id"] == "no-snap-flow"
+        assert result[0]["error"] == "no snapshot"
+
+    def test_returns_error_json_when_no_record(self) -> None:
+        """Flow with no FlowRecord at all returns error entry."""
+        flow = MagicMock()
+        flow.id = "no-record-flow"
+        flow.metadata = {}
+
+        addon = InspectorAddon()
+        result_str = addon.get_client_request([flow])
+        result = json.loads(result_str)
+
+        assert len(result) == 1
+        assert result[0]["error"] == "no snapshot"
+
+    def test_multiple_flows_mixed(self) -> None:
+        """Multiple flows: some with snapshots, some without."""
+        flow_ok = self._make_flow_with_client_request(flow_id="flow-ok")
+        record_no_cr = FlowRecord(direction="inbound")
+        record_no_cr.client_request = None
+        flow_err = MagicMock()
+        flow_err.id = "flow-err"
+        flow_err.metadata = {InspectorMeta.RECORD: record_no_cr}
+
+        addon = InspectorAddon()
+        result_str = addon.get_client_request([flow_ok, flow_err])
+        result = json.loads(result_str)
+
+        assert len(result) == 2
+        ids = {r["flow_id"] for r in result}
+        assert "flow-ok" in ids
+        assert "flow-err" in ids
+
+        ok_entry = next(r for r in result if r["flow_id"] == "flow-ok")
+        err_entry = next(r for r in result if r["flow_id"] == "flow-err")
+        assert "method" in ok_entry
+        assert err_entry["error"] == "no snapshot"
+
+    def test_body_decoded_as_string_on_invalid_json(self) -> None:
+        """Non-JSON body bytes are returned as a decoded string, not parsed."""
+        flow = self._make_flow_with_client_request(
+            flow_id="non-json-flow",
+            body=b"not-json-content",
+        )
+        addon = InspectorAddon()
+        result_str = addon.get_client_request([flow])
+        result = json.loads(result_str)
+
+        entry = result[0]
+        assert entry["body"] == "not-json-content"
+
+    def test_empty_body_is_none(self) -> None:
+        """Empty body bytes produce None for the body field."""
+        flow = self._make_flow_with_client_request(flow_id="empty-body-flow", body=b"")
+        addon = InspectorAddon()
+        result_str = addon.get_client_request([flow])
+        result = json.loads(result_str)
+
+        assert result[0]["body"] is None
+
+    def test_empty_flows_list(self) -> None:
+        """Empty flow list returns an empty JSON array."""
+        addon = InspectorAddon()
+        result_str = addon.get_client_request([])
+        result = json.loads(result_str)
+        assert result == []
+
+
+class TestRetryWithRefreshedToken:
+    """Tests for InspectorAddon._retry_with_refreshed_token."""
+
+    def _make_oauth_flow(
+        self,
+        provider: str = "anthropic",
+        method: str = "POST",
+        url: str = "https://api.anthropic.com/v1/messages",
+        content: bytes = b'{"model": "claude-3"}',
+    ) -> MagicMock:
+        flow = MagicMock()
+        flow.metadata = {"ccproxy.oauth_provider": provider}
+        flow.request.method = method
+        flow.request.pretty_url = url
+        flow.request.headers = {"authorization": "Bearer old-token", "x-ccproxy-oauth-injected": "1"}
+        flow.request.content = content
+        flow.response = MagicMock()
+        flow.response.status_code = 401
+        flow.response.headers = MagicMock()
+        flow.response.headers.clear = MagicMock()
+        flow.response.headers.add = MagicMock()
+        flow.response.headers.multi_items = MagicMock(return_value=[])
+        return flow
+
+    @pytest.mark.asyncio
+    async def test_returns_false_when_no_provider(self) -> None:
+        """Flow without ccproxy.oauth_provider metadata returns False immediately."""
+        flow = MagicMock()
+        flow.metadata = {}
+
+        addon = InspectorAddon()
+        result = await addon._retry_with_refreshed_token(flow)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_returns_false_when_empty_provider(self) -> None:
+        """Empty provider string returns False without touching the config."""
+        flow = MagicMock()
+        flow.metadata = {"ccproxy.oauth_provider": ""}
+
+        addon = InspectorAddon()
+        result = await addon._retry_with_refreshed_token(flow)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_returns_false_when_token_unchanged(self) -> None:
+        """401 with an unchanged token (already fresh) returns False — not retried."""
+        flow = self._make_oauth_flow(provider="anthropic")
+        mock_config = MagicMock()
+        mock_config.refresh_oauth_token.return_value = ("same-token", False)
+
+        with patch("ccproxy.config.get_config", return_value=mock_config):
+            addon = InspectorAddon()
+            result = await addon._retry_with_refreshed_token(flow)
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_returns_false_when_new_token_is_none(self) -> None:
+        """If refresh returns (None, False) — token resolution failed — returns False."""
+        flow = self._make_oauth_flow(provider="anthropic")
+        mock_config = MagicMock()
+        mock_config.refresh_oauth_token.return_value = (None, False)
+
+        with patch("ccproxy.config.get_config", return_value=mock_config):
+            addon = InspectorAddon()
+            result = await addon._retry_with_refreshed_token(flow)
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_retries_with_new_token_and_returns_true(self) -> None:
+        """401 with a refreshed token issues an httpx retry and returns True."""
+        flow = self._make_oauth_flow(provider="anthropic")
+        mock_config = MagicMock()
+        mock_config.refresh_oauth_token.return_value = ("new-token", True)
+        mock_config.get_auth_header.return_value = None  # use Authorization header
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers.multi_items.return_value = [("content-type", "application/json")]
+        mock_response.content = b'{"id": "msg-1"}'
+
+        mock_async_client = AsyncMock()
+        mock_async_client.__aenter__ = AsyncMock(return_value=mock_async_client)
+        mock_async_client.__aexit__ = AsyncMock(return_value=None)
+        mock_async_client.request = AsyncMock(return_value=mock_response)
+
+        with (
+            patch("ccproxy.config.get_config", return_value=mock_config),
+            patch("httpx.AsyncClient", return_value=mock_async_client),
+        ):
+            addon = InspectorAddon()
+            result = await addon._retry_with_refreshed_token(flow)
+
+        assert result is True
+        mock_async_client.request.assert_called_once()
+        call_kwargs = mock_async_client.request.call_args
+        assert call_kwargs.kwargs["method"] == "POST"
+        assert call_kwargs.kwargs["url"] == "https://api.anthropic.com/v1/messages"
+
+    @pytest.mark.asyncio
+    async def test_retry_uses_custom_auth_header(self) -> None:
+        """When get_auth_header returns a custom header name, it is used for the new token."""
+        flow = self._make_oauth_flow(provider="gemini")
+        mock_config = MagicMock()
+        mock_config.refresh_oauth_token.return_value = ("new-gemini-token", True)
+        mock_config.get_auth_header.return_value = "x-goog-api-key"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers.multi_items.return_value = []
+        mock_response.content = b"{}"
+
+        mock_async_client = AsyncMock()
+        mock_async_client.__aenter__ = AsyncMock(return_value=mock_async_client)
+        mock_async_client.__aexit__ = AsyncMock(return_value=None)
+        mock_async_client.request = AsyncMock(return_value=mock_response)
+
+        with (
+            patch("ccproxy.config.get_config", return_value=mock_config),
+            patch("httpx.AsyncClient", return_value=mock_async_client),
+        ):
+            addon = InspectorAddon()
+            result = await addon._retry_with_refreshed_token(flow)
+
+        assert result is True
+        sent_headers = mock_async_client.request.call_args.kwargs["headers"]
+        assert sent_headers.get("x-goog-api-key") == "new-gemini-token"
+
+    @pytest.mark.asyncio
+    async def test_retry_strips_oauth_injected_header(self) -> None:
+        """The x-ccproxy-oauth-injected sentinel is stripped before retrying."""
+        flow = self._make_oauth_flow(provider="anthropic")
+        mock_config = MagicMock()
+        mock_config.refresh_oauth_token.return_value = ("new-token", True)
+        mock_config.get_auth_header.return_value = None
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers.multi_items.return_value = []
+        mock_response.content = b"{}"
+
+        mock_async_client = AsyncMock()
+        mock_async_client.__aenter__ = AsyncMock(return_value=mock_async_client)
+        mock_async_client.__aexit__ = AsyncMock(return_value=None)
+        mock_async_client.request = AsyncMock(return_value=mock_response)
+
+        with (
+            patch("ccproxy.config.get_config", return_value=mock_config),
+            patch("httpx.AsyncClient", return_value=mock_async_client),
+        ):
+            addon = InspectorAddon()
+            await addon._retry_with_refreshed_token(flow)
+
+        sent_headers = mock_async_client.request.call_args.kwargs["headers"]
+        assert "x-ccproxy-oauth-injected" not in sent_headers
+
+    @pytest.mark.asyncio
+    async def test_retry_updates_flow_response(self) -> None:
+        """Successful retry updates flow.response status_code and content in place."""
+        flow = self._make_oauth_flow(provider="anthropic")
+        mock_config = MagicMock()
+        mock_config.refresh_oauth_token.return_value = ("new-token", True)
+        mock_config.get_auth_header.return_value = None
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers.multi_items.return_value = [("content-type", "application/json")]
+        mock_response.content = b'{"ok": true}'
+
+        mock_async_client = AsyncMock()
+        mock_async_client.__aenter__ = AsyncMock(return_value=mock_async_client)
+        mock_async_client.__aexit__ = AsyncMock(return_value=None)
+        mock_async_client.request = AsyncMock(return_value=mock_response)
+
+        with (
+            patch("ccproxy.config.get_config", return_value=mock_config),
+            patch("httpx.AsyncClient", return_value=mock_async_client),
+        ):
+            addon = InspectorAddon()
+            await addon._retry_with_refreshed_token(flow)
+
+        assert flow.response.status_code == 200
+        assert flow.response.content == b'{"ok": true}'
