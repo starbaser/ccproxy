@@ -156,23 +156,14 @@ def setup_logging(config_dir: Path, debug: bool = False, *, log_file: bool = Fal
 
 
 def install_config(config_dir: Path, force: bool = False) -> None:
-    """Install ccproxy configuration files.
+    """Install ccproxy template configuration files.
 
     Args:
         config_dir: Directory to install configuration files to
-        force: Whether to overwrite existing configuration
+        force: Whether to overwrite existing configuration files
     """
-    # Check if config directory exists
-    if config_dir.exists() and not force:
-        print(f"Configuration directory {config_dir} already exists.")
-        print("Use --force to overwrite existing configuration.")
-        sys.exit(1)
-
-    # Create config directory
     config_dir.mkdir(parents=True, exist_ok=True)
-    print(f"Creating configuration directory: {config_dir}")
 
-    # Get templates directory
     try:
         templates_dir = get_templates_dir()
     except RuntimeError as e:
@@ -183,24 +174,28 @@ def install_config(config_dir: Path, force: bool = False) -> None:
         "ccproxy.yaml",
     ]
 
-    # Copy template files
+    installed = 0
     for filename in template_files:
         src = templates_dir / filename
         dst = config_dir / filename
 
-        if src.exists():
-            if dst.exists() and not force:
-                print(f"  Skipping {filename} (already exists)")
-            else:
-                shutil.copy2(src, dst)
-                print(f"  Copied {filename}")
-        else:
+        if not src.exists():
             print(f"  Warning: Template {filename} not found", file=sys.stderr)
+            continue
+        if dst.exists() and not force:
+            print(f"  Skipping {filename} (already exists, use --force to overwrite)")
+            continue
+        shutil.copy2(src, dst)
+        print(f"  Installed {filename}")
+        installed += 1
 
-    print(f"\nInstallation complete! Configuration files installed to: {config_dir}")
-    print("\nNext steps:")
-    print(f"  1. Edit {config_dir}/ccproxy.yaml to configure ccproxy")
-    print("  2. Start the proxy with: ccproxy start")
+    if installed:
+        print(f"\nConfiguration installed to: {config_dir}")
+        print("\nNext steps:")
+        print(f"  1. Edit {config_dir}/ccproxy.yaml")
+        print("  2. Start with: ccproxy start")
+    else:
+        print(f"\nNothing to install. Config files already exist in {config_dir}.")
 
 
 def _ensure_combined_ca_bundle(
