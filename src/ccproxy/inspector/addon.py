@@ -149,9 +149,9 @@ class InspectorAddon:
     async def responseheaders(self, flow: http.HTTPFlow) -> None:
         """Enable SSE streaming for all event-stream responses.
 
-        Sets flow.response.stream before the body arrives. For cross-provider
-        transformed flows, wraps the stream with an SSE chunk transformer.
-        For same-provider or unmatched flows, passes bytes through unchanged.
+        For cross-provider transformed flows, wraps the stream with an SSE
+        chunk transformer. For same-provider or unmatched flows, passes bytes
+        through unchanged.
         """
         if not flow.response:
             return
@@ -237,7 +237,6 @@ class InspectorAddon:
             pass
 
     async def _retry_with_refreshed_token(self, flow: http.HTTPFlow) -> bool:
-        """On 401, re-resolve the OAuth credential. Retry if the token changed."""
         import json
 
         import httpx

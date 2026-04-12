@@ -16,7 +16,6 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# No managed subprocesses in current architecture; mitmweb runs in-process.
 _CCPROXY_PATTERNS: list[tuple[str, str]] = []
 
 
@@ -152,7 +151,6 @@ def get_port_pid(port: int, host: str = "127.0.0.1") -> tuple[int | None, str | 
         except OSError:
             return -1, "unknown"
 
-    # Resolve inodes to PIDs
     inode_to_pid = _find_inode_pids()
     for inode in listening_inodes:
         pid = inode_to_pid.get(inode)
@@ -166,14 +164,7 @@ def get_port_pid(port: int, host: str = "127.0.0.1") -> tuple[int | None, str | 
 
 
 def find_ccproxy_processes(exclude_pid: int | None = None) -> list[tuple[int, str]]:
-    """Scan /proc for orphaned ccproxy-managed processes.
-
-    Args:
-        exclude_pid: PID to exclude (typically the current process).
-
-    Returns:
-        List of (pid, cmdline) for each ccproxy process found.
-    """
+    """Scan /proc for orphaned ccproxy-managed processes."""
     exclude = {exclude_pid, os.getppid()} if exclude_pid else {os.getppid()}
     results: list[tuple[int, str]] = []
 
@@ -194,11 +185,7 @@ def find_ccproxy_processes(exclude_pid: int | None = None) -> list[tuple[int, st
 
 
 def kill_stale_processes(processes: list[tuple[int, str]]) -> int:
-    """Kill a list of processes with SIGTERM → SIGKILL fallback.
-
-    Returns:
-        Number of processes successfully killed.
-    """
+    """Kill a list of processes with SIGTERM → SIGKILL fallback."""
     killed = 0
     for pid, cmdline in processes:
         snippet = (cmdline[:80] + "...") if len(cmdline) > 80 else cmdline
@@ -270,7 +257,6 @@ def run_preflight_checks(
             logger.warning(f"Port {port} held by stale ccproxy process (PID {pid})")
             kill_stale_processes([(pid, cmdline)])
             time.sleep(0.3)
-            # Verify freed
             check_pid, _ = get_port_pid(port)
             if check_pid is not None:
                 print(f"Error: Failed to free port {port} (PID {pid} still holding it)")

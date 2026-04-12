@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
@@ -35,7 +36,6 @@ logger = logging.getLogger(__name__)
 
 
 def _get_flow_hosts(flow: HTTPFlow) -> set[str]:
-    """Collect all host identifiers for this flow (pretty_host, Host header, X-Forwarded-Host)."""
     hosts: set[str] = set()
     hosts.add(flow.request.pretty_host)
     host_header = flow.request.headers.get("host", "")
@@ -48,7 +48,6 @@ def _get_flow_hosts(flow: HTTPFlow) -> set[str]:
 
 
 def _resolve_transform_target(flow: HTTPFlow, body: dict[str, object] | None = None) -> TransformRoute | None:
-    """Match flow against configured transform rules (first match wins)."""
     from ccproxy.config import get_config
 
     config = get_config()
@@ -72,7 +71,6 @@ def _resolve_transform_target(flow: HTTPFlow, body: dict[str, object] | None = N
 
 
 def _resolve_api_key(target: TransformRoute) -> str | None:
-    """Resolve API key for the destination provider."""
     if target.dest_api_key_ref is None:
         return None
 
@@ -87,8 +85,6 @@ def _resolve_api_key(target: TransformRoute) -> str | None:
     return os.environ.get(target.dest_api_key_ref)
 
 
-import re
-
 # Gemini SDK path → cloudcode-pa path mapping
 # /v1beta/models/{model}:generateContent → /v1internal:generateContent
 # /v1beta/models/{model}:streamGenerateContent → /v1internal:streamGenerateContent?alt=sse
@@ -99,7 +95,6 @@ def _rewrite_path(stripped: str, target: TransformRoute) -> str | None:
     """Rewrite a prefix-stripped path for the destination host.
 
     For Gemini: maps standard SDK paths to cloudcode-pa's /v1internal endpoint.
-    Returns None if no rewrite applies (caller keeps the stripped path).
     """
     if target.dest_provider != "gemini":
         return None
@@ -113,7 +108,6 @@ def _rewrite_path(stripped: str, target: TransformRoute) -> str | None:
 
 
 def _handle_passthrough(flow: HTTPFlow) -> None:
-    """Forward to original destination unchanged."""
     logger.info("lightllm passthrough: → %s:%d%s", flow.request.host, flow.request.port, flow.request.path)
 
 
@@ -122,7 +116,6 @@ def _handle_redirect(flow: HTTPFlow, target: TransformRoute, body: dict[str, obj
 
     For same-format flows (e.g. Anthropic → Anthropic, Gemini → Gemini)
     where the request body is already in the correct provider format.
-    Only rewrites the destination and injects auth.
     """
     dest_host = target.dest_host
     if not dest_host:
@@ -174,7 +167,6 @@ def _handle_redirect(flow: HTTPFlow, target: TransformRoute, body: dict[str, obj
 
 
 def _handle_transform(flow: HTTPFlow, target: TransformRoute, body: dict[str, object]) -> None:
-    """Transform request body via lightllm dispatch and rewrite destination."""
     from ccproxy.lightllm import transform_to_provider
 
     is_streaming = bool(body.get("stream", False))
@@ -221,7 +213,6 @@ def _handle_transform(flow: HTTPFlow, target: TransformRoute, body: dict[str, ob
 
 
 def register_transform_routes(router: InspectorRouter) -> None:
-    """Register transform route handlers on the given router."""
     from ccproxy.inspector.router import RouteType
 
     @router.route("/{path}", rtype=RouteType.REQUEST)

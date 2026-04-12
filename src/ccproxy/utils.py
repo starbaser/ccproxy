@@ -40,12 +40,6 @@ def parse_session_id(user_id: str) -> str | None:
 def get_templates_dir() -> Path:
     """Get the path to the templates directory.
 
-    This function handles both development (running from source) and
-    production (installed package) scenarios.
-
-    Returns:
-        Path to the templates directory
-
     Raises:
         RuntimeError: If templates directory cannot be found
     """
@@ -67,12 +61,6 @@ def get_templates_dir() -> Path:
 def get_template_file(filename: str) -> Path:
     """Get the path to a specific template file.
 
-    Args:
-        filename: Name of the template file
-
-    Returns:
-        Path to the template file
-
     Raises:
         FileNotFoundError: If the template file doesn't exist
     """
@@ -87,13 +75,6 @@ def get_template_file(filename: str) -> Path:
 
 def find_available_port(start: int = 49152, end: int = 65535) -> int:
     """Find a random available port in the ephemeral range.
-
-    Args:
-        start: Start of port range (default: 49152, IANA ephemeral start)
-        end: End of port range (default: 65535)
-
-    Returns:
-        An available port number
 
     Raises:
         RuntimeError: If no available port found after 100 attempts
@@ -113,13 +94,6 @@ def calculate_duration_ms(start_time: Any, end_time: Any) -> float:
     """Calculate duration in milliseconds between two timestamps.
 
     Handles both float timestamps and timedelta objects.
-
-    Args:
-        start_time: Start timestamp (float or timedelta)
-        end_time: End timestamp (float or timedelta)
-
-    Returns:
-        Duration in milliseconds, rounded to 2 decimal places
     """
     try:
         if isinstance(end_time, float) and isinstance(start_time, float):
@@ -134,7 +108,6 @@ def calculate_duration_ms(start_time: Any, end_time: Any) -> float:
     return round(duration_ms, 2)
 
 
-# Debug printing utilities
 console = Console()
 
 
@@ -145,15 +118,7 @@ def debug_table(
     show_methods: bool = False,
     compact: bool = True,
 ) -> None:
-    """Print any object as a compact debug table.
-
-    Args:
-        obj: Object to debug print
-        title: Optional title for the table
-        max_width: Maximum width for values
-        show_methods: Include methods in output
-        compact: Use compact table style
-    """
+    """Print any object as a compact debug table."""
     if isinstance(obj, dict):
         _print_dict(cast(dict[Any, Any], obj), title or "Dict", max_width, compact)
     elif isinstance(obj, list | tuple):
@@ -219,7 +184,6 @@ def _print_object(obj: Any, title: str, max_width: int | None, show_methods: boo
     table.add_column("Value", max_width=max_width)
     table.add_column("Type", style="dim cyan")
 
-    # Get all attributes
     attrs: dict[str, Any] = {}
     for attr_name in dir(obj):
         if attr_name.startswith("_"):
@@ -232,7 +196,6 @@ def _print_object(obj: Any, title: str, max_width: int | None, show_methods: boo
         except Exception:
             attrs[attr_name] = "<unable to access>"
 
-    # Sort and display
     for name in sorted(attrs.keys()):
         value: Any = attrs[name]
         table.add_row(name, _format_value(value, max_width), type(value).__name__)

@@ -8,8 +8,8 @@ class OAuthConfigError(ValueError):
     swallowed by error isolation.
     """
 
-# DEPRECATED: Used only to seed the v0 Anthropic compliance profile.
-# Real values are now learned dynamically from observed CLI traffic.
+# Seed values for the initial Anthropic compliance profile before
+# dynamic observation takes over.
 ANTHROPIC_BETA_HEADERS = [
     "oauth-2025-04-20",
     "claude-code-20250219",
@@ -31,6 +31,5 @@ SENSITIVE_PATTERNS: dict[str, str | None] = {
     "cookie": None,
 }
 
-# DEPRECATED: Used only to seed the v0 Anthropic compliance profile.
-# Real value is now learned dynamically from observed CLI traffic.
+# Seed value for the initial Anthropic compliance profile system prompt prefix.
 CLAUDE_CODE_SYSTEM_PREFIX = "You are Claude Code, Anthropic's official CLI for Claude."

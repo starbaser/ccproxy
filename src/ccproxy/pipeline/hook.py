@@ -26,17 +26,7 @@ def always_true(ctx: Context) -> bool:
 
 @dataclass
 class HookSpec:
-    """Specification for a pipeline hook.
-
-    Attributes:
-        name: Unique hook identifier
-        handler: Function that transforms context
-        guard: Predicate that determines if handler should run
-        reads: Keys this hook reads from context
-        writes: Keys this hook writes to context
-        params: Static parameters passed to handler
-        priority: Tie-breaking order among independent hooks (lower = earlier)
-    """
+    """Specification for a pipeline hook."""
 
     name: str
     handler: HandlerFn
@@ -73,28 +63,22 @@ class _HookRegistry:
         self._hooks: dict[str, HookSpec] = {}
 
     def register_spec(self, spec: HookSpec) -> None:
-        """Register a hook specification."""
         self._hooks[spec.name] = spec
 
     def get_spec(self, name: str) -> HookSpec | None:
-        """Get a hook specification by name."""
         return self._hooks.get(name)
 
     def get_all_specs(self) -> dict[str, HookSpec]:
-        """Get all registered hook specifications."""
         return dict(self._hooks)
 
     def clear(self) -> None:
-        """Clear all registered hooks (for testing)."""
         self._hooks.clear()
 
 
-# Global registry
 _registry = _HookRegistry()
 
 
 def get_registry() -> _HookRegistry:
-    """Get the global hook registry."""
     return _registry
 
 
@@ -105,14 +89,6 @@ def hook(
     guard: GuardFn | None = None,
 ) -> Callable[[HandlerFn], HandlerFn]:
     """Decorator to register a function as a pipeline hook.
-
-    Args:
-        reads: Keys this hook reads from context
-        writes: Keys this hook writes to context
-        guard: Predicate that determines if handler should run
-
-    Returns:
-        Decorator function
 
     Example:
         @hook(reads=["model"], writes=["metadata.ccproxy_model_name"])

@@ -24,8 +24,6 @@ from ccproxy.cli import (
 
 
 class TestInstallConfig:
-    """Test suite for install_config function."""
-
     @patch("ccproxy.cli.get_templates_dir")
     def test_install_fresh(self, mock_get_templates: Mock, tmp_path: Path, capsys) -> None:
         """Test fresh installation."""
@@ -117,13 +115,10 @@ class TestInstallConfig:
                 install_config(config_dir)
             assert exc_info.value.code == 1
 
-        # Verify file wasn't overwritten
         assert (config_dir / "ccproxy.yaml").read_text() == "existing content"
 
 
 class TestRunWithProxy:
-    """Test suite for run_with_proxy function."""
-
     def test_run_no_config(self, tmp_path: Path, capsys) -> None:
         """Test run when config doesn't exist."""
         with pytest.raises(SystemExit) as exc_info:
@@ -155,7 +150,6 @@ ccproxy:
 
         assert exc_info.value.code == 0
 
-        # Check environment variables were set
         call_args = mock_run.call_args
         env = call_args[1]["env"]
         assert env["OPENAI_API_BASE"] == "http://192.168.1.1:8888"
@@ -180,7 +174,6 @@ ccproxy:
         with pytest.raises(SystemExit):
             run_with_proxy(tmp_path, ["echo", "test"])
 
-        # Check environment variables use env overrides
         call_args = mock_run.call_args
         env = call_args[1]["env"]
         assert env["OPENAI_API_BASE"] == "http://10.0.0.1:9999"
@@ -208,13 +201,9 @@ ccproxy:
 
         assert exc_info.value.code == 0
 
-        # New architecture: client always connects to main port (4000)
-        # Inspector is transparent - sits on main port and forwards to LiteLLM
         call_args = mock_run.call_args
         env = call_args[1]["env"]
-        # No HTTPS_PROXY/HTTP_PROXY set on client (inspector handles this transparently)
         assert "HTTPS_PROXY" not in env or env.get("HTTPS_PROXY") == os.environ.get("HTTPS_PROXY")
-        # All API URLs point to main port
         assert env["OPENAI_API_BASE"] == "http://127.0.0.1:4000"
         assert env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:4000"
 
@@ -241,7 +230,6 @@ ccproxy:
 
         assert exc_info.value.code == 0
 
-        # Check environment variables route directly to LiteLLM
         call_args = mock_run.call_args
         env = call_args[1]["env"]
         assert env["OPENAI_API_BASE"] == "http://127.0.0.1:4000"
@@ -284,8 +272,6 @@ ccproxy:
 
 
 class TestViewLogs:
-    """Test suite for view_logs function."""
-
     @patch("shutil.which")
     @patch("subprocess.run")
     def test_logs_journalctl_when_service_active(self, mock_run: Mock, mock_which: Mock) -> None:
@@ -374,8 +360,6 @@ class TestViewLogs:
 
 
 class TestShowStatus:
-    """Test suite for show_status function."""
-
     @patch("socket.create_connection")
     def test_status_json_proxy_running(self, mock_conn: Mock, tmp_path: Path, capsys, monkeypatch) -> None:
         """Test status JSON output with proxy running."""
@@ -494,8 +478,6 @@ ccproxy:
 
 
 class TestMainFunction:
-    """Test suite for main CLI function using Tyro."""
-
     @patch("ccproxy.cli.start_server")
     def test_main_start_command(self, mock_start: Mock, tmp_path: Path, monkeypatch) -> None:
         """Test main with start command."""

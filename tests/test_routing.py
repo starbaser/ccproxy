@@ -186,7 +186,7 @@ class TestErrorHandling:
             raise ValueError("boom")
 
         flow = _make_flow(path="/crash")
-        api.request(flow)  # Should not raise
+        api.request(flow)
 
     def test_return_error_sends_502(self) -> None:
         api = InterceptedAPI(default_host="example.com")

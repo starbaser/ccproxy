@@ -61,8 +61,6 @@ def _make_wg_flow(host: str = "api.anthropic.com", path: str = "/v1/messages") -
 
 
 class TestRequestMethod:
-    """Tests for the request method."""
-
     @pytest.mark.asyncio
     async def test_request_runs_without_error(self, mock_flow: MagicMock) -> None:
         """request() should run without error."""
@@ -120,8 +118,6 @@ class TestWireGuardDirectionDetection:
 
 
 class TestGetDirectionEdgeCases:
-    """Edge cases for _get_direction."""
-
     def test_regular_mode_returns_none(self) -> None:
         from mitmproxy.proxy.mode_specs import ProxyMode as MitmProxyMode
 
@@ -279,7 +275,6 @@ class TestResponseAndError:
         flow.request.pretty_url = "https://api.anthropic.com/v1/messages"
         flow.id = "error-test"
 
-        # Should not raise even if something goes wrong
         await addon.response(flow)
 
     @pytest.mark.asyncio
@@ -309,7 +304,6 @@ class TestResponseAndError:
         flow.id = "error-flow-2"
 
         await addon.error(flow)
-        # Should not raise
 
 
 class TestSetTracer:
@@ -366,4 +360,3 @@ class TestRequestWithTracer:
 
         flow = _make_wg_flow(host="api.anthropic.com")
         await addon.request(flow)
-        # Should not raise

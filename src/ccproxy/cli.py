@@ -26,7 +26,6 @@ from ccproxy.utils import get_templates_dir
 logger = logging.getLogger(__name__)
 
 
-# Subcommand definitions using attrs
 @attrs.define
 class Start:
     """Start the ccproxy inspector server."""
@@ -105,7 +104,6 @@ class DagViz:
     """Validate the DAG and report any issues."""
 
 
-# Type alias for all subcommands
 Command = (
     Annotated[Start, tyro.conf.subcommand(name="start")]
     | Annotated[Install, tyro.conf.subcommand(name="install")]
@@ -156,12 +154,7 @@ def setup_logging(config_dir: Path, debug: bool = False, *, log_file: bool = Fal
 
 
 def install_config(config_dir: Path, force: bool = False) -> None:
-    """Install ccproxy template configuration files.
-
-    Args:
-        config_dir: Directory to install configuration files to
-        force: Whether to overwrite existing configuration files
-    """
+    """Install ccproxy template configuration files."""
     config_dir.mkdir(parents=True, exist_ok=True)
 
     try:
@@ -206,14 +199,7 @@ def _ensure_combined_ca_bundle(
     mitmproxy intercepts TLS and re-signs with its own CA. Subprocesses need
     to trust both the mitmproxy CA and real upstream CAs.
 
-    Args:
-        config_dir: Configuration directory for storing the bundle
-        base_ssl_cert: Base SSL_CERT_FILE path (uses system default if None)
-        confdir: mitmproxy confdir override (defaults to ~/.mitmproxy)
-
-    Returns:
-        Path to combined bundle, or None if mitmproxy CA not found
-    """
+"""
     search_dirs: list[Path] = []
     if confdir:
         search_dirs.append(Path(confdir))
@@ -264,7 +250,6 @@ def run_with_proxy(
     cfg = get_config()
     host, port = cfg.host, cfg.port
 
-    # Set up environment for the subprocess
     env = os.environ.copy()
 
     # Inspect mode: route subprocess traffic through a WireGuard namespace for transparent capture.
@@ -330,7 +315,6 @@ def run_with_proxy(
     env["OPENAI_BASE_URL"] = proxy_url
     env["ANTHROPIC_BASE_URL"] = proxy_url
 
-    # Execute the command with the proxy environment
     try:
         # S603: Command comes from user input - this is the intended behavior
         result = subprocess.run(command, env=env)  # noqa: S603
@@ -616,14 +600,12 @@ def show_status(
     if json_output:
         builtin_print(json.dumps(status_data, indent=2))
     else:
-        # Rich table output
         console = Console()
 
         table = Table(show_header=False, show_lines=True)
         table.add_column("Key", style="white", width=15)
         table.add_column("Value", style="yellow")
 
-        # Proxy status with URL
         url = status_data.get("url") or "http://127.0.0.1:4000"
         if status_data["proxy"]:
             proxy_status = f"[cyan]{url}[/cyan] [green]true[/green]"
@@ -631,7 +613,6 @@ def show_status(
             proxy_status = f"[dim]{url}[/dim] [red]false[/red]"
         table.add_row("proxy", proxy_status)
 
-        # Inspector status
         inspector_info = status_data["inspector"]
 
         if inspector_info["running"]:
@@ -644,20 +625,17 @@ def show_status(
 
         table.add_row("inspector", inspect_status)
 
-        # Config files
         if status_data["config"]:
             config_display = "\n".join(f"[cyan]{key}[/cyan]: {value}" for key, value in status_data["config"].items())
         else:
             config_display = "[red]No config files found[/red]"
         table.add_row("config", config_display)
 
-        # Log file
         log_display = status_data["log"] if status_data["log"] else "[yellow]No log file[/yellow]"
         table.add_row("log", log_display)
 
         console.print(Panel(table, title="[bold]ccproxy Status[/bold]", border_style="blue"))
 
-        # Hooks table
         if status_data["hooks"]:
             hooks_table = Table(show_header=True, show_lines=True)
             hooks_table.add_column("#", style="dim", width=3)
@@ -707,7 +685,6 @@ def main(
     config = get_config()
     setup_logging(config_dir, debug=config.debug, log_file=isinstance(cmd, Start))
 
-    # Handle each command type
     if isinstance(cmd, Start):
         start_server(config_dir)
 
@@ -781,7 +758,6 @@ def handle_dag_viz(cmd: DagViz) -> None:
     from ccproxy.pipeline import PipelineExecutor
     from ccproxy.pipeline.hook import get_registry
 
-    # Get registered hooks
     registry = get_registry()
     all_specs = registry.get_all_specs()
 
@@ -798,7 +774,6 @@ def handle_dag_viz(cmd: DagViz) -> None:
         print(f"[red]Error building DAG: {e}[/red]")
         sys.exit(1)
 
-    # Validate if requested
     if cmd.validate:
         warnings = executor.dag.validate()
         if warnings:
@@ -809,7 +784,6 @@ def handle_dag_viz(cmd: DagViz) -> None:
             print("[green]DAG validation passed - no issues found[/green]")
         print()
 
-    # Output based on format
     if cmd.output == "mermaid":
         print(executor.to_mermaid())
     elif cmd.output == "json":
@@ -829,18 +803,14 @@ def handle_dag_viz(cmd: DagViz) -> None:
         }
         print(json_mod.dumps(dag_data, indent=2))
     else:
-        # Default: ASCII
         console = Console()
 
-        # Title
         console.print(Panel("[bold cyan]Pipeline Hook DAG[/bold cyan]", expand=False))
 
-        # Execution order
         order = executor.get_execution_order()
         console.print("\n[bold]Execution Order:[/bold]")
         console.print(f"  {' → '.join(order)}")
 
-        # Parallel groups
         groups = executor.get_parallel_groups()
         if any(len(g) > 1 for g in groups):
             console.print("\n[bold]Parallel Execution Groups:[/bold]")
@@ -850,7 +820,6 @@ def handle_dag_viz(cmd: DagViz) -> None:
                 else:
                     console.print(f"  Group {i + 1}: {next(iter(group))}")
 
-        # Hook details table
         console.print("\n[bold]Hook Dependencies:[/bold]")
         table = Table(show_header=True, header_style="bold")
         table.add_column("Hook", style="cyan")
@@ -870,13 +839,11 @@ def handle_dag_viz(cmd: DagViz) -> None:
 
         console.print(table)
 
-        # ASCII diagram
         console.print("\n[bold]DAG Visualization:[/bold]")
         console.print(executor.to_ascii())
 
 
 def entry_point() -> None:
-    """Entry point for the ccproxy command."""
     # Handle 'run' subcommand specially to avoid tyro parsing command arguments
     # (e.g., ccproxy run claude -p foo)
     args = sys.argv[1:]

@@ -42,7 +42,6 @@ class ProfileStore:
             self._create_anthropic_seed()
 
     def submit_observation(self, bundle: ObservationBundle) -> None:
-        """Submit an observation from a reference flow."""
         key = _make_key(bundle.provider, bundle.user_agent)
 
         with self._lock:
@@ -93,12 +92,10 @@ class ProfileStore:
             return match
 
     def get_all_profiles(self) -> dict[str, ComplianceProfile]:
-        """Return all stored profiles (for debugging/inspection)."""
         with self._lock:
             return dict(self._profiles)
 
     def _create_anthropic_seed(self) -> None:
-        """Seed an Anthropic v0 profile from existing constants."""
         from ccproxy.constants import ANTHROPIC_BETA_HEADERS, CLAUDE_CODE_SYSTEM_PREFIX
 
         seed = ComplianceProfile(
@@ -124,7 +121,6 @@ class ProfileStore:
         self._flush()
 
     def _load(self) -> None:
-        """Load profiles and accumulators from disk."""
         if not self._path.exists():
             return
 
@@ -167,12 +163,10 @@ class ProfileStore:
 
 
 def _make_key(provider: str, user_agent: str) -> str:
-    """Build a store key from provider and user agent."""
     return f"{provider}/{user_agent}"
 
 
 def _truncate_ua(ua: str, max_len: int = 40) -> str:
-    """Truncate a user-agent string for log display."""
     return ua[:max_len] + "..." if len(ua) > max_len else ua
 
 
@@ -183,7 +177,6 @@ _store_lock = threading.Lock()
 
 
 def get_store() -> ProfileStore:
-    """Get or create the global ProfileStore singleton."""
     global _store_instance
     if _store_instance is None:
         with _store_lock:
@@ -193,7 +186,6 @@ def get_store() -> ProfileStore:
 
 
 def _create_store() -> ProfileStore:
-    """Create a ProfileStore with config-derived settings."""
     import os
 
     from ccproxy.config import get_config

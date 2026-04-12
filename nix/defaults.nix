@@ -2,7 +2,7 @@
   settings = {
     host = "127.0.0.1";
     port = 4000;
-    debug = true;
+    debug = false;
     oat_sources = {
       anthropic = {
         command = "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json";

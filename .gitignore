@@ -72,12 +72,4 @@ dumps
 langfuse/
 !stubs/langfuse/
 handoff.md
-
-# ML artifacts
-checkpoints/
-*.pt
-*.pth
-*.ckpt
-tensorboard/
-runs/
-
+.mcp.json

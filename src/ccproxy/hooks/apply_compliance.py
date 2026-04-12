@@ -56,7 +56,6 @@ def apply_compliance(ctx: Context, params: dict[str, Any]) -> Context:
     provider = transform.provider
     store = get_store()
 
-    # Use the OAuthSource.user_agent as a hint to select the right profile
     ua_hint = _get_provider_ua_hint(provider)
     profile = store.get_profile(provider, ua_hint=ua_hint)
 

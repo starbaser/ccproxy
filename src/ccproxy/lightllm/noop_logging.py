@@ -1,9 +1,7 @@
 """Duck-type stub for litellm's Logging class.
 
-BaseConfig.transform_response() takes a ``logging_obj`` parameter typed as
-``Any`` at runtime.  The only method it calls is ``post_call()`` — everything
-else (cost tracking, callbacks, caching) lives in the real Logging class,
-which we intentionally bypass.
+BaseConfig.transform_response() takes a ``logging_obj`` typed as ``Any``.
+The only method called is ``post_call()``.
 """
 
 from __future__ import annotations

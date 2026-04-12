@@ -1,7 +1,7 @@
-"""WireGuard key export for Wireshark decryption. **NOT** a "keylogger"
+"""WireGuard key export for Wireshark decryption.
+
 Reads mitmproxy's WireGuard keypair JSON and writes a Wireshark-compatible
-keylog file (wg.keylog_file format) for decrypting the outer WireGuard
-tunnel layer in packet captures.
+keylog file for decrypting the outer WireGuard tunnel layer in packet captures.
 """
 
 from __future__ import annotations

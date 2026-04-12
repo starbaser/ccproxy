@@ -170,7 +170,6 @@ class TestFinishSpan:
         flow = _make_flow({InspectorMeta.RECORD: record})
 
         tracer.finish_span(flow, status_code=200, duration_ms=10.0)
-        # Should not raise
 
     def test_finish_span_skips_none_span(self) -> None:
         tracer = InspectorTracer(enabled=False)
@@ -217,7 +216,6 @@ class TestFinishSpanError:
         tracer._enabled = True
         flow = _make_flow({})
         tracer.finish_span_error(flow, error_message="err")
-        # Should not raise
 
     def test_finish_span_error_skips_when_disabled(self) -> None:
         tracer = InspectorTracer(enabled=False)
@@ -321,7 +319,6 @@ class TestStartSpan:
         flow.id = "test-id"
 
         tracer.start_span(flow, direction="inbound", host="api.anthropic.com", method="POST", session_id=None)
-        # Should not raise
 
 
 class TestInspectorTracerInit:
@@ -440,7 +437,7 @@ class TestShutdownTracer:
         mod._provider = mock_provider
 
         try:
-            shutdown_tracer()  # Should not raise
+            shutdown_tracer()
             assert mod._provider is None
         finally:
             mod._provider = original

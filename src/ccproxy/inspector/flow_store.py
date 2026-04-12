@@ -17,7 +17,7 @@ FLOW_ID_HEADER = "x-ccproxy-flow-id"
 
 @dataclass
 class AuthMeta:
-    """Auth decision record — written during request phase, readable during response phase."""
+    """Auth decision record."""
 
     provider: str
     credential: str
@@ -28,7 +28,7 @@ class AuthMeta:
 
 @dataclass
 class OtelMeta:
-    """OTel span lifecycle — per-flow, not cross-pass."""
+    """OTel span lifecycle."""
 
     span: Any = None
     ended: bool = False
@@ -50,7 +50,7 @@ class ClientRequest:
 
 @dataclass
 class TransformMeta:
-    """Transform context stored during request phase, consumed by response phase."""
+    """Transform context for the response phase."""
 
     provider: str
     model: str
@@ -71,11 +71,7 @@ class FlowRecord:
 
 
 class InspectorMeta:
-    """Flow metadata keys for ccproxy inspector — mirrors xepor's FlowMeta pattern.
-
-    These are keys for mitmproxy's flow.metadata dict (per-flow, in-memory only).
-    The RECORD key holds a reference to the FlowRecord from the flow store.
-    """
+    """Flow metadata keys for ccproxy inspector."""
 
     RECORD = "ccproxy.record"
     DIRECTION = "ccproxy.direction"
@@ -87,7 +83,6 @@ _STORE_TTL = 120.0
 
 
 def create_flow_record(direction: Literal["inbound"]) -> tuple[str, FlowRecord]:
-    """Create a new FlowRecord and store it. Returns (flow_id, record)."""
     flow_id = str(uuid.uuid4())
     record = FlowRecord(direction=direction)
     with _store_lock:
@@ -97,7 +92,6 @@ def create_flow_record(direction: Literal["inbound"]) -> tuple[str, FlowRecord]:
 
 
 def get_flow_record(flow_id: str | None) -> FlowRecord | None:
-    """Look up a FlowRecord by flow ID. Returns None if not found, expired, or ID is None."""
     if flow_id is None:
         return None
     with _store_lock:

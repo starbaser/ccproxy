@@ -34,8 +34,7 @@ def extract_session_id(ctx: Context, params: dict[str, Any]) -> Context:
 
     Stores session_id on ``flow.metadata`` (mitmproxy per-flow dict), NOT
     on the body's metadata dict — writing into the body would inject fields
-    that upstream APIs reject (e.g. Anthropic: "metadata.session_id: Extra
-    inputs are not permitted").
+    that upstream APIs reject.
     """
     metadata = ctx.metadata
 

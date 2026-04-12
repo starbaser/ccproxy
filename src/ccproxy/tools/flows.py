@@ -8,7 +8,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import Annotated, Any
 
 import attrs
 import httpx
@@ -17,9 +17,6 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
-
-if TYPE_CHECKING:
-    pass
 
 
 class MitmwebClient:
@@ -106,9 +103,6 @@ class Flows:
     """Clear all flows."""
 
 
-# ---------------------------------------------------------------------------
-# Client factory
-# ---------------------------------------------------------------------------
 
 def _make_client() -> MitmwebClient:
     from ccproxy.config import CredentialSource, get_config
@@ -134,9 +128,6 @@ def _make_client() -> MitmwebClient:
     return MitmwebClient(host=host, port=port, token=token)
 
 
-# ---------------------------------------------------------------------------
-# Output helpers
-# ---------------------------------------------------------------------------
 
 def _header_value(headers: list[list[str]], name: str) -> str:
     """Extract a header value from the mitmweb headers array [[name, value], ...]."""
@@ -270,7 +261,6 @@ def _do_diff(
     body_a = client.get_request_body(id_a).decode("utf-8", errors="replace")
     body_b = client.get_request_body(id_b).decode("utf-8", errors="replace")
 
-    # Pretty-print JSON for readable diffs
     with contextlib.suppress(json.JSONDecodeError, ValueError):
         body_a = json.dumps(json.loads(body_a), indent=2)
     with contextlib.suppress(json.JSONDecodeError, ValueError):
@@ -291,9 +281,6 @@ def _do_diff(
     console.print(Syntax(diff_text, "diff", theme="monokai", word_wrap=True))
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 def handle_flows(cmd: Flows, _config_dir: Path) -> None:
     """Dispatch flows subcommand actions."""

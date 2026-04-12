@@ -73,7 +73,6 @@ class NotificationBuffer:
             return any(buf.session_id == session_id and buf.events for buf in self._buffers.values())
 
     def is_empty(self) -> bool:
-        """Check if the buffer has no entries."""
         with self._lock:
             return len(self._buffers) == 0
 
@@ -83,7 +82,7 @@ _buffer_lock = threading.Lock()
 
 
 def get_buffer() -> NotificationBuffer:
-    """Get or create the module-level singleton buffer."""
+    """Creates buffer if needed."""
     global _buffer
     if _buffer is None:
         with _buffer_lock:

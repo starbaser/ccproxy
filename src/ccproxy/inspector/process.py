@@ -1,6 +1,6 @@
 """In-process mitmproxy management for inspector traffic capture.
 
-Embeds mitmweb via the WebMaster API instead of launching a subprocess.
+Embeds mitmweb via the WebMaster API.
 Addons are registered as Python objects with direct access to ccproxy config.
 """
 
@@ -41,8 +41,7 @@ class ReadySignal:
 
     mitmproxy's RunningHook fires after setup_servers() completes — all
     listeners (reverse, WireGuard) are bound by the time running() is called.
-    This addon bridges that internal hook into an asyncio.Event that external
-    code can await.
+    Exposes an asyncio.Event that external code can await.
     """
 
     def __init__(self) -> None:
@@ -57,7 +56,6 @@ def _build_opts(
     reverse_port: int,
     wg_cli_port: int,
 ) -> Any:
-    """Build mitmproxy Options from the singleton config."""
     from mitmproxy.options import Options
 
     from ccproxy.config import MitmproxyOptions, get_config
@@ -117,9 +115,7 @@ def _make_transform_router() -> Any:
 def _build_addons(
     wg_cli_port: int,
 ) -> list[Any]:
-    """Build the addon chain from the singleton config.
-
-    Order: InspectorAddon (OTel, flow records) → inbound pipeline (OAuth,
+    """Addon order: InspectorAddon (OTel, flow records) → inbound pipeline (OAuth,
     session extraction) → transform (lightllm) → outbound pipeline
     (beta headers, identity injection).
     """
@@ -203,7 +199,6 @@ def get_wg_client_conf(master: WebMaster, keypair_path: Path) -> str | None:
 
 
 def get_listen_port(server_instance: ServerInstance) -> int | None:  # type: ignore[type-arg]
-    """Get the actual bound port from a running server instance."""
     addrs = server_instance.listen_addrs
     if addrs:
         return int(addrs[0][1])
@@ -217,20 +212,9 @@ async def run_inspector(
 ) -> tuple[WebMaster, asyncio.Task[None], str]:
     """Start the inspector in-process via mitmproxy's WebMaster API.
 
-    Reads InspectorConfig and OtelConfig from the singleton. Creates and
-    starts a WebMaster with two listeners (reverse + WireGuard), registers
-    all addons directly, and waits for servers to bind.
-
-    Returns after the running() hook fires — all ports are bound and
-    WG configs are readable.
-
-    The caller is responsible for:
-    - Namespace setup using get_wg_client_conf()
-    - Calling master.shutdown() when done
-    - Awaiting the master_task for clean shutdown
-
-    Returns:
-        (master, master_task, web_token)
+    Creates a WebMaster with two listeners (reverse + WireGuard), registers
+    all addons, and waits for servers to bind. Returns after the running()
+    hook fires — all ports are bound and WG configs are readable.
     """
     from mitmproxy.tools.web.master import WebMaster
 

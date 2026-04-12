@@ -1,7 +1,6 @@
 """Merge a compliance profile onto a pipeline Context.
 
-All merge operations are idempotent — applying a profile twice
-produces the same result as applying it once.
+All merge operations are idempotent.
 """
 
 from __future__ import annotations
@@ -36,8 +35,7 @@ def merge_profile(ctx: Context, profile: ComplianceProfile) -> None:
 def _wrap_body(ctx: Context, profile: ComplianceProfile) -> None:
     """Wrap the request body inside a wrapper field if the profile requires it.
 
-    For cloudcode-pa style APIs where the body format is:
-    {model: X, project: Y, request: {<actual API payload>}}
+    cloudcode-pa style: {model: X, project: Y, request: {<actual API payload>}}
     """
     if not profile.body_wrapper:
         return
@@ -80,7 +78,6 @@ def _extract_model_from_path(ctx: Context) -> str | None:
 
 
 def _merge_headers(ctx: Context, profile: ComplianceProfile) -> None:
-    """Add profile headers that are missing from the request."""
     for feature in profile.headers:
         existing = ctx.get_header(feature.name)
         if not existing:

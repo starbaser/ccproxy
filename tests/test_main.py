@@ -6,8 +6,6 @@ from unittest.mock import patch
 
 
 class TestMain:
-    """Test suite for __main__ module."""
-
     @patch("tyro.cli")
     def test_main_entry_point(self, mock_tyro_cli) -> None:
         """Test that __main__ calls tyro.cli with main function."""
@@ -17,5 +15,4 @@ class TestMain:
         with patch.object(sys, "argv", ["ccproxy"]):
             runpy.run_module("ccproxy", run_name="__main__")
 
-        # Verify it called tyro.cli with the main function
         mock_tyro_cli.assert_called_once_with(main)

@@ -31,17 +31,10 @@ def forward_oauth_guard(ctx: Context) -> bool:
     writes=["authorization", "x-api-key"],
 )
 def forward_oauth(ctx: Context, params: dict[str, Any]) -> Context:
-    """Forward OAuth Bearer token to provider.
-
-    Three paths:
-    1. Sentinel key in x-api-key/x-goog-api-key -> substitute real token from oat_sources
-    2. No auth at all -> try cached token from oat_sources
-    3. Real key present -> pass through
-    """
+    """Forward OAuth Bearer token to provider."""
     api_key = ctx.x_api_key or ctx.get_header("x-goog-api-key")
     auth = ctx.authorization
 
-    # Path 1: sentinel key substitution
     if api_key.startswith(OAUTH_SENTINEL_PREFIX):
         provider = api_key[len(OAUTH_SENTINEL_PREFIX):]
         token = _get_oauth_token(provider)
@@ -57,7 +50,6 @@ def forward_oauth(ctx: Context, params: dict[str, Any]) -> Context:
         logger.info("OAuth token injected for provider '%s' (sentinel)", provider)
         return ctx
 
-    # Path 2: no auth — try cached token
     if not api_key and not auth:
         cached_provider, cached_token = _try_cached_token()
         if cached_provider and cached_token:

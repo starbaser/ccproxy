@@ -11,8 +11,6 @@ from ccproxy.utils import calculate_duration_ms, get_template_file, get_template
 
 
 class TestGetTemplatesDir:
-    """Test suite for get_templates_dir function."""
-
     def test_templates_dir_development_mode(self, tmp_path: Path) -> None:
         """Test finding templates in development mode."""
         # Create a fake development structure
@@ -63,8 +61,6 @@ class TestGetTemplatesDir:
 
 
 class TestGetTemplateFile:
-    """Test suite for get_template_file function."""
-
     @patch("ccproxy.utils.get_templates_dir")
     def test_get_existing_template(self, mock_get_templates: Mock, tmp_path: Path) -> None:
         """Test getting an existing template file."""
@@ -93,8 +89,6 @@ class TestGetTemplateFile:
 
 
 class TestCalculateDurationMs:
-    """Test suite for calculate_duration_ms function."""
-
     def test_calculate_duration_with_floats(self) -> None:
         """Test duration calculation with float timestamps."""
         start_time = 1000.0

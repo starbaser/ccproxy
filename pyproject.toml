@@ -7,7 +7,7 @@ requires-python = ">=3.12"
 license = { text = "AGPL-3.0-or-later" }
 keywords = ["proxy", "routing", "ai", "llm"]
 classifiers = [
-  "Development Status :: 5 - Production/Stable",
+  "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
   "Programming Language :: Python :: 3",
@@ -42,15 +42,15 @@ otel = [
   "opentelemetry-semantic-conventions>=0.41b0",
 ]
 dev = [
-  "pytest>=8.0.0",
-  "pytest-asyncio>=0.23.0",
-  "pytest-cov>=4.0.0",
-  "mypy>=1.8.0",
-  "ruff>=0.1.0",
-  "pre-commit>=3.5.0",
-  "coverage[toml]>=7.0.0",
-  "types-pyyaml>=6.0.0",
-  "types-requests>=2.31.0",
+  "pytest>=8.4.1",
+  "pytest-asyncio>=1.1.0",
+  "pytest-cov>=6.2.1",
+  "mypy>=1.17.0",
+  "ruff>=0.12.6",
+  "pre-commit>=4.2.0",
+  "coverage>=7.10.1",
+  "types-pyyaml>=6.0.12.20250516",
+  "types-requests>=2.32.4.20250611",
 ]
 
 [build-system]
@@ -103,7 +103,7 @@ mypy_path = "stubs"
 warn_unused_ignores = false
 warn_redundant_casts = false
 
-# Explicit strict-equivalent flags (Stainless SDK pattern)
+# Strict-equivalent flags
 strict_equality = true
 check_untyped_defs = true
 no_implicit_optional = true
@@ -167,7 +167,6 @@ override-dependencies = ["mitmproxy>=10.0.0"]
 [dependency-groups]
 dev = [
   "beautysh>=6.2.1",
-  "claude-agent-sdk>=0.1.20",
   "coverage>=7.10.1",
   "mypy>=1.17.0",
   "pre-commit>=4.2.0",

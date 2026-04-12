@@ -26,14 +26,6 @@ class HookDAG:
     """
 
     def __init__(self, hooks: list[HookSpec]) -> None:
-        """Initialize DAG with hook specifications.
-
-        Args:
-            hooks: List of HookSpec instances
-
-        Raises:
-            CycleError: If dependencies form a cycle
-        """
         self._hooks: dict[str, HookSpec] = {h.name: h for h in hooks}
         self._key_writers: dict[str, set[str]] = defaultdict(set)
         self._key_readers: dict[str, set[str]] = defaultdict(set)
@@ -52,16 +44,11 @@ class HookDAG:
                 self._key_readers[key].add(name)
 
     def _build_dependencies(self) -> dict[str, set[str]]:
-        """Build dependency graph from reads/writes.
-
-        Returns:
-            Dict mapping hook name to set of hooks it depends on
-        """
+        """Build dependency graph from reads/writes."""
         deps: dict[str, set[str]] = {name: set() for name in self._hooks}
 
         for hook_name, spec in self._hooks.items():
             for read_key in spec.reads:
-                # This hook depends on any hook that writes this key
                 writers = self._key_writers.get(read_key, set())
                 for writer in writers:
                     if writer != hook_name:
@@ -72,9 +59,6 @@ class HookDAG:
     def _compute_order(self) -> None:
         """Compute execution order via topological sort with priority tie-breaking.
 
-        Uses Kahn's algorithm with a min-heap to break ties among
-        independent hooks using their priority field (lower = first).
-
         Raises:
             CycleError: If dependencies form a cycle
         """
@@ -82,7 +66,6 @@ class HookDAG:
 
         deps = self._build_dependencies()
 
-        # Validate: warn about reads without writers
         for hook_name, spec in self._hooks.items():
             for read_key in spec.reads:
                 if read_key not in self._key_writers:
@@ -92,7 +75,6 @@ class HookDAG:
                         read_key,
                     )
 
-        # Kahn's algorithm with min-heap for priority tie-breaking
         in_degree = {name: len(dep_set) for name, dep_set in deps.items()}
 
         heap: list[tuple[int, str]] = [(self._hooks[n].priority, n) for n in self._hooks if in_degree[n] == 0]
@@ -114,7 +96,6 @@ class HookDAG:
 
         self._execution_order = order
 
-        # Compute parallel groups (priority-sorted within each group)
         deps = self._build_dependencies()  # Rebuild since we mutated deps above
         in_degree = {name: len(dep_set) for name, dep_set in deps.items()}
         done: set[str] = set()
@@ -133,68 +114,24 @@ class HookDAG:
 
     @property
     def execution_order(self) -> list[str]:
-        """Get hooks in execution order.
-
-        Returns:
-            List of hook names in dependency-safe order
-        """
         return list(self._execution_order)
 
     @property
     def parallel_groups(self) -> list[set[str]]:
-        """Get groups of hooks that can execute in parallel.
-
-        Each group contains hooks with no inter-dependencies.
-
-        Returns:
-            List of sets, where each set contains hook names
-            that can run concurrently
-        """
+        """Groups of hooks with no inter-dependencies that can execute concurrently."""
         return [set(g) for g in self._parallel_groups]
 
     def get_hook(self, name: str) -> HookSpec:
-        """Get hook specification by name.
-
-        Args:
-            name: Hook name
-
-        Returns:
-            HookSpec instance
-
-        Raises:
-            KeyError: If hook not found
-        """
         return self._hooks[name]
 
     def get_hooks_in_order(self) -> list[HookSpec]:
-        """Get hook specifications in execution order.
-
-        Returns:
-            List of HookSpec instances in dependency-safe order
-        """
         return [self._hooks[name] for name in self._execution_order]
 
     def get_dependencies(self, hook_name: str) -> set[str]:
-        """Get hooks that a given hook depends on.
-
-        Args:
-            hook_name: Name of the hook
-
-        Returns:
-            Set of hook names this hook depends on
-        """
         deps = self._build_dependencies()
         return deps.get(hook_name, set())
 
     def get_dependents(self, hook_name: str) -> set[str]:
-        """Get hooks that depend on a given hook.
-
-        Args:
-            hook_name: Name of the hook
-
-        Returns:
-            Set of hook names that depend on this hook
-        """
         deps = self._build_dependencies()
         dependents: set[str] = set()
         for name, hook_deps in deps.items():
@@ -203,11 +140,7 @@ class HookDAG:
         return dependents
 
     def to_mermaid(self) -> str:
-        """Generate Mermaid diagram of the DAG.
-
-        Returns:
-            Mermaid graph definition string
-        """
+        """Generate Mermaid diagram of the DAG."""
         lines = ["graph TD"]
         deps = self._build_dependencies()
 
@@ -264,11 +197,7 @@ class HookDAG:
         return "\n".join(lines)
 
     def validate(self) -> list[str]:
-        """Validate the DAG configuration.
-
-        Returns:
-            List of warning messages (empty if valid)
-        """
+        """Validate the DAG configuration and return warning messages."""
         warnings: list[str] = []
 
         for hook_name, spec in self._hooks.items():

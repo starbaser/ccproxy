@@ -282,15 +282,10 @@ class CCProxyConfig(BaseSettings):
 
     compliance: ComplianceConfig = Field(default_factory=ComplianceConfig)
 
-    # OAuth token sources - dict mapping provider name to shell command or OAuthSource
-    # Example: {"anthropic": "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"}
-    # Extended: {"gemini": {"command": "jq -r '.token' ~/.gemini/creds.json", "user_agent": "MyApp/1.0"}}
     oat_sources: dict[str, str | OAuthSource | dict[str, Any]] = Field(default_factory=lambda: {})
 
-    # Cached OAuth tokens (loaded at startup)
     _oat_values: dict[str, str] = PrivateAttr(default_factory=lambda: {})
 
-    # Cached OAuth user agents (loaded at startup) - dict mapping provider name to user-agent
     _oat_user_agents: dict[str, str] = PrivateAttr(default_factory=lambda: {})
 
     # Hook configurations — either a flat list (all inbound) or a dict
@@ -309,7 +304,6 @@ class CCProxyConfig(BaseSettings):
         },
     )
 
-    # Path to ccproxy config
     ccproxy_config_path: Path = Field(default_factory=lambda: Path("./ccproxy.yaml"))
 
     @property
@@ -363,41 +357,18 @@ class CCProxyConfig(BaseSettings):
             return token, changed
 
     def get_auth_provider_ua(self, provider: str) -> str | None:
-        """Get custom User-Agent for a specific provider.
-
-        Args:
-            provider: Provider name (e.g., "anthropic", "gemini")
-
-        Returns:
-            Custom User-Agent string or None if not configured for this provider
-        """
+        """Get custom User-Agent for a specific provider."""
         return self._oat_user_agents.get(provider)
 
     def get_auth_header(self, provider: str) -> str | None:
-        """Get target auth header name for a specific provider.
-
-        Args:
-            provider: Provider name (e.g., "zai")
-
-        Returns:
-            Header name string (e.g., 'x-api-key') or None for default Bearer behavior
-        """
+        """Get target auth header name for a specific provider."""
         source = self.oat_sources.get(provider)
         if isinstance(source, OAuthSource):
             return source.auth_header
         return None
 
     def get_provider_for_destination(self, api_base: str | None) -> str | None:
-        """Find which provider should handle requests to a given api_base.
-
-        Checks configured oat_sources destinations to find a matching provider.
-
-        Args:
-            api_base: The API base URL (e.g., "https://api.z.ai/api/anthropic")
-
-        Returns:
-            Provider name if a destination pattern matches, None otherwise
-        """
+        """Find which provider should handle requests to a given api_base."""
         if not api_base:
             return None
 
@@ -420,11 +391,7 @@ class CCProxyConfig(BaseSettings):
         return None
 
     def _load_credentials(self) -> None:
-        """Execute shell commands to load OAuth tokens for all configured providers at startup.
-
-        Logs errors for providers that fail but allows the proxy to continue running.
-        Requests requiring OAuth will fail at request time if tokens are unavailable.
-        """
+        """Execute shell commands to load OAuth tokens for all configured providers at startup."""
         if not self.oat_sources:
             self._oat_values = {}
             self._oat_user_agents = {}
@@ -467,18 +434,7 @@ class CCProxyConfig(BaseSettings):
 
     @classmethod
     def from_yaml(cls, yaml_path: Path, **kwargs: Any) -> "CCProxyConfig":
-        """Load configuration from ccproxy.yaml file.
-
-        Args:
-            yaml_path: Path to the ccproxy.yaml file
-            **kwargs: Additional keyword arguments
-
-        Returns:
-            CCProxyConfig instance
-
-        Raises:
-            RuntimeError: If credentials shell command fails during startup
-        """
+        """Load configuration from ccproxy.yaml file."""
         instance = cls(ccproxy_config_path=yaml_path, **kwargs)
 
         if yaml_path.exists():
@@ -521,13 +477,11 @@ class CCProxyConfig(BaseSettings):
         return instance
 
 
-# Global configuration instance
 _config_instance: CCProxyConfig | None = None
 _config_lock = threading.Lock()
 
 
 def get_config() -> CCProxyConfig:
-    """Get the configuration instance."""
     global _config_instance
 
     if _config_instance is None:
@@ -559,12 +513,10 @@ def get_config() -> CCProxyConfig:
 
 
 def set_config_instance(config: CCProxyConfig) -> None:
-    """Set the global configuration instance (for testing)."""
     global _config_instance
     _config_instance = config
 
 
 def clear_config_instance() -> None:
-    """Clear the global configuration instance (for testing)."""
     global _config_instance
     _config_instance = None

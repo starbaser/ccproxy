@@ -24,9 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 def _load_hooks(hook_entries: list[str | dict[str, Any]]) -> list[HookSpec]:
-    """Import hook modules and collect registered HookSpecs.
-
-    Each entry is either a module path string or a dict with
+    """Each entry is either a module path string or a dict with
     ``hook`` (module path) and optional ``params``.
     """
     hook_priority_map: dict[str, int] = {}
@@ -72,7 +70,6 @@ def _load_hooks(hook_entries: list[str | dict[str, Any]]) -> list[HookSpec]:
 
 
 def build_executor(hook_entries: list[str | dict[str, Any]]) -> PipelineExecutor:
-    """Build a PipelineExecutor from config hook entries."""
     specs = _load_hooks(hook_entries)
     return PipelineExecutor(hooks=specs)
 
@@ -81,7 +78,6 @@ def register_pipeline_routes(
     router: InspectorRouter,
     executor: PipelineExecutor,
 ) -> None:
-    """Register a pipeline executor as a request handler on the router."""
     from ccproxy.inspector.router import RouteType
 
     @router.route("/{path}", rtype=RouteType.REQUEST)

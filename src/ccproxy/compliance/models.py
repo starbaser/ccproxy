@@ -137,7 +137,6 @@ class ObservationAccumulator:
     last_seen: float = 0.0
 
     def submit(self, bundle: ObservationBundle) -> None:
-        """Incorporate a new observation into the accumulator."""
         self.observation_count += 1
         self.last_seen = datetime.now(tz=UTC).timestamp()
 
@@ -153,11 +152,7 @@ class ObservationAccumulator:
         self.body_wrapper_observations.append(bundle.body_wrapper)
 
     def finalize(self) -> ComplianceProfile:
-        """Produce a ComplianceProfile from accumulated observations.
-
-        Features where all observed values are identical are "stable"
-        and included. Variable features are excluded.
-        """
+        """Produce a ComplianceProfile from accumulated observations."""
         now = datetime.now(tz=UTC).isoformat()
 
         stable_headers: list[ProfileFeatureHeader] = []
@@ -183,7 +178,6 @@ class ObservationAccumulator:
                         structure=[{"type": "text", "text": system_val}]
                     )
 
-        # body_wrapper is stable if all observations agree
         wrapper_values = [w for w in self.body_wrapper_observations if w is not None]
         body_wrapper = wrapper_values[0] if wrapper_values and len(set(wrapper_values)) == 1 else None
 

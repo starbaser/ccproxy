@@ -1,10 +1,10 @@
-# ccproxy — Claude Code Proxy [![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/starbased-co/ccproxy)
+# ccproxy — Claude Code Proxy [![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/starbaser/ccproxy)
 
 > [Discord](https://starbased.net/discord)
 
 ccproxy is a mitmproxy-based transparent LLM API interceptor for Claude Code. It intercepts outbound API traffic, routes it through a DAG-driven hook pipeline, and forwards it directly to provider APIs after transforming requests and responses via `lightllm` — a surgical connector into LiteLLM's `BaseConfig` transformation layer. No LiteLLM proxy subprocess. No gateway server.
 
-> **Note**: While core functionality is complete, real-world testing and community input are welcomed. Please [open an issue](https://github.com/starbased-co/ccproxy/issues) to share your experience, report bugs, or suggest improvements, or submit a PR!
+> Feedback and contributions welcome — [open an issue](https://github.com/starbaser/ccproxy/issues) or submit a PR.
 
 ## Installation
 
@@ -142,7 +142,7 @@ ccproxy dag-viz [-o ascii|mermaid|json]  # Visualize hook DAG
 ## Development
 
 ```bash
-git clone https://github.com/starbased-co/ccproxy.git
+git clone https://github.com/starbaser/ccproxy.git
 cd ccproxy
 direnv allow        # activates the nix devShell
 

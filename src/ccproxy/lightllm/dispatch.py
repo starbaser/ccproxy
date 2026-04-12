@@ -63,7 +63,7 @@ def _transform_gemini(
     api_key: str | None = None,
     stream: bool = False,
 ) -> tuple[str, dict[str, str], bytes]:
-    """Gemini-specific transform using _get_gemini_url + _transform_request_body."""
+    """Gemini-specific transform (bypasses BaseConfig.transform_request)."""
     from litellm.llms.vertex_ai.common_utils import _get_gemini_url
     from litellm.llms.vertex_ai.gemini.transformation import _transform_request_body
 
@@ -119,11 +119,7 @@ def transform_to_provider(
     api_base: str | None = None,
     stream: bool = False,
 ) -> tuple[str, dict[str, str], bytes]:
-    """Transform an OpenAI chat-completions request into provider-native format.
-
-    Returns:
-        ``(url, headers, body_bytes)`` ready for httpx or mitmproxy flow rewrite.
-    """
+    """Transform an OpenAI chat-completions request into provider-native format."""
     optional_params = optional_params or {}
 
     if provider in _GEMINI_PROVIDERS:
@@ -183,10 +179,7 @@ def transform_to_provider(
 
 
 class MitmResponseShim:
-    """Duck-types httpx.Response for BaseConfig.transform_response().
-
-    transform_response() only accesses .status_code, .headers, .text, .json().
-    """
+    """Duck-types httpx.Response for BaseConfig.transform_response()."""
 
     def __init__(self, mitm_response: Any) -> None:
         self.status_code: int = mitm_response.status_code
@@ -269,10 +262,6 @@ def _make_response_iterator(provider: str, model: str, optional_params: dict[str
 class SseTransformer:
     """Stateful SSE chunk transformer for flow.response.stream.
 
-    mitmproxy calls this with raw TCP bytes per chunk. We parse SSE events,
-    transform each via the provider's ModelResponseIterator.chunk_parser(),
-    and re-serialize as OpenAI-format SSE.
-
     If no iterator is available (provider already emits OpenAI-format SSE),
     bytes pass through unchanged.
     """
@@ -326,5 +315,4 @@ def make_sse_transformer(
     model: str,
     optional_params: dict[str, Any] | None = None,
 ) -> SseTransformer:
-    """Factory for creating an SSE stream transformer."""
     return SseTransformer(provider, model, optional_params or {})

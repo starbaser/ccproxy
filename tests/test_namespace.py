@@ -251,8 +251,6 @@ class TestRewriteWgEndpoint:
 
 
 class TestCreateNamespace:
-    """Test the namespace creation orchestration."""
-
     @patch("ccproxy.inspector.namespace.PortForwarder")
     @patch("ccproxy.inspector.namespace.shutil.which")
     @patch("ccproxy.inspector.namespace.subprocess.run")
@@ -467,8 +465,6 @@ class TestCreateNamespace:
 
 
 class TestRunInNamespace:
-    """Test running commands inside a confined namespace."""
-
     def test_returns_exit_code(self, mock_ctx: NamespaceContext) -> None:
         """Subprocess exit code is propagated."""
         with patch("ccproxy.inspector.namespace.subprocess.Popen") as mock_popen:
@@ -558,8 +554,6 @@ class TestRunInNamespace:
 
 
 class TestCleanupNamespace:
-    """Test namespace resource cleanup."""
-
     @patch("ccproxy.inspector.namespace._safe_kill")
     @patch("ccproxy.inspector.namespace._safe_close")
     def test_clean_shutdown(self, mock_close: Mock, mock_kill: Mock, mock_ctx: NamespaceContext) -> None:
@@ -632,8 +626,6 @@ class TestCleanupNamespace:
 
 
 class TestSafeClose:
-    """Test FD close helper."""
-
     @patch("os.close")
     def test_closes_valid_fd(self, mock_close: Mock) -> None:
         _safe_close(42)
@@ -650,8 +642,6 @@ class TestSafeClose:
 
 
 class TestSafeKill:
-    """Test process kill helper."""
-
     @patch("os.waitpid")
     @patch("os.kill")
     def test_kills_and_waits(self, mock_kill: Mock, mock_waitpid: Mock) -> None:

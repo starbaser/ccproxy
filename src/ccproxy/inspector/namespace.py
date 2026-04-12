@@ -103,10 +103,7 @@ class NamespaceContext:
 
 
 def _parse_proc_net_tcp(path: Path) -> set[int]:
-    """Return TCP LISTEN ports on localhost or wildcard from a /proc/net/tcp file.
-
-    The sentinel PID's /proc/{pid}/net/tcp exposes the namespace's socket table.
-    """
+    """Return TCP LISTEN ports on localhost or wildcard from a /proc/net/tcp file."""
     ports: set[int] = set()
     try:
         content = path.read_text()
@@ -211,10 +208,8 @@ class PortForwarder:
 
 
 def _rewrite_wg_endpoint(client_conf: str, gateway: str) -> str:
-    """Rewrite the Endpoint and strip wg-quick-only fields.
-
-    Replaces the Endpoint host with the slirp4netns gateway address (preserving
-    the port mitmweb chose) and removes Address/DNS lines (wg-quick extensions
+    """Replace the Endpoint host with the slirp4netns gateway address (preserving
+    the port mitmweb chose) and remove Address/DNS lines (wg-quick extensions
     not understood by `wg setconf`).
     """
     # Strip wg-quick-only fields that `wg setconf` doesn't understand
@@ -238,16 +233,6 @@ def create_namespace(wg_client_conf: str) -> NamespaceContext:
       - Namespace TAP IP: 10.0.2.100/24
       - Gateway (host): 10.0.2.2
       - DNS forwarder: 10.0.2.3
-
-    Args:
-        wg_client_conf: WireGuard client config INI from mitmweb (contains
-            the server endpoint with the auto-assigned port)
-
-    Returns:
-        NamespaceContext with all resources for cleanup
-
-    Raises:
-        RuntimeError: If namespace setup fails at any step
     """
     gateway = "10.0.2.2"
 
@@ -392,16 +377,6 @@ def create_namespace(wg_client_conf: str) -> NamespaceContext:
 
 
 def run_in_namespace(ctx: NamespaceContext, command: list[str], env: dict[str, str]) -> int:
-    """Run a command inside the confined namespace.
-
-    Args:
-        ctx: Active namespace context from create_namespace()
-        command: Command and arguments to execute
-        env: Environment variables for the subprocess
-
-    Returns:
-        Exit code of the confined process
-    """
     nsenter_cmd = [
         "nsenter",
         "-t", str(ctx.ns_pid),
@@ -421,11 +396,7 @@ def run_in_namespace(ctx: NamespaceContext, command: list[str], env: dict[str, s
 
 
 def cleanup_namespace(ctx: NamespaceContext) -> None:
-    """Tear down a confined namespace and all associated resources.
-
-    Uses exit-fd for clean slirp4netns shutdown (preferred over SIGTERM
-    which leaves the API socket file behind).
-    """
+    """Tear down a confined namespace and all associated resources."""
     if ctx.port_forwarder is not None:
         ctx.port_forwarder.stop()
 

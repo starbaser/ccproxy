@@ -44,7 +44,6 @@ other_settings:
         try:
             config = CCProxyConfig.from_yaml(yaml_path)
 
-            # Should use defaults
             assert config.debug is False
 
         finally:
@@ -68,7 +67,6 @@ ccproxy:
         try:
             config = CCProxyConfig.from_yaml(yaml_path)
 
-            # Both hook formats should be in hooks list
             assert len(config.hooks) == 2
             assert config.hooks[0] == "ccproxy.hooks.rule_evaluator"
             assert config.hooks[1] == {
@@ -128,7 +126,6 @@ class TestConfigSingleton:
 
     def test_get_config_singleton(self) -> None:
         """Test that get_config returns the same instance."""
-        # Clear any existing instance
         clear_config_instance()
 
         # Create a custom config instance and set it directly
@@ -210,7 +207,6 @@ ccproxy:
                     futures = [executor.submit(get_and_track) for _ in range(50)]
                     concurrent.futures.wait(futures)
 
-                # All threads should get the same instance
                 assert len(config_ids) == 1
             finally:
                 os.chdir(original_cwd)

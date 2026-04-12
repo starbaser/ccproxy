@@ -7,6 +7,7 @@ giving the model awareness of terminal changes without explicit polling.
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from typing import TYPE_CHECKING, Any
@@ -40,13 +41,6 @@ def inject_mcp_notifications(ctx: Context, params: dict[str, Any]) -> Context:
     For each task with buffered events, generates a synthetic assistant
     tool_use message (tasks_get) paired with a user tool_result containing
     the events. Inserted before the final user message.
-
-    Args:
-        ctx: Pipeline context with messages and session_id
-        params: Hook params (unused)
-
-    Returns:
-        Modified context with injected notification messages
     """
     session_id = ctx.flow.metadata.get("ccproxy.session_id", "")
     if not session_id:
@@ -71,8 +65,6 @@ def inject_mcp_notifications(ctx: Context, params: dict[str, Any]) -> Context:
                 }
             ],
         }
-
-        import json
 
         user_msg: dict[str, Any] = {
             "role": "user",

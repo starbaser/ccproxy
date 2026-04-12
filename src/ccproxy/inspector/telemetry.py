@@ -2,11 +2,6 @@
 
 Provides an InspectorTracer that emits OTel spans for each HTTP flow, with
 graceful degradation when OTel packages are not installed.
-
-Three operational modes:
-1. OTel enabled + packages present → real tracer with OTLP export
-2. OTel disabled + API package present → no-op tracer (zero overhead)
-3. No OTel packages at all → stub (zero overhead, no imports)
 """
 
 from __future__ import annotations
@@ -66,11 +61,6 @@ class InspectorTracer:
         method: str,
         session_id: str | None,
     ) -> None:
-        """Start an OTel span for an HTTP request flow.
-
-        The span is stored in the FlowRecord's OtelMeta and ended in
-        finish_span() or finish_span_error().
-        """
         if not self._enabled or self._tracer is None:
             return
 
@@ -108,7 +98,7 @@ class InspectorTracer:
             logger.debug("Error starting OTel span: %s", e)
 
     def _get_span(self, flow: http.HTTPFlow) -> tuple[Any, bool]:
-        """Retrieve span and ended flag from FlowRecord or legacy metadata."""
+        """Retrieve span and ended flag from FlowRecord or flow.metadata fallback."""
         record: FlowRecord | None = flow.metadata.get(InspectorMeta.RECORD)
         if record and record.otel:
             return record.otel.span, record.otel.ended
@@ -127,7 +117,6 @@ class InspectorTracer:
         status_code: int,
         duration_ms: float | None,
     ) -> None:
-        """End an OTel span with response data."""
         if not self._enabled:
             return
 
@@ -156,7 +145,6 @@ class InspectorTracer:
         flow: http.HTTPFlow,
         error_message: str,
     ) -> None:
-        """End an OTel span with an error."""
         if not self._enabled:
             return
 
@@ -177,7 +165,6 @@ class InspectorTracer:
 
 
 def _init_otel_tracer(service_name: str, otlp_endpoint: str) -> Any:
-    """Initialize the real OTel tracer with OTLP gRPC exporter."""
     global _provider
 
     from opentelemetry import trace
@@ -201,7 +188,6 @@ def _init_otel_tracer(service_name: str, otlp_endpoint: str) -> Any:
 
 
 def shutdown_tracer() -> None:
-    """Flush remaining spans and shut down the OTel tracer provider."""
     global _provider
     if _provider is not None:
         try:

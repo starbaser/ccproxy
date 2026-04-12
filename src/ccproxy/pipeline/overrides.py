@@ -25,37 +25,16 @@ class HookOverride(Enum):
 
 @dataclass
 class OverrideSet:
-    """Parsed override configuration.
-
-    Attributes:
-        overrides: Mapping of hook name to override mode
-        raw_header: Original header value for debugging
-    """
+    """Parsed override configuration."""
 
     overrides: dict[str, HookOverride]
     raw_header: str
 
     def get_override(self, hook_name: str) -> HookOverride:
-        """Get override mode for a hook.
-
-        Args:
-            hook_name: Name of the hook
-
-        Returns:
-            Override mode (NORMAL if not specified)
-        """
         return self.overrides.get(hook_name, HookOverride.NORMAL)
 
     def should_run(self, hook_name: str, guard_result: bool) -> bool:
-        """Determine if a hook should run.
-
-        Args:
-            hook_name: Name of the hook
-            guard_result: Result of the hook's guard function
-
-        Returns:
-            True if the hook should execute
-        """
+        """Determine if a hook should run given its guard result."""
         override = self.get_override(hook_name)
 
         if override == HookOverride.FORCE_RUN:
@@ -73,12 +52,6 @@ def parse_overrides(header_value: str | None) -> OverrideSet:
     - +hook_name → Force run
     - -hook_name → Force skip
     - hook_name → Normal (same as not specifying)
-
-    Args:
-        header_value: Raw header value or None
-
-    Returns:
-        OverrideSet with parsed overrides
 
     Examples:
         >>> parse_overrides("+forward_oauth,-rule_evaluator")
@@ -106,7 +79,6 @@ def parse_overrides(header_value: str | None) -> OverrideSet:
             if hook_name:
                 overrides[hook_name] = HookOverride.FORCE_SKIP
         else:
-            # No prefix = normal (explicit declaration)
             overrides[part] = HookOverride.NORMAL
 
     if overrides:
@@ -116,21 +88,5 @@ def parse_overrides(header_value: str | None) -> OverrideSet:
 
 
 def extract_overrides_from_context(headers: dict[str, str]) -> OverrideSet:
-    """Extract and parse overrides from request headers.
-
-    Args:
-        headers: Request headers dict (case-insensitive keys expected)
-
-    Returns:
-        OverrideSet with parsed overrides
-    """
-    # Try various case combinations
-    for key in ["x-ccproxy-hooks", "X-CCProxy-Hooks", "X-CCPROXY-HOOKS"]:
-        if key in headers:
-            return parse_overrides(headers[key])
-
-    # Try lowercase lookup
     lower_headers = {k.lower(): v for k, v in headers.items()}
-    header_value = lower_headers.get("x-ccproxy-hooks")
-
-    return parse_overrides(header_value)
+    return parse_overrides(lower_headers.get("x-ccproxy-hooks"))
