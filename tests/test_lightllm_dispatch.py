@@ -154,6 +154,27 @@ class TestTransformToProvider:
         data = json.loads(body)
         assert len(data["messages"]) >= 3
 
+    def test_gemini_with_cached_content(self) -> None:
+        _, _, body = transform_to_provider(
+            model="gemini-2.0-flash",
+            provider="gemini",
+            messages=[{"role": "user", "content": "hello"}],
+            api_key="test-key",
+            cached_content="cachedContents/abc123",
+        )
+        data = json.loads(body)
+        assert data.get("cachedContent") == "cachedContents/abc123"
+
+    def test_gemini_without_cached_content(self) -> None:
+        _, _, body = transform_to_provider(
+            model="gemini-2.0-flash",
+            provider="gemini",
+            messages=[{"role": "user", "content": "hello"}],
+            api_key="test-key",
+        )
+        data = json.loads(body)
+        assert "cachedContent" not in data
+
     def test_no_api_key_raises_for_anthropic(self) -> None:
         """Anthropic requires an API key — validate_environment raises."""
         from litellm.exceptions import AuthenticationError

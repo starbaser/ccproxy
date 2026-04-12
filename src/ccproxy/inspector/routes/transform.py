@@ -166,18 +166,42 @@ def _handle_redirect(flow: HTTPFlow, target: TransformRoute, body: dict[str, obj
     logger.info("redirect: → %s %s%s", target.dest_provider, dest_host, flow.request.path)
 
 
+_GEMINI_PROVIDERS = {"gemini", "vertex_ai", "vertex_ai_beta"}
+
+
 def _handle_transform(flow: HTTPFlow, target: TransformRoute, body: dict[str, object]) -> None:
     from ccproxy.lightllm import transform_to_provider
 
     is_streaming = bool(body.get("stream", False))
+    api_key = _resolve_api_key(target)
+    messages: list[object] = body.get("messages", [])  # type: ignore[assignment]
+    optional_params = {k: v for k, v in body.items() if k != "messages"}
+    cached_content: str | None = None
+
+    if target.dest_provider in _GEMINI_PROVIDERS:
+        from ccproxy.lightllm.context_cache import resolve_cached_content
+
+        try:
+            messages, optional_params, cached_content = resolve_cached_content(
+                messages=messages,  # type: ignore[arg-type]
+                model=target.dest_model,
+                provider=target.dest_provider,  # type: ignore[arg-type]
+                optional_params=optional_params,
+                api_key=api_key,
+                vertex_project=target.dest_vertex_project,
+                vertex_location=target.dest_vertex_location,
+            )
+        except Exception:
+            logger.warning("Context cache resolution failed, proceeding without", exc_info=True)
 
     url, headers, new_body = transform_to_provider(
         model=target.dest_model,
         provider=target.dest_provider,
-        messages=body.get("messages", []),  # type: ignore[arg-type]
-        optional_params={k: v for k, v in body.items() if k != "messages"},
-        api_key=_resolve_api_key(target),
+        messages=messages,  # type: ignore[arg-type]
+        optional_params=optional_params,
+        api_key=api_key,
         stream=is_streaming,
+        cached_content=cached_content,
     )
 
     # Persist transform context for response phase

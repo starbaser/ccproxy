@@ -222,6 +222,14 @@ class TransformRoute(BaseModel):
     """Provider name in ``oat_sources`` for credential lookup, or an
     environment variable name.  ``None`` skips API key injection."""
 
+    dest_vertex_project: str | None = None
+    """GCP project ID for Vertex AI transforms. Required for context caching
+    with ``vertex_ai`` / ``vertex_ai_beta`` providers."""
+
+    dest_vertex_location: str | None = None
+    """GCP region for Vertex AI transforms (e.g. ``us-central1``).
+    Required for context caching with ``vertex_ai`` / ``vertex_ai_beta`` providers."""
+
 
 class InspectorConfig(BaseModel):
     """Configuration for the inspector (traffic capture via mitmproxy)."""

@@ -62,6 +62,7 @@ def _transform_gemini(
     *,
     api_key: str | None = None,
     stream: bool = False,
+    cached_content: str | None = None,
 ) -> tuple[str, dict[str, str], bytes]:
     """Gemini-specific transform (bypasses BaseConfig.transform_request)."""
     from litellm.llms.vertex_ai.common_utils import _get_gemini_url
@@ -95,6 +96,12 @@ def _transform_gemini(
         api_key=api_key,
     )
 
+    # For API key auth, ?key= in the URL is the sole auth mechanism.
+    # validate_environment() injects Authorization: Bearer {api_key} which
+    # Google rejects (it's not an OAuth token). Strip it.
+    if not is_oauth:
+        headers.pop("Authorization", None)
+
     custom_provider = "gemini" if provider == "gemini" else "vertex_ai"
     request_body = _transform_request_body(
         messages=messages,
@@ -102,7 +109,7 @@ def _transform_gemini(
         optional_params=optional_params,
         custom_llm_provider=custom_provider,  # type: ignore[arg-type]
         litellm_params={},
-        cached_content=None,
+        cached_content=cached_content,
     )
 
     body = json.dumps(request_body).encode()
@@ -118,6 +125,7 @@ def transform_to_provider(
     api_key: str | None = None,
     api_base: str | None = None,
     stream: bool = False,
+    cached_content: str | None = None,
 ) -> tuple[str, dict[str, str], bytes]:
     """Transform an OpenAI chat-completions request into provider-native format."""
     optional_params = optional_params or {}
@@ -125,7 +133,7 @@ def transform_to_provider(
     if provider in _GEMINI_PROVIDERS:
         return _transform_gemini(
             model, provider, messages, optional_params,
-            api_key=api_key, stream=stream,
+            api_key=api_key, stream=stream, cached_content=cached_content,
         )
 
     config = get_config(provider, model)
