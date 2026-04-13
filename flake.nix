@@ -54,6 +54,14 @@
           tiktoken = prev.tiktoken.overrideAttrs {
             autoPatchelfIgnoreMissingDeps = true;
           };
+          # Suppress uv's "Ignoring invalid SSL_CERT_FILE" warning: stdenv sets
+          # SSL_CERT_FILE=/no-cert-file.crt to block network access; uv warns on
+          # the missing path even though the install is --offline --no-cache.
+          claude-ccproxy = prev.claude-ccproxy.overrideAttrs (old: {
+            preInstall = (old.preInstall or "") + ''
+              export SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+            '';
+          });
         };
 
         pythonSet =
