@@ -1,0 +1,17 @@
+name: Notify Marketplace
+
+on:
+  push:
+    branches: [main, starbased/dev, dev]
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger marketplace sync
+        run: |
+          gh api repos/starbaser/eigenmage-marketplace/dispatches \
+            -f event_type=plugin-updated \
+            -f "client_payload[plugin]=${{ github.event.repository.name }}"
+        env:
+          GH_TOKEN: ${{ secrets.MARKETPLACE_DISPATCH_TOKEN }}
