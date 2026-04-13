@@ -1,13 +1,14 @@
 """Tests for the ccproxy CLI."""
 
 import json
+import logging
 import os
+import sys
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 
-from ccproxy.config import clear_config_instance
 from ccproxy.cli import (
     Install,
     Logs,
@@ -17,10 +18,11 @@ from ccproxy.cli import (
     install_config,
     main,
     run_with_proxy,
+    setup_logging,
     show_status,
-    start_server,
     view_logs,
 )
+from ccproxy.config import clear_config_instance
 
 
 class TestInstallConfig:
@@ -578,3 +580,113 @@ class TestMainFunction:
         mock_status.assert_called_once_with(
             tmp_path, json_output=True, check_proxy=False, check_inspect=False
         )
+
+
+class TestSetupLogging:
+    """Tests for setup_logging — stderr vs systemd journal handler routing."""
+
+    def _root(self) -> logging.Logger:
+        return logging.getLogger()
+
+    def _reset_root(self) -> None:
+        self._root().handlers.clear()
+        self._root().setLevel(logging.WARNING)
+
+    def test_stderr_handler_when_use_journal_false(self, tmp_path: Path) -> None:
+        """Default path: StreamHandler pointed at sys.stderr."""
+        try:
+            setup_logging(tmp_path, debug=False, log_file=False, use_journal=False)
+            handlers = self._root().handlers
+            assert len(handlers) == 1
+            assert isinstance(handlers[0], logging.StreamHandler)
+            assert handlers[0].stream is sys.stderr
+        finally:
+            self._reset_root()
+
+    def test_file_handler_added_when_log_file_true(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """log_file=True adds a FileHandler alongside the stream handler."""
+        monkeypatch.delenv("INVOCATION_ID", raising=False)
+        try:
+            log_path = setup_logging(tmp_path, debug=False, log_file=True, use_journal=False)
+            assert log_path == tmp_path / "ccproxy.log"
+            handler_types = {type(h).__name__ for h in self._root().handlers}
+            assert "FileHandler" in handler_types
+            assert "StreamHandler" in handler_types
+        finally:
+            self._reset_root()
+            (tmp_path / "ccproxy.log").unlink(missing_ok=True)
+
+    def test_journal_fallback_when_systemd_missing(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """use_journal=True falls back to stderr when systemd-python is unavailable.
+
+        The test environment does not have systemd-python installed, so the
+        import naturally raises ImportError and exercises the fallback branch.
+        The warning is emitted via the logger (whose StreamHandler writes to
+        sys.stderr), so capsys captures it.
+        """
+        try:
+            setup_logging(tmp_path, debug=False, log_file=False, use_journal=True)
+
+            handlers = self._root().handlers
+            assert len(handlers) == 1
+            assert isinstance(handlers[0], logging.StreamHandler)
+            assert handlers[0].stream is sys.stderr
+
+            captured = capsys.readouterr()
+            assert "use_journal requested but JournalHandler unavailable" in captured.err
+            # Python raises ModuleNotFoundError (subclass of ImportError) for
+            # missing top-level packages; the fallback message formats
+            # `type(exc).__name__` so either name may appear.
+            assert "ModuleNotFoundError" in captured.err or "ImportError" in captured.err
+        finally:
+            self._reset_root()
+
+    def test_journal_handler_installed_when_systemd_available(self, tmp_path: Path) -> None:
+        """use_journal=True installs JournalHandler when systemd.journal imports cleanly."""
+        mock_handler = Mock(spec=logging.Handler)
+        mock_handler.level = logging.NOTSET
+        fake_journal_module = Mock()
+        fake_journal_module.JournalHandler = Mock(return_value=mock_handler)
+        fake_systemd_module = Mock()
+        fake_systemd_module.journal = fake_journal_module
+
+        try:
+            with patch.dict(
+                sys.modules,
+                {"systemd": fake_systemd_module, "systemd.journal": fake_journal_module},
+            ):
+                setup_logging(tmp_path, debug=False, log_file=False, use_journal=True)
+
+            fake_journal_module.JournalHandler.assert_called_once_with(
+                SYSLOG_IDENTIFIER="ccproxy"
+            )
+            assert mock_handler in self._root().handlers
+        finally:
+            self._reset_root()
+
+    def test_journal_fallback_when_journal_handler_raises(self, tmp_path: Path) -> None:
+        """Runtime JournalHandler construction failures also fall back to stderr."""
+        fake_journal_module = Mock()
+        fake_journal_module.JournalHandler = Mock(
+            side_effect=OSError("No /run/systemd/journal/socket")
+        )
+        fake_systemd_module = Mock()
+        fake_systemd_module.journal = fake_journal_module
+
+        try:
+            with patch.dict(
+                sys.modules,
+                {"systemd": fake_systemd_module, "systemd.journal": fake_journal_module},
+            ):
+                setup_logging(tmp_path, debug=False, log_file=False, use_journal=True)
+
+            handlers = self._root().handlers
+            assert len(handlers) == 1
+            assert isinstance(handlers[0], logging.StreamHandler)
+            assert handlers[0].stream is sys.stderr
+        finally:
+            self._reset_root()

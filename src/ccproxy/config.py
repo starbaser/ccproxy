@@ -305,6 +305,17 @@ class CCProxyConfig(BaseSettings):
     it is unreachable. Catches broken routes, DNS, CA bundles, or namespace
     egress problems before any real traffic is accepted."""
 
+    use_journal: bool = False
+    """Route daemon logging to the systemd journal via JournalHandler.
+
+    Requires the ``journal`` optional extra
+    (``pip install claude-ccproxy[journal]``) which pulls in
+    ``systemd-python``. Only applies to ``ccproxy start`` — interactive
+    commands (run, status, logs) always write to stderr.
+
+    When enabled without ``systemd-python`` installed (or on a host without
+    systemd), ccproxy falls back to stderr with a warning log."""
+
     readiness_probe_url: str = "https://1.1.1.1/"
     """Canary URL for the startup outbound-reachability probe. Any HTTP
     response (status code irrelevant) counts as success. Cloudflare's

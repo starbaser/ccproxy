@@ -558,6 +558,9 @@ dev = [
     { name = "types-pyyaml" },
     { name = "types-requests" },
 ]
+journal = [
+    { name = "systemd-python" },
+]
 otel = [
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-otlp-proto-grpc" },
@@ -606,12 +609,13 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rich", specifier = ">=13.7.1" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12.6" },
+    { name = "systemd-python", marker = "extra == 'journal'", specifier = ">=235" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.12.20250516" },
     { name = "types-requests", marker = "extra == 'dev'", specifier = ">=2.32.4.20250611" },
     { name = "tyro", specifier = ">=0.7.0" },
     { name = "xepor", specifier = ">=0.6.0" },
 ]
-provides-extras = ["otel", "dev"]
+provides-extras = ["otel", "journal", "dev"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -2701,6 +2705,12 @@ sdist = { url = "https://files.pythonhosted.org/packages/81/69/17425771797c36cde
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0b/c9/584bc9651441b4ba60cc4d557d8a547b5aff901af35bda3a4ee30c819b82/starlette-1.0.0-py3-none-any.whl", hash = "sha256:d3ec55e0bb321692d275455ddfd3df75fff145d009685eb40dc91fc66b03d38b", size = 72651, upload-time = "2026-03-22T18:29:45.111Z" },
 ]
+
+[[package]]
+name = "systemd-python"
+version = "235"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/10/9e/ab4458e00367223bda2dd7ccf0849a72235ee3e29b36dce732685d9b7ad9/systemd-python-235.tar.gz", hash = "sha256:4e57f39797fd5d9e2d22b8806a252d7c0106c936039d1e71c8c6b8008e695c0a", size = 61677, upload-time = "2023-02-11T13:42:16.588Z" }
 
 [[package]]
 name = "tiktoken"

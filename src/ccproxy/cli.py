@@ -117,11 +117,25 @@ Command = (
 )
 
 
-def setup_logging(config_dir: Path, debug: bool = False, *, log_file: bool = False) -> Path | None:
+def setup_logging(
+    config_dir: Path,
+    debug: bool = False,
+    *,
+    log_file: bool = False,
+    use_journal: bool = False,
+) -> Path | None:
     """Configure unified logging with tagged namespaces and optional file output.
 
-    In systemd mode (INVOCATION_ID set), logs to stderr only (journal captures).
-    When log_file=True and not systemd, also logs to {config_dir}/ccproxy.log
+    Primary handler:
+      - ``use_journal=True``: ``systemd.journal.JournalHandler`` with
+        ``SYSLOG_IDENTIFIER=ccproxy`` (requires the ``journal`` optional extra).
+      - Otherwise: ``StreamHandler(sys.stderr)``.
+
+    When the journal handler cannot be constructed (missing ``systemd-python``
+    or no systemd socket), falls back to stderr and emits a warning log.
+
+    When ``log_file=True`` and not running under systemd
+    (``INVOCATION_ID`` unset), also logs to ``{config_dir}/ccproxy.log``
     (truncated on restart).
 
     Returns the log file path if created, None otherwise.
@@ -137,9 +151,21 @@ def setup_logging(config_dir: Path, debug: bool = False, *, log_file: bool = Fal
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    stream = logging.StreamHandler(sys.stderr)
-    stream.setFormatter(fmt)
-    root.addHandler(stream)
+    handler: logging.Handler
+    journal_fallback_reason: str | None = None
+    if use_journal:
+        try:
+            from systemd.journal import JournalHandler  # type: ignore[import-not-found]
+
+            handler = JournalHandler(SYSLOG_IDENTIFIER="ccproxy")
+        except Exception as exc:  # ImportError or runtime socket errors
+            handler = logging.StreamHandler(sys.stderr)
+            journal_fallback_reason = f"{type(exc).__name__}: {exc}"
+    else:
+        handler = logging.StreamHandler(sys.stderr)
+
+    handler.setFormatter(fmt)
+    root.addHandler(handler)
 
     log_path: Path | None = None
     if log_file and not os.environ.get("INVOCATION_ID"):
@@ -151,6 +177,13 @@ def setup_logging(config_dir: Path, debug: bool = False, *, log_file: bool = Fal
     logging.getLogger("LiteLLM").setLevel(logging.WARNING)  # suppress litellm import noise
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+
+    if journal_fallback_reason is not None:
+        logger.warning(
+            "use_journal requested but JournalHandler unavailable (%s); "
+            "falling back to stderr",
+            journal_fallback_reason,
+        )
 
     return log_path
 
@@ -382,9 +415,10 @@ async def _run_inspect(
 
     (config_dir / ".inspector-wireguard-client.conf").unlink(missing_ok=True)
 
-    builtin_print(
-        f"Starting inspector: mitmweb reverse@{main_port} "
-        f"+ wg-cli (auto-port), UI@{inspector.port}"
+    logger.info(
+        "Starting inspector: mitmweb reverse@%d + wg-cli (auto-port), UI@%d",
+        main_port,
+        inspector.port,
     )
 
     master, master_task, web_token = await run_inspector(
@@ -430,14 +464,16 @@ async def _run_inspect(
                 pass
         if keylog_lines:
             wg_keylog_path.write_text("\n".join(keylog_lines) + "\n")
-            builtin_print(f"WireGuard keylog: {wg_keylog_path}")
-            builtin_print(f"  Wireshark: -o wg.keylog_file:{wg_keylog_path}")
+            logger.info("WireGuard keylog: %s", wg_keylog_path)
+            logger.info("  Wireshark: -o wg.keylog_file:%s", wg_keylog_path)
 
-        builtin_print(f"TLS keylog: {tls_keylog_path}")
-        builtin_print("  Wireshark: Edit → Preferences → Protocols → TLS → (Pre)-Master-Secret log filename")
+        logger.info("TLS keylog: %s", tls_keylog_path)
+        logger.info(
+            "  Wireshark: Edit → Preferences → Protocols → TLS → (Pre)-Master-Secret log filename"
+        )
 
         web_url = f"http://{inspector.mitmproxy.web_host}:{inspector.port}/?token={web_token}"
-        builtin_print(f"Inspector UI: {web_url}")
+        logger.info("Inspector UI: %s", web_url)
 
         # Block until shutdown (SIGTERM or SIGINT)
         await master_task
@@ -713,7 +749,12 @@ def main(
     from ccproxy.config import get_config
 
     config = get_config()
-    setup_logging(config_dir, debug=config.debug, log_file=isinstance(cmd, Start))
+    setup_logging(
+        config_dir,
+        debug=config.debug,
+        log_file=isinstance(cmd, Start),
+        use_journal=config.use_journal and isinstance(cmd, Start),
+    )
 
     if isinstance(cmd, Start):
         start_server(config_dir)

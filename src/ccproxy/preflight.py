@@ -248,23 +248,29 @@ def run_preflight_checks(
             continue
 
         if pid == -1:
-            print(f"Error: Port {port} is already in use (could not identify process)")
+            logger.error("Port %d is already in use (could not identify process)", port)
             raise SystemExit(1)
 
         # Check if the port holder is a stale ccproxy process we missed
         cmdline = _read_proc_cmdline(pid)
         if cmdline and _is_ccproxy_process(cmdline):
-            logger.warning(f"Port {port} held by stale ccproxy process (PID {pid})")
+            logger.warning("Port %d held by stale ccproxy process (PID %d)", port, pid)
             kill_stale_processes([(pid, cmdline)])
             time.sleep(0.3)
             check_pid, _ = get_port_pid(port)
             if check_pid is not None:
-                print(f"Error: Failed to free port {port} (PID {pid} still holding it)")
+                logger.error("Failed to free port %d (PID %d still holding it)", port, pid)
                 raise SystemExit(1)
         else:
             name = snippet or "unknown"
-            print(f"Error: Port {port} is occupied by another process (PID {pid}: {name})")
-            print(f"Stop it first, e.g.: kill {pid}")
+            logger.error(
+                "Port %d is occupied by another process (PID %d: %s). "
+                "Stop it first, e.g.: kill %d",
+                port,
+                pid,
+                name,
+                pid,
+            )
             raise SystemExit(1)
 
     # UDP port availability
@@ -275,14 +281,20 @@ def run_preflight_checks(
             continue
 
         if pid == -1:
-            print(f"Error: UDP port {port} is already in use (could not identify process)")
+            logger.error("UDP port %d is already in use (could not identify process)", port)
             raise SystemExit(1)
 
         cmdline = _read_proc_cmdline(pid)
         snippet = (cmdline[:80] + "...") if cmdline and len(cmdline) > 80 else cmdline
         name = snippet or "unknown"
-        print(f"Error: UDP port {port} is occupied by another process (PID {pid}: {name})")
-        print(f"Stop it first, e.g.: kill {pid}")
+        logger.error(
+            "UDP port %d is occupied by another process (PID %d: %s). "
+            "Stop it first, e.g.: kill %d",
+            port,
+            pid,
+            name,
+            pid,
+        )
         raise SystemExit(1)
 
     logger.debug("Pre-flight checks passed")

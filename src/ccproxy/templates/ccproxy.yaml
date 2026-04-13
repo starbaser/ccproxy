@@ -3,6 +3,12 @@ ccproxy:
   port: 4000
   debug: true
 
+  # Route daemon logging directly to the systemd journal via JournalHandler.
+  # Applies only to `ccproxy start`. Requires the `journal` optional extra:
+  #   pip install claude-ccproxy[journal]
+  # Falls back to stderr with a warning when systemd-python is unavailable.
+  # use_journal: false
+
   # OAuth token sources - shell commands that output tokens.
   # Sentinel key sk-ant-oat-ccproxy-{name} triggers lookup.
   oat_sources:

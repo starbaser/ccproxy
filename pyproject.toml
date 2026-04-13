@@ -42,6 +42,9 @@ otel = [
   "opentelemetry-exporter-otlp-proto-grpc>=1.20.0",
   "opentelemetry-semantic-conventions>=0.41b0",
 ]
+journal = [
+  "systemd-python>=235",
+]
 dev = [
   "pytest>=8.4.1",
   "pytest-asyncio>=1.1.0",
