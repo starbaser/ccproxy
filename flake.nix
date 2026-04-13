@@ -84,8 +84,8 @@
             inherit ccproxyYaml;
 
             shellHook = ''
-              mkdir -p ${configDir}
-              ln -sfn ${ccproxyYaml} ${configDir}/ccproxy.yaml
+              mkdir -p "${configDir}"
+              ln -sfn ${ccproxyYaml} "${configDir}/ccproxy.yaml"
               export CCPROXY_CONFIG_DIR="$PWD/${configDir}"
             '';
           };
@@ -144,7 +144,6 @@
               uv sync --quiet 2>/dev/null || true
               export VIRTUAL_ENV="$PWD/.venv"
               export PATH="$PWD/.venv/bin:$PATH"
-              export CCPROXY_PORT=4001
             '';
           };
         };
@@ -157,6 +156,7 @@
       devShells = lib.mapAttrs (_: v: v.devShells) perSystem;
       lib = lib.mapAttrs (_: v: v.lib) perSystem;
 
+      inherit defaultSettings;
       homeModules.ccproxy = import ./nix/module.nix;
     };
 }

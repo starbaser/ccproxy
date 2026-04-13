@@ -54,7 +54,7 @@ ccproxy start
 
 ### Per-project instance
 
-Each project can run its own ccproxy with isolated config, port, and transforms via the flake's `mkConfig`:
+Each project can run its own ccproxy with isolated config, port, and transforms via the flake's `mkConfig`. Use `ccproxy.defaultSettings.settings` (top-level, no `${system}` selector needed) as the base to inherit all defaults (hooks, compliance, oat_sources, otel).
 
 ```nix
 # project flake.nix
@@ -64,21 +64,24 @@ Each project can run its own ccproxy with isolated config, port, and transforms 
   inputs.flake-utils.url = "github:numtide/flake-utils";
 
   outputs = { self, nixpkgs, flake-utils, ccproxy }:
+    let
+      defaults = ccproxy.defaultSettings.settings;
+    in
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
         proxyConfig = ccproxy.lib.${system}.mkConfig {
-          settings = {
-            port = 4001;
-            oat_sources.anthropic = {
-              command = "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json";
-              destinations = [ "api.anthropic.com" ];
+          settings = defaults // {
+            port = 4010;  # per-project: use 4010+ to avoid collisions
+            inspector = defaults.inspector // {
+              port = 8090;
+              cert_dir = "./.ccproxy";
+              transforms = [
+                { match_path = "/v1/messages"; mode = "redirect";
+                  dest_provider = "anthropic"; dest_host = "api.anthropic.com";
+                  dest_path = "/v1/messages"; dest_api_key_ref = "anthropic"; }
+              ];
             };
-            inspector.transforms = [
-              { match_path = "/v1/messages"; mode = "redirect";
-                dest_provider = "anthropic"; dest_host = "api.anthropic.com";
-                dest_path = "/v1/messages"; dest_api_key_ref = "anthropic"; }
-            ];
           };
         };
       in {
@@ -95,6 +98,24 @@ Each project can run its own ccproxy with isolated config, port, and transforms 
 
 `mkConfig` generates a Nix store `ccproxy.yaml`, and its `shellHook` symlinks it into `.ccproxy/` and exports `CCPROXY_CONFIG_DIR`. The `.envrc` just needs `use flake`.
 
+Add `.ccproxy/` to `.gitignore` — the directory contains a Nix-generated symlink that is machine-specific and regenerated on `nix develop`:
+
+```
+# .gitignore
+.ccproxy/
+```
+
+#### Port assignment conventions
+
+| Port | Use |
+|------|-----|
+| 4000 | System-wide ccproxy (Home Manager, default) |
+| 4001 | ccproxy project's own devShell |
+| 4010+ | Per-project instances |
+| 8083 | System inspector UI (default) |
+| 8084 | ccproxy dev inspector |
+| 8090+ | Per-project inspector UI |
+
 ### Running the instance
 
 ```bash
@@ -110,6 +131,56 @@ ccproxy status              # Rich panel
 ccproxy status --json       # Machine-readable
 ccproxy status --proxy      # Exit 0 if proxy up, 1 if down
 ccproxy status --inspect    # Exit 0 if inspector up, 2 if down
+```
+
+### process-compose.yml
+
+Use `ccproxy status --proxy` as the readiness probe so dependent processes wait for the proxy to be healthy:
+
+```yaml
+# process-compose.yml
+version: "0.5"
+
+processes:
+  ccproxy:
+    command: "ccproxy start"
+    readiness_probe:
+      exec:
+        command: "ccproxy status --proxy"
+      initial_delay_seconds: 5
+      period_seconds: 30
+      timeout_seconds: 10
+      failure_threshold: 6
+    availability:
+      restart: on_failure
+      backoff_seconds: 2
+      max_restarts: 5
+
+  myapp:
+    command: "python -m myapp"
+    depends_on:
+      ccproxy:
+        condition: process_healthy
+```
+
+### Wiring SDK clients
+
+Point any SDK at the per-project port with a sentinel key:
+
+```python
+import anthropic
+
+client = anthropic.Anthropic(
+    api_key="sk-ant-oat-ccproxy-anthropic",
+    base_url="http://localhost:4010",  # per-project port
+)
+```
+
+Or via environment variables in `shellHook` / `.envrc`:
+
+```bash
+export ANTHROPIC_BASE_URL="http://localhost:4010"
+export ANTHROPIC_API_KEY="sk-ant-oat-ccproxy-anthropic"
 ```
 
 ## Configuration
@@ -379,6 +450,16 @@ ccproxy logs -f             # Stream logs in real-time
 ccproxy logs -n 50          # Last 50 lines
 ccproxy dag-viz             # Visualize hook pipeline
 ```
+
+## Known limitations (upstream flake issues)
+
+1. **`nix/defaults.nix` uses `min_observations: 1`** — permissive for dev; production configs should set `min_observations: 3`+.
+2. **`compliance.seed_anthropic` not in `defaults.nix`** — must be set explicitly in consumer configs; not inherited from defaults.
+3. **`devConfig` overwrites `inspector` atomically** — top-level `//` merge on `inspector` drops sub-keys not re-specified (e.g. `debug`). Deep merge each nested attrset explicitly: `defaults.inspector // { ... }`.
+4. **`supportedSystems` limited** — only `x86_64-linux` and `aarch64-linux`; `aarch64-darwin` not supported.
+5. ~~**`shellHook` doesn't quote `configDir`**~~ — fixed.
+6. ~~**`CCPROXY_PORT` env var duplicated YAML port**~~ — fixed.
+7. ~~**`defaultSettings` only accessible via per-system `lib`**~~ — fixed; now top-level at `ccproxy.defaultSettings`.
 
 ## Reference files
 
