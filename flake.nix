@@ -94,6 +94,7 @@
           settings = defaultSettings.settings // {
             port = 4001;
             inspector = defaultSettings.settings.inspector // {
+              port = 8084;
               cert_dir = "./.ccproxy";
               mitmproxy = {
                 web_password = {
