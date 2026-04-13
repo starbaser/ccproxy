@@ -7,8 +7,11 @@ import difflib
 import json
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any
+
+import humanize
 
 import attrs
 import httpx
@@ -137,6 +140,10 @@ def _header_value(headers: list[list[str]], name: str) -> str:
     return ""
 
 
+def _dt(ts: float) -> datetime:
+    return datetime.fromtimestamp(ts, tz=timezone.utc)
+
+
 def _do_list(
     console: Console,
     client: MitmwebClient,
@@ -154,6 +161,10 @@ def _do_list(
         ]
 
     if json_output:
+        for f in flows:
+            ts = f["request"].get("timestamp_start")
+            if ts:
+                f["time"] = _dt(ts).strftime("%Y-%m-%d %H:%M:%S UTC")
         console.print_json(json.dumps(flows, indent=2))
         return
 
@@ -168,6 +179,7 @@ def _do_list(
     table.add_column("Host", max_width=35)
     table.add_column("Path", max_width=60)
     table.add_column("UA", max_width=30)
+    table.add_column("Time", width=12)
 
     for f in flows:
         req = f["request"]
@@ -175,6 +187,8 @@ def _do_list(
         code = str(res.get("status_code", "-"))
         code_style = "green" if code.startswith("2") else "red" if code != "-" else "dim"
         ua = _header_value(req.get("headers", []), "user-agent")
+        ts = req.get("timestamp_start")
+        rel_time = humanize.naturaltime(_dt(ts)) if ts else "-"
 
         table.add_row(
             f["id"][:8],
@@ -183,6 +197,7 @@ def _do_list(
             req["pretty_host"],
             req["path"][:60],
             ua[:30] if ua else "[dim]-[/dim]",
+            f"[dim]{rel_time}[/dim]",
         )
 
     console.print(table)
