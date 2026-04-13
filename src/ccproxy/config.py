@@ -293,6 +293,27 @@ class CCProxyConfig(BaseSettings):
     port: int = 4000
     debug: bool = False
 
+    upstream_timeout_seconds: float | None = 600.0
+    """Timeout budget (seconds) for httpx-based upstream calls inside ccproxy
+    (OAuth 401 retry, context cache API). ``None`` disables the timeout
+    entirely, matching mitmproxy's default main-forward path. Default 600
+    (10 minutes) accommodates the slowest expected LLM inference."""
+
+    verify_readiness_on_startup: bool = True
+    """Probe a well-known external host at startup and refuse to start if
+    it is unreachable. Catches broken routes, DNS, CA bundles, or namespace
+    egress problems before any real traffic is accepted."""
+
+    readiness_probe_url: str = "https://www.cloudflare.com/"
+    """Canary URL for the startup outbound-reachability probe. Any HTTP
+    response (status code irrelevant) counts as success. Cloudflare's
+    marketing page is chosen for its global reliability; override if you
+    need a different canary."""
+
+    readiness_probe_timeout_seconds: float = 5.0
+    """Total timeout budget for the startup readiness probe. Short by
+    design — the probe is trivial and slow responses indicate a problem."""
+
     inspector: InspectorConfig = Field(default_factory=InspectorConfig)
 
     otel: OtelConfig = Field(default_factory=OtelConfig)

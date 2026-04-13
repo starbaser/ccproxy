@@ -887,3 +887,70 @@ class TestRetryWithRefreshedToken:
 
         assert flow.response.status_code == 200
         assert flow.response.content == b'{"ok": true}'
+
+    @pytest.mark.asyncio
+    async def test_retry_uses_configured_upstream_timeout(self) -> None:
+        """Retry client is instantiated with the config-driven upstream_timeout_seconds,
+        not httpx's default 5-second timeout which is too short for LLM inference."""
+        import httpx
+
+        flow = self._make_oauth_flow(provider="anthropic")
+        mock_config = MagicMock()
+        mock_config.refresh_oauth_token.return_value = ("new-token", True)
+        mock_config.get_auth_header.return_value = None
+        mock_config.upstream_timeout_seconds = 600.0
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers.multi_items.return_value = []
+        mock_response.content = b"{}"
+
+        mock_async_client = AsyncMock()
+        mock_async_client.__aenter__ = AsyncMock(return_value=mock_async_client)
+        mock_async_client.__aexit__ = AsyncMock(return_value=None)
+        mock_async_client.request = AsyncMock(return_value=mock_response)
+
+        with (
+            patch("ccproxy.config.get_config", return_value=mock_config),
+            patch("httpx.AsyncClient", return_value=mock_async_client) as client_cls,
+        ):
+            addon = InspectorAddon()
+            await addon._retry_with_refreshed_token(flow)
+
+        timeout = client_cls.call_args.kwargs["timeout"]
+        assert isinstance(timeout, httpx.Timeout)
+        assert timeout.read == 600.0
+        assert timeout.connect == 600.0
+
+    @pytest.mark.asyncio
+    async def test_retry_honors_disabled_timeout(self) -> None:
+        """Setting upstream_timeout_seconds=None disables all timeouts on the retry client."""
+        import httpx
+
+        flow = self._make_oauth_flow(provider="anthropic")
+        mock_config = MagicMock()
+        mock_config.refresh_oauth_token.return_value = ("new-token", True)
+        mock_config.get_auth_header.return_value = None
+        mock_config.upstream_timeout_seconds = None
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers.multi_items.return_value = []
+        mock_response.content = b"{}"
+
+        mock_async_client = AsyncMock()
+        mock_async_client.__aenter__ = AsyncMock(return_value=mock_async_client)
+        mock_async_client.__aexit__ = AsyncMock(return_value=None)
+        mock_async_client.request = AsyncMock(return_value=mock_response)
+
+        with (
+            patch("ccproxy.config.get_config", return_value=mock_config),
+            patch("httpx.AsyncClient", return_value=mock_async_client) as client_cls,
+        ):
+            addon = InspectorAddon()
+            await addon._retry_with_refreshed_token(flow)
+
+        timeout = client_cls.call_args.kwargs["timeout"]
+        assert isinstance(timeout, httpx.Timeout)
+        assert timeout.read is None
+        assert timeout.connect is None

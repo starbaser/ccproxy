@@ -237,8 +237,6 @@ class InspectorAddon:
             pass
 
     async def _retry_with_refreshed_token(self, flow: http.HTTPFlow) -> bool:
-        import json
-
         import httpx
 
         from ccproxy.config import get_config
@@ -264,7 +262,8 @@ class InspectorAddon:
 
         headers.pop("x-ccproxy-oauth-injected", None)  # strip if somehow present from old flows
 
-        async with httpx.AsyncClient(verify=False) as client:
+        timeout = httpx.Timeout(config.upstream_timeout_seconds)
+        async with httpx.AsyncClient(timeout=timeout) as client:
             retry_resp = await client.request(
                 method=flow.request.method,
                 url=flow.request.pretty_url,

@@ -52,8 +52,8 @@ def _resolve_api_base(provider: str, model: str, api_base: str | None) -> str | 
                 if suffix and not resolved.rstrip("/").endswith(suffix.rstrip("/")):
                     return resolved.rstrip("/") + suffix
                 return resolved
-    except (ValueError, Exception):
-        pass
+    except Exception as e:
+        logger.debug("api_base auto-resolve failed for %s/%s: %s", provider, model, e)
     return None
 
 
@@ -182,7 +182,7 @@ def transform_to_provider(
     if stream and config.supports_stream_param_in_request_body:
         data["stream"] = True
 
-    headers = config.sign_request(
+    headers, signed_body = config.sign_request(
         headers=headers,
         optional_params=optional_params,
         request_data=data,
@@ -192,7 +192,7 @@ def transform_to_provider(
         model=model,
     )
 
-    body = json.dumps(data).encode()
+    body = signed_body if signed_body is not None else json.dumps(data).encode()
     return url, headers, body
 
 

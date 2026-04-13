@@ -395,6 +395,20 @@ async def _run_inspect(
     loop = asyncio.get_running_loop()
     loop.add_signal_handler(signal.SIGTERM, master.shutdown)
 
+    if get_config().verify_readiness_on_startup:
+        import contextlib as _contextlib
+
+        from ccproxy.inspector.readiness import verify_or_shutdown
+
+        async def _cleanup() -> None:
+            master.shutdown()  # type: ignore[no-untyped-call]
+            with _contextlib.suppress(Exception):
+                await master_task
+            loop.remove_signal_handler(signal.SIGTERM)
+            wg_cli_keypair_path.unlink(missing_ok=True)
+
+        await verify_or_shutdown(get_config(), _cleanup)
+
     try:
         wg_cli_conf = get_wg_client_conf(master, wg_cli_keypair_path)
         if wg_cli_conf:
@@ -429,11 +443,11 @@ async def _run_inspect(
         await master_task
 
     finally:
+        import contextlib
+
         master.shutdown()  # type: ignore[no-untyped-call]
-        try:
+        with contextlib.suppress(Exception):
             await master_task
-        except Exception:
-            pass
         loop.remove_signal_handler(signal.SIGTERM)
 
         wg_cli_keypair_path.unlink(missing_ok=True)
@@ -579,7 +593,11 @@ def show_status(
         if isinstance(web_password_cfg, str):
             inspect_url = f"{base}/?token={web_password_cfg}"
         elif web_password_cfg is not None:
-            source = web_password_cfg if isinstance(web_password_cfg, CredentialSource) else CredentialSource(**web_password_cfg)
+            source = (
+                web_password_cfg
+                if isinstance(web_password_cfg, CredentialSource)
+                else CredentialSource(**web_password_cfg)
+            )
             resolved = source.resolve("mitmweb web_password")
             inspect_url = f"{base}/?token={resolved}" if resolved else base
         else:
