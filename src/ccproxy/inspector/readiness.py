@@ -1,7 +1,7 @@
 """Startup outbound-connectivity probe.
 
 ccproxy forwards LLM traffic with no enforced request timeout (see
-``upstream_timeout_seconds``). Rather than relying on a short per-request
+``provider_timeout``). Rather than relying on a short per-request
 timeout to catch network problems — which misfires on slow inference —
 we catch them once at startup: probe a single well-known external host
 and refuse to start if we can't reach the open internet.

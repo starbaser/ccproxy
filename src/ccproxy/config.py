@@ -293,21 +293,23 @@ class CCProxyConfig(BaseSettings):
     port: int = 4000
     debug: bool = False
 
-    upstream_timeout_seconds: float | None = 600.0
+    provider_timeout: float | None = None
     """Timeout budget (seconds) for httpx-based upstream calls inside ccproxy
-    (OAuth 401 retry, context cache API). ``None`` disables the timeout
-    entirely, matching mitmproxy's default main-forward path. Default 600
-    (10 minutes) accommodates the slowest expected LLM inference."""
+    (OAuth 401 retry). ``None`` (default) disables the timeout entirely,
+    matching Portkey AI's upstream behavior and mitmproxy's default main-
+    forward path. Set to a positive float to opt into a total request
+    budget applied uniformly across connect/read/write/pool phases."""
 
     verify_readiness_on_startup: bool = True
     """Probe a well-known external host at startup and refuse to start if
     it is unreachable. Catches broken routes, DNS, CA bundles, or namespace
     egress problems before any real traffic is accepted."""
 
-    readiness_probe_url: str = "https://www.cloudflare.com/"
+    readiness_probe_url: str = "https://1.1.1.1/"
     """Canary URL for the startup outbound-reachability probe. Any HTTP
     response (status code irrelevant) counts as success. Cloudflare's
-    marketing page is chosen for its global reliability; override if you
+    1.1.1.1 DNS server is chosen because it's reachable by direct IP
+    (no DNS resolution required) and globally reliable; override if you
     need a different canary."""
 
     readiness_probe_timeout_seconds: float = 5.0

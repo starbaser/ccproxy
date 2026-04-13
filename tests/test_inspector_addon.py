@@ -889,16 +889,16 @@ class TestRetryWithRefreshedToken:
         assert flow.response.content == b'{"ok": true}'
 
     @pytest.mark.asyncio
-    async def test_retry_uses_configured_upstream_timeout(self) -> None:
-        """Retry client is instantiated with the config-driven upstream_timeout_seconds,
-        not httpx's default 5-second timeout which is too short for LLM inference."""
+    async def test_retry_uses_configured_provider_timeout(self) -> None:
+        """Opt-in path: setting provider_timeout builds an httpx.Timeout applied
+        uniformly across connect/read/write/pool phases."""
         import httpx
 
         flow = self._make_oauth_flow(provider="anthropic")
         mock_config = MagicMock()
         mock_config.refresh_oauth_token.return_value = ("new-token", True)
         mock_config.get_auth_header.return_value = None
-        mock_config.upstream_timeout_seconds = 600.0
+        mock_config.provider_timeout = 120.0
 
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -919,19 +919,18 @@ class TestRetryWithRefreshedToken:
 
         timeout = client_cls.call_args.kwargs["timeout"]
         assert isinstance(timeout, httpx.Timeout)
-        assert timeout.read == 600.0
-        assert timeout.connect == 600.0
+        assert timeout.read == 120.0
+        assert timeout.connect == 120.0
 
     @pytest.mark.asyncio
     async def test_retry_honors_disabled_timeout(self) -> None:
-        """Setting upstream_timeout_seconds=None disables all timeouts on the retry client."""
-        import httpx
-
+        """Default path: provider_timeout=None passes timeout=None to httpx.AsyncClient
+        directly (no wrapper, no budget), matching Portkey's fetch() path."""
         flow = self._make_oauth_flow(provider="anthropic")
         mock_config = MagicMock()
         mock_config.refresh_oauth_token.return_value = ("new-token", True)
         mock_config.get_auth_header.return_value = None
-        mock_config.upstream_timeout_seconds = None
+        mock_config.provider_timeout = None
 
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -950,7 +949,12 @@ class TestRetryWithRefreshedToken:
             addon = InspectorAddon()
             await addon._retry_with_refreshed_token(flow)
 
-        timeout = client_cls.call_args.kwargs["timeout"]
-        assert isinstance(timeout, httpx.Timeout)
-        assert timeout.read is None
-        assert timeout.connect is None
+        assert client_cls.call_args.kwargs["timeout"] is None
+
+    def test_default_config_has_no_provider_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Portkey parity locked in at the config layer: default provider_timeout is None."""
+        from ccproxy.config import CCProxyConfig
+
+        monkeypatch.delenv("CCPROXY_PROVIDER_TIMEOUT", raising=False)
+        config = CCProxyConfig()
+        assert config.provider_timeout is None

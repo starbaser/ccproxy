@@ -262,8 +262,13 @@ class InspectorAddon:
 
         headers.pop("x-ccproxy-oauth-injected", None)  # strip if somehow present from old flows
 
-        timeout = httpx.Timeout(config.upstream_timeout_seconds)
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        client_kwargs: dict[str, Any] = {}
+        if config.provider_timeout is not None:
+            client_kwargs["timeout"] = httpx.Timeout(config.provider_timeout)
+        else:
+            client_kwargs["timeout"] = None  # Portkey parity: no wrapper, no budget
+
+        async with httpx.AsyncClient(**client_kwargs) as client:
             retry_resp = await client.request(
                 method=flow.request.method,
                 url=flow.request.pretty_url,
