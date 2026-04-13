@@ -3,7 +3,9 @@
 import json
 from unittest.mock import MagicMock
 
-from ccproxy.compliance.merger import _extract_model_from_path, _wrap_body, merge_profile
+import pytest
+
+from ccproxy.compliance.merger import ComplianceMerger, resolve_merger_class
 from ccproxy.compliance.models import (
     ComplianceProfile,
     ProfileFeatureBodyField,
@@ -47,7 +49,7 @@ class TestMergeHeaders:
             ProfileFeatureHeader(name="x-app", value="cli"),
             ProfileFeatureHeader(name="anthropic-beta", value="flag1,flag2"),
         ])
-        merge_profile(ctx, profile)
+        ComplianceMerger(ctx, profile).merge()
         assert ctx.get_header("x-app") == "cli"
         assert ctx.get_header("anthropic-beta") == "flag1,flag2"
 
@@ -56,13 +58,13 @@ class TestMergeHeaders:
         profile = _make_profile(headers=[
             ProfileFeatureHeader(name="x-app", value="cli"),
         ])
-        merge_profile(ctx, profile)
+        ComplianceMerger(ctx, profile).merge()
         assert ctx.get_header("x-app") == "sdk"
 
     def test_no_headers_no_op(self):
         ctx = _make_context(headers={"existing": "val"})
         profile = _make_profile(headers=[])
-        merge_profile(ctx, profile)
+        ComplianceMerger(ctx, profile).merge()
         assert ctx.get_header("existing") == "val"
 
 
@@ -72,7 +74,7 @@ class TestMergeBodyFields:
         profile = _make_profile(body_fields=[
             ProfileFeatureBodyField(path="some_envelope", value={"key": "val"}),
         ])
-        merge_profile(ctx, profile)
+        ComplianceMerger(ctx, profile).merge()
         assert ctx._body["some_envelope"] == {"key": "val"}
 
     def test_does_not_overwrite_existing(self):
@@ -80,7 +82,7 @@ class TestMergeBodyFields:
         profile = _make_profile(body_fields=[
             ProfileFeatureBodyField(path="some_envelope", value={"key": "new"}),
         ])
-        merge_profile(ctx, profile)
+        ComplianceMerger(ctx, profile).merge()
         assert ctx._body["some_envelope"] == {"key": "old"}
 
     def test_generates_user_prompt_id_when_missing(self):
@@ -88,18 +90,18 @@ class TestMergeBodyFields:
         profile = _make_profile(body_fields=[
             ProfileFeatureBodyField(path="user_prompt_id", value="placeholder"),
         ])
-        merge_profile(ctx, profile)
+        ComplianceMerger(ctx, profile).merge()
         generated = ctx._body.get("user_prompt_id")
         assert generated is not None
         assert len(generated) == 13  # uuid4 hex[:13]
-        assert generated != "placeholder"  # should be a fresh random value
+        assert generated != "placeholder"
 
     def test_preserves_existing_user_prompt_id(self):
         ctx = _make_context(body={"model": "test", "user_prompt_id": "existing-id"})
         profile = _make_profile(body_fields=[
             ProfileFeatureBodyField(path="user_prompt_id", value="placeholder"),
         ])
-        merge_profile(ctx, profile)
+        ComplianceMerger(ctx, profile).merge()
         assert ctx._body["user_prompt_id"] == "existing-id"
 
     def test_excludes_feature_config_fields(self):
@@ -110,7 +112,7 @@ class TestMergeBodyFields:
             ProfileFeatureBodyField(path="output_config", value={"effort": "max"}),
             ProfileFeatureBodyField(path="metadata", value={"user_id": "test"}),
         ])
-        merge_profile(ctx, profile)
+        ComplianceMerger(ctx, profile).merge()
         assert "thinking" not in ctx._body
         assert "context_management" not in ctx._body
         assert "output_config" not in ctx._body
@@ -122,7 +124,7 @@ class TestMergeSystem:
         profile = _make_profile(system=ProfileFeatureSystem(
             structure=[{"type": "text", "text": "You are Claude"}],
         ))
-        merge_profile(ctx, profile)
+        ComplianceMerger(ctx, profile).merge()
         assert ctx.system == [{"type": "text", "text": "You are Claude"}]
 
     def test_wraps_string_system(self):
@@ -130,19 +132,18 @@ class TestMergeSystem:
         profile = _make_profile(system=ProfileFeatureSystem(
             structure=[{"type": "text", "text": "You are Claude"}],
         ))
-        merge_profile(ctx, profile)
+        ComplianceMerger(ctx, profile).merge()
         assert isinstance(ctx.system, list)
         assert len(ctx.system) == 2
         assert ctx.system[0] == {"type": "text", "text": "You are Claude"}
         assert ctx.system[1] == {"type": "text", "text": "Be helpful"}
 
     def test_skips_list_system(self):
-        """List system blocks indicate a client that manages its own identity — skip injection."""
         ctx = _make_context(body={"system": [{"type": "text", "text": "User block"}]})
         profile = _make_profile(system=ProfileFeatureSystem(
             structure=[{"type": "text", "text": "You are Claude"}],
         ))
-        merge_profile(ctx, profile)
+        ComplianceMerger(ctx, profile).merge()
         assert isinstance(ctx.system, list)
         assert len(ctx.system) == 1
         assert ctx.system[0]["text"] == "User block"
@@ -155,19 +156,19 @@ class TestMergeSystem:
         profile = _make_profile(system=ProfileFeatureSystem(
             structure=[{"type": "text", "text": "You are Claude"}],
         ))
-        merge_profile(ctx, profile)
+        ComplianceMerger(ctx, profile).merge()
         assert len(ctx.system) == 2
 
     def test_no_profile_system_no_op(self):
         ctx = _make_context(body={"system": "Original"})
         profile = _make_profile(system=None)
-        merge_profile(ctx, profile)
+        ComplianceMerger(ctx, profile).merge()
         assert ctx.system == "Original"
 
     def test_empty_profile_structure_no_op(self):
         ctx = _make_context(body={"system": "Original"})
         profile = _make_profile(system=ProfileFeatureSystem(structure=[]))
-        merge_profile(ctx, profile)
+        ComplianceMerger(ctx, profile).merge()
         assert ctx.system == "Original"
 
 
@@ -180,7 +181,7 @@ class TestMergeSessionMetadata:
                 value={"user_id": json.dumps({"device_id": "dev123", "account_uuid": "acc456"})},
             ),
         ])
-        merge_profile(ctx, profile)
+        ComplianceMerger(ctx, profile).merge()
         metadata = ctx._body.get("metadata", {})
         assert "user_id" in metadata
         uid = json.loads(metadata["user_id"])
@@ -196,7 +197,7 @@ class TestMergeSessionMetadata:
                 value={"user_id": json.dumps({"device_id": "dev123"})},
             ),
         ])
-        merge_profile(ctx, profile)
+        ComplianceMerger(ctx, profile).merge()
         assert ctx._body["metadata"]["user_id"] == "existing"
 
     def test_no_identity_fields_no_op(self):
@@ -204,7 +205,7 @@ class TestMergeSessionMetadata:
         profile = _make_profile(body_fields=[
             ProfileFeatureBodyField(path="some_field", value="val"),
         ])
-        merge_profile(ctx, profile)
+        ComplianceMerger(ctx, profile).merge()
         assert "metadata" not in ctx._body or "user_id" not in ctx._body.get("metadata", {})
 
 
@@ -216,52 +217,46 @@ class TestIdempotency:
             system=ProfileFeatureSystem(structure=[{"type": "text", "text": "Prefix"}]),
             body_fields=[ProfileFeatureBodyField(path="some_env", value=True)],
         )
-        merge_profile(ctx, profile)
+        ComplianceMerger(ctx, profile).merge()
         first_system = ctx.system
         first_body = dict(ctx._body)
 
-        merge_profile(ctx, profile)
+        ComplianceMerger(ctx, profile).merge()
         assert ctx.system == first_system
         assert ctx._body["some_env"] == first_body["some_env"]
         assert ctx.get_header("x-app") == "cli"
 
 
 class TestWrapBody:
-    """Tests for the _wrap_body internal function."""
-
     def test_wraps_body_into_wrapper_field(self) -> None:
-        """Body is moved into wrapper_field; model is hoisted to top-level."""
         ctx = _make_context(body={"model": "gemini-pro", "messages": [], "stream": False})
         profile = _make_profile(body_wrapper="request")
 
-        _wrap_body(ctx, profile)
+        ComplianceMerger(ctx, profile).wrap_body()
 
         assert "request" in ctx._body
         assert ctx._body["model"] == "gemini-pro"
         assert ctx._body["request"] == {"messages": [], "stream": False}
 
     def test_noop_when_no_body_wrapper(self) -> None:
-        """Profile without body_wrapper leaves body unchanged."""
         original_body = {"model": "claude-3", "messages": []}
         ctx = _make_context(body=dict(original_body))
         profile = _make_profile(body_wrapper=None)
 
-        _wrap_body(ctx, profile)
+        ComplianceMerger(ctx, profile).wrap_body()
 
         assert ctx._body == original_body
 
     def test_idempotent_when_already_wrapped(self) -> None:
-        """If wrapper_field already present in body, second call is a no-op."""
         ctx = _make_context(body={"model": "gemini-pro", "request": {"messages": []}})
         profile = _make_profile(body_wrapper="request")
 
-        _wrap_body(ctx, profile)
+        ComplianceMerger(ctx, profile).wrap_body()
 
         assert ctx._body["model"] == "gemini-pro"
         assert ctx._body["request"] == {"messages": []}
 
     def test_model_extracted_from_transform_meta_when_missing_from_body(self) -> None:
-        """When body has no 'model', TransformMeta.model is used instead."""
         record = FlowRecord(direction="inbound")
         record.transform = TransformMeta(
             provider="gemini",
@@ -278,13 +273,12 @@ class TestWrapBody:
 
         profile = _make_profile(body_wrapper="request")
 
-        _wrap_body(ctx, profile)
+        ComplianceMerger(ctx, profile).wrap_body()
 
         assert ctx._body["model"] == "gemini-2.5-flash"
         assert "request" in ctx._body
 
     def test_model_extracted_from_path_when_missing_from_body_and_transform(self) -> None:
-        """When body and TransformMeta lack a model, path extraction is tried."""
         flow = MagicMock()
         flow.request.headers = {}
         flow.request.content = json.dumps({"messages": []}).encode()
@@ -294,13 +288,12 @@ class TestWrapBody:
 
         profile = _make_profile(body_wrapper="request")
 
-        _wrap_body(ctx, profile)
+        ComplianceMerger(ctx, profile).wrap_body()
 
         assert ctx._body.get("model") == "gemini-pro"
         assert "request" in ctx._body
 
     def test_wrap_body_without_model_still_wraps(self) -> None:
-        """If no model can be found anywhere, body is still wrapped without model key."""
         flow = MagicMock()
         flow.request.headers = {}
         flow.request.content = json.dumps({"messages": []}).encode()
@@ -310,13 +303,12 @@ class TestWrapBody:
 
         profile = _make_profile(body_wrapper="request")
 
-        _wrap_body(ctx, profile)
+        ComplianceMerger(ctx, profile).wrap_body()
 
         assert "model" not in ctx._body
         assert ctx._body["request"] == {"messages": []}
 
     def test_wrap_body_with_model_from_body_and_transform_prefers_body(self) -> None:
-        """Body model takes priority over TransformMeta model."""
         record = FlowRecord(direction="inbound")
         record.transform = TransformMeta(
             provider="gemini",
@@ -333,71 +325,108 @@ class TestWrapBody:
 
         profile = _make_profile(body_wrapper="request")
 
-        _wrap_body(ctx, profile)
+        ComplianceMerger(ctx, profile).wrap_body()
 
         assert ctx._body["model"] == "explicit-model"
         assert ctx._body["request"] == {"messages": []}
 
 
 class TestExtractModelFromPath:
-    """Tests for the _extract_model_from_path internal function."""
+    def _extract(self, path: str) -> str | None:
+        flow = MagicMock()
+        flow.request.path = path
+        ctx = MagicMock()
+        ctx.flow = flow
+        return ComplianceMerger(ctx, _make_profile())._extract_model_from_path()
 
     def test_extracts_model_from_standard_models_path(self) -> None:
-        """/models/gemini-pro:generateContent → 'gemini-pro'."""
-        flow = MagicMock()
-        flow.request.path = "/v1beta/models/gemini-pro:generateContent"
-        ctx = MagicMock()
-        ctx.flow = flow
-
-        result = _extract_model_from_path(ctx)
-        assert result == "gemini-pro"
+        assert self._extract("/v1beta/models/gemini-pro:generateContent") == "gemini-pro"
 
     def test_extracts_model_from_path_without_method_suffix(self) -> None:
-        """/models/gemini-2.5-flash (no colon suffix) → 'gemini-2.5-flash'."""
-        flow = MagicMock()
-        flow.request.path = "/v1/models/gemini-2.5-flash"
-        ctx = MagicMock()
-        ctx.flow = flow
-
-        result = _extract_model_from_path(ctx)
-        assert result == "gemini-2.5-flash"
+        assert self._extract("/v1/models/gemini-2.5-flash") == "gemini-2.5-flash"
 
     def test_returns_none_when_no_models_segment(self) -> None:
-        """Path with no /models/ segment returns None."""
-        flow = MagicMock()
-        flow.request.path = "/v1/messages"
-        ctx = MagicMock()
-        ctx.flow = flow
-
-        result = _extract_model_from_path(ctx)
-        assert result is None
+        assert self._extract("/v1/messages") is None
 
     def test_returns_none_for_root_path(self) -> None:
-        """Root path returns None."""
-        flow = MagicMock()
-        flow.request.path = "/"
-        ctx = MagicMock()
-        ctx.flow = flow
-
-        result = _extract_model_from_path(ctx)
-        assert result is None
+        assert self._extract("/") is None
 
     def test_extracts_model_with_version_prefix_in_name(self) -> None:
-        """/models/gemini-1.5-pro:streamGenerateContent → 'gemini-1.5-pro'."""
-        flow = MagicMock()
-        flow.request.path = "/v1/models/gemini-1.5-pro:streamGenerateContent"
-        ctx = MagicMock()
-        ctx.flow = flow
-
-        result = _extract_model_from_path(ctx)
-        assert result == "gemini-1.5-pro"
+        assert self._extract("/v1/models/gemini-1.5-pro:streamGenerateContent") == "gemini-1.5-pro"
 
     def test_extracts_first_models_segment_in_complex_path(self) -> None:
-        """When /models/ appears deep in path, first match is returned."""
-        flow = MagicMock()
-        flow.request.path = "/projects/my-project/locations/us-central1/models/gemini-pro:predict"
-        ctx = MagicMock()
-        ctx.flow = flow
+        assert self._extract(
+            "/projects/my-project/locations/us-central1/models/gemini-pro:predict"
+        ) == "gemini-pro"
 
-        result = _extract_model_from_path(ctx)
-        assert result == "gemini-pro"
+
+class TestSubclass:
+    def test_override_skips_operation(self):
+        class SkipHeaders(ComplianceMerger):
+            def merge_headers(self):
+                pass
+
+        ctx = _make_context()
+        profile = _make_profile(
+            headers=[ProfileFeatureHeader(name="x-app", value="cli")],
+            system=ProfileFeatureSystem(structure=[{"type": "text", "text": "You are Claude"}]),
+        )
+        SkipHeaders(ctx, profile).merge()
+        assert ctx.get_header("x-app") == ""
+        assert ctx.system == [{"type": "text", "text": "You are Claude"}]
+
+    def test_override_extends_with_super(self):
+        class ExtendedHeaders(ComplianceMerger):
+            def merge_headers(self):
+                super().merge_headers()
+                self.ctx.set_header("x-custom", "injected")
+
+        ctx = _make_context()
+        profile = _make_profile(headers=[ProfileFeatureHeader(name="x-app", value="cli")])
+        ExtendedHeaders(ctx, profile).merge()
+        assert ctx.get_header("x-app") == "cli"
+        assert ctx.get_header("x-custom") == "injected"
+
+    def test_override_merge_reorders_operations(self):
+        call_order = []
+
+        class ReorderedMerger(ComplianceMerger):
+            def merge(self):
+                self.merge_system()
+                self.merge_headers()
+
+            def merge_headers(self):
+                call_order.append("headers")
+                super().merge_headers()
+
+            def merge_system(self):
+                call_order.append("system")
+                super().merge_system()
+
+        ctx = _make_context(body={"model": "test"})
+        profile = _make_profile(
+            headers=[ProfileFeatureHeader(name="x-app", value="cli")],
+            system=ProfileFeatureSystem(structure=[{"type": "text", "text": "Prefix"}]),
+        )
+        ReorderedMerger(ctx, profile).merge()
+        assert call_order == ["system", "headers"]
+        assert ctx.get_header("x-app") == "cli"
+        assert ctx.system == [{"type": "text", "text": "Prefix"}]
+
+
+class TestResolveMergerClass:
+    def test_resolves_default_class(self):
+        cls = resolve_merger_class("ccproxy.compliance.merger.ComplianceMerger")
+        assert cls is ComplianceMerger
+
+    def test_rejects_non_subclass(self):
+        with pytest.raises(TypeError, match="not a ComplianceMerger subclass"):
+            resolve_merger_class("builtins.dict")
+
+    def test_rejects_nonexistent_module(self):
+        with pytest.raises(ModuleNotFoundError):
+            resolve_merger_class("nonexistent.module.Foo")
+
+    def test_rejects_nonexistent_attr(self):
+        with pytest.raises(AttributeError):
+            resolve_merger_class("ccproxy.compliance.merger.NoSuchClass")

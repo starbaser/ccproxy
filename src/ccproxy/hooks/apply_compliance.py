@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from mitmproxy.proxy.mode_specs import ReverseMode
 
-from ccproxy.compliance.merger import merge_profile
+from ccproxy.compliance.merger import resolve_merger_class
 from ccproxy.compliance.store import get_store
 from ccproxy.inspector.flow_store import InspectorMeta
 from ccproxy.pipeline.hook import hook
@@ -78,5 +78,8 @@ def apply_compliance(ctx: Context, params: dict[str, Any]) -> Context:
         len(profile.body_fields),
     )
 
-    merge_profile(ctx, profile)
+    from ccproxy.config import get_config
+
+    merger_cls = resolve_merger_class(get_config().compliance.merger_class)
+    merger_cls(ctx, profile).merge()
     return ctx

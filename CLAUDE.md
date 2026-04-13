@@ -128,7 +128,7 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 - `classifier.py` — Feature classification (content vs envelope vs auth vs dynamic)
 - `extractor.py` — Feature extraction from `ClientRequest` snapshots
 - `store.py` — `ProfileStore` singleton with JSON persistence at `{config_dir}/compliance_profiles.json`
-- `merger.py` — Idempotent profile application: headers (add if missing), body envelope, system prompt wrapping, session metadata synthesis
+- `merger.py` — `ComplianceMerger` class with 5 idempotent merge operations as public methods: `merge_headers`, `merge_session_metadata`, `wrap_body`, `merge_body_fields`, `merge_system`. `merge()` calls all 5 in order. Subclass to override, skip, reorder, or extend individual operations. `resolve_merger_class()` resolves a dotted import path to a `ComplianceMerger` subclass. Config: `compliance.merger_class` (default `"ccproxy.compliance.merger.ComplianceMerger"`).
 - Observation is built into `InspectorAddon.request()` pre-pipeline, triggered by WireGuard flows or configured UA patterns. Profiles keyed by `(provider, user_agent)` with stability detection across N observations.
 
 **`mcp/`** — Thread-safe notification buffer (`NotificationBuffer` singleton) + `POST /mcp/notify` FastAPI endpoint for MCP terminal event ingestion.
@@ -167,6 +167,13 @@ inspector:
 ```
 
 Matching fields: `match_host` (optional, checked against pretty_host + Host header), `match_path` (prefix), `match_model` (substring in request body). Vertex AI fields: `dest_vertex_project` and `dest_vertex_location` (required for Gemini context caching with `vertex_ai`/`vertex_ai_beta` providers).
+
+**Compliance merger config** — `compliance.merger_class` dotted path to a `ComplianceMerger` subclass:
+```yaml
+compliance:
+  merger_class: mypackage.custom_merger.MyMerger
+```
+Default: `ccproxy.compliance.merger.ComplianceMerger`. Subclass overrides individual methods (`merge_headers`, `merge_session_metadata`, `wrap_body`, `merge_body_fields`, `merge_system`) or `merge()` itself to reorder/skip operations.
 
 ### Singleton Patterns
 

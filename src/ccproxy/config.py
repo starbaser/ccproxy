@@ -124,6 +124,9 @@ class ComplianceConfig(BaseModel):
     additional_body_content_fields: list[str] = Field(default_factory=list)
     """Additional top-level body field names to treat as content (not envelope)."""
 
+    merger_class: str = "ccproxy.compliance.merger.ComplianceMerger"
+    """Dotted import path to a ComplianceMerger subclass for profile application."""
+
 
 class OtelConfig(BaseModel):
     """OpenTelemetry configuration for span export."""
