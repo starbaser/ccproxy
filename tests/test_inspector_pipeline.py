@@ -1,4 +1,4 @@
-"""Tests for ccproxy.inspector.pipeline — _load_hooks, build_executor, register_pipeline_routes."""
+"""Tests for ccproxy.inspector.pipeline — build_executor, register_pipeline_routes."""
 
 from __future__ import annotations
 
@@ -25,20 +25,22 @@ class TestBuildExecutor:
         assert "forward_oauth" in executor.get_execution_order()
 
     def test_invalid_module_handled_gracefully(self, caplog: pytest.LogCaptureFixture) -> None:
-        with caplog.at_level(logging.ERROR, logger="ccproxy.inspector.pipeline"):
+        with caplog.at_level(logging.ERROR, logger="ccproxy.pipeline.loader"):
             executor = build_executor(["ccproxy.hooks.nonexistent_xyz_module"])
         assert isinstance(executor, PipelineExecutor)
         assert "nonexistent_xyz_module" in caplog.text
 
-    def test_dict_entry_attaches_params(self) -> None:
+    def test_dict_entry_params_dropped_without_model(self, caplog: pytest.LogCaptureFixture) -> None:
+        # forward_oauth declares no model=, so YAML params are discarded with a warning
         entry = {"hook": "ccproxy.hooks.forward_oauth", "params": {"timeout": 10, "strict": True}}
-        executor = build_executor([entry])
+        with caplog.at_level(logging.WARNING, logger="ccproxy.pipeline.loader"):
+            executor = build_executor([entry])
         assert isinstance(executor, PipelineExecutor)
         assert "forward_oauth" in executor.get_execution_order()
-        # Verify params reached the spec via the DAG
         spec = executor.dag.get_hook("forward_oauth")
         assert spec is not None
-        assert spec.params == {"timeout": 10, "strict": True}
+        assert spec.params == {}
+        assert "no model=" in caplog.text
 
     def test_dict_entry_with_empty_hook_key_skipped(self) -> None:
         entry = {"hook": "", "params": {}}

@@ -126,8 +126,3 @@ class PipelineExecutor:
     def get_parallel_groups(self) -> list[set[str]]:
         return self.dag.parallel_groups
 
-    def to_mermaid(self) -> str:
-        return self.dag.to_mermaid()
-
-    def to_ascii(self) -> str:
-        return self.dag.to_ascii()

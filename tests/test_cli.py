@@ -724,3 +724,59 @@ class TestSetupLogging:
             assert self._root().level == logging.DEBUG
         finally:
             self._reset_root()
+
+
+class TestStatusPipeline:
+    def test_status_renders_pipeline_panel_with_all_5_hooks(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Pipeline panel in show_status renders all 5 production hooks.
+
+        Regression guard: the deleted dag-viz command had a hardcoded import list
+        that omitted verbose_mode and apply_compliance. This test verifies that
+        show_status via load_hooks + render_pipeline produces output containing
+        every hook declared in the config.
+        """
+        import socket as _socket
+
+        from ccproxy.config import clear_config_instance
+
+        config_file = tmp_path / "ccproxy.yaml"
+        config_file.write_text("""
+ccproxy:
+  host: 127.0.0.1
+  port: 4001
+  inspector:
+    port: 8084
+  hooks:
+    inbound:
+      - ccproxy.hooks.forward_oauth
+      - ccproxy.hooks.extract_session_id
+    outbound:
+      - ccproxy.hooks.inject_mcp_notifications
+      - ccproxy.hooks.verbose_mode
+      - ccproxy.hooks.apply_compliance
+""")
+
+        monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
+        clear_config_instance()
+
+        # Proxy and inspector are not running — socket probes must fail cleanly.
+        monkeypatch.setattr(_socket, "create_connection", Mock(side_effect=OSError))
+
+        show_status(tmp_path, json_output=False, check_proxy=False, check_inspect=False)
+
+        captured = capsys.readouterr()
+        out = captured.out
+
+        assert "Pipeline" in out
+        for hook_name in (
+            "forward_oauth",
+            "extract_session_id",
+            "inject_mcp_notifications",
+            "verbose_mode",
+            "apply_compliance",
+        ):
+            assert hook_name in out, f"Expected hook '{hook_name}' in status output"
+        assert "lightllm transform" in out
+        assert "provider API" in out

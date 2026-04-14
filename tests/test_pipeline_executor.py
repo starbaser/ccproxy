@@ -272,17 +272,6 @@ class TestPipelineExecutorIntrospection:
         assert len(groups) == 1
         assert groups[0] == {"x", "y"}
 
-    def test_to_mermaid(self):
-        executor = PipelineExecutor(hooks=[make_spec("a", writes=["k"]), make_spec("b", reads=["k"])])
-        mermaid = executor.to_mermaid()
-        assert "graph TD" in mermaid
-
-    def test_to_ascii(self):
-        executor = PipelineExecutor(hooks=[make_spec("single")])
-        ascii_art = executor.to_ascii()
-        assert "single" in ascii_art
-
-
 class TestHookSpec:
     def _make_flow_ctx(self, body: dict | None = None) -> Context:
         flow = _make_flow(body)

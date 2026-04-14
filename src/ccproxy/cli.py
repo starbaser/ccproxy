@@ -94,23 +94,12 @@ class Status(BaseModel):
     """Check if inspector stack (mitmweb) is running."""
 
 
-class DagViz(BaseModel):
-    """Visualize the hook pipeline DAG (Directed Acyclic Graph).
-
-    Shows hook execution order and dependencies based on reads/writes declarations.
-    """
-
-    output: Annotated[str, tyro.conf.arg(aliases=["-o"])] = "ascii"
-    """Output format: ascii, mermaid, json."""
-
-
 Command = (
     Annotated[Start, tyro.conf.subcommand(name="start")]
     | Annotated[Install, tyro.conf.subcommand(name="install")]
     | Annotated[Run, tyro.conf.subcommand(name="run")]
     | Annotated[Logs, tyro.conf.subcommand(name="logs")]
     | Annotated[Status, tyro.conf.subcommand(name="status")]
-    | Annotated[DagViz, tyro.conf.subcommand(name="dag-viz")]
     | Flows
 )
 
@@ -701,34 +690,19 @@ def show_status(
         console.print(Panel(table, title="[bold]ccproxy Status[/bold]", border_style="blue"))
 
         if status_data["hooks"]:
-            hooks_table = Table(show_header=True, show_lines=True)
-            hooks_table.add_column("#", style="dim", width=3)
-            hooks_table.add_column("Stage", style="magenta", width=8)
-            hooks_table.add_column("Hook", style="cyan")
-            hooks_table.add_column("Parameters", style="yellow")
+            from ccproxy.pipeline.executor import PipelineExecutor
+            from ccproxy.pipeline.loader import load_hooks
+            from ccproxy.pipeline.render import render_pipeline
 
-            i = 1
-            for stage, hook_list in status_data["hooks"].items():
-                for hook in hook_list:
-                    if isinstance(hook, str):
-                        hook_name = hook.split(".")[-1]
-                        hook_path = hook
-                        params_display = "[dim]none[/dim]"
-                    else:
-                        hook_path = hook.get("hook", "")
-                        hook_name = hook_path.split(".")[-1] if hook_path else ""
-                        params = hook.get("params", {})
-                        params_display = ", ".join(f"{k}={v}" for k, v in params.items()) if params else "[dim]none[/dim]"
-
-                    hooks_table.add_row(
-                        str(i),
-                        stage,
-                        f"[bold]{hook_name}[/bold]\n[dim]{hook_path}[/dim]",
-                        params_display,
-                    )
-                    i += 1
-
-            console.print(Panel(hooks_table, title="[bold]Hooks[/bold]", border_style="green"))
+            hooks_cfg = status_data["hooks"]
+            inbound_specs = load_hooks(hooks_cfg.get("inbound", []))
+            outbound_specs = load_hooks(hooks_cfg.get("outbound", []))
+            inbound_exec = PipelineExecutor(hooks=inbound_specs)
+            outbound_exec = PipelineExecutor(hooks=outbound_specs)
+            pipeline = render_pipeline(inbound_exec, outbound_exec)
+            console.print(
+                Panel(pipeline, title="[bold]Pipeline[/bold]", border_style="green")
+            )
 
 
 def main(
@@ -829,98 +803,8 @@ def main(
             check_inspect=cmd.inspect,
         )
 
-    elif isinstance(cmd, DagViz):
-        handle_dag_viz(cmd)
-
     elif isinstance(cmd, FlowsList | FlowsDump | FlowsDiff | FlowsClear):
         handle_flows(cmd, config_dir)
-
-
-def handle_dag_viz(cmd: DagViz) -> None:
-    """Handle dag-viz subcommand to visualize the pipeline DAG."""
-    # Import all hooks to register them
-    from ccproxy.hooks import (  # noqa: F401
-        extract_session_id,  # pyright: ignore[reportUnusedImport]
-        forward_oauth,  # pyright: ignore[reportUnusedImport]
-        inject_claude_code_identity,  # pyright: ignore[reportUnusedImport]
-        inject_mcp_notifications,  # pyright: ignore[reportUnusedImport]
-    )
-    from ccproxy.pipeline import PipelineExecutor
-    from ccproxy.pipeline.hook import get_registry
-
-    registry = get_registry()
-    all_specs = registry.get_all_specs()
-
-    if not all_specs:
-        print("[red]No hooks registered in pipeline[/red]")
-        sys.exit(1)
-
-    hook_specs = list(all_specs.values())
-
-    # Create executor (this builds the DAG)
-    try:
-        executor = PipelineExecutor(hooks=hook_specs)
-    except Exception as e:
-        print(f"[red]Error building DAG: {e}[/red]")
-        sys.exit(1)
-
-    if cmd.output == "mermaid":
-        print(executor.to_mermaid())
-    elif cmd.output == "json":
-        import json as json_mod
-
-        dag_data = {
-            "execution_order": executor.get_execution_order(),
-            "parallel_groups": [list(g) for g in executor.get_parallel_groups()],
-            "hooks": {
-                name: {
-                    "reads": list(spec.reads),
-                    "writes": list(spec.writes),
-                    "dependencies": list(executor.dag.get_dependencies(name)),
-                }
-                for name, spec in all_specs.items()
-            },
-        }
-        print(json_mod.dumps(dag_data, indent=2))
-    else:
-        console = Console()
-
-        console.print("[bold cyan]Pipeline Hook DAG[/bold cyan]")
-
-        order = executor.get_execution_order()
-        console.print("\n[bold]Execution Order:[/bold]")
-        console.print(f"  {' → '.join(order)}")
-
-        groups = executor.get_parallel_groups()
-        if any(len(g) > 1 for g in groups):
-            console.print("\n[bold]Parallel Execution Groups:[/bold]")
-            for i, group in enumerate(groups):
-                if len(group) > 1:
-                    console.print(f"  Group {i + 1}: {', '.join(sorted(group))} [dim](can run in parallel)[/dim]")
-                else:
-                    console.print(f"  Group {i + 1}: {next(iter(group))}")
-
-        console.print("\n[bold]Hook Dependencies:[/bold]")
-        table = Table(show_header=True, header_style="bold")
-        table.add_column("Hook", style="cyan")
-        table.add_column("Reads", style="green")
-        table.add_column("Writes", style="yellow")
-        table.add_column("Depends On", style="magenta")
-
-        for name in order:
-            spec = all_specs[name]
-            deps = executor.dag.get_dependencies(name)
-            table.add_row(
-                name,
-                ", ".join(sorted(spec.reads)) or "-",
-                ", ".join(sorted(spec.writes)) or "-",
-                ", ".join(sorted(deps)) or "-",
-            )
-
-        console.print(table)
-
-        console.print("\n[bold]DAG Visualization:[/bold]")
-        console.print(executor.to_ascii())
 
 
 def entry_point() -> None:
