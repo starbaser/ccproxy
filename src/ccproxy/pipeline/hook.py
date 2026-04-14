@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from pydantic import BaseModel
+
     from ccproxy.pipeline.context import Context
 
 
@@ -35,6 +37,7 @@ class HookSpec:
     writes: frozenset[str] = field(default_factory=frozenset)  # pyright: ignore[reportUnknownVariableType]
     params: dict[str, Any] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
     priority: int = 0
+    model: type[BaseModel] | None = None
 
     def __hash__(self) -> int:
         return hash(self.name)
@@ -87,6 +90,7 @@ def hook(
     reads: list[str] | None = None,
     writes: list[str] | None = None,
     guard: GuardFn | None = None,
+    model: type[BaseModel] | None = None,
 ) -> Callable[[HandlerFn], HandlerFn]:
     """Decorator to register a function as a pipeline hook.
 
@@ -118,6 +122,7 @@ def hook(
             guard=resolved_guard or always_true,
             reads=frozenset(reads or []),
             writes=frozenset(writes or []),
+            model=model,
         )
         _registry.register_spec(spec)
 
