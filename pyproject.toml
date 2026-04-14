@@ -3,16 +3,12 @@ name = "claude-ccproxy"
 version = "1.2.0"
 description = "Scriptable mitmproxy-based LLM API interceptor for Claude Code"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 license = { text = "AGPL-3.0-or-later" }
 keywords = ["proxy", "routing", "ai", "llm"]
 classifiers = [
-  "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.12",
-  "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
   "litellm>=1.83.0",
@@ -100,7 +96,7 @@ exclude_lines = [
 ]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.13"
 pretty = true
 show_error_codes = true
 mypy_path = "stubs"
@@ -141,18 +137,18 @@ check_untyped_defs = true
 [tool.pyright]
 include = ["src", "tests"]
 ignore = ["tests/"]
-pythonVersion = "3.12"
+pythonVersion = "3.13"
 typeCheckingMode = "standard"
 stubPath = "stubs"
 
 [tool.ty]
-python_version = "3.12"
+python_version = "3.13"
 
 [tool.ty.src]
 root = "src"
 
 [tool.ruff]
-target-version = "py312"
+target-version = "py313"
 src = ["src", "tests"]
 line-length = 120
 

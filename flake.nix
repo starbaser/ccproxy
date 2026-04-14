@@ -41,7 +41,7 @@
 
       perSystem = forAllSystems (system: let
         pkgs = nixpkgs.legacyPackages.${system};
-        python = pkgs.python312;
+        python = pkgs.python313;
 
         # Rust/C extension wheels that need autoPatchelf fixes
         wheelFixes = final: prev: {
@@ -129,7 +129,7 @@
         devShells = {
           default = pkgs.mkShell {
             packages = with pkgs; [
-              python312
+              python313
               uv
               ruff
               mypy

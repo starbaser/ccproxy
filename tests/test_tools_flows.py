@@ -1,5 +1,6 @@
 """Tests for MitmwebClient in ccproxy.tools.flows."""
 
+import base64
 import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -10,13 +11,22 @@ import pytest
 from ccproxy.tools.flows import (
     Flows,
     MitmwebClient,
+    _body_to_har_text,
+    _build_har,
+    _build_har_entry,
+    _build_har_request,
+    _build_har_response,
+    _build_timings,
     _do_diff,
     _do_inspect,
     _do_list,
-    _format_body,
-    _format_headers_table,
     _header_value,
+    _headers_to_har,
     _make_client,
+    _ms_delta,
+    _parse_client_request_text,
+    _query_string,
+    _safe_fetch,
     handle_flows,
 )
 
@@ -128,13 +138,28 @@ class TestMitmwebClientGetResponseBody:
 
 
 class TestMitmwebClientGetClientRequest:
-    """Tests for MitmwebClient.get_client_request."""
+    """Tests for MitmwebClient.get_client_request — returns structured dict."""
 
-    def test_parses_contentview_list_format(self) -> None:
-        """contentview returns [[label, text], ...] — first entry's text is returned."""
-        content_text = json.dumps({"method": "POST", "url": "https://example.com"})
+    _CONTENTVIEW_TEXT = (
+        "POST https://api.anthropic.com:443/v1/messages\n"
+        "\n"
+        "--- Headers ---\n"
+        "  content-type: application/json\n"
+        "  user-agent: claude-code/1.0\n"
+        "\n"
+        "--- Body ---\n"
+        '{"model": "claude-3-5-sonnet"}'
+    )
+
+    def test_parses_dict_text_field(self) -> None:
+        """contentview returns {text: ..., view_name: ...} — text field is parsed."""
         mock_resp = MagicMock()
-        mock_resp.json.return_value = [["Client-Request", content_text]]
+        mock_resp.json.return_value = {
+            "text": self._CONTENTVIEW_TEXT,
+            "view_name": "Client-Request",
+            "syntax_highlight": "yaml",
+            "description": "",
+        }
         mock_resp.raise_for_status = MagicMock()
 
         client = MitmwebClient(host="localhost", port=8084, token="tok")  # noqa: S106
@@ -146,13 +171,16 @@ class TestMitmwebClientGetClientRequest:
         client._client.get.assert_called_once_with(
             "/flows/flow-id-3/request/content/client-request"
         )
-        assert result == content_text
+        assert isinstance(result, dict)
+        assert result["method"] == "POST"
+        assert result["url"] == "https://api.anthropic.com:443/v1/messages"
+        assert {"name": "content-type", "value": "application/json"} in result["headers"]
+        assert result["body_text"] == '{"model": "claude-3-5-sonnet"}'
 
-    def test_falls_back_to_text_on_non_list_response(self) -> None:
-        """If contentview returns a non-list, fall back to resp.text."""
+    def test_falls_back_to_list_format(self) -> None:
+        """List format [[label, text]] — first entry's text element is parsed."""
         mock_resp = MagicMock()
-        mock_resp.json.return_value = "plain text response"
-        mock_resp.text = "plain text response"
+        mock_resp.json.return_value = [["Client-Request", self._CONTENTVIEW_TEXT]]
         mock_resp.raise_for_status = MagicMock()
 
         client = MitmwebClient(host="localhost", port=8084, token="tok")  # noqa: S106
@@ -160,10 +188,28 @@ class TestMitmwebClientGetClientRequest:
         client._client.get.return_value = mock_resp
 
         result = client.get_client_request("flow-id-4")
-        assert result == "plain text response"
 
-    def test_returns_text_for_empty_list(self) -> None:
-        """Empty list response falls back to resp.text."""
+        assert isinstance(result, dict)
+        assert result["method"] == "POST"
+
+    def test_falls_back_to_text_on_non_list_response(self) -> None:
+        """If contentview returns a non-list non-dict, fall back to resp.text."""
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = "not a dict"
+        mock_resp.text = self._CONTENTVIEW_TEXT
+        mock_resp.raise_for_status = MagicMock()
+
+        client = MitmwebClient(host="localhost", port=8084, token="tok")  # noqa: S106
+        client._client = MagicMock()
+        client._client.get.return_value = mock_resp
+
+        result = client.get_client_request("flow-id-5")
+
+        assert isinstance(result, dict)
+        assert result["method"] == "POST"
+
+    def test_returns_dict_for_empty_list(self) -> None:
+        """Empty list response falls back to resp.text, parsed as dict."""
         mock_resp = MagicMock()
         mock_resp.json.return_value = []
         mock_resp.text = ""
@@ -173,21 +219,13 @@ class TestMitmwebClientGetClientRequest:
         client._client = MagicMock()
         client._client.get.return_value = mock_resp
 
-        result = client.get_client_request("flow-id-5")
-        assert result == ""
-
-    def test_handles_string_entry_in_list(self) -> None:
-        """List entry that is a plain string (not a nested list) is stringified."""
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = ["some string"]
-        mock_resp.raise_for_status = MagicMock()
-
-        client = MitmwebClient(host="localhost", port=8084, token="tok")  # noqa: S106
-        client._client = MagicMock()
-        client._client.get.return_value = mock_resp
-
         result = client.get_client_request("flow-id-6")
-        assert result == "some string"
+
+        assert isinstance(result, dict)
+        assert result["method"] == ""
+        assert result["url"] == ""
+        assert result["headers"] == []
+        assert result["body_text"] == ""
 
     def test_raises_on_http_error(self) -> None:
         mock_resp = MagicMock()
@@ -385,27 +423,442 @@ class TestHeaderValue:
         assert _header_value([["other", "val"]], "missing") == ""
 
 
-class TestFormatBody:
-    def test_valid_json_returns_syntax(self) -> None:
-        from rich.syntax import Syntax
-        result = _format_body(b'{"key": "value"}')
-        assert isinstance(result, Syntax)
+class TestParseClientRequestText:
+    """Tests for _parse_client_request_text."""
 
-    def test_invalid_json_returns_string(self) -> None:
-        result = _format_body(b"plain text")
-        assert result == "plain text"
+    def test_empty_input(self) -> None:
+        result = _parse_client_request_text("")
+        assert result == {"method": "", "url": "", "headers": [], "body_text": ""}
 
-    def test_empty_body_returns_empty_marker(self) -> None:
-        result = _format_body(b"")
-        assert result == "(empty)"
+    def test_well_formed_full_input(self) -> None:
+        text = (
+            "POST https://api.anthropic.com:443/v1/messages\n"
+            "\n"
+            "--- Headers ---\n"
+            "  content-type: application/json\n"
+            "  user-agent: claude-code/1.0\n"
+            "\n"
+            "--- Body ---\n"
+            '{"model": "claude-3-5-sonnet"}'
+        )
+        result = _parse_client_request_text(text)
+        assert result["method"] == "POST"
+        assert result["url"] == "https://api.anthropic.com:443/v1/messages"
+        assert {"name": "content-type", "value": "application/json"} in result["headers"]
+        assert {"name": "user-agent", "value": "claude-code/1.0"} in result["headers"]
+        assert result["body_text"] == '{"model": "claude-3-5-sonnet"}'
+
+    def test_empty_body_marker(self) -> None:
+        text = (
+            "GET https://example.com/\n"
+            "\n"
+            "--- Headers ---\n"
+            "  accept: */*\n"
+            "\n"
+            "--- Body ---\n"
+            "(empty)"
+        )
+        result = _parse_client_request_text(text)
+        assert result["body_text"] == ""
+
+    def test_body_with_multiline_content(self) -> None:
+        text = (
+            "POST https://example.com/api\n"
+            "\n"
+            "--- Headers ---\n"
+            "  content-type: application/json\n"
+            "\n"
+            "--- Body ---\n"
+            "line one\n"
+            "line two\n"
+            "line three"
+        )
+        result = _parse_client_request_text(text)
+        assert result["body_text"] == "line one\nline two\nline three"
+
+    def test_malformed_first_line_no_space(self) -> None:
+        text = "https://example.com/\n\n--- Headers ---\n"
+        result = _parse_client_request_text(text)
+        assert result["method"] == ""
+        assert result["url"] == "https://example.com/"
+
+    def test_header_value_with_colon(self) -> None:
+        text = (
+            "GET https://example.com/\n"
+            "\n"
+            "--- Headers ---\n"
+            "  authorization: Bearer tok:extra:colons\n"
+            "\n"
+            "--- Body ---\n"
+            "(empty)"
+        )
+        result = _parse_client_request_text(text)
+        assert {"name": "authorization", "value": "Bearer tok:extra:colons"} in result["headers"]
+
+    def test_no_headers_or_body_sections(self) -> None:
+        text = "DELETE https://example.com/resource"
+        result = _parse_client_request_text(text)
+        assert result["method"] == "DELETE"
+        assert result["url"] == "https://example.com/resource"
+        assert result["headers"] == []
+        assert result["body_text"] == ""
 
 
-class TestFormatHeadersTable:
-    def test_creates_table_with_headers(self) -> None:
-        from rich.table import Table
-        headers = [["Content-Type", "application/json"], ["X-Api-Key", "secret"]]
-        result = _format_headers_table(headers)
-        assert isinstance(result, Table)
+class TestSafeFetch:
+    """Tests for _safe_fetch."""
+
+    def test_success_returns_bytes(self) -> None:
+        fetch = MagicMock(return_value=b"response body")
+        result = _safe_fetch(fetch, "flow-id-1")
+        assert result == b"response body"
+        fetch.assert_called_once_with("flow-id-1")
+
+    def test_http_status_error_returns_empty_bytes(self) -> None:
+        fetch = MagicMock(
+            side_effect=httpx.HTTPStatusError(
+                "500", request=MagicMock(), response=MagicMock()
+            )
+        )
+        result = _safe_fetch(fetch, "flow-id-2")
+        assert result == b""
+
+    def test_non_http_error_propagates(self) -> None:
+        fetch = MagicMock(side_effect=ValueError("unexpected"))
+        with pytest.raises(ValueError, match="unexpected"):
+            _safe_fetch(fetch, "flow-id-3")
+
+
+class TestHeadersToHar:
+    """Tests for _headers_to_har."""
+
+    def test_empty_list(self) -> None:
+        assert _headers_to_har([]) == []
+
+    def test_single_header(self) -> None:
+        result = _headers_to_har([["Content-Type", "application/json"]])
+        assert result == [{"name": "Content-Type", "value": "application/json"}]
+
+    def test_multiple_headers(self) -> None:
+        headers = [
+            ["Content-Type", "application/json"],
+            ["Authorization", "Bearer tok"],
+        ]
+        result = _headers_to_har(headers)
+        assert result == [
+            {"name": "Content-Type", "value": "application/json"},
+            {"name": "Authorization", "value": "Bearer tok"},
+        ]
+
+
+class TestQueryString:
+    """Tests for _query_string."""
+
+    def test_no_query(self) -> None:
+        assert _query_string("/v1/messages") == []
+
+    def test_single_param(self) -> None:
+        result = _query_string("/v1/messages?key=AIzaXXX")
+        assert result == [{"name": "key", "value": "AIzaXXX"}]
+
+    def test_multiple_params(self) -> None:
+        result = _query_string("/search?q=hello&limit=10")
+        assert result == [
+            {"name": "q", "value": "hello"},
+            {"name": "limit", "value": "10"},
+        ]
+
+    def test_param_with_no_value(self) -> None:
+        result = _query_string("/api?flag")
+        assert result == [{"name": "flag", "value": ""}]
+
+    def test_full_url_with_query(self) -> None:
+        result = _query_string("https://example.com/api?model=claude&stream=true")
+        assert result == [
+            {"name": "model", "value": "claude"},
+            {"name": "stream", "value": "true"},
+        ]
+
+
+class TestBodyToHarText:
+    """Tests for _body_to_har_text."""
+
+    def test_utf8_text(self) -> None:
+        raw = b'{"key": "value"}'
+        text, encoding = _body_to_har_text(raw)
+        assert text == '{"key": "value"}'
+        assert encoding is None
+
+    def test_binary_bytes(self) -> None:
+        raw = bytes(range(256))
+        text, encoding = _body_to_har_text(raw)
+        assert encoding == "base64"
+        assert text == base64.b64encode(raw).decode("ascii")
+
+    def test_empty_bytes(self) -> None:
+        text, encoding = _body_to_har_text(b"")
+        assert text == ""
+        assert encoding is None
+
+
+class TestMsDelta:
+    """Tests for _ms_delta."""
+
+    def test_normal_delta(self) -> None:
+        result = _ms_delta(1234567891.0, 1234567890.0)
+        assert result == pytest.approx(1000.0)
+
+    def test_none_earlier(self) -> None:
+        assert _ms_delta(1234567891.0, None) == -1.0
+
+    def test_none_later(self) -> None:
+        assert _ms_delta(None, 1234567890.0) == -1.0
+
+    def test_both_none(self) -> None:
+        assert _ms_delta(None, None) == -1.0
+
+
+class TestBuildTimings:
+    """Tests for _build_timings."""
+
+    def _make_req(self, start: float = 1234567890.0, end: float = 1234567890.1) -> dict:
+        return {"timestamp_start": start, "timestamp_end": end}
+
+    def _make_res(self, start: float = 1234567890.2, end: float = 1234567890.5) -> dict:
+        return {
+            "timestamp_start": start,
+            "timestamp_end": end,
+            "status_code": 200,
+        }
+
+    def _make_server_conn(
+        self,
+        start: float = 1234567889.8,
+        tcp_setup: float = 1234567889.9,
+        tls_setup: float = 1234567889.95,
+    ) -> dict:
+        return {
+            "timestamp_start": start,
+            "timestamp_tcp_setup": tcp_setup,
+            "timestamp_tls_setup": tls_setup,
+        }
+
+    def test_full_timing_data(self) -> None:
+        req = self._make_req()
+        res = self._make_res()
+        sc = self._make_server_conn()
+        timings = _build_timings(req, res, sc)
+        assert "connect" in timings
+        assert "ssl" in timings
+        assert "send" in timings
+        assert "wait" in timings
+        assert "receive" in timings
+        assert timings["connect"] == pytest.approx(100.0, rel=1e-3)
+        assert timings["ssl"] == pytest.approx(50.0, rel=1e-3)
+        assert timings["send"] == pytest.approx(100.0, rel=1e-3)
+        assert timings["receive"] == pytest.approx(300.0, rel=1e-3)
+
+    def test_missing_response(self) -> None:
+        req = self._make_req()
+        sc = self._make_server_conn()
+        timings = _build_timings(req, None, sc)
+        assert timings["wait"] == 0.0
+        assert timings["receive"] == 0.0
+
+    def test_missing_server_conn_timestamps(self) -> None:
+        req = self._make_req()
+        res = self._make_res()
+        sc: dict = {}
+        timings = _build_timings(req, res, sc)
+        assert timings["connect"] == -1.0
+        assert timings["ssl"] == -1.0
+
+
+class TestBuildHarRequest:
+    """Tests for _build_har_request."""
+
+    def _make_flow(self) -> dict:
+        return {
+            "id": "flow-123",
+            "request": {
+                "method": "POST",
+                "scheme": "https",
+                "pretty_host": "api.anthropic.com",
+                "path": "/v1/messages",
+                "headers": [["content-type", "application/json"]],
+                "http_version": "HTTP/1.1",
+                "timestamp_start": 1234567890.0,
+                "timestamp_end": 1234567890.1,
+            },
+            "response": None,
+            "server_conn": {},
+        }
+
+    def test_forwarded_request_with_body(self) -> None:
+        flow = self._make_flow()
+        body = b'{"model": "claude"}'
+        result = _build_har_request(flow, body, client_req=None)
+        assert result["method"] == "POST"
+        assert result["url"] == "https://api.anthropic.com/v1/messages"
+        assert result["postData"]["text"] == '{"model": "claude"}'
+        assert result["bodySize"] == len(body)
+
+    def test_forwarded_get_request_no_post_data(self) -> None:
+        flow = self._make_flow()
+        flow["request"]["method"] = "GET"
+        flow["request"]["path"] = "/v1/models"
+        result = _build_har_request(flow, b"", client_req=None)
+        assert result["method"] == "GET"
+        assert "postData" not in result
+
+    def test_client_req_override(self) -> None:
+        flow = self._make_flow()
+        client_req = {
+            "method": "POST",
+            "url": "http://127.0.0.1:4000/v1/messages",
+            "headers": [{"name": "content-type", "value": "application/json"}],
+            "body_text": '{"model": "claude-3-5-sonnet"}',
+        }
+        result = _build_har_request(flow, b"", client_req=client_req)
+        assert result["method"] == "POST"
+        assert result["url"] == "http://127.0.0.1:4000/v1/messages"
+        assert result["postData"]["text"] == '{"model": "claude-3-5-sonnet"}'
+
+
+class TestBuildHarResponse:
+    """Tests for _build_har_response."""
+
+    def _make_flow_with_response(self) -> dict:
+        return {
+            "id": "flow-123",
+            "request": {
+                "method": "POST",
+                "scheme": "https",
+                "pretty_host": "api.anthropic.com",
+                "path": "/v1/messages",
+                "headers": [],
+                "timestamp_start": 1234567890.0,
+                "timestamp_end": 1234567890.1,
+            },
+            "response": {
+                "status_code": 200,
+                "reason": "OK",
+                "headers": [["content-type", "application/json"]],
+                "http_version": "HTTP/1.1",
+                "timestamp_start": 1234567890.2,
+                "timestamp_end": 1234567890.5,
+            },
+            "server_conn": {},
+        }
+
+    def test_with_response_and_body(self) -> None:
+        flow = self._make_flow_with_response()
+        body = b'{"id": "msg-1"}'
+        result = _build_har_response(flow, body)
+        assert result["status"] == 200
+        assert result["statusText"] == "OK"
+        assert result["content"]["text"] == '{"id": "msg-1"}'
+        assert result["bodySize"] == len(body)
+
+    def test_no_response_returns_stub(self) -> None:
+        flow = self._make_flow_with_response()
+        flow["response"] = None
+        result = _build_har_response(flow, b"")
+        assert result["status"] == 0
+        assert result["statusText"] == ""
+        assert result["content"]["size"] == 0
+
+    def test_binary_body_base64_encoding(self) -> None:
+        flow = self._make_flow_with_response()
+        # bytes 0x80-0xFF are invalid UTF-8 start bytes - forces base64 encoding
+        raw = bytes(range(128, 256))
+        result = _build_har_response(flow, raw)
+        assert result["content"]["encoding"] == "base64"
+        assert result["content"]["text"] == base64.b64encode(raw).decode("ascii")
+
+
+class TestBuildHarEntry:
+    """Tests for _build_har_entry."""
+
+    def _make_flow(self) -> dict:
+        return {
+            "id": "full-flow-id-123",
+            "request": {
+                "method": "POST",
+                "scheme": "https",
+                "pretty_host": "api.anthropic.com",
+                "path": "/v1/messages",
+                "headers": [["content-type", "application/json"]],
+                "http_version": "HTTP/1.1",
+                "timestamp_start": 1234567890.0,
+                "timestamp_end": 1234567890.1,
+            },
+            "response": {
+                "status_code": 200,
+                "reason": "OK",
+                "headers": [["content-type", "application/json"]],
+                "http_version": "HTTP/1.1",
+                "timestamp_start": 1234567890.2,
+                "timestamp_end": 1234567890.5,
+            },
+            "server_conn": {
+                "peername": None,
+                "timestamp_start": 1234567889.8,
+                "timestamp_tcp_setup": 1234567889.9,
+                "timestamp_tls_setup": 1234567889.95,
+            },
+        }
+
+    def test_full_happy_path(self) -> None:
+        flow = self._make_flow()
+        entry = _build_har_entry(flow, b'{"model": "claude"}', b'{"id": "msg-1"}')
+        assert "startedDateTime" in entry
+        assert entry["request"]["method"] == "POST"
+        assert entry["response"]["status"] == 200
+        assert "timings" in entry
+        assert "cache" in entry
+
+    def test_no_response(self) -> None:
+        flow = self._make_flow()
+        flow["response"] = None
+        entry = _build_har_entry(flow, b"", b"")
+        assert entry["response"]["status"] == 0
+
+    def test_with_client_req(self) -> None:
+        flow = self._make_flow()
+        client_req = {
+            "method": "POST",
+            "url": "http://127.0.0.1:4000/v1/messages",
+            "headers": [{"name": "content-type", "value": "application/json"}],
+            "body_text": '{"model": "claude-3-5-sonnet"}',
+        }
+        entry = _build_har_entry(flow, b"", b"", client_req=client_req)
+        assert entry["request"]["url"] == "http://127.0.0.1:4000/v1/messages"
+
+    def test_with_peername(self) -> None:
+        flow = self._make_flow()
+        flow["server_conn"]["peername"] = ["192.168.1.1", 443]
+        entry = _build_har_entry(flow, b"", b"")
+        assert entry["serverIPAddress"] == "192.168.1.1"
+
+
+class TestBuildHar:
+    """Tests for _build_har."""
+
+    def test_wraps_entry_in_har_log(self) -> None:
+        entry = {"startedDateTime": "2024-01-01T00:00:00+00:00", "time": 100.0}
+        har = _build_har(entry)
+        assert har["log"]["version"] == "1.2"
+        assert har["log"]["creator"]["name"] == "ccproxy"
+        assert len(har["log"]["entries"]) == 1
+        assert har["log"]["entries"][0] is entry
+
+    def test_round_trip_json(self) -> None:
+        entry = {"startedDateTime": "2024-01-01T00:00:00+00:00", "time": 42.0}
+        har = _build_har(entry)
+        serialized = json.dumps(har, indent=2)
+        parsed = json.loads(serialized)
+        assert parsed["log"]["version"] == "1.2"
+        assert parsed["log"]["entries"][0]["time"] == 42.0
 
 
 class TestDoList:
@@ -486,69 +939,98 @@ class TestDoInspect:
                 "pretty_host": "api.anthropic.com",
                 "path": "/v1/messages",
                 "headers": [["content-type", "application/json"]],
+                "http_version": "HTTP/1.1",
+                "timestamp_start": 1234567890.0,
+                "timestamp_end": 1234567890.1,
             },
             "response": {
                 "status_code": 200,
                 "reason": "OK",
                 "headers": [["content-type", "application/json"]],
+                "http_version": "HTTP/1.1",
+                "timestamp_start": 1234567890.2,
+                "timestamp_end": 1234567890.5,
+            },
+            "server_conn": {
+                "peername": None,
+                "timestamp_start": 1234567889.8,
+                "timestamp_tcp_setup": 1234567889.9,
+                "timestamp_tls_setup": 1234567889.95,
             },
         }
 
-    def test_inspect_request(self) -> None:
-        console = MagicMock()
+    def test_inspect_request(self, capsys: pytest.CaptureFixture) -> None:
         client = MagicMock()
         client.resolve_id.return_value = "full-flow-id-123"
         client.list_flows.return_value = [self._make_flow_data()]
         client.get_request_body.return_value = b'{"model": "claude"}'
+        client.get_response_body.return_value = b""
 
-        _do_inspect(console, client, action="req", id_prefix="full")
+        _do_inspect(client, action="req", id_prefix="full")
 
-        client.resolve_id.assert_called_once_with("full")
-        assert console.print.call_count >= 1
+        captured = capsys.readouterr()
+        har = json.loads(captured.out)
+        assert har["log"]["version"] == "1.2"
+        assert har["log"]["entries"][0]["request"]["method"] == "POST"
 
-    def test_inspect_response(self) -> None:
-        console = MagicMock()
+    def test_inspect_response(self, capsys: pytest.CaptureFixture) -> None:
         client = MagicMock()
         client.resolve_id.return_value = "full-flow-id-123"
         client.list_flows.return_value = [self._make_flow_data()]
+        client.get_request_body.return_value = b""
         client.get_response_body.return_value = b'{"content": "hello"}'
 
-        _do_inspect(console, client, action="res", id_prefix="full")
+        _do_inspect(client, action="res", id_prefix="full")
 
-        assert console.print.call_count >= 1
+        captured = capsys.readouterr()
+        har = json.loads(captured.out)
+        assert har["log"]["entries"][0]["response"]["status"] == 200
 
-    def test_inspect_client_request(self) -> None:
-        console = MagicMock()
+    def test_inspect_client_request(self, capsys: pytest.CaptureFixture) -> None:
         client = MagicMock()
         client.resolve_id.return_value = "full-flow-id-123"
         client.list_flows.return_value = [self._make_flow_data()]
-        client.get_client_request.return_value = "GET https://example.com"
+        client.get_request_body.return_value = b""
+        client.get_response_body.return_value = b""
+        client.get_client_request.return_value = {
+            "method": "POST",
+            "url": "http://127.0.0.1:4000/v1/messages",
+            "headers": [{"name": "content-type", "value": "application/json"}],
+            "body_text": '{"model": "claude-3-5-sonnet"}',
+        }
 
-        _do_inspect(console, client, action="client", id_prefix="full")
+        _do_inspect(client, action="client", id_prefix="full")
 
-        client.get_client_request.assert_called_once()
-        assert console.print.call_count >= 1
+        client.get_client_request.assert_called_once_with("full-flow-id-123")
+        captured = capsys.readouterr()
+        har = json.loads(captured.out)
+        assert har["log"]["entries"][0]["request"]["url"] == "http://127.0.0.1:4000/v1/messages"
 
-    def test_inspect_response_no_response(self) -> None:
-        console = MagicMock()
+    def test_inspect_response_no_response(self, capsys: pytest.CaptureFixture) -> None:
         client = MagicMock()
         flow_data = self._make_flow_data()
         flow_data["response"] = None
         client.resolve_id.return_value = "full-flow-id-123"
         client.list_flows.return_value = [flow_data]
+        client.get_request_body.return_value = b""
+        client.get_response_body.return_value = b""
 
-        _do_inspect(console, client, action="res", id_prefix="full")
+        _do_inspect(client, action="res", id_prefix="full")
 
-        assert "No response" in str(console.print.call_args)
+        captured = capsys.readouterr()
+        har = json.loads(captured.out)
+        assert har["log"]["entries"][0]["response"]["status"] == 0
 
-    def test_inspect_flow_not_found(self) -> None:
-        console = MagicMock()
+    def test_inspect_flow_not_found(self, capsys: pytest.CaptureFixture) -> None:
         client = MagicMock()
         client.resolve_id.return_value = "not-in-list"
         client.list_flows.return_value = []
 
         with pytest.raises(SystemExit):
-            _do_inspect(console, client, action="req", id_prefix="not")
+            _do_inspect(client, action="req", id_prefix="not")
+
+        captured = capsys.readouterr()
+        assert "not found" in captured.err
 
 
 class TestDoDiff:

@@ -30,59 +30,67 @@ def _make_cr(
     )
 
 
-def _make_flow(record: FlowRecord | None) -> MagicMock:
-    """Mock flow whose metadata dict holds the given record."""
-    flow = MagicMock()
-    flow.metadata = {InspectorMeta.RECORD: record}
-    return flow
-
-
-def _render(cv: ClientRequestContentview, flow: MagicMock | None) -> str:
-    """Invoke the view and join its line generator back into a single string."""
-    _desc, line_gen = cv(b"", flow=flow)
-    return "\n".join("".join(piece for _, piece in line) for line in line_gen)
+def _make_metadata(record: FlowRecord | None = None) -> MagicMock:
+    """Metadata with a mock flow whose metadata dict holds the given record."""
+    meta = MagicMock()
+    meta.flow = MagicMock()
+    meta.flow.metadata = {InspectorMeta.RECORD: record}
+    return meta
 
 
 class TestContentviewProperties:
     def test_name(self) -> None:
-        assert ClientRequestContentview.name == "Client-Request"
-
-    def test_render_priority_returns_negative(self) -> None:
         cv = ClientRequestContentview()
-        assert cv.render_priority(b"") == -1
+        assert cv.name == "Client-Request"
+
+    def test_syntax_highlight(self) -> None:
+        cv = ClientRequestContentview()
+        assert cv.syntax_highlight == "yaml"
+
+    def test_render_priority(self) -> None:
+        cv = ClientRequestContentview()
+        meta = MagicMock()
+        assert cv.render_priority(b"", meta) == -1
 
 
-class TestContentviewRender:
+class TestContentviewPrettify:
     def test_no_flow_returns_fallback(self) -> None:
         cv = ClientRequestContentview()
-        assert _render(cv, None) == "(no flow context)"
+        meta = MagicMock()
+        meta.flow = None
+        assert cv.prettify(b"", meta) == "(no flow context)"
 
     def test_no_record_returns_fallback(self) -> None:
         cv = ClientRequestContentview()
-        assert _render(cv, _make_flow(None)) == "(no client request snapshot)"
+        meta = _make_metadata(record=None)
+        assert cv.prettify(b"", meta) == "(no client request snapshot)"
 
     def test_no_client_request_returns_fallback(self) -> None:
         cv = ClientRequestContentview()
         record = FlowRecord(direction="inbound", client_request=None)
-        assert _render(cv, _make_flow(record)) == "(no client request snapshot)"
+        meta = _make_metadata(record=record)
+        assert cv.prettify(b"", meta) == "(no client request snapshot)"
 
     def test_first_line_format(self) -> None:
         cv = ClientRequestContentview()
         cr = _make_cr(method="GET", scheme="http", host="localhost", port=8080, path="/health")
-        result = _render(cv, _make_flow(FlowRecord(direction="inbound", client_request=cr)))
+        meta = _make_metadata(FlowRecord(direction="inbound", client_request=cr))
+        result = cv.prettify(b"", meta)
         assert result.startswith("GET http://localhost:8080/health")
 
     def test_headers_rendered(self) -> None:
         cv = ClientRequestContentview()
         cr = _make_cr(headers={"x-api-key": "secret", "content-type": "application/json"})
-        result = _render(cv, _make_flow(FlowRecord(direction="inbound", client_request=cr)))
+        meta = _make_metadata(FlowRecord(direction="inbound", client_request=cr))
+        result = cv.prettify(b"", meta)
         assert "  x-api-key: secret" in result
         assert "  content-type: application/json" in result
 
     def test_empty_body_marker(self) -> None:
         cv = ClientRequestContentview()
         cr = _make_cr(body=b"")
-        result = _render(cv, _make_flow(FlowRecord(direction="inbound", client_request=cr)))
+        meta = _make_metadata(FlowRecord(direction="inbound", client_request=cr))
+        result = cv.prettify(b"", meta)
         assert "--- Body ---" in result
         assert "(empty)" in result
 
@@ -90,26 +98,31 @@ class TestContentviewRender:
         cv = ClientRequestContentview()
         payload = {"model": "claude-sonnet", "messages": [{"role": "user", "content": "hi"}]}
         cr = _make_cr(body=json.dumps(payload).encode())
-        result = _render(cv, _make_flow(FlowRecord(direction="inbound", client_request=cr)))
+        meta = _make_metadata(FlowRecord(direction="inbound", client_request=cr))
+        result = cv.prettify(b"", meta)
         assert '"model": "claude-sonnet"' in result
         assert '"role": "user"' in result
 
     def test_non_json_body_decoded_as_utf8(self) -> None:
         cv = ClientRequestContentview()
         cr = _make_cr(body=b"plain text body")
-        result = _render(cv, _make_flow(FlowRecord(direction="inbound", client_request=cr)))
+        meta = _make_metadata(FlowRecord(direction="inbound", client_request=cr))
+        result = cv.prettify(b"", meta)
         assert "plain text body" in result
 
     def test_invalid_utf8_bytes_replaced(self) -> None:
         cv = ClientRequestContentview()
         cr = _make_cr(body=b"data-\xff-end")  # \xff is invalid UTF-8
-        result = _render(cv, _make_flow(FlowRecord(direction="inbound", client_request=cr)))
+        meta = _make_metadata(FlowRecord(direction="inbound", client_request=cr))
+        result = cv.prettify(b"", meta)
+        # Should contain the replacement character
         assert "data-" in result
         assert "-end" in result
 
     def test_sections_structure(self) -> None:
         cv = ClientRequestContentview()
         cr = _make_cr(headers={"h": "v"}, body=b'{"k": 1}')
-        result = _render(cv, _make_flow(FlowRecord(direction="inbound", client_request=cr)))
+        meta = _make_metadata(FlowRecord(direction="inbound", client_request=cr))
+        result = cv.prettify(b"", meta)
         assert "--- Headers ---" in result
         assert "--- Body ---" in result
