@@ -98,19 +98,34 @@ class MitmwebClient:
 
 @attrs.define
 class Flows:
-    """Query mitmweb flows for debugging request pipelines."""
+    """Inspect mitmweb flows for debugging the request pipeline.
+
+    Subcommands:
+      list                       Tabular listing of captured flows (use --json for raw).
+      req <id-prefix>            Dump forwarded request + response as a HAR 1.2 file.
+      res <id-prefix>            Alias for `req` — same HAR output.
+      client <id-prefix>         HAR with the pre-pipeline client request as the
+                                 request side (original URL/headers/body before
+                                 OAuth substitution or lightllm transform).
+      diff <id1> <id2>           Unified diff of two request bodies.
+
+    HAR output is standard HTTP Archive 1.2 JSON — pipe to a file and open in
+    Chrome DevTools / Charles / Fiddler, or query with jq:
+      ccproxy flows req abc | jq '.log.entries[0].request.url'
+      ccproxy flows req abc > flow.har
+    """
 
     args: Annotated[list[str] | None, tyro.conf.Positional] = None
-    """Subcommand and flow IDs: [list|req|res|client|diff] [id1] [id2]"""
+    """Subcommand and flow IDs, e.g. `list`, `req abc123`, `diff a1 b2`."""
 
     json: bool = False
-    """Raw JSON output (list action only)."""
+    """Emit raw JSON for `list` (no-op for other subcommands — they are HAR JSON)."""
 
     filter: str | None = None
-    """Filter list by URL regex pattern."""
+    """Filter `list` output by URL regex pattern (case-insensitive)."""
 
     clear: bool = False
-    """Clear all flows."""
+    """Clear all captured flows from mitmweb."""
 
 
 
