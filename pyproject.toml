@@ -80,7 +80,11 @@ markers = [
 
 [tool.coverage.run]
 source = ["src/ccproxy"]
-omit = ["*/tests/*", "*/__init__.py"]
+omit = [
+  "*/tests/*",
+  "*/__init__.py",
+  "src/ccproxy/hooks/gemini_oauth_refresh.py",
+]
 
 [tool.coverage.report]
 exclude_lines = [

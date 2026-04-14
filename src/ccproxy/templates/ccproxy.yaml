@@ -30,6 +30,12 @@ ccproxy:
     inbound:
       - ccproxy.hooks.forward_oauth
       - ccproxy.hooks.extract_session_id
+      # Example: uncomment to work around google-gemini/gemini-cli#21691 —
+      # the Gemini CLI wipes its own refresh_token during access_token refresh,
+      # causing "No refresh token is set" errors after ~1hr. The hook stashes
+      # the refresh_token, runs the Gemini CLI to trigger a refresh, and
+      # restores the refresh_token if the CLI wipes it.
+      # - ccproxy.hooks.gemini_oauth_refresh
     outbound:
       - ccproxy.hooks.inject_mcp_notifications
       - ccproxy.hooks.verbose_mode
