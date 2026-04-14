@@ -27,9 +27,10 @@ class MitmwebClient:
 
     def __init__(self, host: str, port: int, token: str) -> None:
         self._base = f"http://{host}:{port}"
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
         self._client = httpx.Client(
             base_url=self._base,
-            headers={"Authorization": f"Bearer {token}"},
+            headers=headers,
             timeout=10.0,
         )
         self._xsrf: str | None = None
