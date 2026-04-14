@@ -703,27 +703,30 @@ def show_status(
         if status_data["hooks"]:
             hooks_table = Table(show_header=True, show_lines=True)
             hooks_table.add_column("#", style="dim", width=3)
+            hooks_table.add_column("Stage", style="magenta", width=8)
             hooks_table.add_column("Hook", style="cyan")
             hooks_table.add_column("Parameters", style="yellow")
 
-            for i, hook in enumerate(status_data["hooks"], 1):
-                if isinstance(hook, str):
-                    # Simple string format - extract function name
-                    hook_name = hook.split(".")[-1]
-                    hook_path = hook
-                    params_display = "[dim]none[/dim]"
-                else:
-                    # Dict format with params
-                    hook_path = hook.get("hook", "")
-                    hook_name = hook_path.split(".")[-1] if hook_path else ""
-                    params = hook.get("params", {})
-                    params_display = ", ".join(f"{k}={v}" for k, v in params.items()) if params else "[dim]none[/dim]"
+            i = 1
+            for stage, hook_list in status_data["hooks"].items():
+                for hook in hook_list:
+                    if isinstance(hook, str):
+                        hook_name = hook.split(".")[-1]
+                        hook_path = hook
+                        params_display = "[dim]none[/dim]"
+                    else:
+                        hook_path = hook.get("hook", "")
+                        hook_name = hook_path.split(".")[-1] if hook_path else ""
+                        params = hook.get("params", {})
+                        params_display = ", ".join(f"{k}={v}" for k, v in params.items()) if params else "[dim]none[/dim]"
 
-                hooks_table.add_row(
-                    str(i),
-                    f"[bold]{hook_name}[/bold]\n[dim]{hook_path}[/dim]",
-                    params_display,
-                )
+                    hooks_table.add_row(
+                        str(i),
+                        stage,
+                        f"[bold]{hook_name}[/bold]\n[dim]{hook_path}[/dim]",
+                        params_display,
+                    )
+                    i += 1
 
             console.print(Panel(hooks_table, title="[bold]Hooks[/bold]", border_style="green"))
 

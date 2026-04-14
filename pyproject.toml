@@ -167,9 +167,6 @@ known-first-party = ["ccproxy"]
 [tool.uv]
 override-dependencies = ["mitmproxy>=10.0.0"]
 
-[tool.uv.extra-build-dependencies]
-"pyperclip-1.9.0" = ["setuptools"]
-
 [dependency-groups]
 dev = [
   "beautysh>=6.2.1",
