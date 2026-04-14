@@ -31,6 +31,10 @@ _BODY_GENERATE_FIELDS = frozenset({
     "user_prompt_id",
 })
 
+# Headers whose value is a comma-separated token list — merged via union,
+# not clobbered or skipped. Keep minimal; extend deliberately.
+_LIST_VALUED_HEADERS = frozenset({"anthropic-beta"})
+
 
 class ComplianceMerger:
     """Base compliance merger. Subclass to override individual operations."""
@@ -47,11 +51,36 @@ class ComplianceMerger:
         self.merge_system()
 
     def merge_headers(self) -> None:
+        """Add profile-declared headers onto the request.
+
+        - Missing header: set profile value.
+        - Existing header, not list-valued: leave untouched.
+        - Existing header, list-valued: union profile tokens into the
+          existing comma-separated list, preserving order and deduping.
+        """
         for feature in self.profile.headers:
             existing = self.ctx.get_header(feature.name)
             if not existing:
                 self.ctx.set_header(feature.name, feature.value)
                 logger.debug("Compliance: added header %s", feature.name)
+                continue
+            if feature.name.lower() in _LIST_VALUED_HEADERS:
+                merged = self._union_csv_tokens(existing, feature.value)
+                if merged != existing:
+                    self.ctx.set_header(feature.name, merged)
+                    logger.debug("Compliance: unioned tokens in %s", feature.name)
+
+    @staticmethod
+    def _union_csv_tokens(existing: str, additional: str) -> str:
+        """Union comma-separated tokens, preserving first-seen order."""
+        seen: set[str] = set()
+        result: list[str] = []
+        for token in [*existing.split(","), *additional.split(",")]:
+            token = token.strip()
+            if token and token not in seen:
+                seen.add(token)
+                result.append(token)
+        return ",".join(result)
 
     def merge_session_metadata(self) -> None:
         """Synthesize session metadata from profile identity fields.
@@ -141,11 +170,17 @@ class ComplianceMerger:
                 logger.debug("Compliance: added body field %s", feature.path)
 
     def merge_system(self) -> None:
-        """Inject the profile's system prompt when the request lacks one.
+        """Inject the profile's system blocks into the client request.
 
-        Structured system blocks (list) indicate a client that manages its
-        own identity (Claude CLI, Agent SDK) — skip injection entirely.
-        String or absent system prompts get the profile's blocks prepended.
+        - None / missing: set to profile blocks.
+        - str: wrap as a text block and prepend profile blocks.
+        - list: if any existing block's text starts with any profile
+          block's text, the client already carries the identity — leave
+          it alone. Otherwise prepend profile blocks in front of the
+          existing list (preserving cache_control and block ordering).
+
+        Idempotent: detection is prefix-based, so re-running produces no
+        duplicates. Profile-driven: does not hardcode identity strings.
         """
         if self.profile.system is None:
             return
@@ -160,11 +195,31 @@ class ComplianceMerger:
             self.ctx.system = profile_blocks
             return
 
-        if isinstance(current, list):
-            return
-
         if isinstance(current, str):
             self.ctx.system = [*profile_blocks, {"type": "text", "text": current}]
+            return
+
+        if isinstance(current, list):
+            if self._list_contains_profile(current, profile_blocks):
+                return
+            self.ctx.system = [*profile_blocks, *current]
+            logger.debug("Compliance: prepended %d system block(s)", len(profile_blocks))
+
+    @staticmethod
+    def _list_contains_profile(
+        current: list[dict[str, Any]],
+        profile_blocks: list[dict[str, Any]],
+    ) -> bool:
+        """True if any current block's text starts with any profile block's text."""
+        for pb in profile_blocks:
+            pb_text = pb.get("text")
+            if not isinstance(pb_text, str) or not pb_text:
+                continue
+            for cb in current:
+                cb_text = cb.get("text") if isinstance(cb, dict) else None
+                if isinstance(cb_text, str) and cb_text.startswith(pb_text):
+                    return True
+        return False
 
     def _extract_model_from_path(self) -> str | None:
         """Extract model name from URL path patterns like /models/{model}:method."""

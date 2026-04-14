@@ -67,6 +67,57 @@ class TestMergeHeaders:
         ComplianceMerger(ctx, profile).merge()
         assert ctx.get_header("existing") == "val"
 
+    def test_unions_anthropic_beta_tokens(self):
+        ctx = _make_context(headers={"anthropic-beta": "oauth-2025-04-20"})
+        profile = _make_profile(headers=[
+            ProfileFeatureHeader(
+                name="anthropic-beta",
+                value="oauth-2025-04-20,claude-code-20250219,interleaved-thinking-2025-05-14",
+            ),
+        ])
+        ComplianceMerger(ctx, profile).merge()
+        assert ctx.get_header("anthropic-beta") == (
+            "oauth-2025-04-20,claude-code-20250219,interleaved-thinking-2025-05-14"
+        )
+
+    def test_union_preserves_existing_order(self):
+        ctx = _make_context(headers={"anthropic-beta": "custom-flag,oauth-2025-04-20"})
+        profile = _make_profile(headers=[
+            ProfileFeatureHeader(
+                name="anthropic-beta",
+                value="oauth-2025-04-20,claude-code-20250219",
+            ),
+        ])
+        ComplianceMerger(ctx, profile).merge()
+        tokens = ctx.get_header("anthropic-beta").split(",")
+        assert tokens == ["custom-flag", "oauth-2025-04-20", "claude-code-20250219"]
+
+    def test_union_idempotent_when_already_complete(self):
+        full = "oauth-2025-04-20,claude-code-20250219,interleaved-thinking-2025-05-14"
+        ctx = _make_context(headers={"anthropic-beta": full})
+        profile = _make_profile(headers=[
+            ProfileFeatureHeader(name="anthropic-beta", value=full),
+        ])
+        ComplianceMerger(ctx, profile).merge()
+        assert ctx.get_header("anthropic-beta") == full
+
+    def test_non_list_header_still_strict(self):
+        ctx = _make_context(headers={"anthropic-version": "2024-99-99"})
+        profile = _make_profile(headers=[
+            ProfileFeatureHeader(name="anthropic-version", value="2023-06-01"),
+        ])
+        ComplianceMerger(ctx, profile).merge()
+        assert ctx.get_header("anthropic-version") == "2024-99-99"
+
+    def test_union_handles_whitespace_in_csv(self):
+        ctx = _make_context(headers={"anthropic-beta": "oauth-2025-04-20, custom-flag"})
+        profile = _make_profile(headers=[
+            ProfileFeatureHeader(name="anthropic-beta", value="claude-code-20250219"),
+        ])
+        ComplianceMerger(ctx, profile).merge()
+        tokens = ctx.get_header("anthropic-beta").split(",")
+        assert tokens == ["oauth-2025-04-20", "custom-flag", "claude-code-20250219"]
+
 
 class TestMergeBodyFields:
     def test_adds_missing_compliance_fields(self):
@@ -138,15 +189,18 @@ class TestMergeSystem:
         assert ctx.system[0] == {"type": "text", "text": "You are Claude"}
         assert ctx.system[1] == {"type": "text", "text": "Be helpful"}
 
-    def test_skips_list_system(self):
-        ctx = _make_context(body={"system": [{"type": "text", "text": "User block"}]})
+    def test_prepends_to_list_without_profile_prefix(self):
+        ctx = _make_context(body={"system": [
+            {"type": "text", "text": "User block"},
+        ]})
         profile = _make_profile(system=ProfileFeatureSystem(
             structure=[{"type": "text", "text": "You are Claude"}],
         ))
         ComplianceMerger(ctx, profile).merge()
-        assert isinstance(ctx.system, list)
-        assert len(ctx.system) == 1
-        assert ctx.system[0]["text"] == "User block"
+        assert ctx.system == [
+            {"type": "text", "text": "You are Claude"},
+            {"type": "text", "text": "User block"},
+        ]
 
     def test_skips_list_system_with_existing_prefix(self):
         ctx = _make_context(body={"system": [
@@ -158,6 +212,75 @@ class TestMergeSystem:
         ))
         ComplianceMerger(ctx, profile).merge()
         assert len(ctx.system) == 2
+        assert ctx.system[0]["text"] == "You are Claude"
+        assert ctx.system[1]["text"] == "User block"
+
+    def test_prepends_preserves_cache_control(self):
+        ctx = _make_context(body={"system": [
+            {"type": "text", "text": "Dictation prompt",
+             "cache_control": {"type": "ephemeral"}},
+        ]})
+        profile = _make_profile(system=ProfileFeatureSystem(
+            structure=[{"type": "text", "text": "You are Claude Code"}],
+        ))
+        ComplianceMerger(ctx, profile).merge()
+        assert ctx.system[0] == {"type": "text", "text": "You are Claude Code"}
+        assert ctx.system[1]["text"] == "Dictation prompt"
+        assert ctx.system[1]["cache_control"] == {"type": "ephemeral"}
+
+    def test_list_merge_idempotent(self):
+        ctx = _make_context(body={"system": [
+            {"type": "text", "text": "User block"},
+        ]})
+        profile = _make_profile(system=ProfileFeatureSystem(
+            structure=[{"type": "text", "text": "You are Claude"}],
+        ))
+        ComplianceMerger(ctx, profile).merge()
+        snapshot = list(ctx.system)
+        ComplianceMerger(ctx, profile).merge()
+        assert ctx.system == snapshot
+
+    def test_prefix_match_detects_appended_content(self):
+        ctx = _make_context(body={"system": [
+            {"type": "text", "text":
+             "You are Claude Code, Anthropic's official CLI for Claude.\n\nProject: foo"},
+        ]})
+        profile = _make_profile(system=ProfileFeatureSystem(
+            structure=[{"type": "text", "text":
+                        "You are Claude Code, Anthropic's official CLI for Claude."}],
+        ))
+        ComplianceMerger(ctx, profile).merge()
+        assert len(ctx.system) == 1
+
+    def test_multi_block_profile_prepends_all(self):
+        ctx = _make_context(body={"system": [
+            {"type": "text", "text": "User content"},
+        ]})
+        profile = _make_profile(system=ProfileFeatureSystem(structure=[
+            {"type": "text", "text": "You are Claude Code"},
+            {"type": "text", "text": "Second system block"},
+        ]))
+        ComplianceMerger(ctx, profile).merge()
+        assert len(ctx.system) == 3
+        assert ctx.system[0]["text"] == "You are Claude Code"
+        assert ctx.system[1]["text"] == "Second system block"
+        assert ctx.system[2]["text"] == "User content"
+
+    def test_skips_profile_blocks_without_text(self):
+        ctx = _make_context(body={"system": [
+            {"type": "text", "text": "User block"},
+        ]})
+        profile = _make_profile(system=ProfileFeatureSystem(structure=[
+            {"type": "image", "source": "ignored"},
+            {"type": "text", "text": ""},
+            {"type": "text", "text": "You are Claude"},
+        ]))
+        ComplianceMerger(ctx, profile).merge()
+        assert len(ctx.system) == 4
+        assert ctx.system[0]["type"] == "image"
+        assert ctx.system[1]["text"] == ""
+        assert ctx.system[2]["text"] == "You are Claude"
+        assert ctx.system[3]["text"] == "User block"
 
     def test_no_profile_system_no_op(self):
         ctx = _make_context(body={"system": "Original"})
@@ -225,6 +348,31 @@ class TestIdempotency:
         assert ctx.system == first_system
         assert ctx._body["some_env"] == first_body["some_env"]
         assert ctx.get_header("x-app") == "cli"
+
+    def test_double_apply_list_system_and_list_valued_header(self):
+        ctx = _make_context(
+            headers={"anthropic-beta": "oauth-2025-04-20"},
+            body={"system": [{"type": "text", "text": "User block"}]},
+        )
+        profile = _make_profile(
+            headers=[ProfileFeatureHeader(
+                name="anthropic-beta",
+                value="oauth-2025-04-20,claude-code-20250219",
+            )],
+            system=ProfileFeatureSystem(
+                structure=[{"type": "text", "text": "You are Claude"}],
+            ),
+        )
+        ComplianceMerger(ctx, profile).merge()
+        first_system = list(ctx.system)
+        first_beta = ctx.get_header("anthropic-beta")
+
+        ComplianceMerger(ctx, profile).merge()
+        assert ctx.system == first_system
+        assert ctx.get_header("anthropic-beta") == first_beta
+        assert first_beta == "oauth-2025-04-20,claude-code-20250219"
+        assert first_system[0]["text"] == "You are Claude"
+        assert first_system[1]["text"] == "User block"
 
 
 class TestWrapBody:
