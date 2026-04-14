@@ -33,6 +33,70 @@ class TestInspectorRouter:
         r2 = InspectorRouter(name="outbound")
         assert r1.name != r2.name
 
+    def test_request_noop_when_no_request_routes(self) -> None:
+        """Routeless routers must not set REQ_PASSTHROUGH — otherwise they
+        break subsequent routers' ability to match handlers in the chain."""
+        router = InspectorRouter(
+            name="responseonly", request_passthrough=True, response_passthrough=True,
+        )
+
+        @router.route("/api/test", rtype=RouteType.RESPONSE)
+        def resp_handler(flow: MagicMock) -> None:
+            pass
+
+        assert len(router.request_routes) == 0
+        assert len(router.response_routes) == 1
+
+        flow = _make_flow()
+        router.request(flow)
+        assert FlowMeta.REQ_PASSTHROUGH not in flow.metadata
+
+    def test_response_noop_when_no_response_routes(self) -> None:
+        """Routeless routers must not set RESP_PASSTHROUGH — otherwise they
+        block the transform router's handle_transform_response from running."""
+        router = InspectorRouter(
+            name="requestonly", request_passthrough=True, response_passthrough=True,
+        )
+
+        @router.route("/api/test", rtype=RouteType.REQUEST)
+        def req_handler(flow: MagicMock) -> None:
+            pass
+
+        assert len(router.request_routes) == 1
+        assert len(router.response_routes) == 0
+
+        flow = _make_flow()
+        router.response(flow)
+        assert FlowMeta.RESP_PASSTHROUGH not in flow.metadata
+
+    def test_request_delegates_when_routes_exist(self) -> None:
+        router = InspectorRouter(
+            name="test", request_passthrough=True, response_passthrough=True,
+        )
+        called = []
+
+        @router.route("/api/test", rtype=RouteType.REQUEST)
+        def req_handler(flow: MagicMock) -> None:
+            called.append("req")
+
+        flow = _make_flow()
+        router.request(flow)
+        assert called == ["req"]
+
+    def test_response_delegates_when_routes_exist(self) -> None:
+        router = InspectorRouter(
+            name="test", request_passthrough=True, response_passthrough=True,
+        )
+        called = []
+
+        @router.route("/api/test", rtype=RouteType.RESPONSE)
+        def resp_handler(flow: MagicMock) -> None:
+            called.append("resp")
+
+        flow = _make_flow()
+        router.response(flow)
+        assert called == ["resp"]
+
 
 class TestRouteRegistration:
     def test_request_route_registered(self) -> None:

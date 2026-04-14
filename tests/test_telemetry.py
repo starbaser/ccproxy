@@ -33,6 +33,13 @@ class TestInspectorTracerDisabled:
         tracer.finish_span_error(flow, error_message="connection reset")
         mock_span.end.assert_not_called()
 
+    def test_disabled_finish_span_client_disconnect_noop(self) -> None:
+        tracer = InspectorTracer(enabled=False)
+        mock_span = MagicMock()
+        flow = _make_flow({"ccproxy.otel_span": mock_span, "ccproxy.otel_span_ended": False})
+        tracer.finish_span_client_disconnect(flow, status_code=200, duration_ms=100.0)
+        mock_span.end.assert_not_called()
+
 
 class TestGetSpan:
     def test_from_flow_record(self) -> None:
@@ -223,6 +230,74 @@ class TestFinishSpanError:
         flow = _make_flow({"ccproxy.otel_span": mock_span, "ccproxy.otel_span_ended": False})
         tracer.finish_span_error(flow, error_message="err")
         mock_span.end.assert_not_called()
+
+
+class TestFinishSpanClientDisconnect:
+    def test_records_status_and_disconnect_flag(self) -> None:
+        tracer = InspectorTracer(enabled=False)
+        tracer._enabled = True
+
+        mock_span = MagicMock()
+        record = FlowRecord(direction="inbound", otel=OtelMeta(span=mock_span, ended=False))
+        flow = _make_flow({InspectorMeta.RECORD: record})
+
+        tracer.finish_span_client_disconnect(flow, status_code=200, duration_ms=123.4)
+
+        mock_span.set_attribute.assert_any_call("http.response.status_code", 200)
+        mock_span.set_attribute.assert_any_call("ccproxy.duration_ms", 123.4)
+        mock_span.set_attribute.assert_any_call("ccproxy.client_disconnected", True)
+        mock_span.end.assert_called_once()
+        assert record.otel.ended is True
+
+    def test_skips_duration_when_none(self) -> None:
+        tracer = InspectorTracer(enabled=False)
+        tracer._enabled = True
+
+        mock_span = MagicMock()
+        record = FlowRecord(direction="inbound", otel=OtelMeta(span=mock_span, ended=False))
+        flow = _make_flow({InspectorMeta.RECORD: record})
+
+        tracer.finish_span_client_disconnect(flow, status_code=200, duration_ms=None)
+
+        attr_keys = [call.args[0] for call in mock_span.set_attribute.call_args_list]
+        assert "ccproxy.duration_ms" not in attr_keys
+        assert "http.response.status_code" in attr_keys
+        assert "ccproxy.client_disconnected" in attr_keys
+
+    def test_sets_error_status_for_4xx(self) -> None:
+        from unittest.mock import patch
+
+        tracer = InspectorTracer(enabled=False)
+        tracer._enabled = True
+
+        mock_span = MagicMock()
+        record = FlowRecord(direction="inbound", otel=OtelMeta(span=mock_span, ended=False))
+        flow = _make_flow({InspectorMeta.RECORD: record})
+
+        mock_status_code = MagicMock()
+        mock_status_code.ERROR = "ERROR"
+        with patch.dict("sys.modules", {"opentelemetry.trace": MagicMock(StatusCode=mock_status_code)}):
+            tracer.finish_span_client_disconnect(flow, status_code=503, duration_ms=50.0)
+
+        mock_span.set_status.assert_called_once()
+        mock_span.end.assert_called_once()
+
+    def test_skips_none_span(self) -> None:
+        tracer = InspectorTracer(enabled=False)
+        tracer._enabled = True
+        flow = _make_flow({})
+        tracer.finish_span_client_disconnect(flow, status_code=200, duration_ms=10.0)
+
+    def test_exception_handled(self) -> None:
+        tracer = InspectorTracer(enabled=False)
+        tracer._enabled = True
+
+        mock_span = MagicMock()
+        mock_span.set_attribute.side_effect = RuntimeError("otel error")
+        record = FlowRecord(direction="inbound", otel=OtelMeta(span=mock_span, ended=False))
+        flow = _make_flow({InspectorMeta.RECORD: record})
+
+        tracer.finish_span_client_disconnect(flow, status_code=200, duration_ms=10.0)
 
 
 class TestStartSpan:

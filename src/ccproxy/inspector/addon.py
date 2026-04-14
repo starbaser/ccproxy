@@ -290,10 +290,31 @@ class InspectorAddon:
             if not error:
                 return
 
-            if self.tracer:
-                self.tracer.finish_span_error(flow, str(error))
+            err_msg = str(error)
+            response = flow.response
+            is_client_disconnect = "Client disconnected" in err_msg
 
-            logger.warning("Request error: %s (trace_id: %s)", error, flow.id)
+            if self.tracer:
+                if is_client_disconnect and response is not None:
+                    started = flow.request.timestamp_start
+                    ended = response.timestamp_end
+                    duration_ms = (
+                        (ended - started) * 1000 if started and ended else None
+                    )
+                    self.tracer.finish_span_client_disconnect(
+                        flow, response.status_code, duration_ms,
+                    )
+                else:
+                    self.tracer.finish_span_error(flow, err_msg)
+
+            if is_client_disconnect:
+                logger.info(
+                    "Client disconnected mid-request (trace_id: %s, status: %s)",
+                    flow.id,
+                    response.status_code if response else "n/a",
+                )
+            else:
+                logger.warning("Request error: %s (trace_id: %s)", err_msg, flow.id)
 
         except Exception as e:
             logger.error("Error handling flow error: %s", e, exc_info=True)

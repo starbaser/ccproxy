@@ -152,6 +152,76 @@ class TestPipelineExecutorBasic:
         with caplog.at_level(logging.DEBUG, logger="ccproxy.pipeline.executor"):
             executor.execute(flow)
 
+    def test_runtime_warning_on_missing_read_key(self, caplog):
+        """Hook reads a key not in the request body or headers → runtime warning."""
+        import logging
+
+        flow = _make_flow(body={"model": "m"})
+        flow.request.path = "/v1/messages"
+        executor = PipelineExecutor(hooks=[make_spec("reader", reads=["ghost_key"])])
+
+        with caplog.at_level(logging.WARNING, logger="ccproxy.pipeline.executor"):
+            executor.execute(flow)
+
+        assert any("ghost_key" in r.message for r in caplog.records)
+        assert any("trace_id=test-flow-id" in r.message for r in caplog.records)
+        assert any("path=/v1/messages" in r.message for r in caplog.records)
+
+    def test_no_warning_when_key_present_in_body(self, caplog):
+        """`reads=["metadata"]` resolves silently when body has metadata."""
+        import logging
+
+        flow = _make_flow(body={"model": "m", "metadata": {"user_id": "foo"}})
+        executor = PipelineExecutor(hooks=[make_spec("h", reads=["metadata"])])
+
+        with caplog.at_level(logging.WARNING, logger="ccproxy.pipeline.executor"):
+            executor.execute(flow)
+
+        assert not any("unavailable keys" in r.message for r in caplog.records)
+
+    def test_no_warning_when_key_present_in_header(self, caplog):
+        """`reads=["authorization"]` resolves silently when header is set."""
+        import logging
+
+        flow = _make_flow()
+        flow.request.headers = {"authorization": "Bearer x"}
+        executor = PipelineExecutor(hooks=[make_spec("h", reads=["authorization"])])
+
+        with caplog.at_level(logging.WARNING, logger="ccproxy.pipeline.executor"):
+            executor.execute(flow)
+
+        assert not any("unavailable keys" in r.message for r in caplog.records)
+
+    def test_earlier_hook_writes_satisfy_later_reads(self, caplog):
+        """A key produced by an earlier hook's writes must not trigger a warning
+        for a later hook that reads it."""
+        import logging
+
+        flow = _make_flow()
+        executor = PipelineExecutor(
+            hooks=[
+                make_spec("writer", writes=["computed_key"], priority=0),
+                make_spec("reader", reads=["computed_key"], priority=1),
+            ]
+        )
+
+        with caplog.at_level(logging.WARNING, logger="ccproxy.pipeline.executor"):
+            executor.execute(flow)
+
+        assert not any("computed_key" in r.message for r in caplog.records)
+
+    def test_dot_path_read_resolves(self, caplog):
+        """`reads=["metadata.user_id"]` resolves against nested body dict."""
+        import logging
+
+        flow = _make_flow(body={"model": "m", "metadata": {"user_id": "foo"}})
+        executor = PipelineExecutor(hooks=[make_spec("h", reads=["metadata.user_id"])])
+
+        with caplog.at_level(logging.WARNING, logger="ccproxy.pipeline.executor"):
+            executor.execute(flow)
+
+        assert not any("unavailable keys" in r.message for r in caplog.records)
+
     def test_guard_skip_logs_debug(self, caplog):
         import logging
 

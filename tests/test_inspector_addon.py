@@ -312,6 +312,70 @@ class TestResponseAndError:
 
         await addon.error(flow)
 
+    @pytest.mark.asyncio
+    async def test_error_client_disconnect_routes_to_disconnect_tracer(self) -> None:
+        """Client disconnect after successful server response records the real
+        status via finish_span_client_disconnect, not finish_span_error."""
+        addon = InspectorAddon()
+        mock_tracer = MagicMock()
+        addon.set_tracer(mock_tracer)
+
+        flow = MagicMock()
+        flow.error = MagicMock()
+        flow.error.__str__ = lambda self: "Client disconnected."
+        flow.id = "disconnect-flow-1"
+        flow.response = MagicMock()
+        flow.response.status_code = 200
+        flow.request.timestamp_start = 100.0
+        flow.response.timestamp_end = 101.5
+
+        await addon.error(flow)
+
+        mock_tracer.finish_span_client_disconnect.assert_called_once()
+        args = mock_tracer.finish_span_client_disconnect.call_args
+        assert args.args[1] == 200  # status_code
+        assert args.args[2] == 1500.0  # duration_ms (1.5 seconds)
+        mock_tracer.finish_span_error.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_error_client_disconnect_without_response_uses_error_tracer(self) -> None:
+        """Client disconnect with no flow.response falls back to finish_span_error."""
+        addon = InspectorAddon()
+        mock_tracer = MagicMock()
+        addon.set_tracer(mock_tracer)
+
+        flow = MagicMock()
+        flow.error = MagicMock()
+        flow.error.__str__ = lambda self: "Client disconnected."
+        flow.id = "disconnect-flow-2"
+        flow.response = None
+
+        await addon.error(flow)
+
+        mock_tracer.finish_span_error.assert_called_once()
+        mock_tracer.finish_span_client_disconnect.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_error_client_disconnect_missing_timestamps(self) -> None:
+        """Duration_ms is None when either timestamp is missing."""
+        addon = InspectorAddon()
+        mock_tracer = MagicMock()
+        addon.set_tracer(mock_tracer)
+
+        flow = MagicMock()
+        flow.error = MagicMock()
+        flow.error.__str__ = lambda self: "Client disconnected."
+        flow.id = "disconnect-flow-3"
+        flow.response = MagicMock()
+        flow.response.status_code = 200
+        flow.request.timestamp_start = None
+        flow.response.timestamp_end = 101.5
+
+        await addon.error(flow)
+
+        args = mock_tracer.finish_span_client_disconnect.call_args
+        assert args.args[2] is None  # duration_ms
+
 
 class TestResponseRetryPath:
     """Tests for the 401 retry codepath inside response()."""

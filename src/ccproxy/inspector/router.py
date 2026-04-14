@@ -4,6 +4,9 @@ Patches:
   - ``remap_host``: keyword ``Server(address=...)`` for mitmproxy 12.x kw_only dataclass
   - ``find_handler``: ``host=None`` wildcard support
   - ``name`` attribute for AddonManager dedup across multiple InterceptedAPI instances
+  - ``request``/``response``: short-circuit when the router has no routes of
+    that type so routeless stages don't set passthrough flags that block
+    downstream routers from processing the flow
 """
 
 from __future__ import annotations
@@ -24,6 +27,31 @@ class InspectorRouter(InterceptedAPI):
     def __init__(self, name: str, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.name = name
+
+    def request(self, flow: HTTPFlow) -> None:
+        """Skip the request hook entirely when no request routes are registered.
+
+        xepor's default ``request()`` sets ``REQ_PASSTHROUGH=True`` when a
+        route lookup returns no handler, which then blocks later routers in
+        the chain from running their own handlers. Routers with zero request
+        routes should not participate at all.
+        """
+        if not self.request_routes:
+            return
+        super().request(flow)
+
+    def response(self, flow: HTTPFlow) -> None:
+        """Skip the response hook entirely when no response routes are registered.
+
+        Without this, the first routeless router in the addon chain sets
+        ``RESP_PASSTHROUGH=True``, which causes xepor to log a spurious
+        ``skipped because of previous passthrough`` warning on subsequent
+        routers AND prevents the transform router's
+        ``handle_transform_response`` from ever running.
+        """
+        if not self.response_routes:
+            return
+        super().response(flow)
 
     def find_handler(
         self, host: str, path: str, rtype: RouteType = RouteType.REQUEST

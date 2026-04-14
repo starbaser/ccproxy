@@ -181,26 +181,6 @@ class TestDependencyQueries:
         assert dag.get_dependents("reader") == set()
 
 
-class TestValidate:
-    def test_warns_on_read_without_writer(self, caplog):
-        import logging
-
-        with caplog.at_level(logging.WARNING, logger="ccproxy.pipeline.dag"):
-            dag = HookDAG([make_spec("h", reads=["ghost_key"])])
-        warnings = dag.validate()
-        assert any("ghost_key" in w for w in warnings)
-
-    def test_no_warnings_when_valid(self):
-        hooks = [make_spec("writer", writes=["k"]), make_spec("reader", reads=["k"])]
-        dag = HookDAG(hooks)
-        assert dag.validate() == []
-
-    def test_warns_on_write_without_reader(self):
-        dag = HookDAG([make_spec("writer", writes=["orphan_key"])])
-        warnings = dag.validate()
-        assert any("orphan_key" in w for w in warnings)
-
-
 class TestToMermaid:
     def test_basic_dependency_graph(self):
         hooks = [make_spec("writer", writes=["k"]), make_spec("reader", reads=["k"])]

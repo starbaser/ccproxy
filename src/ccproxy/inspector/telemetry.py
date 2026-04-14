@@ -163,6 +163,45 @@ class InspectorTracer:
         except Exception as e:
             logger.debug("Error finishing OTel span with error: %s", e)
 
+    def finish_span_client_disconnect(
+        self,
+        flow: http.HTTPFlow,
+        status_code: int,
+        duration_ms: float | None,
+    ) -> None:
+        """Close the span for a flow where the server responded successfully
+        but the client disconnected before reading the full body.
+
+        Records the real HTTP status code and marks the flow with
+        ``ccproxy.client_disconnected=true`` so dashboards can distinguish
+        upstream errors from client-side abandonment. Span status is OK for
+        2xx/3xx (the upstream operation succeeded) and ERROR only for
+        4xx/5xx (upstream-reported failure, independent of the disconnect).
+        """
+        if not self._enabled:
+            return
+
+        span, ended = self._get_span(flow)
+        if span is None or ended:
+            return
+
+        try:
+            span.set_attribute("http.response.status_code", status_code)
+            if duration_ms is not None:
+                span.set_attribute("ccproxy.duration_ms", duration_ms)
+            span.set_attribute("ccproxy.client_disconnected", True)
+
+            if status_code >= 400:
+                from opentelemetry.trace import StatusCode
+
+                span.set_status(StatusCode.ERROR, f"HTTP {status_code}")
+
+            span.end()
+            self._mark_ended(flow)
+
+        except Exception as e:
+            logger.debug("Error finishing OTel span for client disconnect: %s", e)
+
 
 def _init_otel_tracer(service_name: str, otlp_endpoint: str) -> Any:
     global _provider

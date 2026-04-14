@@ -15,8 +15,8 @@ from builtins import print as builtin_print
 from pathlib import Path
 from typing import Annotated, Any
 
-import attrs
 import tyro
+from pydantic import BaseModel, Field
 from rich import print
 from rich.console import Console
 from rich.panel import Panel
@@ -28,34 +28,30 @@ from ccproxy.utils import get_templates_dir
 logger = logging.getLogger(__name__)
 
 
-@attrs.define
-class Start:
+class Start(BaseModel):
     """Start the ccproxy inspector server."""
 
     args: Annotated[list[str] | None, tyro.conf.Positional] = None
     """Additional arguments (reserved for future use)."""
 
 
-@attrs.define
-class Install:
+class Install(BaseModel):
     """Install ccproxy configuration files."""
 
     force: bool = False
     """Overwrite existing configuration."""
 
 
-@attrs.define
-class Run:
+class Run(BaseModel):
     """Run a command with ccproxy environment.
 
     Usage: ccproxy run [--inspect] -- <command> [args...]"""
 
-    command: Annotated[list[str], tyro.conf.Positional] = attrs.Factory(list)  # pyright: ignore[reportUnknownVariableType]
+    command: Annotated[list[str], tyro.conf.Positional] = Field(default_factory=list)
     """Command and arguments to execute with proxy settings."""
 
 
-@attrs.define
-class Logs:
+class Logs(BaseModel):
     """View ccproxy logs from journal or process-compose."""
 
     follow: Annotated[bool, tyro.conf.arg(aliases=["-f"])] = False
@@ -65,8 +61,7 @@ class Logs:
     """Number of lines to show (default: 100)."""
 
 
-@attrs.define
-class Status:
+class Status(BaseModel):
     """Show ccproxy status.
 
     When service flags (--proxy, --inspect) are specified,
@@ -92,8 +87,7 @@ class Status:
     """Check if inspector stack (mitmweb) is running."""
 
 
-@attrs.define
-class DagViz:
+class DagViz(BaseModel):
     """Visualize the hook pipeline DAG (Directed Acyclic Graph).
 
     Shows hook execution order and dependencies based on reads/writes declarations.
@@ -101,9 +95,6 @@ class DagViz:
 
     output: Annotated[str, tyro.conf.arg(aliases=["-o"])] = "ascii"
     """Output format: ascii, mermaid, json."""
-
-    validate: Annotated[bool, tyro.conf.arg(aliases=["-v"])] = False
-    """Validate the DAG and report any issues."""
 
 
 Command = (
@@ -843,16 +834,6 @@ def handle_dag_viz(cmd: DagViz) -> None:
     except Exception as e:
         print(f"[red]Error building DAG: {e}[/red]")
         sys.exit(1)
-
-    if cmd.validate:
-        warnings = executor.dag.validate()
-        if warnings:
-            print("[yellow]DAG Validation Warnings:[/yellow]")
-            for w in warnings:
-                print(f"  • {w}")
-        else:
-            print("[green]DAG validation passed - no issues found[/green]")
-        print()
 
     if cmd.output == "mermaid":
         print(executor.to_mermaid())

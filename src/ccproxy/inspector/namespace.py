@@ -29,14 +29,38 @@ _nsenter_logger = logging.getLogger("ccproxy.subprocess.nsenter")
 
 
 def _pipe_output(proc: subprocess.Popen[bytes], tag: str) -> threading.Thread:
-    """Forward subprocess stdout to a tagged logger."""
+    """Forward subprocess stdout to a tagged logger, respecting severity prefixes.
+
+    Parses slirp4netns's standard ``WARNING: ``/``ERROR: ``/``FATAL: `` prefixes
+    and routes each to the matching Python log level. The known-benign host
+    loopback warning is downgraded to DEBUG because ccproxy requires namespace
+    loopback access for iptables DNAT to reach host services.
+    """
     sub_logger = logging.getLogger(f"ccproxy.subprocess.{tag}")
 
     def reader() -> None:
         assert proc.stdout is not None
         for raw_line in proc.stdout:
             line = raw_line.rstrip(b"\n\r").decode("utf-8", errors="replace")
-            if line:
+            if not line:
+                continue
+
+            if tag == "slirp4netns" and line.startswith("WARNING: "):
+                msg = line.removeprefix("WARNING: ")
+                if "--disable-host-loopback" in msg:
+                    sub_logger.debug("%s", msg)
+                    sub_logger.debug(
+                        "ccproxy REQUIRES namespace loopback access: CLI tools "
+                        "with hard-coded 127.0.0.1:4000 base URLs reach ccproxy "
+                        "via namespace localhost → 10.0.2.2 gateway DNAT"
+                    )
+                else:
+                    sub_logger.warning("%s", msg)
+            elif tag == "slirp4netns" and line.startswith("ERROR: "):
+                sub_logger.error("%s", line.removeprefix("ERROR: "))
+            elif tag == "slirp4netns" and line.startswith("FATAL: "):
+                sub_logger.critical("%s", line.removeprefix("FATAL: "))
+            else:
                 sub_logger.info("%s", line)
 
     t = threading.Thread(target=reader, daemon=True)

@@ -6,15 +6,12 @@ from reads/writes declarations, with priority tie-breaking.
 
 from __future__ import annotations
 
-import logging
 from collections import defaultdict
 from graphlib import CycleError
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ccproxy.pipeline.hook import HookSpec
-
-logger = logging.getLogger(__name__)
 
 
 class HookDAG:
@@ -28,7 +25,6 @@ class HookDAG:
     def __init__(self, hooks: list[HookSpec]) -> None:
         self._hooks: dict[str, HookSpec] = {h.name: h for h in hooks}
         self._key_writers: dict[str, set[str]] = defaultdict(set)
-        self._key_readers: dict[str, set[str]] = defaultdict(set)
         self._execution_order: list[str] = []
         self._parallel_groups: list[set[str]] = []
 
@@ -36,12 +32,10 @@ class HookDAG:
         self._compute_order()
 
     def _build_key_index(self) -> None:
-        """Build index of which hooks read/write which keys."""
+        """Build index of which hooks write which keys."""
         for name, spec in self._hooks.items():
             for key in spec.writes:
                 self._key_writers[key].add(name)
-            for key in spec.reads:
-                self._key_readers[key].add(name)
 
     def _build_dependencies(self) -> dict[str, set[str]]:
         """Build dependency graph from reads/writes."""
@@ -65,15 +59,6 @@ class HookDAG:
         import heapq
 
         deps = self._build_dependencies()
-
-        for hook_name, spec in self._hooks.items():
-            for read_key in spec.reads:
-                if read_key not in self._key_writers:
-                    logger.warning(
-                        "Hook '%s' reads key '%s' but no hook writes it",
-                        hook_name,
-                        read_key,
-                    )
 
         in_degree = {name: len(dep_set) for name, dep_set in deps.items()}
 
@@ -195,20 +180,3 @@ class HookDAG:
             lines.append(f"└{'─' * width}┘")
 
         return "\n".join(lines)
-
-    def validate(self) -> list[str]:
-        """Validate the DAG configuration and return warning messages."""
-        warnings: list[str] = []
-
-        for hook_name, spec in self._hooks.items():
-            for read_key in spec.reads:
-                if read_key not in self._key_writers:
-                    warnings.append(f"Hook '{hook_name}' reads '{read_key}' but no hook writes it")
-
-        for write_key, writers in self._key_writers.items():
-            readers = self._key_readers.get(write_key, set())
-            if not readers:
-                for writer in writers:
-                    warnings.append(f"Hook '{writer}' writes '{write_key}' but no hook reads it")
-
-        return warnings

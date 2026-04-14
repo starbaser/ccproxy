@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from ccproxy.constants import OAuthConfigError
 from ccproxy.pipeline.context import Context
 from ccproxy.pipeline.dag import HookDAG
+from ccproxy.pipeline.keyspace import extract_available_keys
 from ccproxy.pipeline.overrides import (
     HookOverride,
     OverrideSet,
@@ -46,18 +47,21 @@ class PipelineExecutor:
                 [sorted(g) for g in groups],
             )
 
-        warnings = self.dag.validate()
-        for warning in warnings:
-            logger.warning("DAG validation: %s", warning)
-
     def execute(self, flow: HTTPFlow) -> None:
         """Execute the hook pipeline against a mitmproxy flow.
 
         Builds a Context from the flow, runs all hooks in DAG order,
         then commits body mutations back to the flow. Header mutations
         are applied live during hook execution.
+
+        Per-hook runtime validation: before each hook runs, checks that
+        its declared ``reads`` are satisfied by either the initial flow
+        vocabulary (request body keys, header names) or by earlier hooks'
+        ``writes``. Missing reads emit a WARNING with the request path
+        and trace_id, but do not block execution.
         """
         ctx = Context.from_flow(flow)
+        available = extract_available_keys(ctx)
 
         overrides = extract_overrides_from_context(ctx.headers)
         if overrides.raw_header:
@@ -65,7 +69,19 @@ class PipelineExecutor:
 
         for hook_name in self.dag.execution_order:
             spec = self.dag.get_hook(hook_name)
+
+            missing = spec.reads - available
+            if missing:
+                logger.warning(
+                    "Hook '%s' reads unavailable keys: %s (path=%s, trace_id=%s)",
+                    hook_name,
+                    sorted(missing),
+                    flow.request.path,
+                    flow.id,
+                )
+
             ctx = self._execute_hook(ctx, spec, overrides, self.extra_params)
+            available |= set(spec.writes)
 
         ctx.commit()
 

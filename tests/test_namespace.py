@@ -14,6 +14,7 @@ from ccproxy.inspector.namespace import (
     NamespaceContext,
     PortForwarder,
     _parse_proc_net_tcp,
+    _pipe_output,
     _rewrite_wg_endpoint,
     _safe_close,
     _safe_kill,
@@ -1274,3 +1275,100 @@ class TestCleanupNamespacePortForwarder:
         """Cleanup succeeds when port_forwarder is None."""
         mock_ctx.slirp_proc.wait.return_value = 0
         cleanup_namespace(mock_ctx)  # should not raise
+
+
+# =============================================================================
+# _pipe_output — severity-aware subprocess log routing
+# =============================================================================
+
+
+class TestPipeOutput:
+    """Verify `_pipe_output` routes slirp4netns severity prefixes correctly."""
+
+    @staticmethod
+    def _run_reader(lines: list[bytes], tag: str = "slirp4netns") -> subprocess.Popen:
+        """Build a mock Popen whose stdout yields the given lines, then wait
+        for _pipe_output's reader thread to drain it."""
+        proc = MagicMock(spec=subprocess.Popen)
+        proc.stdout = iter(lines)
+        t = _pipe_output(proc, tag)
+        t.join(timeout=2)
+        return proc
+
+    def test_host_loopback_warning_downgraded_to_debug(self, caplog) -> None:
+        import logging
+
+        line = (
+            b"WARNING: 127.0.0.1:* on the host is accessible as 10.0.2.2 "
+            b"(set --disable-host-loopback to prohibit connecting to 127.0.0.1:*)\n"
+        )
+        with caplog.at_level(logging.DEBUG, logger="ccproxy.subprocess.slirp4netns"):
+            self._run_reader([line])
+
+        debug_records = [r for r in caplog.records if r.levelname == "DEBUG"]
+        warning_records = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(debug_records) == 2  # original + reason note
+        assert not warning_records
+        assert any("127.0.0.1:*" in r.message for r in debug_records)
+        assert any("REQUIRES namespace loopback" in r.message for r in debug_records)
+
+    def test_other_warning_stays_at_warning(self, caplog) -> None:
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="ccproxy.subprocess.slirp4netns"):
+            self._run_reader([b"WARNING: requested MTU larger than max\n"])
+
+        warn_records = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warn_records) == 1
+        assert "requested MTU larger than max" in warn_records[0].message
+
+    def test_error_prefix_routes_to_error_level(self, caplog) -> None:
+        import logging
+
+        with caplog.at_level(logging.DEBUG, logger="ccproxy.subprocess.slirp4netns"):
+            self._run_reader([b"ERROR: bind failed: permission denied\n"])
+
+        err_records = [r for r in caplog.records if r.levelname == "ERROR"]
+        assert len(err_records) == 1
+        assert "bind failed" in err_records[0].message
+
+    def test_fatal_prefix_routes_to_critical_level(self, caplog) -> None:
+        import logging
+
+        with caplog.at_level(logging.DEBUG, logger="ccproxy.subprocess.slirp4netns"):
+            self._run_reader([b"FATAL: ns_join: Invalid argument\n"])
+
+        crit_records = [r for r in caplog.records if r.levelname == "CRITICAL"]
+        assert len(crit_records) == 1
+        assert "ns_join" in crit_records[0].message
+
+    def test_unprefixed_line_routes_to_info(self, caplog) -> None:
+        import logging
+
+        with caplog.at_level(logging.INFO, logger="ccproxy.subprocess.slirp4netns"):
+            self._run_reader([b"sending DHCP NACK\n"])
+
+        info_records = [r for r in caplog.records if r.levelname == "INFO"]
+        assert len(info_records) == 1
+        assert "DHCP NACK" in info_records[0].message
+
+    def test_empty_lines_skipped(self, caplog) -> None:
+        import logging
+
+        with caplog.at_level(logging.DEBUG, logger="ccproxy.subprocess.slirp4netns"):
+            self._run_reader([b"\n", b"", b"real content\n"])
+
+        messages = [r.message for r in caplog.records]
+        assert "real content" in messages
+        assert "" not in messages
+
+    def test_non_slirp4netns_tag_uses_info_branch(self, caplog) -> None:
+        """Prefix parsing is slirp4netns-specific; other tags always log at INFO."""
+        import logging
+
+        with caplog.at_level(logging.DEBUG, logger="ccproxy.subprocess.nsenter"):
+            self._run_reader([b"WARNING: looks scary but isn't parsed\n"], tag="nsenter")
+
+        # Should end up as INFO (plain forwarding, no prefix parsing)
+        info_records = [r for r in caplog.records if r.levelname == "INFO"]
+        assert len(info_records) == 1
