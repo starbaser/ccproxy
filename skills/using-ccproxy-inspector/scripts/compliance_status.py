@@ -256,9 +256,12 @@ def main() -> None:
                 continue
             if p.get("user_agent") == "v0-seed":
                 seed_profile = p
-            elif p.get("is_complete") and p.get("observation_count", 0) > 0:
-                if learned_profile is None or p.get("updated_at", "") > learned_profile.get("updated_at", ""):
-                    learned_profile = p
+            elif (
+                p.get("is_complete")
+                and p.get("observation_count", 0) > 0
+                and (learned_profile is None or p.get("updated_at", "") > learned_profile.get("updated_at", ""))
+            ):
+                learned_profile = p
 
         # Check accumulator progress
         acc_remaining = min_obs

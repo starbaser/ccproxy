@@ -11,14 +11,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import sys
 
 from rich.console import Console
 from rich.table import Table
 
-from ccproxy.tools.flows import MitmwebClient, _make_client
+from ccproxy.tools.flows import _make_client
 
+logger = logging.getLogger(__name__)
 console = Console()
 
 # Known salt for Claude Code v2.1.87 (from cch.md analysis)
@@ -112,6 +114,7 @@ def main() -> None:
             body_raw = client.get_request_body(flow_id)
             body = json.loads(body_raw)
         except Exception:
+            logger.debug("Failed to fetch/parse body for flow %s", flow_id, exc_info=True)
             continue
 
         system = body.get("system")

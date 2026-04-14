@@ -7,14 +7,13 @@ import difflib
 import json
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
-import humanize
-
 import attrs
 import httpx
+import humanize
 import tyro
 from rich.console import Console
 from rich.panel import Panel
@@ -141,7 +140,7 @@ def _header_value(headers: list[list[str]], name: str) -> str:
 
 
 def _dt(ts: float) -> datetime:
-    return datetime.fromtimestamp(ts, tz=timezone.utc)
+    return datetime.fromtimestamp(ts, tz=UTC)
 
 
 def _do_list(
@@ -239,7 +238,8 @@ def _do_inspect(
 
     if action == "client":
         text = client.get_client_request(flow_id)
-        console.print(Panel(text, title=f"Client Request (pre-pipeline) — {flow_id[:8]}"))
+        console.rule(f"[dim]Client Request (pre-pipeline) — {flow_id[:8]}[/dim]", align="left")
+        console.print(text)
         return
 
     if action == "req":
@@ -249,7 +249,8 @@ def _do_inspect(
         console.print(Panel(_format_headers_table(headers), title=title))
         body = client.get_request_body(flow_id)
         if body:
-            console.print(Panel(_format_body(body), title="Request Body"))
+            console.rule("[dim]Request Body[/dim]", align="left")
+            console.print(_format_body(body))
 
     elif action == "res":
         res = flow.get("response")
@@ -261,7 +262,8 @@ def _do_inspect(
         console.print(Panel(_format_headers_table(headers), title=title))
         body = client.get_response_body(flow_id)
         if body:
-            console.print(Panel(_format_body(body), title="Response Body"))
+            console.rule("[dim]Response Body[/dim]", align="left")
+            console.print(_format_body(body))
 
 
 def _do_diff(

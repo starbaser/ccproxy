@@ -875,7 +875,7 @@ def handle_dag_viz(cmd: DagViz) -> None:
     else:
         console = Console()
 
-        console.print(Panel("[bold cyan]Pipeline Hook DAG[/bold cyan]", expand=False))
+        console.print("[bold cyan]Pipeline Hook DAG[/bold cyan]")
 
         order = executor.get_execution_order()
         console.print("\n[bold]Execution Order:[/bold]")

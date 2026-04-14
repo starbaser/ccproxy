@@ -36,7 +36,7 @@ def _get_api_key() -> str:
         return key
     try:
         return subprocess.check_output(
-            ["opc", "secret", "op://dev/anthropic/credential"],
+            ["opc", "secret", "op://dev/anthropic/credential"],  # noqa: S607
             text=True,
         ).strip()
     except (FileNotFoundError, subprocess.CalledProcessError):

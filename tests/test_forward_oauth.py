@@ -96,9 +96,11 @@ class TestForwardOAuthSentinelPath:
     def test_sentinel_get_config_exception_raises_oauth_config_error(self) -> None:
         ctx = _make_ctx({"x-api-key": f"{OAUTH_SENTINEL_PREFIX}err-provider"})
 
-        with patch("ccproxy.hooks.forward_oauth.get_config", side_effect=RuntimeError("config exploded")):
-            with pytest.raises(OAuthConfigError, match="err-provider"):
-                forward_oauth(ctx, {})
+        with (
+            patch("ccproxy.hooks.forward_oauth.get_config", side_effect=RuntimeError("config exploded")),
+            pytest.raises(OAuthConfigError, match="err-provider"),
+        ):
+            forward_oauth(ctx, {})
 
 
 class TestForwardOAuthCachedPath:

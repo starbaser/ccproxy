@@ -39,7 +39,7 @@ def _get_gemini_key() -> str:
         return key
     try:
         return subprocess.check_output(
-            ["opc", "secret", "op://dev/gemini/credential"],
+            ["opc", "secret", "op://dev/gemini/credential"],  # noqa: S607
             text=True,
         ).strip()
     except (FileNotFoundError, subprocess.CalledProcessError):
@@ -78,7 +78,7 @@ def run() -> None:
 
     # Step 1: resolve (should create or find existing)
     console.print("\n[cyan]Step 1: resolve_cached_content (create/find)...[/cyan]")
-    filtered_msgs, params, cached_name = resolve_cached_content(
+    filtered_msgs, _params, cached_name = resolve_cached_content(
         messages=messages,
         model=model,
         provider="gemini",

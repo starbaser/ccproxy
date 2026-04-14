@@ -181,7 +181,7 @@ class HookDAG:
         lines: list[str] = []
         deps = self._build_dependencies()
 
-        for i, (group, content) in enumerate(zip(self._parallel_groups, group_contents)):
+        for i, (group, content) in enumerate(zip(self._parallel_groups, group_contents, strict=False)):
             if i > 0:
                 prev_group = self._parallel_groups[i - 1]
                 has_dep = any(deps[h] & prev_group for h in group)

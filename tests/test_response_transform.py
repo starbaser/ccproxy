@@ -7,7 +7,6 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from mitmproxy.proxy.mode_specs import ProxyMode
 
 from ccproxy.inspector.flow_store import FlowRecord, InspectorMeta, TransformMeta

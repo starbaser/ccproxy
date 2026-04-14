@@ -5,10 +5,7 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock
 
-import pytest
-
 from ccproxy.pipeline.context import Context
-
 
 _DEFAULT_BODY = {"model": "test", "messages": [], "metadata": {}}
 

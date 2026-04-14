@@ -237,7 +237,9 @@ class TestReadCredentialFile:
         assert _read_credential_file(str(f), "TestCred") is None
         assert "TestCred file is empty" in caplog.text
 
-    def test_exception_returns_none(self, tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_exception_returns_none(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         original_resolve = Path.resolve
 
         def mock_resolve(self: Path, *args: object, **kwargs: object) -> Path:
@@ -257,7 +259,9 @@ class TestRunCredentialCommand:
         monkeypatch.setattr(subprocess, "run", mock.Mock(return_value=mock_result))
         assert _run_credential_command("echo cmd-token", "TestCmd") == "cmd-token"
 
-    def test_non_zero_exit_returns_none(self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    def test_non_zero_exit_returns_none(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
         mock_result = mock.MagicMock(returncode=127, stderr=" command not found \n")
         monkeypatch.setattr(subprocess, "run", mock.Mock(return_value=mock_result))
         assert _run_credential_command("badcmd", "TestCmd") is None
@@ -269,7 +273,9 @@ class TestRunCredentialCommand:
         assert _run_credential_command("echo", "TestCmd") is None
         assert "TestCmd command returned empty output" in caplog.text
 
-    def test_timeout_expired_returns_none(self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    def test_timeout_expired_returns_none(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
         def mock_run_timeout(*args: object, **kwargs: object) -> None:
             raise subprocess.TimeoutExpired(cmd="sleep", timeout=5)
 
@@ -277,7 +283,9 @@ class TestRunCredentialCommand:
         assert _run_credential_command("sleep 10", "TestCmd") is None
         assert "TestCmd command timed out after 5 seconds" in caplog.text
 
-    def test_other_exception_returns_none(self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    def test_other_exception_returns_none(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
         def mock_run_error(*args: object, **kwargs: object) -> None:
             raise OSError("No such file or directory")
 
@@ -314,7 +322,7 @@ class TestRefreshOAuthToken:
 
         token, changed = config.refresh_oauth_token("provider1")
 
-        assert token == "new-token"
+        assert token == "new-token"  # noqa: S105
         assert changed is True
         assert config._oat_values["provider1"] == "new-token"
 
@@ -326,7 +334,7 @@ class TestRefreshOAuthToken:
 
         token, changed = config.refresh_oauth_token("provider1")
 
-        assert token == "current-token"
+        assert token == "current-token"  # noqa: S105
         assert changed is False
 
     def test_provider_not_configured_returns_none(self) -> None:
@@ -423,7 +431,9 @@ class TestLoadCredentials:
 
         assert config._oat_values["prov1"] == "tok1"
 
-    def test_partial_failure_logs_warning(self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    def test_partial_failure_logs_warning(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
         config = CCProxyConfig(oat_sources={"prov1": "echo tok1", "prov2": "fail"})
 
         def mock_run(cmd: str, **kwargs: object) -> mock.MagicMock:
@@ -443,7 +453,9 @@ class TestLoadCredentials:
         assert config._oat_values == {"prov1": "tok1"}
         assert "but 1 provider(s) failed to load" in caplog.text
 
-    def test_all_providers_fail_logs_error(self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    def test_all_providers_fail_logs_error(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
         config = CCProxyConfig(oat_sources={"prov1": "fail1", "prov2": "fail2"})
         mock_result = mock.MagicMock(returncode=1, stderr="err")
         monkeypatch.setattr(subprocess, "run", mock.Mock(return_value=mock_result))

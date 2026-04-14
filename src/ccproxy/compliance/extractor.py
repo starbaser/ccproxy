@@ -52,11 +52,11 @@ def extract_observation(
                         system = value
                     elif not should_skip_body_field(key, additional_body_content_fields):
                         # Detect wrapper: a dict field containing primary payload fields
-                        _PAYLOAD_MARKERS = ("contents", "messages", "prompt")
+                        payload_markers = ("contents", "messages", "prompt")
                         if (
                             body_wrapper is None
                             and isinstance(value, dict)
-                            and any(k in value for k in _PAYLOAD_MARKERS)
+                            and any(k in value for k in payload_markers)
                         ):
                             body_wrapper = key
                         else:

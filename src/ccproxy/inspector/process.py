@@ -230,7 +230,10 @@ async def run_inspector(
         web_token = web_password_cfg
     elif web_password_cfg is not None:
         from ccproxy.config import CredentialSource
-        source = web_password_cfg if isinstance(web_password_cfg, CredentialSource) else CredentialSource(**web_password_cfg)
+        if isinstance(web_password_cfg, CredentialSource):
+            source = web_password_cfg
+        else:
+            source = CredentialSource(**web_password_cfg)
         web_token = source.resolve("mitmweb web_password") or secrets.token_hex(16)
         logger.info("Resolved mitmweb web_password from credential source")
     else:

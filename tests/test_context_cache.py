@@ -5,7 +5,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import httpx
-import pytest
 
 from ccproxy.lightllm.context_cache import (
     _compute_cache_key,
@@ -118,7 +117,7 @@ class TestComputeCacheKey:
 class TestResolveCachedContent:
     def test_no_cache_control_annotations(self) -> None:
         messages = _make_plain_messages()
-        result_msgs, params, name = resolve_cached_content(
+        result_msgs, _params, name = resolve_cached_content(
             messages=messages,
             model="gemini-2.0-flash",
             provider="gemini",
@@ -227,7 +226,7 @@ class TestResolveCachedContent:
             mock_client.get.return_value = list_resp
 
             messages = _make_cached_messages()
-            result_msgs, _, name = resolve_cached_content(
+            _result_msgs, _, name = resolve_cached_content(
                 messages=messages,
                 model="gemini-2.0-flash",
                 provider="vertex_ai",

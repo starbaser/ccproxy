@@ -14,6 +14,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 from typing import Any
@@ -184,12 +185,11 @@ def _compute_changes(
                 "type": "system_injected",
                 "description": "System prompt was injected (likely by compliance)",
             })
-        elif "system" in client_keys and "system" in fwd_keys:
-            if client_body["system"] != forwarded_body["system"]:
-                changes.append({
-                    "type": "system_modified",
-                    "description": "System prompt was modified (compliance prepended blocks)",
-                })
+        elif "system" in client_keys and "system" in fwd_keys and client_body["system"] != forwarded_body["system"]:
+            changes.append({
+                "type": "system_modified",
+                "description": "System prompt was modified (compliance prepended blocks)",
+            })
 
         # Body wrapping
         new_keys = fwd_keys - client_keys
@@ -287,13 +287,11 @@ def main() -> None:
             # Fetch response (optional)
             response_body = None
             if args.with_response:
-                try:
+                with contextlib.suppress(Exception):
                     res_raw = client.get_response_body(flow_id)
                     response_body = _parse_json_safe(res_raw)
                     if response_body is None:
                         response_body = res_raw.decode("utf-8", errors="replace")
-                except Exception:
-                    pass
 
             # Compute changes
             changes = _compute_changes(client_parsed, flow, fwd_body)

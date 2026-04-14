@@ -31,7 +31,7 @@ class TestTransformToProvider:
         assert data["messages"][0]["role"] == "user"
 
     def test_anthropic_with_stream(self) -> None:
-        url, headers, body = transform_to_provider(
+        _url, _headers, body = transform_to_provider(
             model="claude-3-5-sonnet-20241022",
             provider="anthropic",
             messages=[{"role": "user", "content": "hello"}],
@@ -43,7 +43,7 @@ class TestTransformToProvider:
         assert data.get("stream") is True
 
     def test_anthropic_with_optional_params(self) -> None:
-        url, headers, body = transform_to_provider(
+        _url, _headers, body = transform_to_provider(
             model="claude-3-5-sonnet-20241022",
             provider="anthropic",
             messages=[{"role": "user", "content": "hello"}],
@@ -70,7 +70,7 @@ class TestTransformToProvider:
         assert data["messages"][0]["role"] == "user"
 
     def test_gemini_basic(self) -> None:
-        url, headers, body = transform_to_provider(
+        url, _headers, body = transform_to_provider(
             model="gemini-2.0-flash",
             provider="gemini",
             messages=[{"role": "user", "content": "hello"}],

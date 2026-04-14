@@ -19,9 +19,8 @@ def _make_ctx(
     oauth_provider: str | None = None,
 ) -> Context:
     body: dict = {"model": "claude-sonnet", "messages": []}
-    if system is not ...:
-        if system is not None:
-            body["system"] = system
+    if system is not ... and system is not None:
+        body["system"] = system
     if oauth_provider:
         body["metadata"] = {"ccproxy_oauth_provider": oauth_provider}
     flow = MagicMock()

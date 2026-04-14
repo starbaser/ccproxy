@@ -7,7 +7,6 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from mitmproxy.proxy.mode_specs import ProxyMode
 
 from ccproxy.config import InspectorConfig, TransformRoute, set_config_instance
@@ -278,7 +277,11 @@ class TestHandleTransform:
 
         mock_transform.assert_called_once()
         call_kwargs = mock_transform.call_args
-        assert call_kwargs.kwargs.get("model") or call_kwargs[1].get("model") or call_kwargs[0][0] == "claude-3-5-sonnet-20241022"
+        assert (
+            call_kwargs.kwargs.get("model")
+            or call_kwargs[1].get("model")
+            or call_kwargs[0][0] == "claude-3-5-sonnet-20241022"
+        )
 
     def test_reverse_proxy_unmatched_returns_501(self, cleanup: None) -> None:
         _make_config_with_transforms([{

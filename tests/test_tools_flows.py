@@ -1,13 +1,11 @@
 """Tests for MitmwebClient in ccproxy.tools.flows."""
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
-
-import sys
-from pathlib import Path
 
 from ccproxy.tools.flows import (
     Flows,
@@ -32,7 +30,7 @@ class TestMitmwebClientListFlows:
         mock_resp.json.return_value = payload
         mock_resp.raise_for_status = MagicMock()
 
-        client = MitmwebClient(host="localhost", port=8084, token="tok")
+        client = MitmwebClient(host="localhost", port=8084, token="tok")  # noqa: S106
         client._client = MagicMock()
         client._client.get.return_value = mock_resp
 
@@ -48,7 +46,7 @@ class TestMitmwebClientListFlows:
             "403", request=MagicMock(), response=MagicMock()
         )
 
-        client = MitmwebClient(host="localhost", port=8084, token="tok")
+        client = MitmwebClient(host="localhost", port=8084, token="tok")  # noqa: S106
         client._client = MagicMock()
         client._client.get.return_value = mock_resp
 
@@ -60,7 +58,7 @@ class TestMitmwebClientListFlows:
         mock_resp.json.return_value = []
         mock_resp.raise_for_status = MagicMock()
 
-        client = MitmwebClient(host="localhost", port=8084, token="tok")
+        client = MitmwebClient(host="localhost", port=8084, token="tok")  # noqa: S106
         client._client = MagicMock()
         client._client.get.return_value = mock_resp
 
@@ -75,7 +73,7 @@ class TestMitmwebClientGetRequestBody:
         mock_resp.content = b'{"model": "claude"}'
         mock_resp.raise_for_status = MagicMock()
 
-        client = MitmwebClient(host="localhost", port=8084, token="tok")
+        client = MitmwebClient(host="localhost", port=8084, token="tok")  # noqa: S106
         client._client = MagicMock()
         client._client.get.return_value = mock_resp
 
@@ -90,7 +88,7 @@ class TestMitmwebClientGetRequestBody:
             "404", request=MagicMock(), response=MagicMock()
         )
 
-        client = MitmwebClient(host="localhost", port=8084, token="tok")
+        client = MitmwebClient(host="localhost", port=8084, token="tok")  # noqa: S106
         client._client = MagicMock()
         client._client.get.return_value = mock_resp
 
@@ -106,7 +104,7 @@ class TestMitmwebClientGetResponseBody:
         mock_resp.content = b'{"id": "msg-1"}'
         mock_resp.raise_for_status = MagicMock()
 
-        client = MitmwebClient(host="localhost", port=8084, token="tok")
+        client = MitmwebClient(host="localhost", port=8084, token="tok")  # noqa: S106
         client._client = MagicMock()
         client._client.get.return_value = mock_resp
 
@@ -121,7 +119,7 @@ class TestMitmwebClientGetResponseBody:
             "404", request=MagicMock(), response=MagicMock()
         )
 
-        client = MitmwebClient(host="localhost", port=8084, token="tok")
+        client = MitmwebClient(host="localhost", port=8084, token="tok")  # noqa: S106
         client._client = MagicMock()
         client._client.get.return_value = mock_resp
 
@@ -139,7 +137,7 @@ class TestMitmwebClientGetClientRequest:
         mock_resp.json.return_value = [["Client-Request", content_text]]
         mock_resp.raise_for_status = MagicMock()
 
-        client = MitmwebClient(host="localhost", port=8084, token="tok")
+        client = MitmwebClient(host="localhost", port=8084, token="tok")  # noqa: S106
         client._client = MagicMock()
         client._client.get.return_value = mock_resp
 
@@ -157,7 +155,7 @@ class TestMitmwebClientGetClientRequest:
         mock_resp.text = "plain text response"
         mock_resp.raise_for_status = MagicMock()
 
-        client = MitmwebClient(host="localhost", port=8084, token="tok")
+        client = MitmwebClient(host="localhost", port=8084, token="tok")  # noqa: S106
         client._client = MagicMock()
         client._client.get.return_value = mock_resp
 
@@ -171,7 +169,7 @@ class TestMitmwebClientGetClientRequest:
         mock_resp.text = ""
         mock_resp.raise_for_status = MagicMock()
 
-        client = MitmwebClient(host="localhost", port=8084, token="tok")
+        client = MitmwebClient(host="localhost", port=8084, token="tok")  # noqa: S106
         client._client = MagicMock()
         client._client.get.return_value = mock_resp
 
@@ -184,7 +182,7 @@ class TestMitmwebClientGetClientRequest:
         mock_resp.json.return_value = ["some string"]
         mock_resp.raise_for_status = MagicMock()
 
-        client = MitmwebClient(host="localhost", port=8084, token="tok")
+        client = MitmwebClient(host="localhost", port=8084, token="tok")  # noqa: S106
         client._client = MagicMock()
         client._client.get.return_value = mock_resp
 
@@ -197,7 +195,7 @@ class TestMitmwebClientGetClientRequest:
             "404", request=MagicMock(), response=MagicMock()
         )
 
-        client = MitmwebClient(host="localhost", port=8084, token="tok")
+        client = MitmwebClient(host="localhost", port=8084, token="tok")  # noqa: S106
         client._client = MagicMock()
         client._client.get.return_value = mock_resp
 
@@ -212,7 +210,7 @@ class TestMitmwebClientPost:
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
 
-        client = MitmwebClient(host="localhost", port=8084, token="tok")
+        client = MitmwebClient(host="localhost", port=8084, token="tok")  # noqa: S106
         client._client = MagicMock()
         client._client.post.return_value = mock_resp
 
@@ -226,7 +224,7 @@ class TestMitmwebClientPost:
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
 
-        client = MitmwebClient(host="localhost", port=8084, token="tok")
+        client = MitmwebClient(host="localhost", port=8084, token="tok")  # noqa: S106
         client._client = MagicMock()
         client._client.post.return_value = mock_resp
         client._xsrf = "presettoken1234"
@@ -239,7 +237,7 @@ class TestMitmwebClientPost:
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
 
-        client = MitmwebClient(host="localhost", port=8084, token="tok")
+        client = MitmwebClient(host="localhost", port=8084, token="tok")  # noqa: S106
         client._client = MagicMock()
         client._client.cookies = MagicMock()
         client._client.post.return_value = mock_resp
@@ -256,7 +254,7 @@ class TestMitmwebClientPost:
             "403", request=MagicMock(), response=MagicMock()
         )
 
-        client = MitmwebClient(host="localhost", port=8084, token="tok")
+        client = MitmwebClient(host="localhost", port=8084, token="tok")  # noqa: S106
         client._client = MagicMock()
         client._client.post.return_value = mock_resp
 
@@ -271,7 +269,7 @@ class TestMitmwebClientClear:
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
 
-        client = MitmwebClient(host="localhost", port=8084, token="tok")
+        client = MitmwebClient(host="localhost", port=8084, token="tok")  # noqa: S106
         client._client = MagicMock()
         client._client.cookies = MagicMock()
         client._client.post.return_value = mock_resp
@@ -288,7 +286,7 @@ class TestMitmwebClientClear:
             "500", request=MagicMock(), response=MagicMock()
         )
 
-        client = MitmwebClient(host="localhost", port=8084, token="tok")
+        client = MitmwebClient(host="localhost", port=8084, token="tok")  # noqa: S106
         client._client = MagicMock()
         client._client.cookies = MagicMock()
         client._client.post.return_value = mock_resp
@@ -309,7 +307,7 @@ class TestMitmwebClientResolveId:
         mock_resp.json.return_value = flows
         mock_resp.raise_for_status = MagicMock()
 
-        client = MitmwebClient(host="localhost", port=8084, token="tok")
+        client = MitmwebClient(host="localhost", port=8084, token="tok")  # noqa: S106
         client._client = MagicMock()
         client._client.get.return_value = mock_resp
 
@@ -321,7 +319,7 @@ class TestMitmwebClientResolveId:
         mock_resp.json.return_value = [{"id": "abcdef123456"}]
         mock_resp.raise_for_status = MagicMock()
 
-        client = MitmwebClient(host="localhost", port=8084, token="tok")
+        client = MitmwebClient(host="localhost", port=8084, token="tok")  # noqa: S106
         client._client = MagicMock()
         client._client.get.return_value = mock_resp
 
@@ -333,14 +331,14 @@ class TestMitmwebClientContextManager:
     """Tests for MitmwebClient context manager protocol."""
 
     def test_enter_returns_self(self) -> None:
-        client = MitmwebClient(host="localhost", port=8084, token="tok")
+        client = MitmwebClient(host="localhost", port=8084, token="tok")  # noqa: S106
         client._client = MagicMock()
 
         result = client.__enter__()
         assert result is client
 
     def test_exit_calls_close(self) -> None:
-        client = MitmwebClient(host="localhost", port=8084, token="tok")
+        client = MitmwebClient(host="localhost", port=8084, token="tok")  # noqa: S106
         client._client = MagicMock()
 
         client.__exit__(None, None, None)
@@ -354,7 +352,7 @@ class TestMakeClient:
         mock_config = MagicMock()
         mock_config.inspector.mitmproxy.web_host = "127.0.0.1"
         mock_config.inspector.port = 8084
-        mock_config.inspector.mitmproxy.web_password = "secret-token"
+        mock_config.inspector.mitmproxy.web_password = "secret-token"  # noqa: S105
 
         with patch("ccproxy.config.get_config", return_value=mock_config):
             client = _make_client()
@@ -600,7 +598,7 @@ class TestHandleFlows:
         mock_client.return_value.__exit__ = MagicMock(return_value=False)
 
         cmd = Flows(args=[])
-        handle_flows(cmd, Path("/tmp"))
+        handle_flows(cmd, Path("/tmp"))  # noqa: S108
 
         mock_list.assert_called_once()
 
@@ -612,7 +610,7 @@ class TestHandleFlows:
         mock_client.return_value.__exit__ = MagicMock(return_value=False)
 
         cmd = Flows(args=["list"], json=True, filter="anthropic")
-        handle_flows(cmd, Path("/tmp"))
+        handle_flows(cmd, Path("/tmp"))  # noqa: S108
 
         mock_list.assert_called_once()
         call_kwargs = mock_list.call_args
@@ -627,7 +625,7 @@ class TestHandleFlows:
         mock_client.return_value.__exit__ = MagicMock(return_value=False)
 
         cmd = Flows(args=["req", "abc123"])
-        handle_flows(cmd, Path("/tmp"))
+        handle_flows(cmd, Path("/tmp"))  # noqa: S108
 
         mock_inspect.assert_called_once()
         assert mock_inspect.call_args.kwargs["action"] == "req"
@@ -641,7 +639,7 @@ class TestHandleFlows:
         mock_client.return_value.__exit__ = MagicMock(return_value=False)
 
         cmd = Flows(args=["client", "abc"])
-        handle_flows(cmd, Path("/tmp"))
+        handle_flows(cmd, Path("/tmp"))  # noqa: S108
 
         mock_inspect.assert_called_once()
         assert mock_inspect.call_args.kwargs["action"] == "client"
@@ -654,7 +652,7 @@ class TestHandleFlows:
         mock_client.return_value.__exit__ = MagicMock(return_value=False)
 
         cmd = Flows(args=["diff", "a1", "b2"])
-        handle_flows(cmd, Path("/tmp"))
+        handle_flows(cmd, Path("/tmp"))  # noqa: S108
 
         mock_diff.assert_called_once()
 
@@ -666,7 +664,7 @@ class TestHandleFlows:
 
         cmd = Flows(args=["req"])
         with pytest.raises(SystemExit):
-            handle_flows(cmd, Path("/tmp"))
+            handle_flows(cmd, Path("/tmp"))  # noqa: S108
 
     @patch("ccproxy.tools.flows._make_client")
     def test_diff_without_two_ids_exits(self, mock_client: MagicMock) -> None:
@@ -676,7 +674,7 @@ class TestHandleFlows:
 
         cmd = Flows(args=["diff", "only-one"])
         with pytest.raises(SystemExit):
-            handle_flows(cmd, Path("/tmp"))
+            handle_flows(cmd, Path("/tmp"))  # noqa: S108
 
     @patch("ccproxy.tools.flows._make_client")
     def test_unknown_action_exits(self, mock_client: MagicMock) -> None:
@@ -686,7 +684,7 @@ class TestHandleFlows:
 
         cmd = Flows(args=["bogus"])
         with pytest.raises(SystemExit):
-            handle_flows(cmd, Path("/tmp"))
+            handle_flows(cmd, Path("/tmp"))  # noqa: S108
 
     @patch("ccproxy.tools.flows._make_client")
     def test_clear_flag(self, mock_client: MagicMock) -> None:
@@ -695,7 +693,7 @@ class TestHandleFlows:
         mock_client.return_value.__exit__ = MagicMock(return_value=False)
 
         cmd = Flows(clear=True)
-        handle_flows(cmd, Path("/tmp"))
+        handle_flows(cmd, Path("/tmp"))  # noqa: S108
 
         mock_ctx.clear.assert_called_once()
 
@@ -708,7 +706,7 @@ class TestHandleFlows:
 
         cmd = Flows(clear=True)
         with pytest.raises(SystemExit):
-            handle_flows(cmd, Path("/tmp"))
+            handle_flows(cmd, Path("/tmp"))  # noqa: S108
 
     @patch("ccproxy.tools.flows._make_client")
     @patch("ccproxy.tools.flows._do_list")
@@ -718,7 +716,7 @@ class TestHandleFlows:
         mock_client.return_value.__exit__ = MagicMock(return_value=False)
 
         cmd = Flows(args=["list"], clear=True)
-        handle_flows(cmd, Path("/tmp"))
+        handle_flows(cmd, Path("/tmp"))  # noqa: S108
 
         mock_ctx.clear.assert_called_once()
         mock_list.assert_called_once()
@@ -730,7 +728,7 @@ class TestHandleFlows:
 
         cmd = Flows(args=["list"])
         with pytest.raises(SystemExit):
-            handle_flows(cmd, Path("/tmp"))
+            handle_flows(cmd, Path("/tmp"))  # noqa: S108
 
     @patch("ccproxy.tools.flows._make_client")
     def test_http_status_error_exits(self, mock_client: MagicMock) -> None:
@@ -744,7 +742,7 @@ class TestHandleFlows:
 
         cmd = Flows(args=["list"])
         with pytest.raises(SystemExit):
-            handle_flows(cmd, Path("/tmp"))
+            handle_flows(cmd, Path("/tmp"))  # noqa: S108
 
     @patch("ccproxy.tools.flows._make_client")
     def test_value_error_exits(self, mock_client: MagicMock) -> None:
@@ -755,7 +753,7 @@ class TestHandleFlows:
 
         cmd = Flows(args=["list"])
         with pytest.raises(SystemExit):
-            handle_flows(cmd, Path("/tmp"))
+            handle_flows(cmd, Path("/tmp"))  # noqa: S108
 
 
 class TestMakeClientCredentialSource:

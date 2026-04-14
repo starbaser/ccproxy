@@ -7,11 +7,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ccproxy.compliance.models import (
-    ComplianceProfile,
-    ProfileFeatureHeader,
-    ProfileFeatureSystem,
-)
 from ccproxy.compliance.store import ProfileStore, clear_store_instance
 from ccproxy.hooks.apply_compliance import apply_compliance, apply_compliance_guard
 from ccproxy.inspector.flow_store import InspectorMeta
