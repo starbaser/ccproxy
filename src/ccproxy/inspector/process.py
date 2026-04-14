@@ -94,7 +94,9 @@ def _make_pipeline_router(name: str, hook_entries: list[Any]) -> Any:
     from ccproxy.inspector.router import InspectorRouter
 
     router = InspectorRouter(
-        name=name, request_passthrough=True, response_passthrough=True,
+        name=name,
+        request_passthrough=True,
+        response_passthrough=True,
     )
     executor = build_executor(hook_entries)
     register_pipeline_routes(router, executor)
@@ -106,7 +108,9 @@ def _make_transform_router() -> Any:
     from ccproxy.inspector.routes.transform import register_transform_routes
 
     router = InspectorRouter(
-        name="ccproxy_transform", request_passthrough=True, response_passthrough=True,
+        name="ccproxy_transform",
+        request_passthrough=True,
+        response_passthrough=True,
     )
     register_transform_routes(router)
     return router
@@ -124,6 +128,7 @@ def _build_addons(
     from ccproxy.config import get_config
     from ccproxy.inspector.addon import InspectorAddon
     from ccproxy.inspector.contentview import ClientRequestContentview
+    from ccproxy.inspector.multi_har_saver import MultiHARSaver
 
     contentviews.add(ClientRequestContentview())
 
@@ -165,7 +170,7 @@ def _build_addons(
     inbound_hooks = hooks_cfg.get("inbound", []) if isinstance(hooks_cfg, dict) else hooks_cfg
     outbound_hooks = hooks_cfg.get("outbound", []) if isinstance(hooks_cfg, dict) else []
 
-    addons: list[Any] = [addon]
+    addons: list[Any] = [addon, MultiHARSaver()]
 
     if inbound_hooks:
         addons.append(_make_pipeline_router("ccproxy_inbound", inbound_hooks))
@@ -230,6 +235,7 @@ async def run_inspector(
         web_token = web_password_cfg
     elif web_password_cfg is not None:
         from ccproxy.config import CredentialSource
+
         if isinstance(web_password_cfg, CredentialSource):
             source = web_password_cfg
         else:
@@ -242,7 +248,8 @@ async def run_inspector(
 
     opts = _build_opts(
         wg_cli_conf_path,
-        reverse_port, wg_cli_port,
+        reverse_port,
+        wg_cli_port,
     )
 
     master = WebMaster(opts, with_termlog=False)
@@ -266,7 +273,9 @@ async def run_inspector(
 
     logger.info(
         "Inspector running: reverse@%d, wg-cli@%d, UI@%d",
-        reverse_port, wg_cli_port, inspector.port,
+        reverse_port,
+        wg_cli_port,
+        inspector.port,
     )
 
     return master, master_task, web_token

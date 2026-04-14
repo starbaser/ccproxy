@@ -22,7 +22,10 @@ from ccproxy.lightllm.dispatch import (
 
 class TestMitmResponseShim:
     def _make_mitm_response(
-        self, body: dict[str, Any], status: int = 200, headers: dict[str, str] | None = None,
+        self,
+        body: dict[str, Any],
+        status: int = 200,
+        headers: dict[str, str] | None = None,
     ) -> MagicMock:
         mock = MagicMock()
         mock.status_code = status
@@ -344,7 +347,9 @@ class TestResponseRouteHandler:
         mock_transform.return_value = mock_model_response
 
         router = InspectorRouter(
-            name="test_transform", request_passthrough=True, response_passthrough=True,
+            name="test_transform",
+            request_passthrough=True,
+            response_passthrough=True,
         )
         register_transform_routes(router)
 
@@ -375,7 +380,9 @@ class TestResponseRouteHandler:
         set_config_instance(config)
 
         router = InspectorRouter(
-            name="test_transform", request_passthrough=True, response_passthrough=True,
+            name="test_transform",
+            request_passthrough=True,
+            response_passthrough=True,
         )
         register_transform_routes(router)
 
@@ -400,7 +407,9 @@ class TestResponseRouteHandler:
         set_config_instance(config)
 
         router = InspectorRouter(
-            name="test_transform", request_passthrough=True, response_passthrough=True,
+            name="test_transform",
+            request_passthrough=True,
+            response_passthrough=True,
         )
         register_transform_routes(router)
 
@@ -419,7 +428,9 @@ class TestResponseRouteHandler:
         set_config_instance(config)
 
         router = InspectorRouter(
-            name="test_transform", request_passthrough=True, response_passthrough=True,
+            name="test_transform",
+            request_passthrough=True,
+            response_passthrough=True,
         )
         register_transform_routes(router)
 
@@ -430,7 +441,9 @@ class TestResponseRouteHandler:
             is_streaming=False,
         )
         flow = self._make_flow_with_response(
-            {"error": "bad request"}, transform=meta, status=400,
+            {"error": "bad request"},
+            transform=meta,
+            status=400,
         )
         original_content = flow.response.content
 
@@ -453,20 +466,24 @@ class TestTransformMetaPersistence:
         from ccproxy.inspector.router import InspectorRouter
         from ccproxy.inspector.routes.transform import register_transform_routes
 
-        transform_routes = [TransformRoute(
-            mode="transform",
-            match_host="api.openai.com",
-            match_path="/v1/chat/completions",
-            dest_provider="anthropic",
-            dest_model="claude-3",
-        )]
+        transform_routes = [
+            TransformRoute(
+                mode="transform",
+                match_host="api.openai.com",
+                match_path="/v1/chat/completions",
+                dest_provider="anthropic",
+                dest_model="claude-3",
+            )
+        ]
         config = CCProxyConfig(inspector=InspectorConfig(transforms=transform_routes))
         set_config_instance(config)
 
         mock_transform.return_value = ("https://api.anthropic.com/v1/messages", {}, b"{}")
 
         router = InspectorRouter(
-            name="test_transform", request_passthrough=True, response_passthrough=True,
+            name="test_transform",
+            request_passthrough=True,
+            response_passthrough=True,
         )
         register_transform_routes(router)
 
@@ -480,11 +497,13 @@ class TestTransformMetaPersistence:
         flow.request.port = 443
         flow.request.scheme = "https"
         flow.request.headers = {}
-        flow.request.content = json.dumps({
-            "model": "gpt-4o",
-            "messages": [{"role": "user", "content": "hi"}],
-            "stream": True,
-        }).encode()
+        flow.request.content = json.dumps(
+            {
+                "model": "gpt-4o",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": True,
+            }
+        ).encode()
         flow.metadata = {
             InspectorMeta.DIRECTION: "inbound",
             InspectorMeta.RECORD: record,
@@ -512,18 +531,22 @@ class TestTransformMetaPersistence:
         from ccproxy.inspector.router import InspectorRouter
         from ccproxy.inspector.routes.transform import register_transform_routes
 
-        transform_routes = [TransformRoute(
-            mode="redirect",
-            match_host="api.openai.com",
-            match_path="/v1/",
-            dest_provider="anthropic",
-            dest_host="api.anthropic.com",
-        )]
+        transform_routes = [
+            TransformRoute(
+                mode="redirect",
+                match_host="api.openai.com",
+                match_path="/v1/",
+                dest_provider="anthropic",
+                dest_host="api.anthropic.com",
+            )
+        ]
         config = CCProxyConfig(inspector=InspectorConfig(transforms=transform_routes))
         set_config_instance(config)
 
         router = InspectorRouter(
-            name="test_transform", request_passthrough=True, response_passthrough=True,
+            name="test_transform",
+            request_passthrough=True,
+            response_passthrough=True,
         )
         register_transform_routes(router)
 
@@ -564,18 +587,22 @@ class TestTransformMetaPersistence:
         from ccproxy.inspector.router import InspectorRouter
         from ccproxy.inspector.routes.transform import register_transform_routes
 
-        transform_routes = [TransformRoute(
-            match_host="api.openai.com",
-            match_path="/",
-            dest_provider="anthropic",
-            dest_model="claude-3",
-            mode="passthrough",
-        )]
+        transform_routes = [
+            TransformRoute(
+                match_host="api.openai.com",
+                match_path="/",
+                dest_provider="anthropic",
+                dest_model="claude-3",
+                mode="passthrough",
+            )
+        ]
         config = CCProxyConfig(inspector=InspectorConfig(transforms=transform_routes))
         set_config_instance(config)
 
         router = InspectorRouter(
-            name="test_transform", request_passthrough=True, response_passthrough=True,
+            name="test_transform",
+            request_passthrough=True,
+            response_passthrough=True,
         )
         register_transform_routes(router)
 

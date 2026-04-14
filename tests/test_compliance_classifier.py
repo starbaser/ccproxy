@@ -64,8 +64,19 @@ class TestBodyFieldClassification:
 
     def test_content_fields_set_completeness(self):
         expected = {
-            "messages", "contents", "prompt", "tools", "tool_choice",
-            "model", "stream", "max_tokens", "max_completion_tokens",
-            "temperature", "top_p", "top_k", "stop", "n",
+            "messages",
+            "contents",
+            "prompt",
+            "tools",
+            "tool_choice",
+            "model",
+            "stream",
+            "max_tokens",
+            "max_completion_tokens",
+            "temperature",
+            "top_p",
+            "top_k",
+            "stop",
+            "n",
         }
         assert expected == BODY_CONTENT_FIELDS

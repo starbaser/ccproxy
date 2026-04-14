@@ -102,7 +102,6 @@ class OAuthSource(CredentialSource):
     """
 
 
-
 class ComplianceConfig(BaseModel):
     """Configuration for the compliance profile learning system."""
 
@@ -254,12 +253,14 @@ class InspectorConfig(BaseModel):
     """mitmproxy CA certificate store directory. Populates mitmproxy.confdir
     via model validator when set."""
 
-    provider_map: dict[str, str] = Field(default_factory=lambda: {
-        "api.anthropic.com": "anthropic",
-        "api.openai.com": "openai",
-        "generativelanguage.googleapis.com": "google",
-        "openrouter.ai": "openrouter",
-    })
+    provider_map: dict[str, str] = Field(
+        default_factory=lambda: {
+            "api.anthropic.com": "anthropic",
+            "api.openai.com": "openai",
+            "generativelanguage.googleapis.com": "google",
+            "openrouter.ai": "openrouter",
+        }
+    )
     """Hostname → OTel gen_ai.system attribute mapping for provider identification."""
 
     transforms: list[TransformRoute] = Field(default_factory=list)

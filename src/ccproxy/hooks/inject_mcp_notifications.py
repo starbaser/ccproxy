@@ -34,6 +34,7 @@ Integration flow::
 
 See also: ``ccproxy.mcp.buffer``, ``ccproxy.mcp.routes``.
 """
+
 from __future__ import annotations
 
 import json

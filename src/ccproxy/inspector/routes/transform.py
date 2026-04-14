@@ -82,6 +82,7 @@ def _resolve_api_key(target: TransformRoute) -> str | None:
         return token
 
     import os
+
     return os.environ.get(target.dest_api_key_ref)
 
 
@@ -152,7 +153,7 @@ def _handle_redirect(flow: HTTPFlow, target: TransformRoute, body: dict[str, obj
         # Strip the routing prefix and rewrite the path for the destination
         prefix = target.match_path.rstrip("/")
         if flow.request.path.startswith(prefix):
-            stripped = flow.request.path[len(prefix):] or "/"
+            stripped = flow.request.path[len(prefix) :] or "/"
             flow.request.path = _rewrite_path(stripped, target) or stripped
     flow.server_conn = Server(address=(dest_host, 443))
 

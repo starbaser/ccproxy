@@ -93,7 +93,7 @@ uv run python scripts/compliance_status.py  # from ccproxy project root
 3. Inspect the forwarded request to see what headers are actually being sent:
    ```bash
    ccproxy flows list
-   ccproxy flows req <flow-id>    # Check for anthropic-beta header
+   ccproxy flows dump <flow-id> | jq '.log.entries[0].request.headers'    # Check for anthropic-beta header
    ```
 
 4. Compare client vs forwarded to see if compliance stamped headers:
@@ -162,7 +162,7 @@ jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json
 
 Check the forwarded request headers:
 ```bash
-ccproxy flows req <flow-id>
+ccproxy flows dump <flow-id> | jq '.log.entries[0].request.headers'
 # Verify Authorization or x-api-key header is present and non-empty
 ```
 
@@ -224,8 +224,8 @@ If a hook is not firing:
 ccproxy flows list
 
 # Check if a flow was transformed
-ccproxy flows client <id>   # Pre-pipeline URL
-ccproxy flows req <id>      # Post-pipeline URL (should differ if transformed)
+ccproxy flows dump <id> | jq '.log.entries[1].request.url'   # Pre-pipeline URL
+ccproxy flows dump <id> | jq '.log.entries[0].request.url'   # Post-pipeline URL (should differ if transformed)
 ```
 
 If transforms are configured but not matching, check:

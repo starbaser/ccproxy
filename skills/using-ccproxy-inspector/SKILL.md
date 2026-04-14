@@ -122,12 +122,18 @@ ccproxy flows list                        # Table of all flows
 ccproxy flows list --filter "anthropic"   # Filter by host+path regex
 ccproxy flows list --json                 # Raw JSON array
 
-ccproxy flows client a1b2c3d4             # Pre-pipeline client request
-ccproxy flows req a1b2c3d4               # Post-pipeline forwarded request
-ccproxy flows res a1b2c3d4               # Provider response
+# `dump` emits a 1-page / 2-entry HAR 1.2 file for a single flow:
+#   entries[0] = [fwdreq, fwdres]  real flow (forwarded request + upstream response)
+#   entries[1] = [clireq, fwdres]  clone with .request from ClientRequest snapshot
+ccproxy flows dump a1b2c3d4                                 # Write HAR to stdout
+ccproxy flows dump a1b2c3d4 | jq '.log.entries[0].request.url'   # Forwarded URL
+ccproxy flows dump a1b2c3d4 | jq '.log.entries[1].request.url'   # Pre-pipeline URL
+ccproxy flows dump a1b2c3d4 | jq '.log.entries[0].response.status'
+ccproxy flows dump a1b2c3d4 > /tmp/flow.har                 # Open in Chrome DevTools
+
 ccproxy flows diff a1b2c3d4 e5f6a7b8     # Unified diff of two request bodies
 
-ccproxy flows --clear                     # Clear all captured flows
+ccproxy flows clear                       # Clear all captured flows
 ```
 
 ### Helper scripts
@@ -219,7 +225,7 @@ compliance:
 Problem?
 │
 ├─ Provider returns auth errors (401/403)
-│  ▶ Check: ccproxy flows req <id> — is Authorization header present?
+│  ▶ Check: ccproxy flows dump <id> | jq '.log.entries[0].request.headers' — is Authorization header present?
 │  ▶ Check: x-ccproxy-oauth-injected header — did forward_oauth run?
 │  ▶ Check: oat_sources config — is the token source valid?
 │  ▶ Check: sentinel key format — sk-ant-oat-ccproxy-{provider}
@@ -227,7 +233,7 @@ Problem?
 ├─ Request not being transformed
 │  ▶ Check: ccproxy flows list — is the flow captured?
 │  ▶ Check: transform rules — does match_host/match_path/match_model match?
-│  ▶ Check: ccproxy flows client <id> — what did the client send?
+│  ▶ Check: ccproxy flows dump <id> | jq '.log.entries[1].request.url' — what did the client send (pre-pipeline)?
 │  ▶ Check: ccproxy dag-viz — is the transform router in the addon chain?
 │
 ├─ Compliance not applying

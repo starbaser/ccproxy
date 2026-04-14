@@ -245,7 +245,8 @@ class TestRunPreflightChecks:
     def test_udp_port_occupied_by_process(self):
         with (
             patch("ccproxy.preflight._is_udp_port_in_use", return_value=1234),
-            patch("ccproxy.preflight._read_proc_cmdline", return_value="wg"),pytest.raises(SystemExit)
+            patch("ccproxy.preflight._read_proc_cmdline", return_value="wg"),
+            pytest.raises(SystemExit),
         ):
             run_preflight_checks(udp_ports=[51820])
 
@@ -305,6 +306,7 @@ class TestGetPortPidExtra:
         def fake_open(self, *args, **kwargs):
             if "tcp6" in str(self):
                 from io import StringIO
+
                 return StringIO(header + tcp6_line)
             raise OSError("no tcp")
 
@@ -325,6 +327,7 @@ class TestGetPortPidExtra:
             if "tcp6" in str(self):
                 raise OSError("no tcp6")
             from io import StringIO
+
             return StringIO(header + short_line)
 
         with (
@@ -427,8 +430,10 @@ class TestIsUdpPortInUse:
 
     def test_udp_short_line_skipped(self):
         """Short lines in /proc/net/udp are skipped."""
+
         def fake_open(self, *args, **kwargs):
             from io import StringIO
+
             return StringIO("too short\n")
 
         with patch("pathlib.Path.open", fake_open):
@@ -445,6 +450,7 @@ class TestIsUdpPortInUse:
 
         def fake_open(self, *args, **kwargs):
             from io import StringIO
+
             return StringIO(udp_line)
 
         with (

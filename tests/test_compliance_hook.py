@@ -97,13 +97,15 @@ class TestApplyCompliance:
     def test_applies_profile_headers(self, store: ProfileStore):
         from ccproxy.compliance.models import ObservationBundle
 
-        store.submit_observation(ObservationBundle(
-            provider="anthropic",
-            user_agent="cli/1.0",
-            headers={"x-app": "cli"},
-            body_envelope={},
-            system=None,
-        ))
+        store.submit_observation(
+            ObservationBundle(
+                provider="anthropic",
+                user_agent="cli/1.0",
+                headers={"x-app": "cli"},
+                body_envelope={},
+                system=None,
+            )
+        )
 
         flow = _make_flow(reverse=True, has_transform=True, provider="anthropic")
         ctx = Context.from_flow(flow)
@@ -113,16 +115,19 @@ class TestApplyCompliance:
     def test_applies_system_prompt(self, store: ProfileStore):
         from ccproxy.compliance.models import ObservationBundle
 
-        store.submit_observation(ObservationBundle(
-            provider="anthropic",
-            user_agent="cli/1.0",
-            headers={},
-            body_envelope={},
-            system="You are Claude",
-        ))
+        store.submit_observation(
+            ObservationBundle(
+                provider="anthropic",
+                user_agent="cli/1.0",
+                headers={},
+                body_envelope={},
+                system="You are Claude",
+            )
+        )
 
-        flow = _make_flow(reverse=True, has_transform=True, provider="anthropic",
-                          body={"model": "test", "system": "Help me"})
+        flow = _make_flow(
+            reverse=True, has_transform=True, provider="anthropic", body={"model": "test", "system": "Help me"}
+        )
         ctx = Context.from_flow(flow)
         result = apply_compliance(ctx, {})
         assert isinstance(result.system, list)

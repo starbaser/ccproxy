@@ -52,12 +52,10 @@ class TestVerifyOutboundReachability:
         ):
             await verify_outbound_reachability(config)
 
-        assert any(
-            "Outbound readiness OK" in r.message and "HTTP 404" in r.message
-            for r in caplog.records
-        )
+        assert any("Outbound readiness OK" in r.message and "HTTP 404" in r.message for r in caplog.records)
         client.head.assert_awaited_once_with(
-            "https://canary.example.com/", follow_redirects=False,
+            "https://canary.example.com/",
+            follow_redirects=False,
         )
 
     async def test_connect_error_raises(self) -> None:
@@ -111,7 +109,8 @@ class TestVerifyOutboundReachability:
             await verify_outbound_reachability(config)
 
         client.head.assert_awaited_once_with(
-            "https://custom.example.org/ping", follow_redirects=False,
+            "https://custom.example.org/ping",
+            follow_redirects=False,
         )
 
     async def test_uses_configured_timeout(self) -> None:
@@ -166,7 +165,8 @@ class TestVerifyOrShutdown:
         cleanup.assert_awaited_once()
 
     async def test_cleanup_exception_is_swallowed_but_original_raised(
-        self, caplog: pytest.LogCaptureFixture,
+        self,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """If the cleanup itself raises, log and still surface the original ReadinessError."""
         config = _config()
@@ -182,7 +182,4 @@ class TestVerifyOrShutdown:
         ):
             await verify_or_shutdown(config, broken_cleanup)
 
-        assert any(
-            "Cleanup after readiness failure itself raised" in r.message
-            for r in caplog.records
-        )
+        assert any("Cleanup after readiness failure itself raised" in r.message for r in caplog.records)

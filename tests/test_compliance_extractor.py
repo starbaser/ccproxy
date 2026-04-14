@@ -26,13 +26,15 @@ def _make_client_request(
 
 class TestExtractObservation:
     def test_extracts_profiled_headers(self):
-        cr = _make_client_request(headers={
-            "user-agent": "claude-cli/2.1.87",
-            "anthropic-beta": "oauth-2025-04-20",
-            "x-app": "cli",
-            "authorization": "Bearer sk-ant-secret",
-            "content-length": "1234",
-        })
+        cr = _make_client_request(
+            headers={
+                "user-agent": "claude-cli/2.1.87",
+                "anthropic-beta": "oauth-2025-04-20",
+                "x-app": "cli",
+                "authorization": "Bearer sk-ant-secret",
+                "content-length": "1234",
+            }
+        )
         bundle = extract_observation(cr, "anthropic")
         assert bundle.user_agent == "claude-cli/2.1.87"
         assert "anthropic-beta" in bundle.headers
@@ -73,8 +75,13 @@ class TestExtractObservation:
 
     def test_handles_non_json_body(self):
         cr = ClientRequest(
-            method="GET", scheme="https", host="example.com", port=443,
-            path="/health", headers={"user-agent": "test"}, body=b"not json",
+            method="GET",
+            scheme="https",
+            host="example.com",
+            port=443,
+            path="/health",
+            headers={"user-agent": "test"},
+            body=b"not json",
             content_type="text/plain",
         )
         bundle = extract_observation(cr, "unknown")
@@ -87,11 +94,13 @@ class TestExtractObservation:
         assert bundle.body_envelope == {}
 
     def test_header_names_lowercased(self):
-        cr = _make_client_request(headers={
-            "User-Agent": "cli/1.0",
-            "Anthropic-Beta": "flag1",
-            "X-Custom": "val",
-        })
+        cr = _make_client_request(
+            headers={
+                "User-Agent": "cli/1.0",
+                "Anthropic-Beta": "flag1",
+                "X-Custom": "val",
+            }
+        )
         bundle = extract_observation(cr, "anthropic")
         assert "user-agent" in bundle.headers
         assert "anthropic-beta" in bundle.headers

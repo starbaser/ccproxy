@@ -156,16 +156,18 @@ def _parse_proc_net_tcp(path: Path) -> set[int]:
 
 def _slirp_add_hostfwd(api_socket: Path, port: int) -> bool:
     """Forward host 127.0.0.1:port → namespace 10.0.2.100:port via slirp4netns API."""
-    request = json.dumps({
-        "execute": "add_hostfwd",
-        "arguments": {
-            "proto": "tcp",
-            "host_addr": "127.0.0.1",
-            "host_port": port,
-            "guest_addr": "10.0.2.100",
-            "guest_port": port,
-        },
-    }).encode()
+    request = json.dumps(
+        {
+            "execute": "add_hostfwd",
+            "arguments": {
+                "proto": "tcp",
+                "host_addr": "127.0.0.1",
+                "host_port": port,
+                "guest_addr": "10.0.2.100",
+                "guest_port": port,
+            },
+        }
+    ).encode()
 
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
@@ -240,10 +242,12 @@ def _rewrite_wg_endpoint(client_conf: str, gateway: str) -> str:
     """
     # Strip wg-quick-only fields that `wg setconf` doesn't understand
     conf = re.sub(r"^(?:Address|DNS)\s*=.*\n?", "", client_conf, flags=re.MULTILINE)
+
     # Rewrite endpoint host to the namespace-reachable gateway, keep the port
     def _replace_endpoint(m: re.Match[str]) -> str:
         port = m.group(1)
         return f"Endpoint = {gateway}:{port}"
+
     return re.sub(
         r"^Endpoint\s*=\s*\S+:(\d+)\s*$",
         _replace_endpoint,
@@ -282,8 +286,16 @@ def create_namespace(wg_client_conf: str, *, proxy_port: int = 4000) -> Namespac
     # Start sentinel process in a new user+net namespace
     try:
         sentinel = subprocess.Popen(
-            ["unshare", "--user", "--map-root-user", "--net", "--pid", "--fork",  # noqa: S607
-             "sleep", "infinity"],
+            [  # noqa: S607
+                "unshare",
+                "--user",
+                "--map-root-user",
+                "--net",
+                "--pid",
+                "--fork",
+                "sleep",
+                "infinity",
+            ],
             start_new_session=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -347,8 +359,18 @@ def create_namespace(wg_client_conf: str, *, proxy_port: int = 4000) -> Namespac
             f"ip route add default dev wg0"
         )
         result = subprocess.run(  # noqa: S603
-            ["nsenter", "-t", str(ns_pid), "--net", "--user", "--preserve-credentials", "--",  # noqa: S607
-             "sh", "-c", wg_setup],
+            [  # noqa: S607
+                "nsenter",
+                "-t",
+                str(ns_pid),
+                "--net",
+                "--user",
+                "--preserve-credentials",
+                "--",
+                "sh",
+                "-c",
+                wg_setup,
+            ],
             capture_output=True,
             text=True,
         )
@@ -370,27 +392,34 @@ def create_namespace(wg_client_conf: str, *, proxy_port: int = 4000) -> Namespac
             default_port = 4000
             dnat_cmds = [
                 # Inbound: slirp4netns hostfwd traffic → namespace localhost
-                (
-                    "iptables -t nat -A PREROUTING -i tap0 -p tcp "
-                    "-j DNAT --to-destination 127.0.0.1"
-                ),
+                ("iptables -t nat -A PREROUTING -i tap0 -p tcp -j DNAT --to-destination 127.0.0.1"),
                 # Outbound: namespace localhost → host via gateway
-                (
-                    f"iptables -t nat -A OUTPUT -d 127.0.0.1 -p tcp "
-                    f"-j DNAT --to-destination {gateway}"
-                ),
+                (f"iptables -t nat -A OUTPUT -d 127.0.0.1 -p tcp -j DNAT --to-destination {gateway}"),
             ]
             # Remap default port → running port when they differ
             if proxy_port != default_port:
-                dnat_cmds.insert(0, (
-                    f"iptables -t nat -A OUTPUT -d 127.0.0.1 -p tcp "
-                    f"--dport {default_port} "
-                    f"-j DNAT --to-destination {gateway}:{proxy_port}"
-                ))
+                dnat_cmds.insert(
+                    0,
+                    (
+                        f"iptables -t nat -A OUTPUT -d 127.0.0.1 -p tcp "
+                        f"--dport {default_port} "
+                        f"-j DNAT --to-destination {gateway}:{proxy_port}"
+                    ),
+                )
             for dnat_cmd in dnat_cmds:
                 dnat_result = subprocess.run(  # noqa: S603
-                    ["nsenter", "-t", str(ns_pid), "--net", "--user",  # noqa: S607
-                     "--preserve-credentials", "--", "sh", "-c", dnat_cmd],
+                    [  # noqa: S607
+                        "nsenter",
+                        "-t",
+                        str(ns_pid),
+                        "--net",
+                        "--user",
+                        "--preserve-credentials",
+                        "--",
+                        "sh",
+                        "-c",
+                        dnat_cmd,
+                    ],
                     capture_output=True,
                     text=True,
                 )
@@ -403,9 +432,7 @@ def create_namespace(wg_client_conf: str, *, proxy_port: int = 4000) -> Namespac
                 else:
                     logger.debug("iptables rule installed: %s", dnat_cmd)
         else:
-            logger.warning(
-                "iptables not found — port forwarding unavailable"
-            )
+            logger.warning("iptables not found — port forwarding unavailable")
 
         # Start port monitor to dynamically forward namespace listen ports to host
         forwarder = PortForwarder(ns_pid=ns_pid, api_socket=api_socket_path)
@@ -435,9 +462,13 @@ def create_namespace(wg_client_conf: str, *, proxy_port: int = 4000) -> Namespac
 def run_in_namespace(ctx: NamespaceContext, command: list[str], env: dict[str, str]) -> int:
     nsenter_cmd = [
         "nsenter",
-        "-t", str(ctx.ns_pid),
-        "--net", "--user", "--preserve-credentials",
-        "--", *command,
+        "-t",
+        str(ctx.ns_pid),
+        "--net",
+        "--user",
+        "--preserve-credentials",
+        "--",
+        *command,
     ]
     proc = subprocess.Popen(nsenter_cmd, env=env)  # noqa: S603
     try:

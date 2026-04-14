@@ -47,10 +47,12 @@ class TestBuildExecutor:
         assert executor.get_execution_order() == []
 
     def test_multiple_hooks_priority_order(self) -> None:
-        executor = build_executor([
-            "ccproxy.hooks.forward_oauth",
-            "ccproxy.hooks.verbose_mode",
-        ])
+        executor = build_executor(
+            [
+                "ccproxy.hooks.forward_oauth",
+                "ccproxy.hooks.verbose_mode",
+            ]
+        )
         order = executor.get_execution_order()
         assert "forward_oauth" in order
         assert "verbose_mode" in order
@@ -68,6 +70,7 @@ class TestRegisterPipelineRoutes:
             def decorator(fn: object) -> object:
                 captured.append(fn)
                 return fn
+
             return decorator
 
         mock_router.route.side_effect = capture_decorator

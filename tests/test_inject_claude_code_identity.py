@@ -41,10 +41,12 @@ class TestInjectClaudeCodeIdentityGuard:
         assert inject_claude_code_identity_guard(ctx) is False
 
     def test_true_when_bearer_and_anthropic_version(self) -> None:
-        ctx = _make_ctx(headers={
-            "authorization": "Bearer token",
-            "anthropic-version": "2023-06-01",
-        })
+        ctx = _make_ctx(
+            headers={
+                "authorization": "Bearer token",
+                "anthropic-version": "2023-06-01",
+            }
+        )
         assert inject_claude_code_identity_guard(ctx) is True
 
     def test_false_when_bearer_but_no_anthropic_version(self) -> None:

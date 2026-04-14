@@ -55,7 +55,10 @@ class TestGetCachingUrlAndHeaders:
 
     def test_vertex_ai(self) -> None:
         result = _get_caching_url_and_headers(
-            "vertex_ai", "ya29.tok", "my-project", "us-central1",
+            "vertex_ai",
+            "ya29.tok",
+            "my-project",
+            "us-central1",
         )
         assert result is not None
         url, headers = result
@@ -66,7 +69,10 @@ class TestGetCachingUrlAndHeaders:
 
     def test_vertex_ai_beta(self) -> None:
         result = _get_caching_url_and_headers(
-            "vertex_ai_beta", "ya29.tok", "proj", "europe-west1",
+            "vertex_ai_beta",
+            "ya29.tok",
+            "proj",
+            "europe-west1",
         )
         assert result is not None
         url, _ = result
@@ -74,7 +80,10 @@ class TestGetCachingUrlAndHeaders:
 
     def test_vertex_ai_global_location(self) -> None:
         result = _get_caching_url_and_headers(
-            "vertex_ai", "ya29.tok", "proj", "global",
+            "vertex_ai",
+            "ya29.tok",
+            "proj",
+            "global",
         )
         assert result is not None
         url, _ = result
@@ -260,7 +269,9 @@ class TestResolveCachedContent:
         list_resp = MagicMock()
         list_resp.status_code = 500
         list_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
-            "Server Error", request=MagicMock(), response=list_resp,
+            "Server Error",
+            request=MagicMock(),
+            response=list_resp,
         )
         mock_client.get.return_value = list_resp
 

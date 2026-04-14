@@ -176,9 +176,7 @@ class ObservationAccumulator:
                 if isinstance(system_val, list):
                     system_feature = ProfileFeatureSystem(structure=system_val)
                 elif isinstance(system_val, str):
-                    system_feature = ProfileFeatureSystem(
-                        structure=[{"type": "text", "text": system_val}]
-                    )
+                    system_feature = ProfileFeatureSystem(structure=[{"type": "text", "text": system_val}])
 
         wrapper_values = [w for w in self.body_wrapper_observations if w is not None]
         body_wrapper = wrapper_values[0] if wrapper_values and len(set(wrapper_values)) == 1 else None

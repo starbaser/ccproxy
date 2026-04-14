@@ -264,8 +264,7 @@ def run_preflight_checks(
         else:
             name = snippet or "unknown"
             logger.error(
-                "Port %d is occupied by another process (PID %d: %s). "
-                "Stop it first, e.g.: kill %d",
+                "Port %d is occupied by another process (PID %d: %s). Stop it first, e.g.: kill %d",
                 port,
                 pid,
                 name,
@@ -288,8 +287,7 @@ def run_preflight_checks(
         snippet = (cmdline[:80] + "...") if cmdline and len(cmdline) > 80 else cmdline
         name = snippet or "unknown"
         logger.error(
-            "UDP port %d is occupied by another process (PID %d: %s). "
-            "Stop it first, e.g.: kill %d",
+            "UDP port %d is occupied by another process (PID %d: %s). Stop it first, e.g.: kill %d",
             port,
             pid,
             name,

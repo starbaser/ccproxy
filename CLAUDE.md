@@ -42,11 +42,9 @@ ccproxy install [--force]         # Install template config files
 ccproxy logs [-f] [-n LINES]     # View logs
 ccproxy dag-viz [-o ascii|mermaid|json]  # Visualize hook DAG
 ccproxy flows list [--filter PAT] [--json]  # List captured flows
-ccproxy flows req <id-prefix>     # HAR of forwarded request + response (post-pipeline)
-ccproxy flows res <id-prefix>     # Alias for `req` — same HAR output
-ccproxy flows client <id-prefix>  # HAR with pre-pipeline client request as request side
+ccproxy flows dump <id-prefix>    # 1-page / 2-entry HAR ([fwdreq,fwdres] + [clireq,fwdres])
 ccproxy flows diff <id1> <id2>    # Unified diff of two request bodies
-ccproxy flows --clear             # Clear all captured flows
+ccproxy flows clear               # Clear all captured flows
 ```
 
 ## Architecture
@@ -133,13 +131,12 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 
 **`mcp/`** — Thread-safe notification buffer (`NotificationBuffer` singleton) + `POST /mcp/notify` FastAPI endpoint for MCP terminal event ingestion.
 
-**`tools/flows.py`** — `MitmwebClient` for programmatic mitmweb REST API access + `ccproxy flows` CLI subcommand.
-- **Auth**: Bearer token resolved from `inspector.mitmproxy.web_password` config (mitmproxy 12+ accepts `Authorization: Bearer` on the REST API directly — no cookie dance).
-- **Client methods**: `list_flows()`, `get_request_body(id)`, `get_response_body(id)`, `get_client_request(id)` (returns parsed dict `{method, url, headers, body_text}` from the `Client-Request` contentview), `clear()`. `_make_client()` reads auth from ccproxy config.
-- **HAR output**: `req`, `res`, and `client` subcommands emit valid HAR 1.2 JSON (`{"log": {"version": "1.2", "creator": ..., "entries": [...]}}`). `req`/`res` use the forwarded (post-pipeline) request; `client` substitutes the pre-pipeline client request via `_parse_client_request_text()`. Body bytes are fetched via `_safe_fetch()` which swallows 5xx (e.g. completed SSE streams that mitmweb can no longer replay). Binary bodies are base64-encoded with `encoding: "base64"` on the HAR `content`/`postData`. HAR entries include timings computed from `server_conn` / request / response timestamps in the REST JSON.
-- **HAR consumption**: pipe to a file and open in Chrome DevTools / Charles / Fiddler (`ccproxy flows req abc > flow.har`), or query with jq (`ccproxy flows req abc | jq '.log.entries[0].request.url'`, `... | jq '.log.entries[0].timings'`). Since `req` and `res` output is identical, either can be used to save a single-entry HAR of a flow.
+**`tools/flows.py`** — `MitmwebClient` for programmatic mitmweb REST API access + `ccproxy flows` CLI tyro subcommands (`FlowsList`, `FlowsDump`, `FlowsDiff`, `FlowsClear`).
+- **Auth**: Bearer token resolved from `inspector.mitmproxy.web_password` config (mitmproxy 12+ accepts `Authorization: Bearer` on the REST API directly).
+- **Client methods**: `list_flows()`, `get_request_body(id)`, `resolve_id(prefix)`, `dump_har(id)` (invokes the `ccproxy.dump` mitmproxy command via `POST /commands/ccproxy.dump`), `clear()`. `_make_client()` reads auth from ccproxy config.
+- **HAR output**: `ccproxy flows dump` emits HAR 1.2 JSON built server-side by `MultiHARSaver.ccproxy_dump` (see `inspector/multi_har_saver.py`). One page per flow (`pages[0].id == flow.id`), two complete HAR entries by documented index: `entries[0] = [fwdreq, fwdres]` is the real flow untouched (authoritative forwarded request + upstream response); `entries[1] = [clireq, fwdres]` is a `flow.copy()` with `.request` rebuilt from `flow.metadata[InspectorMeta.RECORD].client_request` via `http.Request.make()` — the response is duplicated so the HAR pair stays schema-complete. All HAR details (cookies, multipart bodies, binary base64, websocket messages, timings) are delegated to `mitmproxy.addons.savehar.SaveHar.make_har()`.
+- **HAR consumption**: pipe to a file and open in Chrome DevTools / Charles / Fiddler (`ccproxy flows dump abc > flow.har`), or query with jq by entry index (`... | jq '.log.entries[0].request.url'` for forwarded URL, `... | jq '.log.entries[1].request.url'` for pre-pipeline URL, `... | jq '.log.entries[0].response.status'` for upstream status, `... | jq '.log.pages[0].id'` for the flow id).
 - **HAR vs diff**: for quick payload comparison between two flows use `ccproxy flows diff <a> <b>` (unified diff of raw request bodies). For structural HAR comparison, save two HAR files and diff them with `jq` or a HAR viewer.
-- **scripts/**: Python scripts that import `MitmwebClient` directly for richer analysis (e.g. `verify_cch.py`).
 
 ### Configuration
 

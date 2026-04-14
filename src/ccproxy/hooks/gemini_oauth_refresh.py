@@ -50,10 +50,16 @@ _BACKUP_PATH = Path.home() / ".ccproxy" / "gemini_refresh_token.bak"
 _REFRESH_CMD = "gemini -m gemini-2.5-flash -p hi 2>/dev/null"
 _EXPIRY_BUFFER_MS = 120_000  # Refresh when < 2 minutes remaining
 _REFRESH_TIMEOUT_SEC = 30
-_PROXY_ENV_VARS = frozenset({
-    "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy",
-    "ALL_PROXY", "all_proxy",
-})
+_PROXY_ENV_VARS = frozenset(
+    {
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+    }
+)
 _BUG_SIGNATURES = ("No refresh token is set", "Failed to clear OAuth credentials")
 
 _refresh_token_stash: str | None = None
@@ -95,9 +101,7 @@ def gemini_oauth_refresh(ctx: Context, _: dict[str, Any]) -> Context:
             if stashed:
                 new_creds["refresh_token"] = stashed
                 _write_creds_atomic(new_creds)
-                logger.info(
-                    "Restored Gemini refresh_token after CLI wiped it (#21691 workaround)"
-                )
+                logger.info("Restored Gemini refresh_token after CLI wiped it (#21691 workaround)")
             elif any(sig in stderr for sig in _BUG_SIGNATURES):
                 logger.warning(
                     "Gemini OAuth is in an unrecoverable state (#21691). "

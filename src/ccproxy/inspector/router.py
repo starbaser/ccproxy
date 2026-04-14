@@ -53,9 +53,7 @@ class InspectorRouter(InterceptedAPI):
             return
         super().response(flow)
 
-    def find_handler(
-        self, host: str, path: str, rtype: RouteType = RouteType.REQUEST
-    ) -> tuple[Any, Any]:
+    def find_handler(self, host: str, path: str, rtype: RouteType = RouteType.REQUEST) -> tuple[Any, Any]:
         """Support host=None as a wildcard (xepor skips None-registered routes)."""
         routes = self.request_routes if rtype == RouteType.REQUEST else self.response_routes
         for h, parser, handler in routes:
@@ -70,12 +68,8 @@ class InspectorRouter(InterceptedAPI):
         """Use keyword Server(address=...) for mitmproxy 12.x kw_only dataclass."""
         host, port = self.get_host(flow)
         for src, dest in self.host_mapping:
-            if (isinstance(src, re.Pattern) and src.match(host)) or (
-                isinstance(src, str) and host == src
-            ):
-                if overwrite and (
-                    flow.request.host != dest or flow.request.port != port
-                ):
+            if (isinstance(src, re.Pattern) and src.match(host)) or (isinstance(src, str) and host == src):
+                if overwrite and (flow.request.host != dest or flow.request.port != port):
                     if self.respect_proxy_headers:
                         flow.request.scheme = flow.request.headers["X-Forwarded-Proto"]
                     flow.server_conn = Server(address=(dest, port))

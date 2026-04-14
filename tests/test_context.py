@@ -164,7 +164,6 @@ class TestMetadataConvenienceProperties:
         assert ctx.metadata["ccproxy_oauth_provider"] == "google"
 
 
-
 class TestCommit:
     def test_commit_writes_body_to_flow(self):
         flow = _make_flow(body={"model": "original", "messages": []})

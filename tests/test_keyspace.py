@@ -27,10 +27,12 @@ class TestExtractAvailableKeys:
         assert "system" in keys
 
     def test_nested_dict_dot_paths(self) -> None:
-        flow = _make_flow({
-            "metadata": {"user_id": "foo", "session_id": "bar"},
-            "model": "m",
-        })
+        flow = _make_flow(
+            {
+                "metadata": {"user_id": "foo", "session_id": "bar"},
+                "model": "m",
+            }
+        )
         ctx = Context.from_flow(flow)
         keys = extract_available_keys(ctx)
         assert "metadata" in keys
@@ -39,9 +41,11 @@ class TestExtractAvailableKeys:
         assert "model" in keys
 
     def test_deeply_nested_dict(self) -> None:
-        flow = _make_flow({
-            "outer": {"middle": {"inner": "value"}},
-        })
+        flow = _make_flow(
+            {
+                "outer": {"middle": {"inner": "value"}},
+            }
+        )
         ctx = Context.from_flow(flow)
         keys = extract_available_keys(ctx)
         assert "outer" in keys
@@ -49,9 +53,11 @@ class TestExtractAvailableKeys:
         assert "outer.middle.inner" in keys
 
     def test_lists_skipped(self) -> None:
-        flow = _make_flow({
-            "messages": [{"role": "user", "content": "hi"}],
-        })
+        flow = _make_flow(
+            {
+                "messages": [{"role": "user", "content": "hi"}],
+            }
+        )
         ctx = Context.from_flow(flow)
         keys = extract_available_keys(ctx)
         # Parent dict key present
@@ -78,10 +84,12 @@ class TestExtractAvailableKeys:
 
     def test_extract_session_id_pattern(self) -> None:
         """Regression: `reads=["metadata"]` must resolve when metadata dict exists."""
-        flow = _make_flow({
-            "metadata": {"user_id": "claude_code-123_456_789"},
-            "model": "m",
-        })
+        flow = _make_flow(
+            {
+                "metadata": {"user_id": "claude_code-123_456_789"},
+                "model": "m",
+            }
+        )
         ctx = Context.from_flow(flow)
         keys = extract_available_keys(ctx)
         # The extract_session_id hook declares `reads=["metadata"]`

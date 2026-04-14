@@ -37,7 +37,9 @@ class TestInspectorRouter:
         """Routeless routers must not set REQ_PASSTHROUGH — otherwise they
         break subsequent routers' ability to match handlers in the chain."""
         router = InspectorRouter(
-            name="responseonly", request_passthrough=True, response_passthrough=True,
+            name="responseonly",
+            request_passthrough=True,
+            response_passthrough=True,
         )
 
         @router.route("/api/test", rtype=RouteType.RESPONSE)
@@ -55,7 +57,9 @@ class TestInspectorRouter:
         """Routeless routers must not set RESP_PASSTHROUGH — otherwise they
         block the transform router's handle_transform_response from running."""
         router = InspectorRouter(
-            name="requestonly", request_passthrough=True, response_passthrough=True,
+            name="requestonly",
+            request_passthrough=True,
+            response_passthrough=True,
         )
 
         @router.route("/api/test", rtype=RouteType.REQUEST)
@@ -71,7 +75,9 @@ class TestInspectorRouter:
 
     def test_request_delegates_when_routes_exist(self) -> None:
         router = InspectorRouter(
-            name="test", request_passthrough=True, response_passthrough=True,
+            name="test",
+            request_passthrough=True,
+            response_passthrough=True,
         )
         called = []
 
@@ -85,7 +91,9 @@ class TestInspectorRouter:
 
     def test_response_delegates_when_routes_exist(self) -> None:
         router = InspectorRouter(
-            name="test", request_passthrough=True, response_passthrough=True,
+            name="test",
+            request_passthrough=True,
+            response_passthrough=True,
         )
         called = []
 

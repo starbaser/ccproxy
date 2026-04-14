@@ -35,10 +35,13 @@ def _make_flow(
     flow.request.port = 443
     flow.request.scheme = "https"
     flow.request.headers = {}
-    flow.request.content = json.dumps(body or {
-        "model": "gpt-4o",
-        "messages": [{"role": "user", "content": "hello"}],
-    }).encode()
+    flow.request.content = json.dumps(
+        body
+        or {
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+    ).encode()
     flow.metadata = {InspectorMeta.DIRECTION: direction}
     flow.server_conn = MagicMock()
     flow.response = None
@@ -61,34 +64,46 @@ def _make_config_with_transforms(transforms: list[dict[str, Any]]) -> None:
 
 class TestResolveTransformTarget:
     def test_matches_host_and_path(self, cleanup: None) -> None:
-        _make_config_with_transforms([{
-            "match_host": "api.openai.com",
-            "match_path": "/v1/chat/completions",
-            "dest_provider": "anthropic",
-            "dest_model": "claude-3-5-sonnet-20241022",
-        }])
+        _make_config_with_transforms(
+            [
+                {
+                    "match_host": "api.openai.com",
+                    "match_path": "/v1/chat/completions",
+                    "dest_provider": "anthropic",
+                    "dest_model": "claude-3-5-sonnet-20241022",
+                }
+            ]
+        )
         flow = _make_flow(host="api.openai.com", path="/v1/chat/completions")
         target = _resolve_transform_target(flow)
         assert target is not None
         assert target.dest_provider == "anthropic"
 
     def test_no_match_different_host(self, cleanup: None) -> None:
-        _make_config_with_transforms([{
-            "match_host": "api.openai.com",
-            "match_path": "/v1/chat/completions",
-            "dest_provider": "anthropic",
-            "dest_model": "claude-3-5-sonnet-20241022",
-        }])
+        _make_config_with_transforms(
+            [
+                {
+                    "match_host": "api.openai.com",
+                    "match_path": "/v1/chat/completions",
+                    "dest_provider": "anthropic",
+                    "dest_model": "claude-3-5-sonnet-20241022",
+                }
+            ]
+        )
         flow = _make_flow(host="api.anthropic.com", path="/v1/messages")
         assert _resolve_transform_target(flow) is None
 
     def test_no_match_different_path(self, cleanup: None) -> None:
-        _make_config_with_transforms([{
-            "match_host": "api.openai.com",
-            "match_path": "/v1/chat/completions",
-            "dest_provider": "anthropic",
-            "dest_model": "claude-3-5-sonnet-20241022",
-        }])
+        _make_config_with_transforms(
+            [
+                {
+                    "match_host": "api.openai.com",
+                    "match_path": "/v1/chat/completions",
+                    "dest_provider": "anthropic",
+                    "dest_model": "claude-3-5-sonnet-20241022",
+                }
+            ]
+        )
         flow = _make_flow(host="api.openai.com", path="/v1/embeddings")
         assert _resolve_transform_target(flow) is None
 
@@ -98,43 +113,53 @@ class TestResolveTransformTarget:
         assert _resolve_transform_target(flow) is None
 
     def test_first_match_wins(self, cleanup: None) -> None:
-        _make_config_with_transforms([
-            {
-                "match_host": "api.openai.com",
-                "match_path": "/",
-                "dest_provider": "anthropic",
-                "dest_model": "claude-first",
-            },
-            {
-                "match_host": "api.openai.com",
-                "match_path": "/",
-                "dest_provider": "gemini",
-                "dest_model": "gemini-second",
-            },
-        ])
+        _make_config_with_transforms(
+            [
+                {
+                    "match_host": "api.openai.com",
+                    "match_path": "/",
+                    "dest_provider": "anthropic",
+                    "dest_model": "claude-first",
+                },
+                {
+                    "match_host": "api.openai.com",
+                    "match_path": "/",
+                    "dest_provider": "gemini",
+                    "dest_model": "gemini-second",
+                },
+            ]
+        )
         flow = _make_flow()
         target = _resolve_transform_target(flow)
         assert target is not None
         assert target.dest_model == "claude-first"
 
     def test_path_prefix_match(self, cleanup: None) -> None:
-        _make_config_with_transforms([{
-            "match_host": "api.openai.com",
-            "match_path": "/v1/",
-            "dest_provider": "anthropic",
-            "dest_model": "claude-3-5-sonnet-20241022",
-        }])
+        _make_config_with_transforms(
+            [
+                {
+                    "match_host": "api.openai.com",
+                    "match_path": "/v1/",
+                    "dest_provider": "anthropic",
+                    "dest_model": "claude-3-5-sonnet-20241022",
+                }
+            ]
+        )
         flow = _make_flow(host="api.openai.com", path="/v1/chat/completions")
         target = _resolve_transform_target(flow)
         assert target is not None
 
     def test_match_model(self, cleanup: None) -> None:
-        _make_config_with_transforms([{
-            "match_path": "/v1/chat/completions",
-            "match_model": "gpt-4o",
-            "dest_provider": "anthropic",
-            "dest_model": "claude-3-5-sonnet-20241022",
-        }])
+        _make_config_with_transforms(
+            [
+                {
+                    "match_path": "/v1/chat/completions",
+                    "match_model": "gpt-4o",
+                    "dest_provider": "anthropic",
+                    "dest_model": "claude-3-5-sonnet-20241022",
+                }
+            ]
+        )
         flow = _make_flow(body={"model": "gpt-4o", "messages": [{"role": "user", "content": "hi"}]})
         body = json.loads(flow.request.content)
         target = _resolve_transform_target(flow, body)
@@ -142,22 +167,30 @@ class TestResolveTransformTarget:
         assert target.dest_provider == "anthropic"
 
     def test_match_model_no_match(self, cleanup: None) -> None:
-        _make_config_with_transforms([{
-            "match_path": "/v1/chat/completions",
-            "match_model": "gpt-4o",
-            "dest_provider": "anthropic",
-            "dest_model": "claude-3-5-sonnet-20241022",
-        }])
+        _make_config_with_transforms(
+            [
+                {
+                    "match_path": "/v1/chat/completions",
+                    "match_model": "gpt-4o",
+                    "dest_provider": "anthropic",
+                    "dest_model": "claude-3-5-sonnet-20241022",
+                }
+            ]
+        )
         flow = _make_flow(body={"model": "claude-3-haiku", "messages": [{"role": "user", "content": "hi"}]})
         body = json.loads(flow.request.content)
         assert _resolve_transform_target(flow, body) is None
 
     def test_null_match_host_matches_any(self, cleanup: None) -> None:
-        _make_config_with_transforms([{
-            "match_path": "/v1/chat/completions",
-            "dest_provider": "anthropic",
-            "dest_model": "claude-3-5-sonnet-20241022",
-        }])
+        _make_config_with_transforms(
+            [
+                {
+                    "match_path": "/v1/chat/completions",
+                    "dest_provider": "anthropic",
+                    "dest_model": "claude-3-5-sonnet-20241022",
+                }
+            ]
+        )
         flow = _make_flow(host="any-host.example.com")
         target = _resolve_transform_target(flow)
         assert target is not None
@@ -166,20 +199,25 @@ class TestResolveTransformTarget:
 class TestResolveApiKey:
     def test_none_ref(self) -> None:
         target = TransformRoute(
-            match_host="x", dest_provider="anthropic",
-            dest_model="m", dest_api_key_ref=None,
+            match_host="x",
+            dest_provider="anthropic",
+            dest_model="m",
+            dest_api_key_ref=None,
         )
         assert _resolve_api_key(target) is None
 
     def test_env_var_fallback(self, monkeypatch: pytest.MonkeyPatch, cleanup: None) -> None:
         monkeypatch.setenv("MY_API_KEY", "env-key-value")
         from ccproxy.config import CCProxyConfig
+
         config = CCProxyConfig()
         set_config_instance(config)
 
         target = TransformRoute(
-            match_host="x", dest_provider="anthropic",
-            dest_model="m", dest_api_key_ref="MY_API_KEY",
+            match_host="x",
+            dest_provider="anthropic",
+            dest_model="m",
+            dest_api_key_ref="MY_API_KEY",
         )
         result = _resolve_api_key(target)
         assert result == "env-key-value"
@@ -187,14 +225,20 @@ class TestResolveApiKey:
 
 class TestHandleTransform:
     def test_skips_outbound_flows(self, cleanup: None) -> None:
-        _make_config_with_transforms([{
-            "match_host": "api.openai.com",
-            "match_path": "/",
-            "dest_provider": "anthropic",
-            "dest_model": "claude-3-5-sonnet-20241022",
-        }])
+        _make_config_with_transforms(
+            [
+                {
+                    "match_host": "api.openai.com",
+                    "match_path": "/",
+                    "dest_provider": "anthropic",
+                    "dest_model": "claude-3-5-sonnet-20241022",
+                }
+            ]
+        )
         router = InspectorRouter(
-            name="test_transform", request_passthrough=True, response_passthrough=True,
+            name="test_transform",
+            request_passthrough=True,
+            response_passthrough=True,
         )
         register_transform_routes(router)
 
@@ -204,14 +248,20 @@ class TestHandleTransform:
         assert flow.request.content == original_content
 
     def test_skips_unmatched_flows(self, cleanup: None) -> None:
-        _make_config_with_transforms([{
-            "match_host": "api.openai.com",
-            "match_path": "/v1/chat/completions",
-            "dest_provider": "anthropic",
-            "dest_model": "claude-3-5-sonnet-20241022",
-        }])
+        _make_config_with_transforms(
+            [
+                {
+                    "match_host": "api.openai.com",
+                    "match_path": "/v1/chat/completions",
+                    "dest_provider": "anthropic",
+                    "dest_model": "claude-3-5-sonnet-20241022",
+                }
+            ]
+        )
         router = InspectorRouter(
-            name="test_transform", request_passthrough=True, response_passthrough=True,
+            name="test_transform",
+            request_passthrough=True,
+            response_passthrough=True,
         )
         register_transform_routes(router)
 
@@ -222,13 +272,17 @@ class TestHandleTransform:
 
     @patch("ccproxy.lightllm.transform_to_provider")
     def test_rewrites_matched_flow(self, mock_transform: MagicMock, cleanup: None) -> None:
-        _make_config_with_transforms([{
-            "mode": "transform",
-            "match_host": "api.openai.com",
-            "match_path": "/v1/chat/completions",
-            "dest_provider": "anthropic",
-            "dest_model": "claude-3-5-sonnet-20241022",
-        }])
+        _make_config_with_transforms(
+            [
+                {
+                    "mode": "transform",
+                    "match_host": "api.openai.com",
+                    "match_path": "/v1/chat/completions",
+                    "dest_provider": "anthropic",
+                    "dest_model": "claude-3-5-sonnet-20241022",
+                }
+            ]
+        )
         mock_transform.return_value = (
             "https://api.anthropic.com/v1/messages",
             {"x-api-key": "test-key", "anthropic-version": "2023-06-01"},
@@ -236,7 +290,9 @@ class TestHandleTransform:
         )
 
         router = InspectorRouter(
-            name="test_transform", request_passthrough=True, response_passthrough=True,
+            name="test_transform",
+            request_passthrough=True,
+            response_passthrough=True,
         )
         register_transform_routes(router)
 
@@ -252,25 +308,33 @@ class TestHandleTransform:
 
     @patch("ccproxy.lightllm.transform_to_provider")
     def test_passes_messages_and_params(self, mock_transform: MagicMock, cleanup: None) -> None:
-        _make_config_with_transforms([{
-            "mode": "transform",
-            "match_host": "api.openai.com",
-            "match_path": "/",
-            "dest_provider": "anthropic",
-            "dest_model": "claude-3-5-sonnet-20241022",
-            "dest_api_key_ref": None,
-        }])
+        _make_config_with_transforms(
+            [
+                {
+                    "mode": "transform",
+                    "match_host": "api.openai.com",
+                    "match_path": "/",
+                    "dest_provider": "anthropic",
+                    "dest_model": "claude-3-5-sonnet-20241022",
+                    "dest_api_key_ref": None,
+                }
+            ]
+        )
         mock_transform.return_value = ("https://api.anthropic.com/v1/messages", {}, b"{}")
 
-        flow = _make_flow(body={
-            "model": "gpt-4o",
-            "messages": [{"role": "user", "content": "hi"}],
-            "temperature": 0.7,
-            "stream": True,
-        })
+        flow = _make_flow(
+            body={
+                "model": "gpt-4o",
+                "messages": [{"role": "user", "content": "hi"}],
+                "temperature": 0.7,
+                "stream": True,
+            }
+        )
 
         router = InspectorRouter(
-            name="test_transform", request_passthrough=True, response_passthrough=True,
+            name="test_transform",
+            request_passthrough=True,
+            response_passthrough=True,
         )
         register_transform_routes(router)
         router.request(flow)
@@ -284,14 +348,20 @@ class TestHandleTransform:
         )
 
     def test_reverse_proxy_unmatched_returns_501(self, cleanup: None) -> None:
-        _make_config_with_transforms([{
-            "match_host": "api.openai.com",
-            "match_path": "/v1/chat/completions",
-            "dest_provider": "anthropic",
-            "dest_model": "claude-3-5-sonnet-20241022",
-        }])
+        _make_config_with_transforms(
+            [
+                {
+                    "match_host": "api.openai.com",
+                    "match_path": "/v1/chat/completions",
+                    "dest_provider": "anthropic",
+                    "dest_model": "claude-3-5-sonnet-20241022",
+                }
+            ]
+        )
         router = InspectorRouter(
-            name="test_transform", request_passthrough=True, response_passthrough=True,
+            name="test_transform",
+            request_passthrough=True,
+            response_passthrough=True,
         )
         register_transform_routes(router)
 
@@ -305,14 +375,20 @@ class TestHandleTransform:
         assert flow.response.status_code == 501
 
     def test_wireguard_unmatched_passes_through(self, cleanup: None) -> None:
-        _make_config_with_transforms([{
-            "match_host": "api.openai.com",
-            "match_path": "/v1/chat/completions",
-            "dest_provider": "anthropic",
-            "dest_model": "claude-3-5-sonnet-20241022",
-        }])
+        _make_config_with_transforms(
+            [
+                {
+                    "match_host": "api.openai.com",
+                    "match_path": "/v1/chat/completions",
+                    "dest_provider": "anthropic",
+                    "dest_model": "claude-3-5-sonnet-20241022",
+                }
+            ]
+        )
         router = InspectorRouter(
-            name="test_transform", request_passthrough=True, response_passthrough=True,
+            name="test_transform",
+            request_passthrough=True,
+            response_passthrough=True,
         )
         register_transform_routes(router)
 
@@ -327,15 +403,21 @@ class TestHandleTransform:
         assert flow.request.content == original_content
 
     def test_passthrough_mode_leaves_flow_unchanged(self, cleanup: None) -> None:
-        _make_config_with_transforms([{
-            "match_host": "api.openai.com",
-            "match_path": "/v1/chat/completions",
-            "dest_provider": "anthropic",
-            "dest_model": "claude-3-5-sonnet-20241022",
-            "mode": "passthrough",
-        }])
+        _make_config_with_transforms(
+            [
+                {
+                    "match_host": "api.openai.com",
+                    "match_path": "/v1/chat/completions",
+                    "dest_provider": "anthropic",
+                    "dest_model": "claude-3-5-sonnet-20241022",
+                    "mode": "passthrough",
+                }
+            ]
+        )
         router = InspectorRouter(
-            name="test_transform", request_passthrough=True, response_passthrough=True,
+            name="test_transform",
+            request_passthrough=True,
+            response_passthrough=True,
         )
         register_transform_routes(router)
 
@@ -432,11 +514,13 @@ class TestHandleRedirect:
         assert flow.request.path.startswith("/v1beta/")
 
     def test_redirect_gemini_path_rewrite(self, cleanup: None) -> None:
-        self._make_redirect_config({
-            "match_path": "/gemini/",
-            "dest_provider": "gemini",
-            "dest_host": "cloudcode-pa.googleapis.com",
-        })
+        self._make_redirect_config(
+            {
+                "match_path": "/gemini/",
+                "dest_provider": "gemini",
+                "dest_host": "cloudcode-pa.googleapis.com",
+            }
+        )
         router = InspectorRouter(name="test_redir", request_passthrough=True, response_passthrough=True)
         register_transform_routes(router)
 
@@ -447,13 +531,17 @@ class TestHandleRedirect:
         assert flow.request.host == "cloudcode-pa.googleapis.com"
 
     def test_redirect_missing_dest_host_passthrough(self, cleanup: None) -> None:
-        _make_config_with_transforms([{
-            "mode": "redirect",
-            "match_host": "proxy.local",
-            "match_path": "/v1/",
-            "dest_provider": "anthropic",
-            # dest_host intentionally missing
-        }])
+        _make_config_with_transforms(
+            [
+                {
+                    "mode": "redirect",
+                    "match_host": "proxy.local",
+                    "match_path": "/v1/",
+                    "dest_provider": "anthropic",
+                    # dest_host intentionally missing
+                }
+            ]
+        )
         router = InspectorRouter(name="test_redir", request_passthrough=True, response_passthrough=True)
         register_transform_routes(router)
 
@@ -480,14 +568,18 @@ class TestHandleRedirect:
         from ccproxy.config import CCProxyConfig, OAuthSource
 
         config = CCProxyConfig(
-            inspector=InspectorConfig(transforms=[TransformRoute(
-                mode="redirect",
-                match_host="proxy.local",
-                match_path="/v1/",
-                dest_provider="anthropic",
-                dest_host="api.anthropic.com",
-                dest_api_key_ref="anthropic",
-            )]),
+            inspector=InspectorConfig(
+                transforms=[
+                    TransformRoute(
+                        mode="redirect",
+                        match_host="proxy.local",
+                        match_path="/v1/",
+                        dest_provider="anthropic",
+                        dest_host="api.anthropic.com",
+                        dest_api_key_ref="anthropic",
+                    )
+                ]
+            ),
             oat_sources={"anthropic": OAuthSource(command="echo tok")},
         )
         config._oat_values["anthropic"] = "injected-token"
@@ -508,15 +600,22 @@ class TestContextCacheInTransform:
     @patch("ccproxy.lightllm.transform_to_provider")
     @patch("ccproxy.lightllm.context_cache.resolve_cached_content")
     def test_gemini_calls_resolve_cached_content(
-        self, mock_cache: MagicMock, mock_transform: MagicMock, cleanup: None,
+        self,
+        mock_cache: MagicMock,
+        mock_transform: MagicMock,
+        cleanup: None,
     ) -> None:
-        _make_config_with_transforms([{
-            "mode": "transform",
-            "match_host": "api.openai.com",
-            "match_path": "/",
-            "dest_provider": "gemini",
-            "dest_model": "gemini-2.0-flash",
-        }])
+        _make_config_with_transforms(
+            [
+                {
+                    "mode": "transform",
+                    "match_host": "api.openai.com",
+                    "match_path": "/",
+                    "dest_provider": "gemini",
+                    "dest_model": "gemini-2.0-flash",
+                }
+            ]
+        )
 
         mock_cache.return_value = (
             [{"role": "user", "content": "filtered"}],
@@ -528,10 +627,12 @@ class TestContextCacheInTransform:
         router = InspectorRouter(name="test_cache", request_passthrough=True, response_passthrough=True)
         register_transform_routes(router)
 
-        flow = _make_flow(body={
-            "model": "gpt-4o",
-            "messages": [{"role": "user", "content": "hello"}],
-        })
+        flow = _make_flow(
+            body={
+                "model": "gpt-4o",
+                "messages": [{"role": "user", "content": "hello"}],
+            }
+        )
         router.request(flow)
 
         mock_cache.assert_called_once()
@@ -542,25 +643,34 @@ class TestContextCacheInTransform:
     @patch("ccproxy.lightllm.transform_to_provider")
     @patch("ccproxy.lightllm.context_cache.resolve_cached_content", side_effect=RuntimeError("cache boom"))
     def test_gemini_cache_failure_graceful(
-        self, mock_cache: MagicMock, mock_transform: MagicMock, cleanup: None,
+        self,
+        mock_cache: MagicMock,
+        mock_transform: MagicMock,
+        cleanup: None,
     ) -> None:
-        _make_config_with_transforms([{
-            "mode": "transform",
-            "match_host": "api.openai.com",
-            "match_path": "/",
-            "dest_provider": "gemini",
-            "dest_model": "gemini-2.0-flash",
-        }])
+        _make_config_with_transforms(
+            [
+                {
+                    "mode": "transform",
+                    "match_host": "api.openai.com",
+                    "match_path": "/",
+                    "dest_provider": "gemini",
+                    "dest_model": "gemini-2.0-flash",
+                }
+            ]
+        )
 
         mock_transform.return_value = ("https://gemini.googleapis.com/v1", {}, b"{}")
 
         router = InspectorRouter(name="test_cache", request_passthrough=True, response_passthrough=True)
         register_transform_routes(router)
 
-        flow = _make_flow(body={
-            "model": "gpt-4o",
-            "messages": [{"role": "user", "content": "hello"}],
-        })
+        flow = _make_flow(
+            body={
+                "model": "gpt-4o",
+                "messages": [{"role": "user", "content": "hello"}],
+            }
+        )
         router.request(flow)
 
         # Transform still proceeds despite cache failure
@@ -569,15 +679,21 @@ class TestContextCacheInTransform:
 
     @patch("ccproxy.lightllm.transform_to_provider")
     def test_non_gemini_skips_context_cache(
-        self, mock_transform: MagicMock, cleanup: None,
+        self,
+        mock_transform: MagicMock,
+        cleanup: None,
     ) -> None:
-        _make_config_with_transforms([{
-            "mode": "transform",
-            "match_host": "api.openai.com",
-            "match_path": "/",
-            "dest_provider": "anthropic",
-            "dest_model": "claude-3",
-        }])
+        _make_config_with_transforms(
+            [
+                {
+                    "mode": "transform",
+                    "match_host": "api.openai.com",
+                    "match_path": "/",
+                    "dest_provider": "anthropic",
+                    "dest_model": "claude-3",
+                }
+            ]
+        )
 
         mock_transform.return_value = ("https://api.anthropic.com/v1/messages", {}, b"{}")
 

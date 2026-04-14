@@ -36,7 +36,7 @@ def forward_oauth(ctx: Context, _: dict[str, Any]) -> Context:
     auth = ctx.authorization
 
     if api_key.startswith(OAUTH_SENTINEL_PREFIX):
-        provider = api_key[len(OAUTH_SENTINEL_PREFIX):]
+        provider = api_key[len(OAUTH_SENTINEL_PREFIX) :]
         token = _get_oauth_token(provider)
 
         if not token:

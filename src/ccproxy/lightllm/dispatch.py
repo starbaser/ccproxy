@@ -135,8 +135,13 @@ def transform_to_provider(
 
     if provider in _GEMINI_PROVIDERS:
         return _transform_gemini(
-            model, provider, messages, optional_params,
-            api_key=api_key, stream=stream, cached_content=cached_content,
+            model,
+            provider,
+            messages,
+            optional_params,
+            api_key=api_key,
+            stream=stream,
+            cached_content=cached_content,
         )
 
     config = get_config(provider, model)

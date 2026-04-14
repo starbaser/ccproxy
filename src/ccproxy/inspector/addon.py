@@ -163,19 +163,15 @@ class InspectorAddon:
         record = flow.metadata.get(InspectorMeta.RECORD)
         transform = getattr(record, "transform", None) if record else None
 
-        if (
-            transform is not None
-            and transform.is_streaming
-            and transform.mode == "transform"
-        ):
+        if transform is not None and transform.is_streaming and transform.mode == "transform":
             from ccproxy.lightllm.dispatch import make_sse_transformer
 
-            optional_params = {
-                k: v for k, v in transform.request_data.items() if k != "messages"
-            }
+            optional_params = {k: v for k, v in transform.request_data.items() if k != "messages"}
             try:
                 flow.response.stream = make_sse_transformer(
-                    transform.provider, transform.model, optional_params,
+                    transform.provider,
+                    transform.model,
+                    optional_params,
                 )
             except Exception:
                 logger.warning(
@@ -298,11 +294,11 @@ class InspectorAddon:
                 if is_client_disconnect and response is not None:
                     started = flow.request.timestamp_start
                     ended = response.timestamp_end
-                    duration_ms = (
-                        (ended - started) * 1000 if started and ended else None
-                    )
+                    duration_ms = (ended - started) * 1000 if started and ended else None
                     self.tracer.finish_span_client_disconnect(
-                        flow, response.status_code, duration_ms,
+                        flow,
+                        response.status_code,
+                        duration_ms,
                     )
                 else:
                     self.tracer.finish_span_error(flow, err_msg)
@@ -334,11 +330,13 @@ class InspectorAddon:
                 body_parsed = json.loads(cr.body) if cr.body else None
             except Exception:
                 body_parsed = cr.body.decode("utf-8", errors="replace")
-            results.append({
-                "flow_id": f.id,
-                "method": cr.method,
-                "url": f"{cr.scheme}://{cr.host}:{cr.port}{cr.path}",
-                "headers": cr.headers,
-                "body": body_parsed,
-            })
+            results.append(
+                {
+                    "flow_id": f.id,
+                    "method": cr.method,
+                    "url": f"{cr.scheme}://{cr.host}:{cr.port}{cr.path}",
+                    "headers": cr.headers,
+                    "body": body_parsed,
+                }
+            )
         return json.dumps(results)

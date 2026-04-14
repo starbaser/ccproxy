@@ -339,9 +339,7 @@ class TestViewLogs:
     @patch("ccproxy.cli.Path")
     @patch("shutil.which")
     @patch("subprocess.run")
-    def test_logs_process_compose_when_socket_present(
-        self, mock_run: Mock, mock_which: Mock, mock_path: Mock
-    ) -> None:
+    def test_logs_process_compose_when_socket_present(self, mock_run: Mock, mock_which: Mock, mock_path: Mock) -> None:
         """Test that logs delegates to process-compose when socket exists."""
         mock_which.side_effect = lambda cmd: "/usr/bin/systemctl" if cmd == "systemctl" else "/usr/bin/process-compose"
         mock_run.side_effect = [
@@ -565,9 +563,7 @@ class TestMainFunction:
         cmd = Status(json_output=False)
         main(cmd, config_dir=tmp_path)
 
-        mock_status.assert_called_once_with(
-            tmp_path, json_output=False, check_proxy=False, check_inspect=False
-        )
+        mock_status.assert_called_once_with(tmp_path, json_output=False, check_proxy=False, check_inspect=False)
 
     @patch("ccproxy.cli.show_status")
     def test_main_status_command_json(self, mock_status: Mock, tmp_path: Path, monkeypatch) -> None:
@@ -577,9 +573,7 @@ class TestMainFunction:
         cmd = Status(json_output=True)
         main(cmd, config_dir=tmp_path)
 
-        mock_status.assert_called_once_with(
-            tmp_path, json_output=True, check_proxy=False, check_inspect=False
-        )
+        mock_status.assert_called_once_with(tmp_path, json_output=True, check_proxy=False, check_inspect=False)
 
 
 class TestSetupLogging:
@@ -603,15 +597,16 @@ class TestSetupLogging:
         finally:
             self._reset_root()
 
-    def test_file_handler_added_when_log_file_set(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_file_handler_added_when_log_file_set(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """log_file=<path> adds a FileHandler alongside the stream handler."""
         monkeypatch.delenv("INVOCATION_ID", raising=False)
         target = tmp_path / "ccproxy.log"
         try:
             log_path = setup_logging(
-                tmp_path, log_level="INFO", log_file=target, use_journal=False,
+                tmp_path,
+                log_level="INFO",
+                log_file=target,
+                use_journal=False,
             )
             assert log_path == target
             handler_types = {type(h).__name__ for h in self._root().handlers}
@@ -621,9 +616,7 @@ class TestSetupLogging:
             self._reset_root()
             target.unlink(missing_ok=True)
 
-    def test_journal_fallback_when_systemd_missing(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_journal_fallback_when_systemd_missing(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """use_journal=True falls back to stderr when systemd-python is unavailable.
 
         The test environment does not have systemd-python installed, so the
@@ -664,9 +657,7 @@ class TestSetupLogging:
             ):
                 setup_logging(tmp_path, log_level="INFO", log_file=None, use_journal=True)
 
-            fake_journal_module.JournalHandler.assert_called_once_with(
-                SYSLOG_IDENTIFIER="ccproxy"
-            )
+            fake_journal_module.JournalHandler.assert_called_once_with(SYSLOG_IDENTIFIER="ccproxy")
             assert mock_handler in self._root().handlers
         finally:
             self._reset_root()
@@ -674,9 +665,7 @@ class TestSetupLogging:
     def test_journal_fallback_when_journal_handler_raises(self, tmp_path: Path) -> None:
         """Runtime JournalHandler construction failures also fall back to stderr."""
         fake_journal_module = Mock()
-        fake_journal_module.JournalHandler = Mock(
-            side_effect=OSError("No /run/systemd/journal/socket")
-        )
+        fake_journal_module.JournalHandler = Mock(side_effect=OSError("No /run/systemd/journal/socket"))
         fake_systemd_module = Mock()
         fake_systemd_module.journal = fake_journal_module
 
@@ -698,7 +687,11 @@ class TestSetupLogging:
         """verbose=False floors effective level at WARNING even if log_level=DEBUG."""
         try:
             setup_logging(
-                tmp_path, log_level="DEBUG", log_file=None, use_journal=False, verbose=False,
+                tmp_path,
+                log_level="DEBUG",
+                log_file=None,
+                use_journal=False,
+                verbose=False,
             )
             assert self._root().level == logging.WARNING
         finally:
@@ -708,7 +701,11 @@ class TestSetupLogging:
         """verbose=False doesn't lower a level that's already above WARNING."""
         try:
             setup_logging(
-                tmp_path, log_level="ERROR", log_file=None, use_journal=False, verbose=False,
+                tmp_path,
+                log_level="ERROR",
+                log_file=None,
+                use_journal=False,
+                verbose=False,
             )
             assert self._root().level == logging.ERROR
         finally:
@@ -718,7 +715,11 @@ class TestSetupLogging:
         """verbose=True applies log_level without flooring."""
         try:
             setup_logging(
-                tmp_path, log_level="DEBUG", log_file=None, use_journal=False, verbose=True,
+                tmp_path,
+                log_level="DEBUG",
+                log_file=None,
+                use_journal=False,
+                verbose=True,
             )
             assert self._root().level == logging.DEBUG
         finally:

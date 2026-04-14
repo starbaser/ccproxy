@@ -64,7 +64,6 @@ class TestCreateFlowRecord:
         assert record.direction == "inbound"
 
 
-
 class TestGetFlowRecord:
     def test_found(self):
         flow_id, record = create_flow_record("inbound")

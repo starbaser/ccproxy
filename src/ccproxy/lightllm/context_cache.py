@@ -35,7 +35,9 @@ def _has_cached_messages(messages: list[Any]) -> bool:
 
 
 def _compute_cache_key(
-    cached_messages: list[Any], tools: Any | None, model: str,
+    cached_messages: list[Any],
+    tools: Any | None,
+    model: str,
 ) -> str:
     payload = json.dumps(
         {"messages": cached_messages, "tools": tools, "model": model},
@@ -87,7 +89,9 @@ def _get_caching_url_and_headers(
 
 
 def _find_existing_cache(
-    url: str, headers: dict[str, str], cache_key: str,
+    url: str,
+    headers: dict[str, str],
+    cache_key: str,
 ) -> str | None:
     page_token: str | None = None
 
@@ -164,9 +168,7 @@ def resolve_cached_content(
     if not cached_messages:
         return messages, optional_params, None
 
-    custom_provider: Literal["gemini", "vertex_ai", "vertex_ai_beta"] = (
-        "gemini" if provider == "gemini" else provider
-    )
+    custom_provider: Literal["gemini", "vertex_ai", "vertex_ai_beta"] = "gemini" if provider == "gemini" else provider
 
     if not is_prompt_caching_valid_prompt(
         model=model,
@@ -179,7 +181,10 @@ def resolve_cached_content(
         return messages, optional_params, None
 
     result = _get_caching_url_and_headers(
-        provider, api_key, vertex_project, vertex_location,
+        provider,
+        api_key,
+        vertex_project,
+        vertex_location,
     )
     if result is None:
         return messages, optional_params, None

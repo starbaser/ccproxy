@@ -20,16 +20,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Body fields that are feature config, not compliance — never stamped
-_BODY_MERGE_EXCLUSIONS = frozenset({
-    "thinking",
-    "context_management",
-    "output_config",
-})
+_BODY_MERGE_EXCLUSIONS = frozenset(
+    {
+        "thinking",
+        "context_management",
+        "output_config",
+    }
+)
 
 # Body fields that need fresh generation per-request (like session_id)
-_BODY_GENERATE_FIELDS = frozenset({
-    "user_prompt_id",
-})
+_BODY_GENERATE_FIELDS = frozenset(
+    {
+        "user_prompt_id",
+    }
+)
 
 # Headers whose value is a comma-separated token list — merged via union,
 # not clobbered or skipped. Keep minimal; extend deliberately.

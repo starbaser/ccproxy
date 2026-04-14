@@ -45,19 +45,23 @@ def _make_profile(**kwargs) -> ComplianceProfile:
 class TestMergeHeaders:
     def test_adds_missing_headers(self):
         ctx = _make_context()
-        profile = _make_profile(headers=[
-            ProfileFeatureHeader(name="x-app", value="cli"),
-            ProfileFeatureHeader(name="anthropic-beta", value="flag1,flag2"),
-        ])
+        profile = _make_profile(
+            headers=[
+                ProfileFeatureHeader(name="x-app", value="cli"),
+                ProfileFeatureHeader(name="anthropic-beta", value="flag1,flag2"),
+            ]
+        )
         ComplianceMerger(ctx, profile).merge()
         assert ctx.get_header("x-app") == "cli"
         assert ctx.get_header("anthropic-beta") == "flag1,flag2"
 
     def test_does_not_overwrite_existing(self):
         ctx = _make_context(headers={"x-app": "sdk"})
-        profile = _make_profile(headers=[
-            ProfileFeatureHeader(name="x-app", value="cli"),
-        ])
+        profile = _make_profile(
+            headers=[
+                ProfileFeatureHeader(name="x-app", value="cli"),
+            ]
+        )
         ComplianceMerger(ctx, profile).merge()
         assert ctx.get_header("x-app") == "sdk"
 
@@ -69,12 +73,14 @@ class TestMergeHeaders:
 
     def test_unions_anthropic_beta_tokens(self):
         ctx = _make_context(headers={"anthropic-beta": "oauth-2025-04-20"})
-        profile = _make_profile(headers=[
-            ProfileFeatureHeader(
-                name="anthropic-beta",
-                value="oauth-2025-04-20,claude-code-20250219,interleaved-thinking-2025-05-14",
-            ),
-        ])
+        profile = _make_profile(
+            headers=[
+                ProfileFeatureHeader(
+                    name="anthropic-beta",
+                    value="oauth-2025-04-20,claude-code-20250219,interleaved-thinking-2025-05-14",
+                ),
+            ]
+        )
         ComplianceMerger(ctx, profile).merge()
         assert ctx.get_header("anthropic-beta") == (
             "oauth-2025-04-20,claude-code-20250219,interleaved-thinking-2025-05-14"
@@ -82,12 +88,14 @@ class TestMergeHeaders:
 
     def test_union_preserves_existing_order(self):
         ctx = _make_context(headers={"anthropic-beta": "custom-flag,oauth-2025-04-20"})
-        profile = _make_profile(headers=[
-            ProfileFeatureHeader(
-                name="anthropic-beta",
-                value="oauth-2025-04-20,claude-code-20250219",
-            ),
-        ])
+        profile = _make_profile(
+            headers=[
+                ProfileFeatureHeader(
+                    name="anthropic-beta",
+                    value="oauth-2025-04-20,claude-code-20250219",
+                ),
+            ]
+        )
         ComplianceMerger(ctx, profile).merge()
         tokens = ctx.get_header("anthropic-beta").split(",")
         assert tokens == ["custom-flag", "oauth-2025-04-20", "claude-code-20250219"]
@@ -95,25 +103,31 @@ class TestMergeHeaders:
     def test_union_idempotent_when_already_complete(self):
         full = "oauth-2025-04-20,claude-code-20250219,interleaved-thinking-2025-05-14"
         ctx = _make_context(headers={"anthropic-beta": full})
-        profile = _make_profile(headers=[
-            ProfileFeatureHeader(name="anthropic-beta", value=full),
-        ])
+        profile = _make_profile(
+            headers=[
+                ProfileFeatureHeader(name="anthropic-beta", value=full),
+            ]
+        )
         ComplianceMerger(ctx, profile).merge()
         assert ctx.get_header("anthropic-beta") == full
 
     def test_non_list_header_still_strict(self):
         ctx = _make_context(headers={"anthropic-version": "2024-99-99"})
-        profile = _make_profile(headers=[
-            ProfileFeatureHeader(name="anthropic-version", value="2023-06-01"),
-        ])
+        profile = _make_profile(
+            headers=[
+                ProfileFeatureHeader(name="anthropic-version", value="2023-06-01"),
+            ]
+        )
         ComplianceMerger(ctx, profile).merge()
         assert ctx.get_header("anthropic-version") == "2024-99-99"
 
     def test_union_handles_whitespace_in_csv(self):
         ctx = _make_context(headers={"anthropic-beta": "oauth-2025-04-20, custom-flag"})
-        profile = _make_profile(headers=[
-            ProfileFeatureHeader(name="anthropic-beta", value="claude-code-20250219"),
-        ])
+        profile = _make_profile(
+            headers=[
+                ProfileFeatureHeader(name="anthropic-beta", value="claude-code-20250219"),
+            ]
+        )
         ComplianceMerger(ctx, profile).merge()
         tokens = ctx.get_header("anthropic-beta").split(",")
         assert tokens == ["oauth-2025-04-20", "custom-flag", "claude-code-20250219"]
@@ -122,25 +136,31 @@ class TestMergeHeaders:
 class TestMergeBodyFields:
     def test_adds_missing_compliance_fields(self):
         ctx = _make_context(body={"model": "test"})
-        profile = _make_profile(body_fields=[
-            ProfileFeatureBodyField(path="some_envelope", value={"key": "val"}),
-        ])
+        profile = _make_profile(
+            body_fields=[
+                ProfileFeatureBodyField(path="some_envelope", value={"key": "val"}),
+            ]
+        )
         ComplianceMerger(ctx, profile).merge()
         assert ctx._body["some_envelope"] == {"key": "val"}
 
     def test_does_not_overwrite_existing(self):
         ctx = _make_context(body={"some_envelope": {"key": "old"}})
-        profile = _make_profile(body_fields=[
-            ProfileFeatureBodyField(path="some_envelope", value={"key": "new"}),
-        ])
+        profile = _make_profile(
+            body_fields=[
+                ProfileFeatureBodyField(path="some_envelope", value={"key": "new"}),
+            ]
+        )
         ComplianceMerger(ctx, profile).merge()
         assert ctx._body["some_envelope"] == {"key": "old"}
 
     def test_generates_user_prompt_id_when_missing(self):
         ctx = _make_context(body={"model": "test"})
-        profile = _make_profile(body_fields=[
-            ProfileFeatureBodyField(path="user_prompt_id", value="placeholder"),
-        ])
+        profile = _make_profile(
+            body_fields=[
+                ProfileFeatureBodyField(path="user_prompt_id", value="placeholder"),
+            ]
+        )
         ComplianceMerger(ctx, profile).merge()
         generated = ctx._body.get("user_prompt_id")
         assert generated is not None
@@ -149,20 +169,24 @@ class TestMergeBodyFields:
 
     def test_preserves_existing_user_prompt_id(self):
         ctx = _make_context(body={"model": "test", "user_prompt_id": "existing-id"})
-        profile = _make_profile(body_fields=[
-            ProfileFeatureBodyField(path="user_prompt_id", value="placeholder"),
-        ])
+        profile = _make_profile(
+            body_fields=[
+                ProfileFeatureBodyField(path="user_prompt_id", value="placeholder"),
+            ]
+        )
         ComplianceMerger(ctx, profile).merge()
         assert ctx._body["user_prompt_id"] == "existing-id"
 
     def test_excludes_feature_config_fields(self):
         ctx = _make_context(body={"model": "test"})
-        profile = _make_profile(body_fields=[
-            ProfileFeatureBodyField(path="thinking", value={"type": "enabled"}),
-            ProfileFeatureBodyField(path="context_management", value={"edits": []}),
-            ProfileFeatureBodyField(path="output_config", value={"effort": "max"}),
-            ProfileFeatureBodyField(path="metadata", value={"user_id": "test"}),
-        ])
+        profile = _make_profile(
+            body_fields=[
+                ProfileFeatureBodyField(path="thinking", value={"type": "enabled"}),
+                ProfileFeatureBodyField(path="context_management", value={"edits": []}),
+                ProfileFeatureBodyField(path="output_config", value={"effort": "max"}),
+                ProfileFeatureBodyField(path="metadata", value={"user_id": "test"}),
+            ]
+        )
         ComplianceMerger(ctx, profile).merge()
         assert "thinking" not in ctx._body
         assert "context_management" not in ctx._body
@@ -172,17 +196,21 @@ class TestMergeBodyFields:
 class TestMergeSystem:
     def test_sets_system_when_none(self):
         ctx = _make_context(body={"model": "test"})
-        profile = _make_profile(system=ProfileFeatureSystem(
-            structure=[{"type": "text", "text": "You are Claude"}],
-        ))
+        profile = _make_profile(
+            system=ProfileFeatureSystem(
+                structure=[{"type": "text", "text": "You are Claude"}],
+            )
+        )
         ComplianceMerger(ctx, profile).merge()
         assert ctx.system == [{"type": "text", "text": "You are Claude"}]
 
     def test_wraps_string_system(self):
         ctx = _make_context(body={"system": "Be helpful"})
-        profile = _make_profile(system=ProfileFeatureSystem(
-            structure=[{"type": "text", "text": "You are Claude"}],
-        ))
+        profile = _make_profile(
+            system=ProfileFeatureSystem(
+                structure=[{"type": "text", "text": "You are Claude"}],
+            )
+        )
         ComplianceMerger(ctx, profile).merge()
         assert isinstance(ctx.system, list)
         assert len(ctx.system) == 2
@@ -190,12 +218,18 @@ class TestMergeSystem:
         assert ctx.system[1] == {"type": "text", "text": "Be helpful"}
 
     def test_prepends_to_list_without_profile_prefix(self):
-        ctx = _make_context(body={"system": [
-            {"type": "text", "text": "User block"},
-        ]})
-        profile = _make_profile(system=ProfileFeatureSystem(
-            structure=[{"type": "text", "text": "You are Claude"}],
-        ))
+        ctx = _make_context(
+            body={
+                "system": [
+                    {"type": "text", "text": "User block"},
+                ]
+            }
+        )
+        profile = _make_profile(
+            system=ProfileFeatureSystem(
+                structure=[{"type": "text", "text": "You are Claude"}],
+            )
+        )
         ComplianceMerger(ctx, profile).merge()
         assert ctx.system == [
             {"type": "text", "text": "You are Claude"},
@@ -203,63 +237,95 @@ class TestMergeSystem:
         ]
 
     def test_skips_list_system_with_existing_prefix(self):
-        ctx = _make_context(body={"system": [
-            {"type": "text", "text": "You are Claude"},
-            {"type": "text", "text": "User block"},
-        ]})
-        profile = _make_profile(system=ProfileFeatureSystem(
-            structure=[{"type": "text", "text": "You are Claude"}],
-        ))
+        ctx = _make_context(
+            body={
+                "system": [
+                    {"type": "text", "text": "You are Claude"},
+                    {"type": "text", "text": "User block"},
+                ]
+            }
+        )
+        profile = _make_profile(
+            system=ProfileFeatureSystem(
+                structure=[{"type": "text", "text": "You are Claude"}],
+            )
+        )
         ComplianceMerger(ctx, profile).merge()
         assert len(ctx.system) == 2
         assert ctx.system[0]["text"] == "You are Claude"
         assert ctx.system[1]["text"] == "User block"
 
     def test_prepends_preserves_cache_control(self):
-        ctx = _make_context(body={"system": [
-            {"type": "text", "text": "Dictation prompt",
-             "cache_control": {"type": "ephemeral"}},
-        ]})
-        profile = _make_profile(system=ProfileFeatureSystem(
-            structure=[{"type": "text", "text": "You are Claude Code"}],
-        ))
+        ctx = _make_context(
+            body={
+                "system": [
+                    {"type": "text", "text": "Dictation prompt", "cache_control": {"type": "ephemeral"}},
+                ]
+            }
+        )
+        profile = _make_profile(
+            system=ProfileFeatureSystem(
+                structure=[{"type": "text", "text": "You are Claude Code"}],
+            )
+        )
         ComplianceMerger(ctx, profile).merge()
         assert ctx.system[0] == {"type": "text", "text": "You are Claude Code"}
         assert ctx.system[1]["text"] == "Dictation prompt"
         assert ctx.system[1]["cache_control"] == {"type": "ephemeral"}
 
     def test_list_merge_idempotent(self):
-        ctx = _make_context(body={"system": [
-            {"type": "text", "text": "User block"},
-        ]})
-        profile = _make_profile(system=ProfileFeatureSystem(
-            structure=[{"type": "text", "text": "You are Claude"}],
-        ))
+        ctx = _make_context(
+            body={
+                "system": [
+                    {"type": "text", "text": "User block"},
+                ]
+            }
+        )
+        profile = _make_profile(
+            system=ProfileFeatureSystem(
+                structure=[{"type": "text", "text": "You are Claude"}],
+            )
+        )
         ComplianceMerger(ctx, profile).merge()
         snapshot = list(ctx.system)
         ComplianceMerger(ctx, profile).merge()
         assert ctx.system == snapshot
 
     def test_prefix_match_detects_appended_content(self):
-        ctx = _make_context(body={"system": [
-            {"type": "text", "text":
-             "You are Claude Code, Anthropic's official CLI for Claude.\n\nProject: foo"},
-        ]})
-        profile = _make_profile(system=ProfileFeatureSystem(
-            structure=[{"type": "text", "text":
-                        "You are Claude Code, Anthropic's official CLI for Claude."}],
-        ))
+        ctx = _make_context(
+            body={
+                "system": [
+                    {
+                        "type": "text",
+                        "text": "You are Claude Code, Anthropic's official CLI for Claude.\n\nProject: foo",
+                    },
+                ]
+            }
+        )
+        profile = _make_profile(
+            system=ProfileFeatureSystem(
+                structure=[{"type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude."}],
+            )
+        )
         ComplianceMerger(ctx, profile).merge()
         assert len(ctx.system) == 1
 
     def test_multi_block_profile_prepends_all(self):
-        ctx = _make_context(body={"system": [
-            {"type": "text", "text": "User content"},
-        ]})
-        profile = _make_profile(system=ProfileFeatureSystem(structure=[
-            {"type": "text", "text": "You are Claude Code"},
-            {"type": "text", "text": "Second system block"},
-        ]))
+        ctx = _make_context(
+            body={
+                "system": [
+                    {"type": "text", "text": "User content"},
+                ]
+            }
+        )
+        profile = _make_profile(
+            system=ProfileFeatureSystem(
+                structure=[
+                    {"type": "text", "text": "You are Claude Code"},
+                    {"type": "text", "text": "Second system block"},
+                ]
+            )
+        )
         ComplianceMerger(ctx, profile).merge()
         assert len(ctx.system) == 3
         assert ctx.system[0]["text"] == "You are Claude Code"
@@ -267,14 +333,22 @@ class TestMergeSystem:
         assert ctx.system[2]["text"] == "User content"
 
     def test_skips_profile_blocks_without_text(self):
-        ctx = _make_context(body={"system": [
-            {"type": "text", "text": "User block"},
-        ]})
-        profile = _make_profile(system=ProfileFeatureSystem(structure=[
-            {"type": "image", "source": "ignored"},
-            {"type": "text", "text": ""},
-            {"type": "text", "text": "You are Claude"},
-        ]))
+        ctx = _make_context(
+            body={
+                "system": [
+                    {"type": "text", "text": "User block"},
+                ]
+            }
+        )
+        profile = _make_profile(
+            system=ProfileFeatureSystem(
+                structure=[
+                    {"type": "image", "source": "ignored"},
+                    {"type": "text", "text": ""},
+                    {"type": "text", "text": "You are Claude"},
+                ]
+            )
+        )
         ComplianceMerger(ctx, profile).merge()
         assert len(ctx.system) == 4
         assert ctx.system[0]["type"] == "image"
@@ -298,12 +372,14 @@ class TestMergeSystem:
 class TestMergeSessionMetadata:
     def test_synthesizes_session_from_profile(self):
         ctx = _make_context(body={"model": "test"})
-        profile = _make_profile(body_fields=[
-            ProfileFeatureBodyField(
-                path="metadata",
-                value={"user_id": json.dumps({"device_id": "dev123", "account_uuid": "acc456"})},
-            ),
-        ])
+        profile = _make_profile(
+            body_fields=[
+                ProfileFeatureBodyField(
+                    path="metadata",
+                    value={"user_id": json.dumps({"device_id": "dev123", "account_uuid": "acc456"})},
+                ),
+            ]
+        )
         ComplianceMerger(ctx, profile).merge()
         metadata = ctx._body.get("metadata", {})
         assert "user_id" in metadata
@@ -314,20 +390,24 @@ class TestMergeSessionMetadata:
 
     def test_does_not_overwrite_existing_user_id(self):
         ctx = _make_context(body={"metadata": {"user_id": "existing"}})
-        profile = _make_profile(body_fields=[
-            ProfileFeatureBodyField(
-                path="metadata",
-                value={"user_id": json.dumps({"device_id": "dev123"})},
-            ),
-        ])
+        profile = _make_profile(
+            body_fields=[
+                ProfileFeatureBodyField(
+                    path="metadata",
+                    value={"user_id": json.dumps({"device_id": "dev123"})},
+                ),
+            ]
+        )
         ComplianceMerger(ctx, profile).merge()
         assert ctx._body["metadata"]["user_id"] == "existing"
 
     def test_no_identity_fields_no_op(self):
         ctx = _make_context(body={"model": "test"})
-        profile = _make_profile(body_fields=[
-            ProfileFeatureBodyField(path="some_field", value="val"),
-        ])
+        profile = _make_profile(
+            body_fields=[
+                ProfileFeatureBodyField(path="some_field", value="val"),
+            ]
+        )
         ComplianceMerger(ctx, profile).merge()
         assert "metadata" not in ctx._body or "user_id" not in ctx._body.get("metadata", {})
 
@@ -355,10 +435,12 @@ class TestIdempotency:
             body={"system": [{"type": "text", "text": "User block"}]},
         )
         profile = _make_profile(
-            headers=[ProfileFeatureHeader(
-                name="anthropic-beta",
-                value="oauth-2025-04-20,claude-code-20250219",
-            )],
+            headers=[
+                ProfileFeatureHeader(
+                    name="anthropic-beta",
+                    value="oauth-2025-04-20,claude-code-20250219",
+                )
+            ],
             system=ProfileFeatureSystem(
                 structure=[{"type": "text", "text": "You are Claude"}],
             ),
@@ -503,9 +585,7 @@ class TestExtractModelFromPath:
         assert self._extract("/v1/models/gemini-1.5-pro:streamGenerateContent") == "gemini-1.5-pro"
 
     def test_extracts_first_models_segment_in_complex_path(self) -> None:
-        assert self._extract(
-            "/projects/my-project/locations/us-central1/models/gemini-pro:predict"
-        ) == "gemini-pro"
+        assert self._extract("/projects/my-project/locations/us-central1/models/gemini-pro:predict") == "gemini-pro"
 
 
 class TestSubclass:

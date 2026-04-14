@@ -24,10 +24,7 @@ def get_config(provider: str, model: str) -> BaseConfig:
     try:
         llm_provider = LlmProviders(provider)
     except ValueError as exc:
-        raise ValueError(
-            f"Unknown provider {provider!r}. "
-            f"Valid providers: {[p.value for p in LlmProviders]}"
-        ) from exc
+        raise ValueError(f"Unknown provider {provider!r}. Valid providers: {[p.value for p in LlmProviders]}") from exc
 
     config = ProviderConfigManager.get_provider_chat_config(model, llm_provider)
     if config is None:

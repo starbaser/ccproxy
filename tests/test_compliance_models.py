@@ -165,13 +165,15 @@ class TestObservationAccumulator:
     def test_system_string_converted_to_blocks(self):
         acc = ObservationAccumulator(provider="anthropic", user_agent="cli/1.0")
         for _ in range(3):
-            acc.submit(ObservationBundle(
-                provider="anthropic",
-                user_agent="cli/1.0",
-                headers={},
-                body_envelope={},
-                system="You are Claude",
-            ))
+            acc.submit(
+                ObservationBundle(
+                    provider="anthropic",
+                    user_agent="cli/1.0",
+                    headers={},
+                    body_envelope={},
+                    system="You are Claude",
+                )
+            )
 
         profile = acc.finalize()
         assert profile.system is not None
@@ -181,13 +183,15 @@ class TestObservationAccumulator:
         blocks = [{"type": "text", "text": "Block1"}, {"type": "text", "text": "Block2"}]
         acc = ObservationAccumulator(provider="anthropic", user_agent="cli/1.0")
         for _ in range(3):
-            acc.submit(ObservationBundle(
-                provider="anthropic",
-                user_agent="cli/1.0",
-                headers={},
-                body_envelope={},
-                system=blocks,
-            ))
+            acc.submit(
+                ObservationBundle(
+                    provider="anthropic",
+                    user_agent="cli/1.0",
+                    headers={},
+                    body_envelope={},
+                    system=blocks,
+                )
+            )
 
         profile = acc.finalize()
         assert profile.system is not None
@@ -195,10 +199,15 @@ class TestObservationAccumulator:
 
     def test_roundtrip(self):
         acc = ObservationAccumulator(provider="test", user_agent="ua")
-        acc.submit(ObservationBundle(
-            provider="test", user_agent="ua",
-            headers={"h": "v"}, body_envelope={"k": "v"}, system="sys",
-        ))
+        acc.submit(
+            ObservationBundle(
+                provider="test",
+                user_agent="ua",
+                headers={"h": "v"},
+                body_envelope={"k": "v"},
+                system="sys",
+            )
+        )
         d = acc.to_dict()
         restored = ObservationAccumulator.from_dict(d)
         assert restored.observation_count == 1

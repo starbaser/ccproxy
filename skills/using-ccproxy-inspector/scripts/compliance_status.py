@@ -90,15 +90,9 @@ def _profile_detail(profile: dict[str, Any]) -> dict[str, Any]:
         "updated_at": profile.get("updated_at"),
     }
 
-    detail["headers"] = [
-        {"name": h["name"], "value": h["value"]}
-        for h in profile.get("headers", [])
-    ]
+    detail["headers"] = [{"name": h["name"], "value": h["value"]} for h in profile.get("headers", [])]
 
-    detail["body_fields"] = [
-        {"path": f["path"], "value": f["value"]}
-        for f in profile.get("body_fields", [])
-    ]
+    detail["body_fields"] = [{"path": f["path"], "value": f["value"]} for f in profile.get("body_fields", [])]
 
     if profile.get("system"):
         detail["system"] = profile["system"]
@@ -231,12 +225,8 @@ def main() -> None:
     data = _load_store(store_path)
     min_obs = _get_min_observations()
 
-    profiles = [
-        _profile_summary(k, p) for k, p in data.get("profiles", {}).items()
-    ]
-    accumulators = [
-        _accumulator_summary(k, a, min_obs) for k, a in data.get("accumulators", {}).items()
-    ]
+    profiles = [_profile_summary(k, p) for k, p in data.get("profiles", {}).items()]
+    accumulators = [_accumulator_summary(k, a, min_obs) for k, a in data.get("accumulators", {}).items()]
 
     # Detail for --provider
     detail: dict[str, Any] | None = None

@@ -192,16 +192,12 @@ class TestExtractSessionId:
 
     def test_multiple_session_separators(self) -> None:
         addon = InspectorAddon()
-        req = self._make_request(
-            json.dumps({"metadata": {"user_id": "a_session_b_session_c"}}).encode()
-        )
+        req = self._make_request(json.dumps({"metadata": {"user_id": "a_session_b_session_c"}}).encode())
         assert addon._extract_session_id(req) is None
 
     def test_neither_format(self) -> None:
         addon = InspectorAddon()
-        req = self._make_request(
-            json.dumps({"metadata": {"user_id": "plain-user-id"}}).encode()
-        )
+        req = self._make_request(json.dumps({"metadata": {"user_id": "plain-user-id"}}).encode())
         assert addon._extract_session_id(req) is None
 
 
@@ -424,8 +420,11 @@ class TestResponseHeadersEdgeCases:
         """When mode=transform and make_sse_transformer raises, fall back to passthrough."""
         addon = InspectorAddon()
         meta = TransformMeta(
-            provider="anthropic", model="claude-3",
-            request_data={"messages": []}, is_streaming=True, mode="transform",
+            provider="anthropic",
+            model="claude-3",
+            request_data={"messages": []},
+            is_streaming=True,
+            mode="transform",
         )
         record = FlowRecord(direction="inbound", transform=meta)
         flow = MagicMock()

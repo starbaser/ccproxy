@@ -67,11 +67,13 @@ class TestGetSpan:
         tracer = InspectorTracer(enabled=False)
         mock_span = MagicMock()
         record = FlowRecord(direction="inbound", otel=None)
-        flow = _make_flow({
-            InspectorMeta.RECORD: record,
-            "ccproxy.otel_span": mock_span,
-            "ccproxy.otel_span_ended": False,
-        })
+        flow = _make_flow(
+            {
+                InspectorMeta.RECORD: record,
+                "ccproxy.otel_span": mock_span,
+                "ccproxy.otel_span_ended": False,
+            }
+        )
 
         span, ended = tracer._get_span(flow)
 
@@ -214,6 +216,7 @@ class TestFinishSpanError:
         flow = _make_flow({InspectorMeta.RECORD: record})
 
         from unittest.mock import patch
+
         mock_status_code = MagicMock()
         with patch.dict("sys.modules", {"opentelemetry.trace": MagicMock(StatusCode=mock_status_code)}):
             tracer.finish_span_error(flow, error_message="error")
@@ -404,12 +407,14 @@ class TestInspectorTracerInit:
 
     def test_import_error_disables(self) -> None:
         from unittest.mock import patch
+
         with patch("ccproxy.inspector.telemetry._init_otel_tracer", side_effect=ImportError("no otel")):
             tracer = InspectorTracer(enabled=True)
         assert tracer._enabled is False
 
     def test_exception_disables(self) -> None:
         from unittest.mock import patch
+
         with patch("ccproxy.inspector.telemetry._init_otel_tracer", side_effect=RuntimeError("init failed")):
             tracer = InspectorTracer(enabled=True)
         assert tracer._enabled is False
@@ -469,6 +474,7 @@ class TestInitOtelTracer:
 
         with patch.dict(sys.modules, otel_modules):
             from ccproxy.inspector.telemetry import _init_otel_tracer
+
             result = _init_otel_tracer("test-service", "http://localhost:4317")
 
         # Result should be the return value of trace.get_tracer

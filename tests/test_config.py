@@ -130,7 +130,8 @@ ccproxy:
         """Relative log_file resolves against ccproxy_config_path.parent."""
         yaml_path = tmp_path / "ccproxy.yaml"
         config = CCProxyConfig(
-            ccproxy_config_path=yaml_path, log_file=Path("ccproxy.log"),
+            ccproxy_config_path=yaml_path,
+            log_file=Path("ccproxy.log"),
         )
         assert config.resolved_log_file == tmp_path / "ccproxy.log"
 
@@ -138,14 +139,16 @@ ccproxy:
         """Absolute log_file passes through unchanged."""
         abs_path = tmp_path / "custom" / "ccproxy.log"
         config = CCProxyConfig(
-            ccproxy_config_path=tmp_path / "ccproxy.yaml", log_file=abs_path,
+            ccproxy_config_path=tmp_path / "ccproxy.yaml",
+            log_file=abs_path,
         )
         assert config.resolved_log_file == abs_path
 
     def test_resolved_log_file_none(self, tmp_path: Path) -> None:
         """log_file=None returns None."""
         config = CCProxyConfig(
-            ccproxy_config_path=tmp_path / "ccproxy.yaml", log_file=None,
+            ccproxy_config_path=tmp_path / "ccproxy.yaml",
+            log_file=None,
         )
         assert config.resolved_log_file is None
 
@@ -331,6 +334,7 @@ class TestCredentialSource:
 
     def test_requires_exactly_one_source(self) -> None:
         import pydantic
+
         with pytest.raises(pydantic.ValidationError):
             CredentialSource()  # neither file nor command
 
@@ -366,9 +370,7 @@ class TestRefreshOAuthToken:
         assert changed is False
 
     def test_user_agent_stored(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        config = CCProxyConfig(oat_sources={
-            "provider1": OAuthSource(command="echo tok", user_agent="CustomAgent/1.0")
-        })
+        config = CCProxyConfig(oat_sources={"provider1": OAuthSource(command="echo tok", user_agent="CustomAgent/1.0")})
         mock_result = mock.MagicMock(returncode=0, stdout="tok")
         monkeypatch.setattr(subprocess, "run", mock.Mock(return_value=mock_result))
 
@@ -390,9 +392,7 @@ class TestGetAuthProviderUA:
 
 class TestGetAuthHeader:
     def test_oauth_source_with_auth_header(self) -> None:
-        config = CCProxyConfig(oat_sources={
-            "prov": OAuthSource(command="echo t", auth_header="x-api-key")
-        })
+        config = CCProxyConfig(oat_sources={"prov": OAuthSource(command="echo t", auth_header="x-api-key")})
         assert config.get_auth_header("prov") == "x-api-key"
 
     def test_string_source_returns_none(self) -> None:
@@ -414,15 +414,15 @@ class TestGetProviderForDestination:
         assert config.get_provider_for_destination("") is None
 
     def test_matching_destination_case_insensitive(self) -> None:
-        config = CCProxyConfig(oat_sources={
-            "anthropic": OAuthSource(command="cmd", destinations=["api.anthropic.com"])
-        })
+        config = CCProxyConfig(
+            oat_sources={"anthropic": OAuthSource(command="cmd", destinations=["api.anthropic.com"])}
+        )
         assert config.get_provider_for_destination("https://API.ANTHROPIC.COM/v1") == "anthropic"
 
     def test_no_matching_destination_returns_none(self) -> None:
-        config = CCProxyConfig(oat_sources={
-            "anthropic": OAuthSource(command="cmd", destinations=["api.anthropic.com"])
-        })
+        config = CCProxyConfig(
+            oat_sources={"anthropic": OAuthSource(command="cmd", destinations=["api.anthropic.com"])}
+        )
         assert config.get_provider_for_destination("api.openai.com") is None
 
     def test_string_source_skipped(self) -> None:
@@ -430,9 +430,7 @@ class TestGetProviderForDestination:
         assert config.get_provider_for_destination("api.test.com") is None
 
     def test_dict_source_matching(self) -> None:
-        config = CCProxyConfig(oat_sources={
-            "prov": {"command": "echo t", "destinations": ["api.z.ai"]}
-        })
+        config = CCProxyConfig(oat_sources={"prov": {"command": "echo t", "destinations": ["api.z.ai"]}})
         assert config.get_provider_for_destination("https://api.z.ai/v1") == "prov"
 
 

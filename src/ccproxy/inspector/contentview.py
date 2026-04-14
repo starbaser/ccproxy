@@ -15,7 +15,6 @@ from ccproxy.inspector.flow_store import InspectorMeta
 
 
 class ClientRequestContentview(Contentview):
-
     @property
     def name(self) -> str:
         return "Client-Request"

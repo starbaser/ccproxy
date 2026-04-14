@@ -8,6 +8,7 @@ class OAuthConfigError(ValueError):
     swallowed by error isolation.
     """
 
+
 # Seed values for the initial Anthropic compliance profile before
 # dynamic observation takes over.
 ANTHROPIC_BETA_HEADERS = [

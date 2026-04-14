@@ -38,9 +38,7 @@ def _make_client():
         token = web_password_cfg
     elif web_password_cfg is not None:
         source = (
-            web_password_cfg
-            if isinstance(web_password_cfg, CredentialSource)
-            else CredentialSource(**web_password_cfg)
+            web_password_cfg if isinstance(web_password_cfg, CredentialSource) else CredentialSource(**web_password_cfg)
         )
         token = source.resolve("mitmweb web_password") or ""
     else:
@@ -77,9 +75,7 @@ def _build_provider_map() -> dict[str, str]:
         return {}
 
 
-def _enrich_flow(
-    client, flow: dict[str, Any], *, fetch_model: bool = False
-) -> dict[str, Any]:
+def _enrich_flow(client, flow: dict[str, Any], *, fetch_model: bool = False) -> dict[str, Any]:
     """Extract structured fields from a raw mitmweb flow dict."""
     req = flow["request"]
     res = flow.get("response") or {}
@@ -94,9 +90,7 @@ def _enrich_flow(
         "path": req["path"],
         "user_agent": _header_value(req.get("headers", []), "user-agent"),
         "content_type": _header_value(req.get("headers", []), "content-type"),
-        "oauth_injected": bool(
-            _header_value(req.get("headers", []), "x-ccproxy-oauth-injected")
-        ),
+        "oauth_injected": bool(_header_value(req.get("headers", []), "x-ccproxy-oauth-injected")),
         "timestamp": flow.get("client_conn", {}).get("timestamp_start"),
     }
 
@@ -169,43 +163,28 @@ def main() -> None:
             # URL regex filter
             if args.filter:
                 pat = re.compile(args.filter, re.IGNORECASE)
-                raw_flows = [
-                    f for f in raw_flows
-                    if pat.search(f["request"]["pretty_host"] + f["request"]["path"])
-                ]
+                raw_flows = [f for f in raw_flows if pat.search(f["request"]["pretty_host"] + f["request"]["path"])]
 
             # Provider filter
             if args.provider:
                 provider_map = _build_provider_map()
-                provider_hosts = {
-                    host for host, prov in provider_map.items() if prov == args.provider
-                }
-                raw_flows = [
-                    f for f in raw_flows if f["request"]["pretty_host"] in provider_hosts
-                ]
+                provider_hosts = {host for host, prov in provider_map.items() if prov == args.provider}
+                raw_flows = [f for f in raw_flows if f["request"]["pretty_host"] in provider_hosts]
 
             # Status filter
             if args.status is not None:
-                raw_flows = [
-                    f for f in raw_flows
-                    if (f.get("response") or {}).get("status_code") == args.status
-                ]
+                raw_flows = [f for f in raw_flows if (f.get("response") or {}).get("status_code") == args.status]
 
             # Latest N
             if args.latest:
                 raw_flows = raw_flows[-args.latest :]
 
             # Enrich
-            enriched = [
-                _enrich_flow(client, f, fetch_model=fetch_model) for f in raw_flows
-            ]
+            enriched = [_enrich_flow(client, f, fetch_model=fetch_model) for f in raw_flows]
 
             # Model filter (post-enrichment)
             if args.model:
-                enriched = [
-                    f for f in enriched
-                    if f.get("model") and args.model.lower() in f["model"].lower()
-                ]
+                enriched = [f for f in enriched if f.get("model") and args.model.lower() in f["model"].lower()]
 
             if args.table:
                 _print_table(enriched)

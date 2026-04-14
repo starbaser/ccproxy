@@ -675,9 +675,7 @@ class TestCliInspectHardFailure:
         cmd = Run(command=["--inspect", "--", "echo", "hello"])
         main(cmd, config_dir=tmp_path)
 
-        mock_run.assert_called_once_with(
-            tmp_path, ["echo", "hello"], inspect=True
-        )
+        mock_run.assert_called_once_with(tmp_path, ["echo", "hello"], inspect=True)
 
     @patch("ccproxy.inspector.namespace.check_namespace_capabilities")
     def test_missing_prerequisites_exits_1(self, mock_check: Mock, tmp_path: Path, capsys) -> None:
@@ -697,9 +695,7 @@ class TestCliInspectHardFailure:
         assert "Cannot create network namespace" in captured.err
 
     @patch("ccproxy.inspector.namespace.check_namespace_capabilities")
-    def test_multiple_missing_prerequisites_all_reported(
-        self, mock_check: Mock, tmp_path: Path, capsys
-    ) -> None:
+    def test_multiple_missing_prerequisites_all_reported(self, mock_check: Mock, tmp_path: Path, capsys) -> None:
         """All missing prerequisites are listed before exiting."""
         from ccproxy.cli import run_with_proxy
 
@@ -737,9 +733,7 @@ class TestCliInspectHardFailure:
 
     @patch("ccproxy.inspector.namespace.check_namespace_capabilities", return_value=[])
     @patch("ccproxy.inspector.namespace.create_namespace")
-    def test_namespace_runtime_error_exits_1(
-        self, mock_create: Mock, mock_check: Mock, tmp_path: Path, capsys
-    ) -> None:
+    def test_namespace_runtime_error_exits_1(self, mock_create: Mock, mock_check: Mock, tmp_path: Path, capsys) -> None:
         """Namespace creation fails at runtime → exit(1) with error message."""
         from ccproxy.cli import run_with_proxy
 
@@ -825,8 +819,7 @@ class TestCliInspectHardFailure:
 
 
 PROC_NET_TCP_HEADER = (
-    "  sl  local_address rem_address   st tx_queue rx_queue "
-    "tr tm->when retrnsmt   uid  timeout inode\n"
+    "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"
 )
 
 
@@ -844,42 +837,29 @@ class TestParseProcNetTcp:
 
     def test_listen_on_localhost(self, tmp_path: Path) -> None:
         f = tmp_path / "tcp"
-        f.write_text(
-            PROC_NET_TCP_HEADER
-            + _tcp_line(0, "0100007F:816B", "00000000:0000", "0A")
-        )
+        f.write_text(PROC_NET_TCP_HEADER + _tcp_line(0, "0100007F:816B", "00000000:0000", "0A"))
         assert _parse_proc_net_tcp(f) == {33131}
 
     def test_listen_on_wildcard(self, tmp_path: Path) -> None:
         f = tmp_path / "tcp"
-        f.write_text(
-            PROC_NET_TCP_HEADER
-            + _tcp_line(0, "00000000:1F90", "00000000:0000", "0A")
-        )
+        f.write_text(PROC_NET_TCP_HEADER + _tcp_line(0, "00000000:1F90", "00000000:0000", "0A"))
         assert _parse_proc_net_tcp(f) == {8080}
 
     def test_ignores_established(self, tmp_path: Path) -> None:
         f = tmp_path / "tcp"
-        f.write_text(
-            PROC_NET_TCP_HEADER
-            + _tcp_line(0, "0100007F:1F90", "0100007F:ABCD", "01")
-        )
+        f.write_text(PROC_NET_TCP_HEADER + _tcp_line(0, "0100007F:1F90", "0100007F:ABCD", "01"))
         assert _parse_proc_net_tcp(f) == set()
 
     def test_ignores_non_localhost(self, tmp_path: Path) -> None:
         f = tmp_path / "tcp"
         # 10.0.2.100 = 6402000A in LE hex
-        f.write_text(
-            PROC_NET_TCP_HEADER
-            + _tcp_line(0, "6402000A:1F90", "00000000:0000", "0A")
-        )
+        f.write_text(PROC_NET_TCP_HEADER + _tcp_line(0, "6402000A:1F90", "00000000:0000", "0A"))
         assert _parse_proc_net_tcp(f) == set()
 
     def test_skips_ports_below_1024(self, tmp_path: Path) -> None:
         f = tmp_path / "tcp"
         f.write_text(
-            PROC_NET_TCP_HEADER
-            + _tcp_line(0, "0100007F:0050", "00000000:0000", "0A")  # port 80
+            PROC_NET_TCP_HEADER + _tcp_line(0, "0100007F:0050", "00000000:0000", "0A")  # port 80
         )
         assert _parse_proc_net_tcp(f) == set()
 
@@ -1009,6 +989,7 @@ class TestPortForwarder:
         fwd = PortForwarder(ns_pid=1, api_socket=tmp_path / "api.sock", poll_interval=10.0)
         fwd.start()
         import time
+
         start = time.monotonic()
         fwd.stop()
         fwd._thread.join(timeout=1)
@@ -1247,9 +1228,7 @@ class TestCleanupNamespacePortForwarder:
 
     @patch("ccproxy.inspector.namespace._safe_kill")
     @patch("ccproxy.inspector.namespace._safe_close")
-    def test_port_forwarder_stopped(
-        self, mock_close: Mock, mock_kill: Mock, tmp_path: Path
-    ) -> None:
+    def test_port_forwarder_stopped(self, mock_close: Mock, mock_kill: Mock, tmp_path: Path) -> None:
         conf_path = tmp_path / "wg.conf"
         conf_path.write_text("test")
         mock_forwarder = MagicMock()
@@ -1269,9 +1248,7 @@ class TestCleanupNamespacePortForwarder:
 
     @patch("ccproxy.inspector.namespace._safe_kill")
     @patch("ccproxy.inspector.namespace._safe_close")
-    def test_no_forwarder_ok(
-        self, mock_close: Mock, mock_kill: Mock, mock_ctx: NamespaceContext
-    ) -> None:
+    def test_no_forwarder_ok(self, mock_close: Mock, mock_kill: Mock, mock_ctx: NamespaceContext) -> None:
         """Cleanup succeeds when port_forwarder is None."""
         mock_ctx.slirp_proc.wait.return_value = 0
         cleanup_namespace(mock_ctx)  # should not raise

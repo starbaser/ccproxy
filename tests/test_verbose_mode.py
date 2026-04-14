@@ -12,10 +12,12 @@ from ccproxy.pipeline.context import Context
 def _make_ctx(anthropic_beta: str | None = None) -> Context:
     flow = MagicMock()
     flow.id = "test-flow"
-    flow.request.content = json.dumps({
-        "model": "claude-sonnet-4-20250514",
-        "messages": [],
-    }).encode()
+    flow.request.content = json.dumps(
+        {
+            "model": "claude-sonnet-4-20250514",
+            "messages": [],
+        }
+    ).encode()
     headers: dict[str, str] = {"anthropic-version": "2023-06-01"}
     if anthropic_beta is not None:
         headers["anthropic-beta"] = anthropic_beta

@@ -22,7 +22,14 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from ccproxy.tools.flows import Flows, handle_flows
+from ccproxy.tools.flows import (
+    Flows,
+    FlowsClear,
+    FlowsDiff,
+    FlowsDump,
+    FlowsList,
+    handle_flows,
+)
 from ccproxy.utils import get_templates_dir
 
 logger = logging.getLogger(__name__)
@@ -104,7 +111,7 @@ Command = (
     | Annotated[Logs, tyro.conf.subcommand(name="logs")]
     | Annotated[Status, tyro.conf.subcommand(name="status")]
     | Annotated[DagViz, tyro.conf.subcommand(name="dag-viz")]
-    | Annotated[Flows, tyro.conf.subcommand(name="flows")]
+    | Flows
 )
 
 
@@ -174,8 +181,7 @@ def setup_logging(
 
     if journal_fallback_reason is not None:
         logger.warning(
-            "use_journal requested but JournalHandler unavailable (%s); "
-            "falling back to stderr",
+            "use_journal requested but JournalHandler unavailable (%s); falling back to stderr",
             journal_fallback_reason,
         )
 
@@ -228,7 +234,7 @@ def _ensure_combined_ca_bundle(
     mitmproxy intercepts TLS and re-signs with its own CA. Subprocesses need
     to trust both the mitmproxy CA and real upstream CAs.
 
-"""
+    """
     search_dirs: list[Path] = []
     if confdir:
         search_dirs.append(Path(confdir))
@@ -306,16 +312,14 @@ def run_with_proxy(
             for p in problems:
                 print(f"Error: {p}", file=sys.stderr)
             print(
-                "\nCannot create network namespace for --inspect mode. "
-                "All prerequisites above must be satisfied.",
+                "\nCannot create network namespace for --inspect mode. All prerequisites above must be satisfied.",
                 file=sys.stderr,
             )
             sys.exit(1)
         wg_conf_file = config_dir / ".inspector-wireguard-client.conf"
         if not wg_conf_file.exists():
             print(
-                "Error: No WireGuard configuration found. "
-                "Start ccproxy first: ccproxy start",
+                "Error: No WireGuard configuration found. Start ccproxy first: ccproxy start",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -326,9 +330,7 @@ def run_with_proxy(
         inspector_confdir: Path | None = Path(confdir) if confdir else None
 
         # Trust mitmproxy's CA so TLS interception works transparently
-        combined_bundle = _ensure_combined_ca_bundle(
-            config_dir, env.get("SSL_CERT_FILE"), confdir=inspector_confdir
-        )
+        combined_bundle = _ensure_combined_ca_bundle(config_dir, env.get("SSL_CERT_FILE"), confdir=inspector_confdir)
         if combined_bundle:
             bundle = str(combined_bundle)
             env["SSL_CERT_FILE"] = bundle
@@ -389,8 +391,7 @@ async def _run_inspect(
         for p in problems:
             builtin_print(f"Error: {p}", file=sys.stderr)
         builtin_print(
-            "\nCannot create network namespace for --inspect mode. "
-            "All prerequisites above must be satisfied.",
+            "\nCannot create network namespace for --inspect mode. All prerequisites above must be satisfied.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -462,9 +463,7 @@ async def _run_inspect(
             logger.info("  Wireshark: -o wg.keylog_file:%s", wg_keylog_path)
 
         logger.info("TLS keylog: %s", tls_keylog_path)
-        logger.info(
-            "  Wireshark: Edit → Preferences → Protocols → TLS → (Pre)-Master-Secret log filename"
-        )
+        logger.info("  Wireshark: Edit → Preferences → Protocols → TLS → (Pre)-Master-Secret log filename")
 
         web_url = f"http://{inspector.mitmproxy.web_host}:{inspector.port}/?token={web_token}"
         logger.info("Inspector UI: %s", web_url)
@@ -504,10 +503,12 @@ def start_server(
     ports_to_check = [main_port, get_config().inspector.port]
     run_preflight_checks(ports=ports_to_check, config_dir=config_dir)
 
-    exit_code = asyncio.run(_run_inspect(
-        config_dir=config_dir,
-        main_port=main_port,
-    ))
+    exit_code = asyncio.run(
+        _run_inspect(
+            config_dir=config_dir,
+            main_port=main_port,
+        )
+    )
     sys.exit(exit_code)
 
 
@@ -727,7 +728,6 @@ def show_status(
             console.print(Panel(hooks_table, title="[bold]Hooks[/bold]", border_style="green"))
 
 
-
 def main(
     cmd: Annotated[Command, tyro.conf.arg(name="")],
     *,
@@ -750,6 +750,13 @@ def main(
         config_dir = Path(env_config_dir) if env_config_dir else Path.home() / ".ccproxy"
 
     os.environ.setdefault("CCPROXY_CONFIG_DIR", str(config_dir))
+
+    # Tyro wraps nested subcommand unions (like Flows) in a DummyWrapper when
+    # the outer parameter is Annotated[Command, tyro.conf.arg(name="")]. The
+    # real parsed subcommand lives at cmd.__tyro_dummy_inner__ — unwrap it so
+    # the isinstance dispatch below sees the concrete class.
+    if hasattr(cmd, "__tyro_dummy_inner__"):
+        cmd = cmd.__tyro_dummy_inner__  # type: ignore[attr-defined]
     from ccproxy.config import get_config
 
     config = get_config()
@@ -822,7 +829,7 @@ def main(
     elif isinstance(cmd, DagViz):
         handle_dag_viz(cmd)
 
-    elif isinstance(cmd, Flows):  # pyright: ignore[reportUnnecessaryIsInstance]
+    elif isinstance(cmd, FlowsList | FlowsDump | FlowsDiff | FlowsClear):
         handle_flows(cmd, config_dir)
 
 

@@ -126,11 +126,15 @@ class TestPersistence:
         assert store.get_profile("anthropic") is None
 
     def test_degraded_on_version_mismatch_with_data(self, store_path: Path):
-        store_path.write_text(json.dumps({
-            "format_version": 99,
-            "profiles": {"anthropic/v0": {}},
-            "accumulators": {},
-        }))
+        store_path.write_text(
+            json.dumps(
+                {
+                    "format_version": 99,
+                    "profiles": {"anthropic/v0": {}},
+                    "accumulators": {},
+                }
+            )
+        )
         store = ProfileStore(store_path, min_observations=3, seed_profiles=None)
         assert store.is_degraded is True
         assert store.get_profile("anthropic") is None

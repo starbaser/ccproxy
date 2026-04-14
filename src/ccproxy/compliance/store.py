@@ -191,9 +191,7 @@ def _build_anthropic_seed_profile() -> ComplianceProfile:
             ProfileFeatureHeader(name="anthropic-version", value="2023-06-01"),
         ],
         body_fields=[],
-        system=ProfileFeatureSystem(
-            structure=[{"type": "text", "text": CLAUDE_CODE_SYSTEM_PREFIX}]
-        ),
+        system=ProfileFeatureSystem(structure=[{"type": "text", "text": CLAUDE_CODE_SYSTEM_PREFIX}]),
     )
 
 
