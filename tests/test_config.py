@@ -26,7 +26,7 @@ class TestCCProxyConfig:
         monkeypatch.delenv("CCPROXY_HOST", raising=False)
         monkeypatch.delenv("CCPROXY_PORT", raising=False)
         config = CCProxyConfig()
-        assert config.debug is False
+        assert config.log_level == "INFO"
         assert config.host == "127.0.0.1"
         assert config.port == 4000
         assert config.ccproxy_config_path == Path("./ccproxy.yaml")
@@ -34,8 +34,8 @@ class TestCCProxyConfig:
     def test_config_attributes(self) -> None:
         """Test config attributes can be set directly."""
         config = CCProxyConfig()
-        config.debug = True
-        assert config.debug is True
+        config.log_level = "DEBUG"
+        assert config.log_level == "DEBUG"
 
     def test_from_yaml_no_ccproxy_section(self) -> None:
         """Test loading ccproxy.yaml without ccproxy section."""
@@ -51,7 +51,7 @@ other_settings:
         try:
             config = CCProxyConfig.from_yaml(yaml_path)
 
-            assert config.debug is False
+            assert config.log_level == "INFO"
 
         finally:
             yaml_path.unlink()
@@ -60,7 +60,6 @@ other_settings:
         """Test that hooks with parameters are loaded correctly."""
         yaml_content = """
 ccproxy:
-  debug: false
   hooks:
     - ccproxy.hooks.rule_evaluator
     - hook: ccproxy.hooks.capture_headers
@@ -127,6 +126,29 @@ ccproxy:
         finally:
             yaml_path.unlink()
 
+    def test_resolved_log_file_relative(self, tmp_path: Path) -> None:
+        """Relative log_file resolves against ccproxy_config_path.parent."""
+        yaml_path = tmp_path / "ccproxy.yaml"
+        config = CCProxyConfig(
+            ccproxy_config_path=yaml_path, log_file=Path("ccproxy.log"),
+        )
+        assert config.resolved_log_file == tmp_path / "ccproxy.log"
+
+    def test_resolved_log_file_absolute(self, tmp_path: Path) -> None:
+        """Absolute log_file passes through unchanged."""
+        abs_path = tmp_path / "custom" / "ccproxy.log"
+        config = CCProxyConfig(
+            ccproxy_config_path=tmp_path / "ccproxy.yaml", log_file=abs_path,
+        )
+        assert config.resolved_log_file == abs_path
+
+    def test_resolved_log_file_none(self, tmp_path: Path) -> None:
+        """log_file=None returns None."""
+        config = CCProxyConfig(
+            ccproxy_config_path=tmp_path / "ccproxy.yaml", log_file=None,
+        )
+        assert config.resolved_log_file is None
+
 
 class TestConfigSingleton:
     """Tests for configuration singleton functions."""
@@ -136,7 +158,7 @@ class TestConfigSingleton:
         clear_config_instance()
 
         # Create a custom config instance and set it directly
-        custom_config = CCProxyConfig(debug=True)
+        custom_config = CCProxyConfig(log_level="DEBUG")
         from ccproxy.config import set_config_instance
 
         set_config_instance(custom_config)
@@ -146,7 +168,7 @@ class TestConfigSingleton:
             config2 = get_config()
 
             assert config1 is config2
-            assert config1.debug is True
+            assert config1.log_level == "DEBUG"
 
         finally:
             clear_config_instance()
@@ -157,7 +179,7 @@ class TestConfigSingleton:
 
         ccproxy_yaml_content = """
 ccproxy:
-  debug: true
+  log_level: DEBUG
 """
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -172,7 +194,7 @@ ccproxy:
             try:
                 with mock.patch.dict(os.environ, {"CCPROXY_CONFIG_DIR": temp_dir}):
                     config = get_config()
-                    assert config.debug is True
+                    assert config.log_level == "DEBUG"
             finally:
                 os.chdir(original_cwd)
 
@@ -192,7 +214,7 @@ class TestThreadSafety:
 
         yaml_content = """
 ccproxy:
-  debug: true
+  log_level: DEBUG
 """
         with tempfile.TemporaryDirectory() as temp_dir:
             ccproxy_path = Path(temp_dir) / "ccproxy.yaml"

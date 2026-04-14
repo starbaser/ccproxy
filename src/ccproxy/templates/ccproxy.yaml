@@ -1,7 +1,14 @@
 ccproxy:
   host: 127.0.0.1
   port: 4000
-  debug: true
+
+  # Root Python logger level. DEBUG emits library internals (httpx,
+  # httpcore, mitmproxy); INFO is recommended for normal use.
+  # log_level: INFO
+
+  # Daemon log file path. Relative to this config file, or absolute.
+  # Set to null to disable file logging. Only `ccproxy start` writes here.
+  # log_file: ccproxy.log
 
   # Route daemon logging directly to the systemd journal via JournalHandler.
   # Applies only to `ccproxy start`. Requires the `journal` optional extra:
@@ -52,4 +59,3 @@ ccproxy:
   inspector:
     port: 8083
     cert_dir: ~/.ccproxy
-    debug: false

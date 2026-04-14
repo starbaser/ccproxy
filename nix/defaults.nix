@@ -2,7 +2,6 @@
   settings = {
     host = "127.0.0.1";
     port = 4000;
-    debug = false;
     oat_sources = {
       anthropic = {
         command = "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json";
@@ -46,7 +45,6 @@
     inspector = {
       port = 8083;
       cert_dir = "~/.ccproxy";
-      debug = false;
       transforms = [
         { match_host = "cloudcode-pa.googleapis.com"; mode = "passthrough"; }
         { match_path = "/v1/messages"; mode = "redirect"; dest_provider = "anthropic"; dest_host = "api.anthropic.com"; dest_path = "/v1/messages"; dest_api_key_ref = "anthropic"; }

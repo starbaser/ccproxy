@@ -595,7 +595,7 @@ class TestSetupLogging:
     def test_stderr_handler_when_use_journal_false(self, tmp_path: Path) -> None:
         """Default path: StreamHandler pointed at sys.stderr."""
         try:
-            setup_logging(tmp_path, debug=False, log_file=False, use_journal=False)
+            setup_logging(tmp_path, log_level="INFO", log_file=None, use_journal=False)
             handlers = self._root().handlers
             assert len(handlers) == 1
             assert isinstance(handlers[0], logging.StreamHandler)
@@ -603,20 +603,23 @@ class TestSetupLogging:
         finally:
             self._reset_root()
 
-    def test_file_handler_added_when_log_file_true(
+    def test_file_handler_added_when_log_file_set(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """log_file=True adds a FileHandler alongside the stream handler."""
+        """log_file=<path> adds a FileHandler alongside the stream handler."""
         monkeypatch.delenv("INVOCATION_ID", raising=False)
+        target = tmp_path / "ccproxy.log"
         try:
-            log_path = setup_logging(tmp_path, debug=False, log_file=True, use_journal=False)
-            assert log_path == tmp_path / "ccproxy.log"
+            log_path = setup_logging(
+                tmp_path, log_level="INFO", log_file=target, use_journal=False,
+            )
+            assert log_path == target
             handler_types = {type(h).__name__ for h in self._root().handlers}
             assert "FileHandler" in handler_types
             assert "StreamHandler" in handler_types
         finally:
             self._reset_root()
-            (tmp_path / "ccproxy.log").unlink(missing_ok=True)
+            target.unlink(missing_ok=True)
 
     def test_journal_fallback_when_systemd_missing(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -629,7 +632,7 @@ class TestSetupLogging:
         sys.stderr), so capsys captures it.
         """
         try:
-            setup_logging(tmp_path, debug=False, log_file=False, use_journal=True)
+            setup_logging(tmp_path, log_level="INFO", log_file=None, use_journal=True)
 
             handlers = self._root().handlers
             assert len(handlers) == 1
@@ -659,7 +662,7 @@ class TestSetupLogging:
                 sys.modules,
                 {"systemd": fake_systemd_module, "systemd.journal": fake_journal_module},
             ):
-                setup_logging(tmp_path, debug=False, log_file=False, use_journal=True)
+                setup_logging(tmp_path, log_level="INFO", log_file=None, use_journal=True)
 
             fake_journal_module.JournalHandler.assert_called_once_with(
                 SYSLOG_IDENTIFIER="ccproxy"
@@ -682,11 +685,41 @@ class TestSetupLogging:
                 sys.modules,
                 {"systemd": fake_systemd_module, "systemd.journal": fake_journal_module},
             ):
-                setup_logging(tmp_path, debug=False, log_file=False, use_journal=True)
+                setup_logging(tmp_path, log_level="INFO", log_file=None, use_journal=True)
 
             handlers = self._root().handlers
             assert len(handlers) == 1
             assert isinstance(handlers[0], logging.StreamHandler)
             assert handlers[0].stream is sys.stderr
+        finally:
+            self._reset_root()
+
+    def test_verbose_false_floors_level_at_warning(self, tmp_path: Path) -> None:
+        """verbose=False floors effective level at WARNING even if log_level=DEBUG."""
+        try:
+            setup_logging(
+                tmp_path, log_level="DEBUG", log_file=None, use_journal=False, verbose=False,
+            )
+            assert self._root().level == logging.WARNING
+        finally:
+            self._reset_root()
+
+    def test_verbose_false_preserves_higher_level(self, tmp_path: Path) -> None:
+        """verbose=False doesn't lower a level that's already above WARNING."""
+        try:
+            setup_logging(
+                tmp_path, log_level="ERROR", log_file=None, use_journal=False, verbose=False,
+            )
+            assert self._root().level == logging.ERROR
+        finally:
+            self._reset_root()
+
+    def test_verbose_true_applies_log_level_directly(self, tmp_path: Path) -> None:
+        """verbose=True applies log_level without flooring."""
+        try:
+            setup_logging(
+                tmp_path, log_level="DEBUG", log_file=None, use_journal=False, verbose=True,
+            )
+            assert self._root().level == logging.DEBUG
         finally:
             self._reset_root()

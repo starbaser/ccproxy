@@ -251,9 +251,6 @@ async def run_inspector(
     # update_defer doesn't trigger WebAuth.configure for this option.
     opts.update(web_password=web_token)
 
-    mitmproxy_level = logging.DEBUG if config.debug else logging.WARNING
-    logging.getLogger("mitmproxy").setLevel(mitmproxy_level)
-
     ready = ReadySignal()
     addons = _build_addons(wg_cli_port)
     master.addons.add(ready, *addons)  # type: ignore[no-untyped-call]

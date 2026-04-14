@@ -110,12 +110,17 @@ Command = (
 
 def setup_logging(
     config_dir: Path,
-    debug: bool = False,
+    log_level: str = "INFO",
     *,
-    log_file: bool = False,
+    log_file: Path | None = None,
     use_journal: bool = False,
+    verbose: bool = True,
 ) -> Path | None:
-    """Configure unified logging with tagged namespaces and optional file output.
+    """Configure unified logging with optional file output.
+
+    The effective root level is ``log_level`` when ``verbose=True``,
+    otherwise ``max(log_level, WARNING)`` — one-shot CLI commands without
+    ``-v`` still surface warnings and errors but suppress INFO/DEBUG noise.
 
     Primary handler:
       - ``use_journal=True``: ``systemd.journal.JournalHandler`` with
@@ -125,16 +130,17 @@ def setup_logging(
     When the journal handler cannot be constructed (missing ``systemd-python``
     or no systemd socket), falls back to stderr and emits a warning log.
 
-    When ``log_file=True`` and not running under systemd
-    (``INVOCATION_ID`` unset), also logs to ``{config_dir}/ccproxy.log``
-    (truncated on restart).
+    When ``log_file`` is provided and not running under systemd
+    (``INVOCATION_ID`` unset), also logs to that path (truncated on restart).
 
-    Returns the log file path if created, None otherwise.
+    Returns the log file path if a FileHandler was installed, None otherwise.
     """
     root = logging.getLogger()
     root.handlers.clear()
 
-    level = logging.DEBUG if debug else logging.INFO
+    level = getattr(logging, log_level.upper(), logging.INFO)
+    if not verbose:
+        level = max(level, logging.WARNING)
     root.setLevel(level)
 
     fmt = logging.Formatter(
@@ -159,15 +165,12 @@ def setup_logging(
     root.addHandler(handler)
 
     log_path: Path | None = None
-    if log_file and not os.environ.get("INVOCATION_ID"):
-        log_path = config_dir / "ccproxy.log"
+    if log_file is not None and not os.environ.get("INVOCATION_ID"):
+        log_path = log_file
+        log_path.parent.mkdir(parents=True, exist_ok=True)
         fh = logging.FileHandler(str(log_path), mode="w", encoding="utf-8")
         fh.setFormatter(fmt)
         root.addHandler(fh)
-
-    logging.getLogger("LiteLLM").setLevel(logging.WARNING)  # suppress litellm import noise
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
     if journal_fallback_reason is not None:
         logger.warning(
@@ -554,8 +557,10 @@ def view_logs(follow: bool = False, lines: int = 100, config_dir: Path | None = 
             sys.exit(0)
 
     if config_dir:
-        log_path = config_dir / "ccproxy.log"
-        if log_path.exists():
+        from ccproxy.config import get_config
+
+        log_path = get_config().resolved_log_file
+        if log_path is not None and log_path.exists():
             tail_cmd = ["tail", "-n", str(lines)]
             if follow:
                 tail_cmd.append("-f")
@@ -630,12 +635,13 @@ def show_status(
         else:
             inspect_url = base
 
+    log_path = cfg.resolved_log_file
     status_data: dict[str, Any] = {
         "proxy": proxy_running,
         "url": proxy_url,
         "config": config_paths,
         "hooks": hooks,
-        "log": str(config_dir / "ccproxy.log") if (config_dir / "ccproxy.log").exists() else None,
+        "log": str(log_path) if log_path is not None and log_path.exists() else None,
         "inspector": {
             "running": combined_running,
             "entry_port": main_port,
@@ -726,6 +732,13 @@ def main(
     cmd: Annotated[Command, tyro.conf.arg(name="")],
     *,
     config_dir: Annotated[Path | None, tyro.conf.arg(help="Configuration directory", metavar="PATH")] = None,
+    verbose: Annotated[
+        bool,
+        tyro.conf.arg(
+            aliases=["-v"],
+            help="Show INFO/DEBUG log output on CLI commands (daemon logs unconditionally)",
+        ),
+    ] = False,
 ) -> None:
     """ccproxy - Intercept and route Claude Code requests to LLM providers.
 
@@ -740,11 +753,17 @@ def main(
     from ccproxy.config import get_config
 
     config = get_config()
+    is_daemon = isinstance(cmd, Start)
+    # LOG_LEVEL env var overrides config.log_level — standard convention
+    # used across Django / FastAPI / uvicorn. Python's stdlib has no
+    # built-in env var support for logging; LOG_LEVEL is the de-facto name.
+    log_level = os.environ.get("LOG_LEVEL") or config.log_level
     setup_logging(
         config_dir,
-        debug=config.debug,
-        log_file=isinstance(cmd, Start),
-        use_journal=config.use_journal and isinstance(cmd, Start),
+        log_level=log_level,
+        log_file=config.resolved_log_file if is_daemon else None,
+        use_journal=config.use_journal and is_daemon,
+        verbose=is_daemon or verbose,
     )
 
     if isinstance(cmd, Start):

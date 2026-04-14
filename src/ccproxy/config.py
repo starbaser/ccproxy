@@ -13,7 +13,7 @@ import logging
 import subprocess
 import threading
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import yaml
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
@@ -250,9 +250,6 @@ class InspectorConfig(BaseModel):
     max_body_size: int = 0
     """Maximum request/response body size to capture (bytes). 0 = unlimited."""
 
-    debug: bool = False
-    """Enable debug logging (includes request body logging)."""
-
     cert_dir: Path | None = None
     """mitmproxy CA certificate store directory. Populates mitmproxy.confdir
     via model validator when set."""
@@ -291,7 +288,16 @@ class CCProxyConfig(BaseSettings):
 
     host: str = "127.0.0.1"
     port: int = 4000
-    debug: bool = False
+
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    """Root Python logger level. Applies uniformly to all loggers."""
+
+    log_file: Path | None = Path("ccproxy.log")
+    """Path to the daemon log file. Relative paths resolve against the
+    config file's directory (``ccproxy_config_path.parent``); absolute
+    paths pass through; ``None`` disables file logging. Only applies to
+    ``ccproxy start`` — one-shot CLI commands never write here.
+    Access the resolved path via ``resolved_log_file``."""
 
     provider_timeout: float | None = None
     """Timeout budget (seconds) for httpx-based upstream calls inside ccproxy
@@ -356,6 +362,19 @@ class CCProxyConfig(BaseSettings):
     )
 
     ccproxy_config_path: Path = Field(default_factory=lambda: Path("./ccproxy.yaml"))
+
+    @property
+    def resolved_log_file(self) -> Path | None:
+        """log_file resolved against ccproxy_config_path.parent.
+
+        Relative paths anchor to the config file's directory; absolute
+        paths pass through; None stays None.
+        """
+        if self.log_file is None:
+            return None
+        if self.log_file.is_absolute():
+            return self.log_file
+        return self.ccproxy_config_path.parent / self.log_file
 
     @property
     def oat_values(self) -> dict[str, str]:
@@ -501,16 +520,16 @@ class CCProxyConfig(BaseSettings):
                     instance.host = ccproxy_data["host"]
                 if "port" in ccproxy_data and "CCPROXY_PORT" not in os.environ:
                     instance.port = int(ccproxy_data["port"])
-                if "debug" in ccproxy_data:
-                    instance.debug = ccproxy_data["debug"]
+                if "log_level" in ccproxy_data:
+                    instance.log_level = ccproxy_data["log_level"]
+                if "log_file" in ccproxy_data:
+                    raw = ccproxy_data["log_file"]
+                    instance.log_file = Path(raw) if raw is not None else None
                 if "oat_sources" in ccproxy_data:
                     instance.oat_sources = ccproxy_data["oat_sources"]
                 inspector_data = ccproxy_data.get("inspector")
                 if inspector_data:
-                    inspector_dict = cast(dict[str, Any], inspector_data)
-                    if "debug" not in inspector_dict and instance.debug:
-                        inspector_dict = {**inspector_dict, "debug": instance.debug}
-                    instance.inspector = InspectorConfig(**inspector_dict)  # pyright: ignore[reportArgumentType]
+                    instance.inspector = InspectorConfig(**cast(dict[str, Any], inspector_data))
                 otel_data = ccproxy_data.get("otel")
                 if otel_data:
                     instance.otel = OtelConfig(**otel_data)
