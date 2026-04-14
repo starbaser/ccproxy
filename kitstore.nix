@@ -113,5 +113,27 @@
         };
       };
     };
+    pydantic = {
+      url = "https://github.com/pydantic/pydantic";
+      kits = {
+        docs = { include = [ "docs/**/*.md" "README.md" ]; chunk_by = "lines"; };
+        src = { include = [ "pydantic/**/*.py" ]; chunk_by = "symbols"; };
+      };
+    };
+    rich = {
+      url = "https://github.com/Textualize/rich";
+      kits = {
+        docs = {
+          include = [
+            "docs/source/**/*.rst"
+            "docs/source/**/*.md"
+            "README.md"
+            "CHANGELOG.md"
+          ];
+          chunk_by = "lines";
+        };
+        src = { include = [ "rich/**/*.py" ]; chunk_by = "symbols"; };
+      };
+    };
   };
 }
