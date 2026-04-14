@@ -1,5 +1,82 @@
 {
   repositories = {
+    "inspector/mitmproxy" = {
+      url = "https://github.com/mitmproxy/mitmproxy";
+      kits = {
+        docs = { include = [ "docs/src/**" ]; chunk_by = "lines"; };
+        src = {
+          include = [
+            "mitmproxy/**/*.py"
+            "examples/**/*.py"
+          ];
+          exclude = [
+            "test/**"
+            "mitmproxy/test/**"
+            "mitmproxy/contrib/**"
+            "mitmproxy/tools/**"
+            "**/test_*.py"
+            "**/*_test.py"
+          ];
+          chunk_by = "symbols";
+        };
+      };
+    };
+    "inspector/slirp4netns" = {
+      url = "https://github.com/rootless-containers/slirp4netns";
+      kits = {
+        docs = {
+          include = [
+            "README.md"
+            "slirp4netns.1.md"
+            "COPYING"
+            "MAINTAINERS"
+            "SECURITY_CONTACTS"
+          ];
+          chunk_by = "lines";
+        };
+        src = {
+          include = [
+            "**/*.c"
+            "**/*.h"
+            "Makefile.am"
+            "configure.ac"
+            "autogen.sh"
+          ];
+          exclude = [
+            "tests/**"
+            "vendor/**"
+            "Dockerfile*"
+            ".github/**"
+            "benchmarks/**"
+          ];
+          chunk_by = "symbols";
+        };
+      };
+    };
+    "inspector/xepor" = {
+      url = "https://github.com/xepor/xepor";
+      kits = {
+        docs = { include = [ "docs/**" ]; chunk_by = "lines"; };
+        src = { include = [ "src/xepor/**" ]; chunk_by = "symbols"; };
+      };
+    };
+    "inspector/xepor-examples" = {
+      url = "https://github.com/xepor/xepor-examples";
+    };
+    "lib/tyro" = {
+      url = "https://github.com/brentyi/tyro";
+      kits = {
+        docs = {
+          include = [
+            "docs/source/**/*.rst"
+            "docs/source/**/*.md"
+            "README.md"
+          ];
+          chunk_by = "lines";
+        };
+        src = { include = [ "src/tyro/**/*.py" "examples/**/*.py" ]; chunk_by = "symbols"; };
+      };
+    };
     litellm = {
       url = "https://github.com/BerriAI/litellm";
       kits = {
@@ -32,69 +109,6 @@
         proxy = {
           include = [ "litellm/proxy/**/*.py" ];
           exclude = [ "tests/**/*" ];
-          chunk_by = "symbols";
-        };
-      };
-    };
-    "inspector/mitmproxy" = {
-      url = "https://github.com/mitmproxy/mitmproxy";
-      kits = {
-        docs = { include = [ "docs/src/**" ]; chunk_by = "lines"; };
-        src = {
-          include = [
-            "mitmproxy/**/*.py"
-            "examples/**/*.py"
-          ];
-          exclude = [
-            "test/**"
-            "mitmproxy/test/**"
-            "mitmproxy/contrib/**"
-            "mitmproxy/tools/**"
-            "**/test_*.py"
-            "**/*_test.py"
-          ];
-          chunk_by = "symbols";
-        };
-      };
-    };
-    "inspector/xepor" = {
-      url = "https://github.com/xepor/xepor";
-      kits = {
-        docs = { include = [ "docs/**" ]; chunk_by = "lines"; };
-        src = { include = [ "src/xepor/**" ]; chunk_by = "symbols"; };
-      };
-    };
-    "inspector/xepor-examples" = {
-      url = "https://github.com/xepor/xepor-examples";
-    };
-    "inspector/slirp4netns" = {
-      url = "https://github.com/rootless-containers/slirp4netns";
-      kits = {
-        docs = {
-          include = [
-            "README.md"
-            "slirp4netns.1.md"
-            "COPYING"
-            "MAINTAINERS"
-            "SECURITY_CONTACTS"
-          ];
-          chunk_by = "lines";
-        };
-        src = {
-          include = [
-            "**/*.c"
-            "**/*.h"
-            "Makefile.am"
-            "configure.ac"
-            "autogen.sh"
-          ];
-          exclude = [
-            "tests/**"
-            "vendor/**"
-            "Dockerfile*"
-            ".github/**"
-            "benchmarks/**"
-          ];
           chunk_by = "symbols";
         };
       };

@@ -73,3 +73,4 @@ langfuse/
 !stubs/langfuse/
 handoff.md
 .mcp.json
+scripts/verify_cch.py
