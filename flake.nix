@@ -54,6 +54,11 @@
           tiktoken = prev.tiktoken.overrideAttrs {
             autoPatchelfIgnoreMissingDeps = true;
           };
+          # pyperclip 1.9.0 ships only a setup.py (no pyproject.toml), so uv2nix
+          # attempts a source build without setuptools in scope.
+          pyperclip = prev.pyperclip.overrideAttrs (old: {
+            nativeBuildInputs = (old.nativeBuildInputs or []) ++ [ final.setuptools ];
+          });
           # Suppress uv's "Ignoring invalid SSL_CERT_FILE" warning: stdenv sets
           # SSL_CERT_FILE=/no-cert-file.crt to block network access; uv warns on
           # the missing path even though the install is --offline --no-cache.
