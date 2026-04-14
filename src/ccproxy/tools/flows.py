@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import difflib
 import json
@@ -10,13 +11,13 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import urlsplit
 
 import attrs
 import httpx
 import humanize
 import tyro
 from rich.console import Console
-from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
 
@@ -48,14 +49,21 @@ class MitmwebClient:
         resp.raise_for_status()
         return resp.content
 
-    def get_client_request(self, flow_id: str) -> str:
+    def get_client_request(self, flow_id: str) -> dict[str, Any]:
+        """Fetch the pre-pipeline client request as a structured dict.
+
+        Returns ``{method, url, headers: [{name, value}, ...], body_text}``.
+        """
         resp = self._client.get(f"/flows/{flow_id}/request/content/client-request")
         resp.raise_for_status()
         data = resp.json()
-        # contentview returns [[label, text], ...] — extract the text
-        if isinstance(data, list) and data:
-            return str(data[0][1]) if isinstance(data[0], list) else str(data[0])
-        return resp.text
+        if isinstance(data, dict) and "text" in data:
+            text = str(data["text"])
+        elif isinstance(data, list) and data:
+            text = str(data[0][1]) if isinstance(data[0], list) else str(data[0])
+        else:
+            text = resp.text
+        return _parse_client_request_text(text)
 
     def _post(self, path: str) -> httpx.Response:
         """POST with synthetic XSRF token pair (cookie + header)."""
@@ -202,27 +210,261 @@ def _do_list(
     console.print(table)
 
 
-def _format_headers_table(headers: list[list[str]]) -> Table:
-    table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
-    table.add_column("Header", style="cyan")
-    table.add_column("Value")
-    for name, value in headers:
-        table.add_row(name, value)
-    return table
+_CLIENT_REQUEST_HEADERS_MARKER = "--- Headers ---"
+_CLIENT_REQUEST_BODY_MARKER = "--- Body ---"
 
 
-def _format_body(raw: bytes) -> Syntax | str:
-    text = raw.decode("utf-8", errors="replace")
+def _parse_client_request_text(text: str) -> dict[str, Any]:
+    """Parse the rendered pre-pipeline client request text into structured fields.
+
+    Input format (produced by ``ClientRequestContentview``)::
+
+        {METHOD} {scheme}://{host}:{port}{path}
+
+        --- Headers ---
+          {name}: {value}
+          ...
+
+        --- Body ---
+        {body or "(empty)"}
+    """
+    method = ""
+    url = ""
+    headers: list[dict[str, str]] = []
+    body_text = ""
+
+    lines = text.splitlines()
+    if lines:
+        first = lines[0].strip()
+        if " " in first:
+            method, url = first.split(" ", 1)
+        else:
+            url = first
+
+    section: str | None = None
+    body_lines: list[str] = []
+    for line in lines[1:]:
+        stripped = line.strip()
+        if stripped == _CLIENT_REQUEST_HEADERS_MARKER:
+            section = "headers"
+            continue
+        if stripped == _CLIENT_REQUEST_BODY_MARKER:
+            section = "body"
+            continue
+        if section == "headers":
+            if not stripped:
+                continue
+            if ":" in stripped:
+                name, value = stripped.split(":", 1)
+                headers.append({"name": name.strip(), "value": value.strip()})
+        elif section == "body":
+            body_lines.append(line)
+
+    if body_lines:
+        body_text = "\n".join(body_lines)
+        if body_text == "(empty)":
+            body_text = ""
+
+    return {"method": method, "url": url, "headers": headers, "body_text": body_text}
+
+
+def _safe_fetch(fetch: Any, flow_id: str) -> bytes:
+    """Fetch a flow body, swallowing 5xx (e.g. SSE streams that can't be replayed)."""
     try:
-        parsed = json.loads(text)
-        pretty = json.dumps(parsed, indent=2)
-        return Syntax(pretty, "json", theme="monokai", word_wrap=True)
-    except (json.JSONDecodeError, ValueError):
-        return text if text else "(empty)"
+        return fetch(flow_id)  # type: ignore[no-any-return]
+    except httpx.HTTPStatusError:
+        return b""
+
+
+def _headers_to_har(headers: list[list[str]]) -> list[dict[str, str]]:
+    return [{"name": pair[0], "value": pair[1]} for pair in headers]
+
+
+def _query_string(path: str) -> list[dict[str, str]]:
+    parsed = urlsplit(path)
+    if not parsed.query:
+        return []
+    out: list[dict[str, str]] = []
+    for kv in parsed.query.split("&"):
+        if "=" in kv:
+            k, v = kv.split("=", 1)
+        else:
+            k, v = kv, ""
+        out.append({"name": k, "value": v})
+    return out
+
+
+def _body_to_har_text(raw: bytes) -> tuple[str, str | None]:
+    """Decode body bytes for HAR. Returns (text, encoding) where encoding is 'base64' for binary."""
+    if not raw:
+        return "", None
+    try:
+        return raw.decode("utf-8"), None
+    except UnicodeDecodeError:
+        return base64.b64encode(raw).decode("ascii"), "base64"
+
+
+def _ms_delta(later: float | None, earlier: float | None) -> float:
+    if later is None or earlier is None:
+        return -1.0
+    return 1000.0 * (later - earlier)
+
+
+def _build_timings(req: dict[str, Any], res: dict[str, Any] | None, server_conn: dict[str, Any]) -> dict[str, float]:
+    connect = _ms_delta(server_conn.get("timestamp_tcp_setup"), server_conn.get("timestamp_start"))
+    ssl = _ms_delta(server_conn.get("timestamp_tls_setup"), server_conn.get("timestamp_tcp_setup"))
+
+    req_end = req.get("timestamp_end")
+    req_start = req.get("timestamp_start")
+    send = _ms_delta(req_end, req_start)
+    if send < 0:
+        send = 0.0
+
+    if res and req_end is not None:
+        wait_v = _ms_delta(res.get("timestamp_start"), req_end)
+        wait = wait_v if wait_v >= 0 else 0.0
+    else:
+        wait = 0.0
+
+    if res:
+        receive_v = _ms_delta(res.get("timestamp_end"), res.get("timestamp_start"))
+        receive = receive_v if receive_v >= 0 else 0.0
+    else:
+        receive = 0.0
+
+    return {"connect": connect, "ssl": ssl, "send": send, "wait": wait, "receive": receive}
+
+
+def _build_har_request(
+    flow: dict[str, Any],
+    body: bytes,
+    *,
+    client_req: dict[str, Any] | None,
+) -> dict[str, Any]:
+    req = flow["request"]
+
+    if client_req:
+        method = client_req["method"]
+        url = client_req["url"]
+        headers_har = client_req["headers"]
+        body_text = client_req["body_text"]
+        body_encoding: str | None = None
+        body_size = len(body_text.encode("utf-8")) if body_text else 0
+    else:
+        method = req["method"]
+        url = f"{req['scheme']}://{req['pretty_host']}{req['path']}"
+        headers_har = _headers_to_har(req.get("headers", []))
+        body_text, body_encoding = _body_to_har_text(body)
+        body_size = len(body)
+
+    mime_type = next((h["value"] for h in headers_har if h["name"].lower() == "content-type"), "")
+
+    request_entry: dict[str, Any] = {
+        "method": method,
+        "url": url,
+        "httpVersion": req.get("http_version", "HTTP/1.1"),
+        "cookies": [],
+        "headers": headers_har,
+        "queryString": _query_string(url) or _query_string(req.get("path", "")),
+        "headersSize": -1,
+        "bodySize": body_size,
+    }
+
+    if method in {"POST", "PUT", "PATCH"} or body_text or body_encoding:
+        post_data: dict[str, Any] = {"mimeType": mime_type, "text": body_text, "params": []}
+        if body_encoding:
+            post_data["encoding"] = body_encoding
+        request_entry["postData"] = post_data
+
+    return request_entry
+
+
+def _build_har_response(flow: dict[str, Any], body: bytes) -> dict[str, Any]:
+    res = flow.get("response")
+    if not res:
+        return {
+            "status": 0,
+            "statusText": "",
+            "httpVersion": "",
+            "cookies": [],
+            "headers": [],
+            "content": {"size": 0, "mimeType": "", "text": ""},
+            "redirectURL": "",
+            "headersSize": -1,
+            "bodySize": -1,
+        }
+
+    headers_har = _headers_to_har(res.get("headers", []))
+    mime_type = next((h["value"] for h in headers_har if h["name"].lower() == "content-type"), "")
+    redirect_url = next((h["value"] for h in headers_har if h["name"].lower() == "location"), "")
+
+    body_text, body_encoding = _body_to_har_text(body)
+    content: dict[str, Any] = {
+        "size": len(body),
+        "mimeType": mime_type,
+        "text": body_text,
+    }
+    if body_encoding:
+        content["encoding"] = body_encoding
+
+    return {
+        "status": res.get("status_code", 0),
+        "statusText": res.get("reason", ""),
+        "httpVersion": res.get("http_version", "HTTP/1.1"),
+        "cookies": [],
+        "headers": headers_har,
+        "content": content,
+        "redirectURL": redirect_url,
+        "headersSize": -1,
+        "bodySize": len(body),
+    }
+
+
+def _build_har_entry(
+    flow: dict[str, Any],
+    req_body: bytes,
+    res_body: bytes,
+    *,
+    client_req: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    req = flow["request"]
+    res = flow.get("response")
+    server_conn = flow.get("server_conn") or {}
+
+    timings = _build_timings(req, res, server_conn)
+    started = req.get("timestamp_start")
+    started_iso = (
+        _dt(started).isoformat() if started is not None else datetime.now(UTC).isoformat()
+    )
+    total_time = sum(v for v in timings.values() if v >= 0)
+
+    entry: dict[str, Any] = {
+        "startedDateTime": started_iso,
+        "time": total_time,
+        "request": _build_har_request(flow, req_body, client_req=client_req),
+        "response": _build_har_response(flow, res_body),
+        "cache": {},
+        "timings": timings,
+    }
+
+    peername = server_conn.get("peername")
+    if isinstance(peername, list) and peername:
+        entry["serverIPAddress"] = str(peername[0])
+
+    return entry
+
+
+def _build_har(entry: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "log": {
+            "version": "1.2",
+            "creator": {"name": "ccproxy", "version": "dev"},
+            "entries": [entry],
+        }
+    }
 
 
 def _do_inspect(
-    console: Console,
     client: MitmwebClient,
     *,
     action: str,
@@ -233,37 +475,19 @@ def _do_inspect(
     flows = client.list_flows()
     flow = next((f for f in flows if f["id"] == flow_id), None)
     if flow is None:
-        console.print(f"[red]Flow {flow_id} not found[/red]")
+        print(f"error: flow {flow_id} not found", file=sys.stderr)
         sys.exit(1)
 
+    req_body = _safe_fetch(client.get_request_body, flow_id)
+    res_body = _safe_fetch(client.get_response_body, flow_id)
+
     if action == "client":
-        text = client.get_client_request(flow_id)
-        console.rule(f"[dim]Client Request (pre-pipeline) — {flow_id[:8]}[/dim]", align="left")
-        console.print(text)
-        return
+        client_req = client.get_client_request(flow_id)
+        entry = _build_har_entry(flow, req_body, res_body, client_req=client_req)
+    else:
+        entry = _build_har_entry(flow, req_body, res_body)
 
-    if action == "req":
-        req = flow["request"]
-        headers = req.get("headers", [])
-        title = f"{req['method']} {req['scheme']}://{req['pretty_host']}{req['path']}"
-        console.print(Panel(_format_headers_table(headers), title=title))
-        body = client.get_request_body(flow_id)
-        if body:
-            console.rule("[dim]Request Body[/dim]", align="left")
-            console.print(_format_body(body))
-
-    elif action == "res":
-        res = flow.get("response")
-        if not res:
-            console.print("[yellow]No response yet.[/yellow]")
-            return
-        headers = res.get("headers", [])
-        title = f"HTTP {res['status_code']} {res.get('reason', '')}"
-        console.print(Panel(_format_headers_table(headers), title=title))
-        body = client.get_response_body(flow_id)
-        if body:
-            console.rule("[dim]Response Body[/dim]", align="left")
-            console.print(_format_body(body))
+    print(json.dumps(_build_har(entry), indent=2))
 
 
 def _do_diff(
@@ -326,7 +550,7 @@ def handle_flows(cmd: Flows, _config_dir: Path) -> None:
                 if not ids:
                     console.print(f"[red]{action} requires a flow ID prefix[/red]")
                     sys.exit(1)
-                _do_inspect(console, client, action=action, id_prefix=ids[0])
+                _do_inspect(client, action=action, id_prefix=ids[0])
 
             elif action == "diff":
                 if len(ids) < 2:
