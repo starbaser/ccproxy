@@ -77,7 +77,7 @@ class Status(BaseModel):
         ccproxy status --proxy            # Just check proxy
     """
 
-    json: bool = False
+    json_output: Annotated[bool, tyro.conf.arg(name="json")] = False
     """Output status as JSON with boolean values."""
 
     proxy: bool = False
@@ -795,7 +795,7 @@ def main(
     elif isinstance(cmd, Status):
         show_status(
             config_dir,
-            json_output=cmd.json,
+            json_output=cmd.json_output,
             check_proxy=cmd.proxy,
             check_inspect=cmd.inspect,
         )

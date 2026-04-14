@@ -13,10 +13,10 @@ from pathlib import Path
 from typing import Annotated, Any
 from urllib.parse import urlsplit
 
-import attrs
 import httpx
 import humanize
 import tyro
+from pydantic import BaseModel
 from rich.console import Console
 from rich.syntax import Syntax
 from rich.table import Table
@@ -96,8 +96,7 @@ class MitmwebClient:
         self.close()
 
 
-@attrs.define
-class Flows:
+class Flows(BaseModel):
     """Inspect mitmweb flows for debugging the request pipeline.
 
     Subcommands:
@@ -118,7 +117,7 @@ class Flows:
     args: Annotated[list[str] | None, tyro.conf.Positional] = None
     """Subcommand and flow IDs, e.g. `list`, `req abc123`, `diff a1 b2`."""
 
-    json: bool = False
+    json_output: Annotated[bool, tyro.conf.arg(name="json")] = False
     """Emit raw JSON for `list` (no-op for other subcommands — they are HAR JSON)."""
 
     filter: str | None = None
@@ -559,7 +558,7 @@ def handle_flows(cmd: Flows, _config_dir: Path) -> None:
     try:
         with _make_client() as client:
             if action == "list":
-                _do_list(console, client, json_output=cmd.json, filter_pat=cmd.filter)
+                _do_list(console, client, json_output=cmd.json_output, filter_pat=cmd.filter)
 
             elif action in ("req", "res", "client"):
                 if not ids:

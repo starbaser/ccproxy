@@ -562,7 +562,7 @@ class TestMainFunction:
         """Test main with status command."""
         monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
         clear_config_instance()
-        cmd = Status(json=False)
+        cmd = Status(json_output=False)
         main(cmd, config_dir=tmp_path)
 
         mock_status.assert_called_once_with(
@@ -574,7 +574,7 @@ class TestMainFunction:
         """Test main with status command with JSON output."""
         monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
         clear_config_instance()
-        cmd = Status(json=True)
+        cmd = Status(json_output=True)
         main(cmd, config_dir=tmp_path)
 
         mock_status.assert_called_once_with(

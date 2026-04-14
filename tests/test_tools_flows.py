@@ -1091,7 +1091,7 @@ class TestHandleFlows:
         mock_client.return_value.__enter__ = MagicMock(return_value=mock_ctx)
         mock_client.return_value.__exit__ = MagicMock(return_value=False)
 
-        cmd = Flows(args=["list"], json=True, filter="anthropic")
+        cmd = Flows(args=["list"], json_output=True, filter="anthropic")
         handle_flows(cmd, Path("/tmp"))  # noqa: S108
 
         mock_list.assert_called_once()

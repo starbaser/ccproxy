@@ -472,7 +472,6 @@ version = "1.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
-    { name = "attrs" },
     { name = "certifi" },
     { name = "fastapi" },
     { name = "httpx" },
@@ -528,7 +527,6 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "anthropic", specifier = ">=0.39.0" },
-    { name = "attrs", specifier = ">=23.0.0" },
     { name = "certifi", specifier = ">=2024.0.0" },
     { name = "coverage", marker = "extra == 'dev'", specifier = ">=7.10.1" },
     { name = "fastapi", specifier = ">=0.100.0" },
