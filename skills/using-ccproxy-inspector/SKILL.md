@@ -234,7 +234,6 @@ Problem?
 │  ▶ Check: ccproxy flows list — is the flow captured?
 │  ▶ Check: transform rules — does match_host/match_path/match_model match?
 │  ▶ Check: ccproxy flows dump <id> | jq '.log.entries[1].request.url' — what did the client send (pre-pipeline)?
-│  ▶ Check: ccproxy dag-viz — is the transform router in the addon chain?
 │
 ├─ Compliance not applying
 │  ▶ Check: compliance_status.py — is a profile finalized?

@@ -448,7 +448,6 @@ ccproxy status              # Verify proxy is running
 ccproxy status --json       # Machine-readable status with URL
 ccproxy logs -f             # Stream logs in real-time
 ccproxy logs -n 50          # Last 50 lines
-ccproxy dag-viz             # Visualize hook pipeline
 ```
 
 ## Known limitations (upstream flake issues)

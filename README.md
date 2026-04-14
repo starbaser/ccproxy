@@ -132,7 +132,6 @@ ccproxy run [--inspect] -- <command>   # Run command with proxy env vars / WireG
 ccproxy status [--json]                # Show running state
 ccproxy install [--force]              # Write template config to ~/.ccproxy/
 ccproxy logs [-f] [-n LINES]           # View logs
-ccproxy dag-viz [-o ascii|mermaid|json]  # Visualize hook DAG
 ```
 
 `ccproxy run` (without `--inspect`) sets `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, and `OPENAI_API_BASE` in the subprocess environment and routes traffic through the reverse proxy listener.

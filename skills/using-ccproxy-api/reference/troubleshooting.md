@@ -23,17 +23,14 @@ ccproxy status
 # 2. Stream logs while reproducing the issue
 ccproxy logs -f
 
-# 3. Verify hook pipeline
-ccproxy dag-viz
-
-# 4. Verify config
+# 3. Verify config
 cat $CCPROXY_CONFIG_DIR/ccproxy.yaml   # or: cat ~/.ccproxy/ccproxy.yaml
 
-# 5. Test OAuth command manually
+# 4. Test OAuth command manually
 jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json
 # Should output a token starting with "sk-ant-oat"
 
-# 6. Check compliance profile status
+# 5. Check compliance profile status
 uv run python scripts/compliance_status.py  # from ccproxy project root
 ```
 
@@ -194,14 +191,6 @@ Common causes:
 ---
 
 ## General diagnostics
-
-### Verify hook pipeline
-
-```bash
-# Visualize the hook DAG
-ccproxy dag-viz                # ASCII
-ccproxy dag-viz -o mermaid     # Mermaid format
-```
 
 With `debug: true` in `ccproxy.yaml`, logs show each hook's execution:
 

@@ -40,7 +40,6 @@ ccproxy run --inspect -- <cmd>    # Run command in WireGuard namespace jail
 ccproxy status [--json]           # Show running state
 ccproxy install [--force]         # Install template config files
 ccproxy logs [-f] [-n LINES]     # View logs
-ccproxy dag-viz [-o ascii|mermaid|json]  # Visualize hook DAG
 ccproxy flows list [--filter PAT] [--json]  # List captured flows
 ccproxy flows dump <id-prefix>    # 1-page / 2-entry HAR ([fwdreq,fwdres] + [clireq,fwdres])
 ccproxy flows diff <id1> <id2>    # Unified diff of two request bodies
