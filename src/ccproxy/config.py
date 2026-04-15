@@ -127,6 +127,19 @@ class ComplianceConfig(BaseModel):
     """Dotted import path to a ComplianceMerger subclass for profile application."""
 
 
+class FlowsConfig(BaseModel):
+    """Configuration for the ``ccproxy flows`` CLI commands."""
+
+    default_jq_filters: list[str] = Field(default_factory=list)
+    """JQ filter expressions applied before any CLI ``--jq`` filters.
+
+    Each filter must consume a JSON array and produce a JSON array, e.g.::
+
+        map(select(.request.host | endswith("anthropic.com")))
+
+    Filters chain in order via jq's ``|`` operator."""
+
+
 class OtelConfig(BaseModel):
     """OpenTelemetry configuration for span export."""
 
@@ -340,6 +353,8 @@ class CCProxyConfig(BaseSettings):
 
     compliance: ComplianceConfig = Field(default_factory=ComplianceConfig)
 
+    flows: FlowsConfig = Field(default_factory=lambda: FlowsConfig())
+
     oat_sources: dict[str, str | OAuthSource | dict[str, Any]] = Field(default_factory=lambda: {})
 
     _oat_values: dict[str, str] = PrivateAttr(default_factory=lambda: {})
@@ -538,6 +553,10 @@ class CCProxyConfig(BaseSettings):
                 compliance_data = ccproxy_data.get("compliance")
                 if compliance_data:
                     instance.compliance = ComplianceConfig(**compliance_data)
+
+                flows_data = ccproxy_data.get("flows")
+                if flows_data:
+                    instance.flows = FlowsConfig(**flows_data)
 
                 hooks_data = ccproxy_data.get("hooks", [])
                 if hooks_data:
