@@ -125,4 +125,3 @@ class PipelineExecutor:
 
     def get_parallel_groups(self) -> list[set[str]]:
         return self.dag.parallel_groups
-

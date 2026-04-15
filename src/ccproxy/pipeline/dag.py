@@ -123,4 +123,3 @@ class HookDAG:
             if hook_name in hook_deps:
                 dependents.add(name)
         return dependents
-
