@@ -75,9 +75,7 @@ def load_hooks(entries: list[str | dict[str, Any]]) -> list[HookSpec]:
             try:
                 validated = spec.model(**params)
             except ValidationError as exc:
-                raise ValueError(
-                    f"Hook {spec.name!r} params failed validation: {exc}"
-                ) from exc
+                raise ValueError(f"Hook {spec.name!r} params failed validation: {exc}") from exc
             spec.params = validated.model_dump()
         elif params and spec.model is None:
             logger.warning(
