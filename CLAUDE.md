@@ -40,10 +40,11 @@ ccproxy run --inspect -- <cmd>    # Run command in WireGuard namespace jail
 ccproxy status [--json]           # Show running state
 ccproxy install [--force]         # Install template config files
 ccproxy logs [-f] [-n LINES]     # View logs
-ccproxy flows list [--filter PAT] [--json]  # List captured flows
-ccproxy flows dump <id-prefix>    # 1-page / 2-entry HAR ([fwdreq,fwdres] + [clireq,fwdres])
-ccproxy flows diff <id1> <id2>    # Unified diff of two request bodies
-ccproxy flows clear               # Clear all captured flows
+ccproxy flows list [--json] [--jq FILTER]...     # List flow set
+ccproxy flows dump [--jq FILTER]...              # Multi-page HAR of flow set
+ccproxy flows diff [--jq FILTER]...              # Sliding-window diff across set
+ccproxy flows compare [--jq FILTER]...           # Per-flow client-vs-forwarded diff
+ccproxy flows clear [--all] [--jq FILTER]...     # Clear flow set (--all bypasses filters)
 ```
 
 ## Architecture
@@ -130,12 +131,13 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 
 **`mcp/`** — Thread-safe notification buffer (`NotificationBuffer` singleton) + `POST /mcp/notify` FastAPI endpoint for MCP terminal event ingestion.
 
-**`tools/flows.py`** — `MitmwebClient` for programmatic mitmweb REST API access + `ccproxy flows` CLI tyro subcommands (`FlowsList`, `FlowsDump`, `FlowsDiff`, `FlowsClear`).
+**`tools/flows.py`** — `MitmwebClient` for programmatic mitmweb REST API access + `ccproxy flows` CLI tyro subcommands (`FlowsList`, `FlowsDump`, `FlowsDiff`, `FlowsCompare`, `FlowsClear`). All subcommands inherit `_FlowsBase` which provides a repeatable `--jq FILTER` arg.
 - **Auth**: Bearer token resolved from `inspector.mitmproxy.web_password` config (mitmproxy 12+ accepts `Authorization: Bearer` on the REST API directly).
-- **Client methods**: `list_flows()`, `get_request_body(id)`, `resolve_id(prefix)`, `dump_har(id)` (invokes the `ccproxy.dump` mitmproxy command via `POST /commands/ccproxy.dump`), `clear()`. `_make_client()` reads auth from ccproxy config.
-- **HAR output**: `ccproxy flows dump` emits HAR 1.2 JSON built server-side by `MultiHARSaver.ccproxy_dump` (see `inspector/multi_har_saver.py`). One page per flow (`pages[0].id == flow.id`), two complete HAR entries by documented index: `entries[0] = [fwdreq, fwdres]` is the real flow untouched (authoritative forwarded request + upstream response); `entries[1] = [clireq, fwdres]` is a `flow.copy()` with `.request` rebuilt from `flow.metadata[InspectorMeta.RECORD].client_request` via `http.Request.make()` — the response is duplicated so the HAR pair stays schema-complete. All HAR details (cookies, multipart bodies, binary base64, websocket messages, timings) are delegated to `mitmproxy.addons.savehar.SaveHar.make_har()`.
-- **HAR consumption**: pipe to a file and open in Chrome DevTools / Charles / Fiddler (`ccproxy flows dump abc > flow.har`), or query with jq by entry index (`... | jq '.log.entries[0].request.url'` for forwarded URL, `... | jq '.log.entries[1].request.url'` for pre-pipeline URL, `... | jq '.log.entries[0].response.status'` for upstream status, `... | jq '.log.pages[0].id'` for the flow id).
-- **HAR vs diff**: for quick payload comparison between two flows use `ccproxy flows diff <a> <b>` (unified diff of raw request bodies). For structural HAR comparison, save two HAR files and diff them with `jq` or a HAR viewer.
+- **Set model**: all subcommands operate on a resolved flow set: `GET /flows` → config `flows.default_jq_filters` → CLI `--jq` filters → final set. Filters are jq expressions that consume and produce JSON arrays (e.g. `map(select(.request.host | endswith("anthropic.com")))`). Multiple `--jq` flags chain via `|`. The `jq` binary (subprocess) is used — no pypi dependency.
+- **Client methods**: `list_flows()`, `get_request_body(id)`, `dump_har(ids: list[str])` (invokes the `ccproxy.dump` mitmproxy command via `POST /commands/ccproxy.dump` with comma-joined ids), `delete_flow(id)`, `clear()`. `_make_client()` reads auth from ccproxy config.
+- **HAR output**: `ccproxy flows dump` emits multi-page HAR 1.2 JSON built server-side by `MultiHARSaver.ccproxy_dump` (see `inspector/multi_har_saver.py`). One page per flow, two complete HAR entries per page by documented index: `entries[2i] = [fwdreq, fwdres]`, `entries[2i+1] = [clireq, fwdres]`. All HAR details delegated to `mitmproxy.addons.savehar.SaveHar.make_har()`.
+- **HAR consumption**: `ccproxy flows dump > all.har` (opens in Chrome DevTools / Charles / Fiddler). Query with jq: `... | jq '.log.entries[0].request.url'` for forwarded URL, `... | jq '.log.pages | length'` for page count.
+- **diff vs compare**: `diff` does a sliding-window diff of request bodies across consecutive flows in the set (requires >= 2). `compare` diffs client-request vs forwarded-request within each flow (1+ flows).
 
 ### Configuration
 
@@ -176,6 +178,14 @@ compliance:
   merger_class: mypackage.custom_merger.MyMerger
 ```
 Default: `ccproxy.compliance.merger.ComplianceMerger`. Subclass overrides individual methods (`merge_headers`, `merge_session_metadata`, `wrap_body`, `merge_body_fields`, `merge_system`) or `merge()` itself to reorder/skip operations.
+
+**Flows config** — `flows.default_jq_filters` list of jq expressions applied before CLI `--jq` filters:
+```yaml
+flows:
+  default_jq_filters:
+    - 'map(select(.request.host | endswith("anthropic.com")))'
+```
+Each filter must consume a JSON array and produce a JSON array. Filters chain in order via jq's `|` operator. An empty list (default) means no pre-filtering.
 
 ### Singleton Patterns
 
