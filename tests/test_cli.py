@@ -10,12 +10,12 @@ from unittest.mock import Mock, patch
 import pytest
 
 from ccproxy.cli import (
-    Install,
+    Init,
     Logs,
     Run,
     Start,
     Status,
-    install_config,
+    init_config,
     main,
     run_with_proxy,
     setup_logging,
@@ -25,20 +25,20 @@ from ccproxy.cli import (
 from ccproxy.config import clear_config_instance
 
 
-class TestInstallConfig:
+class TestInitConfig:
     @patch("ccproxy.cli.get_templates_dir")
-    def test_install_fresh(self, mock_get_templates: Mock, tmp_path: Path, capsys) -> None:
-        """Test fresh installation."""
+    def test_init_fresh(self, mock_get_templates: Mock, tmp_path: Path, capsys) -> None:
+        """Test fresh initialization."""
         templates_dir = tmp_path / "templates"
         templates_dir.mkdir()
 
-        # Only ccproxy.yaml is installed; ccproxy.py is auto-generated on start
+        # Only ccproxy.yaml is initialized; ccproxy.py is auto-generated on start
         (templates_dir / "ccproxy.yaml").write_text("test: config")
 
         mock_get_templates.return_value = templates_dir
 
         config_dir = tmp_path / "config"
-        install_config(config_dir)
+        init_config(config_dir)
 
         assert (config_dir / "ccproxy.yaml").exists()
 
@@ -47,8 +47,8 @@ class TestInstallConfig:
         assert "Next steps:" in captured.out
 
     @patch("ccproxy.cli.get_templates_dir")
-    def test_install_exists_no_force(self, mock_get_templates: Mock, tmp_path: Path, capsys) -> None:
-        """Test install skips existing files without force and reports nothing to install."""
+    def test_init_exists_no_force(self, mock_get_templates: Mock, tmp_path: Path, capsys) -> None:
+        """Test init skips existing files without force and reports nothing to initialize."""
         templates_dir = tmp_path / "templates"
         templates_dir.mkdir()
         (templates_dir / "ccproxy.yaml").write_text("template content")
@@ -59,7 +59,7 @@ class TestInstallConfig:
         config_dir.mkdir()
         (config_dir / "ccproxy.yaml").write_text("existing content")
 
-        install_config(config_dir, force=False)
+        init_config(config_dir, force=False)
 
         assert (config_dir / "ccproxy.yaml").read_text() == "existing content"
         captured = capsys.readouterr()
@@ -68,8 +68,8 @@ class TestInstallConfig:
         assert "Nothing to install" in captured.out
 
     @patch("ccproxy.cli.get_templates_dir")
-    def test_install_with_force(self, mock_get_templates: Mock, tmp_path: Path, capsys) -> None:
-        """Test install with force overwrites existing files."""
+    def test_init_with_force(self, mock_get_templates: Mock, tmp_path: Path, capsys) -> None:
+        """Test init with force overwrites existing files."""
         templates_dir = tmp_path / "templates"
         templates_dir.mkdir()
         (templates_dir / "ccproxy.yaml").write_text("new: config")
@@ -80,15 +80,15 @@ class TestInstallConfig:
         config_dir.mkdir()
         (config_dir / "ccproxy.yaml").write_text("old: config")
 
-        install_config(config_dir, force=True)
+        init_config(config_dir, force=True)
 
         assert (config_dir / "ccproxy.yaml").read_text() == "new: config"
         captured = capsys.readouterr()
         assert "Installed ccproxy.yaml" in captured.out
 
     @patch("ccproxy.cli.get_templates_dir")
-    def test_install_template_not_found(self, mock_get_templates: Mock, tmp_path: Path, capsys) -> None:
-        """Test install when template file is missing."""
+    def test_init_template_not_found(self, mock_get_templates: Mock, tmp_path: Path, capsys) -> None:
+        """Test init when template file is missing."""
         templates_dir = tmp_path / "templates"
         templates_dir.mkdir()
         # No template files present
@@ -96,22 +96,22 @@ class TestInstallConfig:
         mock_get_templates.return_value = templates_dir
 
         config_dir = tmp_path / "config"
-        install_config(config_dir)
+        init_config(config_dir)
 
         captured = capsys.readouterr()
         assert "Warning: Template ccproxy.yaml not found" in captured.err
 
-    def test_install_template_dir_error(self, tmp_path: Path) -> None:
-        """Test install when get_templates_dir raises RuntimeError."""
+    def test_init_template_dir_error(self, tmp_path: Path) -> None:
+        """Test init when get_templates_dir raises RuntimeError."""
         config_dir = tmp_path / "config"
 
         with patch("ccproxy.cli.get_templates_dir", side_effect=RuntimeError("Templates not found")):
             with pytest.raises(SystemExit) as exc_info:
-                install_config(config_dir)
+                init_config(config_dir)
             assert exc_info.value.code == 1
 
-    def test_install_skip_existing_file(self, tmp_path: Path, capsys) -> None:
-        """Test install skips existing files without force flag."""
+    def test_init_skip_existing_file(self, tmp_path: Path, capsys) -> None:
+        """Test init skips existing files without force flag."""
         templates_dir = tmp_path / "templates"
         templates_dir.mkdir()
         (templates_dir / "ccproxy.yaml").write_text("template content")
@@ -121,7 +121,7 @@ class TestInstallConfig:
         (config_dir / "ccproxy.yaml").write_text("existing content")
 
         with patch("ccproxy.cli.get_templates_dir", return_value=templates_dir):
-            install_config(config_dir)
+            init_config(config_dir)
 
         assert (config_dir / "ccproxy.yaml").read_text() == "existing content"
         captured = capsys.readouterr()
@@ -138,7 +138,7 @@ class TestRunWithProxy:
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
         assert "Configuration not found" in captured.err
-        assert "Run 'ccproxy install' first" in captured.err
+        assert "Run 'ccproxy init' first" in captured.err
 
     @patch("subprocess.run")
     def test_run_with_proxy_success(self, mock_run: Mock, tmp_path: Path, monkeypatch) -> None:
@@ -497,15 +497,15 @@ class TestMainFunction:
 
         mock_start.assert_called_once_with(tmp_path)
 
-    @patch("ccproxy.cli.install_config")
-    def test_main_install_command(self, mock_install: Mock, tmp_path: Path, monkeypatch) -> None:
-        """Test main with install command."""
+    @patch("ccproxy.cli.init_config")
+    def test_main_init_command(self, mock_init: Mock, tmp_path: Path, monkeypatch) -> None:
+        """Test main with init command."""
         monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
         clear_config_instance()
-        cmd = Install(force=True)
+        cmd = Init(force=True)
         main(cmd, config_dir=tmp_path)
 
-        mock_install.assert_called_once_with(tmp_path, force=True)
+        mock_init.assert_called_once_with(tmp_path, force=True)
 
     @patch("ccproxy.cli.run_with_proxy")
     def test_main_run_command(self, mock_run: Mock, tmp_path: Path, monkeypatch) -> None:

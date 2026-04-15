@@ -43,8 +43,8 @@ class Start(BaseModel):
     """Additional arguments (reserved for future use)."""
 
 
-class Install(BaseModel):
-    """Install ccproxy configuration files."""
+class Init(BaseModel):
+    """Initialize ccproxy configuration files."""
 
     force: bool = False
     """Overwrite existing configuration."""
@@ -97,7 +97,7 @@ class Status(BaseModel):
 
 Command = (
     Annotated[Start, tyro.conf.subcommand(name="start")]
-    | Annotated[Install, tyro.conf.subcommand(name="install")]
+    | Annotated[Init, tyro.conf.subcommand(name="init")]
     | Annotated[Run, tyro.conf.subcommand(name="run")]
     | Annotated[Logs, tyro.conf.subcommand(name="logs")]
     | Annotated[Status, tyro.conf.subcommand(name="status")]
@@ -178,7 +178,7 @@ def setup_logging(
     return log_path
 
 
-def install_config(config_dir: Path, force: bool = False) -> None:
+def init_config(config_dir: Path, force: bool = False) -> None:
     """Install ccproxy template configuration files."""
     config_dir.mkdir(parents=True, exist_ok=True)
 
@@ -279,7 +279,7 @@ def run_with_proxy(
     ccproxy_config_path = config_dir / "ccproxy.yaml"
     if not ccproxy_config_path.exists():
         print(f"Error: Configuration not found at {ccproxy_config_path}", file=sys.stderr)
-        print("Run 'ccproxy install' first to set up configuration.", file=sys.stderr)
+        print("Run 'ccproxy init' first to set up configuration.", file=sys.stderr)
         sys.exit(1)
 
     cfg = get_config()
@@ -752,8 +752,8 @@ def main(
     if isinstance(cmd, Start):
         start_server(config_dir)
 
-    elif isinstance(cmd, Install):
-        install_config(config_dir, force=cmd.force)
+    elif isinstance(cmd, Init):
+        init_config(config_dir, force=cmd.force)
 
     elif isinstance(cmd, Run):
         # Tyro's greedy Positional consumes all args including flags.
@@ -813,7 +813,7 @@ def entry_point() -> None:
 
     subcommands = {
         "start",
-        "install",
+        "init",
         "logs",
         "status",
         "run",

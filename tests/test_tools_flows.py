@@ -290,7 +290,9 @@ class TestMitmwebClientDeleteFlow:
 
         client.delete_flow("flow-id-1")
 
-        client._client.delete.assert_called_once_with("/flows/flow-id-1")
+        args, kwargs = client._client.delete.call_args
+        assert args == ("/flows/flow-id-1",)
+        assert "X-XSRFToken" in kwargs["headers"]
         mock_resp.raise_for_status.assert_called_once()
 
     def test_delete_flow_raises_on_http_error(self) -> None:
