@@ -17,10 +17,10 @@ Install ccproxy via uv:
 uv tool install claude-ccproxy
 ```
 
-Generate the template config file:
+Initialize the config file:
 
 ```bash
-ccproxy install
+ccproxy init
 ```
 
 This writes `~/.ccproxy/ccproxy.yaml` with defaults. Use `--force` to overwrite an existing file.

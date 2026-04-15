@@ -31,6 +31,14 @@ uv run pytest -m e2e                         # E2E tests (excluded by default)
 
 **IMPORTANT**: Always use `just up` / `just down` for the dev instance. Never run `ccproxy start` with `&`/`disown`.
 
+### Smoke Test
+
+```bash
+ccproxy run --inspect -- claude --model haiku -p "what's 2+2"
+```
+
+Sends a real request through the WireGuard namespace jail. Verifies: namespace setup, TLS interception, hook pipeline, transform dispatch, upstream response, SSE streaming.
+
 ### CLI
 
 ```bash
@@ -38,7 +46,7 @@ ccproxy start                     # Start server (always inspector mode, foregro
 ccproxy run <command> [args...]   # Run command with proxy env vars
 ccproxy run --inspect -- <cmd>    # Run command in WireGuard namespace jail
 ccproxy status [--json]           # Show running state
-ccproxy install [--force]         # Install template config files
+ccproxy init [--force]            # Initialize config files
 ccproxy logs [-f] [-n LINES]     # View logs
 ccproxy flows list [--json] [--jq FILTER]...     # List flow set
 ccproxy flows dump [--jq FILTER]...              # Multi-page HAR of flow set
@@ -94,10 +102,13 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 - `NoopLogging` duck-types LiteLLM's `Logging` class to bypass cost/callback machinery (includes `optional_params` for Gemini iterator)
 
 **`pipeline/`** — DAG-based hook execution engine:
-- `Context` wraps `HTTPFlow`. Header mutations are immediate; body mutations deferred until `commit()`. `commit()` strips empty `metadata` dicts injected by property access (upstream APIs reject unknown fields).
-- `@hook(reads=..., writes=...)` decorator declares data dependencies. `HookDAG` topologically sorts via Kahn's algorithm.
-- `PipelineExecutor.execute(flow)` runs hooks in DAG order, calls `ctx.commit()` at the end.
-- `x-ccproxy-hooks: +hook,-hook` header for per-request force-run/force-skip.
+- `context.py` — `Context` wraps `HTTPFlow`. Header mutations are immediate; body mutations deferred until `commit()`. `commit()` strips empty `metadata` dicts injected by property access (upstream APIs reject unknown fields).
+- `hook.py` — `@hook(reads=..., writes=...)` decorator declares data dependencies. Global `HookSpec` registry.
+- `dag.py` — `HookDAG` topologically sorts hooks via Kahn's algorithm.
+- `executor.py` — `PipelineExecutor.execute(flow)` runs hooks in DAG order, calls `ctx.commit()` at the end.
+- `loader.py` — `load_hooks()` resolves config hook-list entries (dotted module paths or `{hook, params}` dicts) into `HookSpec` objects. Validates YAML-supplied params against each hook's declared Pydantic model.
+- `render.py` — `render_pipeline()` builds a `rich.console.Group` representing the full DAG: inbound stage → lightllm transform bridge → outbound stage → provider sink. Each hook is a `rich.panel.Panel` with reads/writes. Parallel groups use `rich.columns.Columns`.
+- `overrides.py` — `x-ccproxy-hooks: +hook,-hook` header for per-request force-run/force-skip.
 
 **`inspector/`** — mitmproxy addon layer:
 - `addon.py` — `InspectorAddon`: OTel span lifecycle, FlowRecord creation, direction detection, client request snapshot. All flows are `"inbound"`. Snapshots the full pre-pipeline request (`ClientRequest`) before any hooks mutate the flow. `responseheaders()` hook enables SSE streaming for all `text/event-stream` responses — sets `flow.response.stream` to `True` (passthrough) or `SseTransformer` (cross-provider transform). Exposes `ccproxy.clientrequest` mitmproxy command for structured JSON access to client requests.
@@ -108,6 +119,7 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 - `namespace.py` — Rootless user+net namespace via `unshare` + `slirp4netns` + WireGuard. Network topology: namespace TAP IP `10.0.2.100/24`, gateway (host) `10.0.2.2`, DNS `10.0.2.3`. Default route replaced with `wg0` so all internet traffic goes through WireGuard tunnel → mitmproxy. `route_localnet` sysctl enabled for iptables OUTPUT DNAT on loopback. Three DNAT rules: PREROUTING inbound (tap0→localhost), OUTPUT outbound (localhost→gateway), OUTPUT port remap (default port→running port). `PortForwarder` polls `/proc/{pid}/net/tcp` for dynamic `add_hostfwd` port forwarding. Requires `slirp4netns`, `wg`, `unshare`, `nsenter`, `ip`, `iptables`, `sysctl`.
 - `contentview.py` — Custom mitmproxy content view "Client-Request" showing the pre-pipeline request (method, URL, headers, body). Registered via `contentviews.add()`. Accessible at `GET /flows/{id}/request/content/client-request`.
 - `flow_store.py` — TTL store keyed by `x-ccproxy-flow-id` header for cross-addon state. `ClientRequest` dataclass snapshots the full client request (method, scheme, host, port, path, headers, body) before pipeline mutation. `TransformMeta` carries provider/model/request_data/is_streaming from request phase to response phase.
+- `multi_har_saver.py` — `MultiHARSaver` addon registering the `ccproxy.dump` mitmproxy command. Accepts comma-separated flow IDs, builds a multi-page HAR 1.2 via `SaveHar.make_har()`. Layout: `entries[2i] = [fwdreq, fwdres]`, `entries[2i+1] = [clireq, fwdres]` (clone rebuilt from `ClientRequest` snapshot). One page per flow, `pageref == flow.id`. Registered in `process.py` addon chain.
 - `telemetry.py` — Three-mode OTel: real OTLP export, no-op, or stub.
 - `wg_keylog.py` — Writes Wireshark-compatible keylog for WireGuard tunnel decryption.
 

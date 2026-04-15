@@ -41,9 +41,9 @@ git clone https://github.com/starbaser/ccproxy
 cd ccproxy
 nix develop   # or: direnv allow
 
-# Install template config
-ccproxy install          # copies template to ~/.ccproxy/ccproxy.yaml
-ccproxy install --force  # overwrites existing config
+# Initialize config
+ccproxy init          # copies template to ~/.ccproxy/ccproxy.yaml
+ccproxy init --force  # overwrites existing config
 
 # Edit config
 $EDITOR ~/.ccproxy/ccproxy.yaml

@@ -19,8 +19,8 @@ pip install claude-ccproxy
 ## Quick Start
 
 ```bash
-# Create config template at ~/.ccproxy/ccproxy.yaml
-ccproxy install
+# Initialize config template at ~/.ccproxy/ccproxy.yaml
+ccproxy init
 
 # Start the inspector server (foreground)
 ccproxy start
@@ -65,7 +65,7 @@ flowchart TD
 
 ## Configuration
 
-`ccproxy install` writes a template to `~/.ccproxy/ccproxy.yaml`. Config is also read from `$CCPROXY_CONFIG_DIR/ccproxy.yaml`.
+`ccproxy init` writes a template to `~/.ccproxy/ccproxy.yaml`. Config is also read from `$CCPROXY_CONFIG_DIR/ccproxy.yaml`.
 
 ```yaml
 ccproxy:
@@ -130,13 +130,157 @@ Per-request overrides via header: `x-ccproxy-hooks: +hook_name,-other_hook`.
 ccproxy start                          # Start server (inspector mode, foreground)
 ccproxy run [--inspect] -- <command>   # Run command with proxy env vars / WireGuard namespace jail
 ccproxy status [--json]                # Show running state
-ccproxy install [--force]              # Write template config to ~/.ccproxy/
+ccproxy init [--force]                 # Initialize config in ~/.ccproxy/
 ccproxy logs [-f] [-n LINES]           # View logs
+
+# Flow inspection (all commands accept repeatable --jq filters)
+ccproxy flows list [--json] [--jq FILTER]...     # List flow set
+ccproxy flows dump [--jq FILTER]...              # Multi-page HAR of flow set
+ccproxy flows diff [--jq FILTER]...              # Sliding-window diff across set
+ccproxy flows compare [--jq FILTER]...           # Per-flow client-vs-forwarded diff
+ccproxy flows clear [--all] [--jq FILTER]...     # Clear flow set (--all bypasses filters)
 ```
 
 `ccproxy run` (without `--inspect`) sets `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, and `OPENAI_API_BASE` in the subprocess environment and routes traffic through the reverse proxy listener.
 
 `ccproxy run --inspect` wraps the command in a rootless WireGuard network namespace jail — all outbound traffic is transparently intercepted regardless of SDK configuration.
+
+## Inspecting Flows
+
+All `flows` subcommands operate on a resolved **set** of flows. The set is built by a pipeline:
+
+```
+GET /flows → config default_jq_filters → CLI --jq filters → final set
+```
+
+The `--jq` flag is repeatable. Each filter must consume a JSON array and produce a JSON array. Multiple filters chain via jq's `|` operator:
+
+```bash
+# Only Anthropic API calls
+ccproxy flows list --jq 'map(select(.request.pretty_host == "api.anthropic.com"))'
+
+# Only POST /v1/messages
+ccproxy flows list --jq 'map(select(.request.path | startswith("/v1/messages")))'
+
+# Chain filters: Anthropic POSTs with 200 status
+ccproxy flows list \
+  --jq 'map(select(.request.pretty_host == "api.anthropic.com"))' \
+  --jq 'map(select(.request.method == "POST"))' \
+  --jq 'map(select(.response.status_code == 200))'
+```
+
+Config-level defaults apply before CLI filters, so you can set a baseline in `ccproxy.yaml`:
+
+```yaml
+flows:
+  default_jq_filters:
+    - 'map(select(.request.path | startswith("/v1/messages")))'
+```
+
+### Listing flows
+
+```bash
+# Rich table (default)
+ccproxy flows list
+
+# Raw JSON
+ccproxy flows list --json
+
+# Filtered table
+ccproxy flows list --jq 'map(select(.request.path | startswith("/v1/messages")))'
+```
+
+```
+┏━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━┓
+┃ ID       ┃ Method  ┃  Code ┃ Host      ┃ Path      ┃ UA       ┃ Time         ┃
+┡━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━┩
+│ 3c9c224c │ POST    │   200 │ api.anth… │ /v1/mess… │ claude-… │ 42 seconds   │
+│          │         │       │           │           │ (extern… │ ago          │
+│ 6cc161e9 │ POST    │   200 │ api.anth… │ /v1/mess… │ claude-… │ 29 seconds   │
+│          │         │       │           │           │ (extern… │ ago          │
+└──────────┴─────────┴───────┴───────────┴───────────┴──────────┴──────────────┘
+```
+
+### Diffing consecutive requests
+
+`flows diff` performs a sliding-window unified diff over request bodies. For a set `[f0, f1, f2]`, it produces diffs `f0→f1` and `f1→f2`. Requires at least 2 flows.
+
+```bash
+ccproxy flows diff --jq 'map(select(.request.path | startswith("/v1/messages")))'
+```
+
+```diff
+--- flow:3c9c224c
++++ flow:6cc161e9
+@@ -26,7 +26,7 @@
+         {
+           "type": "text",
+-          "text": "what's 2+2",
++          "text": "what's 3+3",
+           "cache_control": {
+```
+
+### Comparing client vs forwarded requests
+
+`flows compare` diffs the pre-pipeline client request against the post-pipeline forwarded request for each flow. This shows what ccproxy's hook pipeline and lightllm transform actually changed. Supports 1+ flows.
+
+```bash
+ccproxy flows compare --jq 'map(select(.request.path | startswith("/v1/messages")))'
+```
+
+When the pipeline rewrites the request (e.g. Anthropic → Gemini transform), you'll see URL changes and body diffs:
+
+```
+╭──────── URL change — abc12345 ────────╮
+│ - https://api.anthropic.com/v1/messages│
+│ + https://generativelanguage.googleapi…│
+╰───────────────────────────────────────╯
+╭──────── Body diff — abc12345 ─────────╮
+│ --- client:abc12345                    │
+│ +++ forwarded:abc12345                 │
+│ @@ -1,5 +1,5 @@                       │
+│ ...                                    │
+╰───────────────────────────────────────╯
+```
+
+When no transform is applied (same-provider passthrough), the output confirms the bodies are identical:
+
+```
+3c9c224c: request bodies are identical.
+6cc161e9: request bodies are identical.
+```
+
+### Dumping HAR
+
+`flows dump` exports the flow set as a multi-page HAR 1.2 file. Each flow becomes one page with two entries:
+
+| Entry | Content |
+|-------|---------|
+| `entries[2i]` | Forwarded request + upstream response |
+| `entries[2i+1]` | Client request (pre-pipeline snapshot) + upstream response |
+
+```bash
+# Dump all flows to a HAR file (open in Chrome DevTools / Charles / Fiddler)
+ccproxy flows dump > all.har
+
+# Dump only LLM requests
+ccproxy flows dump --jq 'map(select(.request.path | startswith("/v1/messages")))' > llm.har
+
+# Query HAR with jq
+ccproxy flows dump | jq '.log.pages | length'           # page count
+ccproxy flows dump | jq '.log.entries[0].request.url'    # first forwarded URL
+```
+
+### Clearing flows
+
+```bash
+# Clear only matching flows (respects --jq filters)
+ccproxy flows clear --jq 'map(select(.request.path | startswith("/v1/messages")))'
+# => Cleared 2 flow(s).
+
+# Clear everything (bypasses all filters)
+ccproxy flows clear --all
+```
 
 ## Development
 
