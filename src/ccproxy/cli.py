@@ -25,6 +25,7 @@ from rich.table import Table
 from ccproxy.tools.flows import (
     Flows,
     FlowsClear,
+    FlowsCompare,
     FlowsDiff,
     FlowsDump,
     FlowsList,
@@ -700,9 +701,7 @@ def show_status(
             inbound_exec = PipelineExecutor(hooks=inbound_specs)
             outbound_exec = PipelineExecutor(hooks=outbound_specs)
             pipeline = render_pipeline(inbound_exec, outbound_exec)
-            console.print(
-                Panel(pipeline, title="[bold]Pipeline[/bold]", border_style="green")
-            )
+            console.print(Panel(pipeline, title="[bold]Pipeline[/bold]", border_style="green"))
 
 
 def main(
@@ -803,7 +802,7 @@ def main(
             check_inspect=cmd.inspect,
         )
 
-    elif isinstance(cmd, FlowsList | FlowsDump | FlowsDiff | FlowsClear):
+    elif isinstance(cmd, FlowsList | FlowsDump | FlowsDiff | FlowsCompare | FlowsClear):
         handle_flows(cmd, config_dir)
 
 
