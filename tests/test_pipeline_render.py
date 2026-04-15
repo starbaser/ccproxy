@@ -127,8 +127,11 @@ class TestRenderPipeline:
         assert "◆ lightllm transform ◆" in text
         assert "→ provider API" in text
         hook_names = (
-            "extract_session_id", "forward_oauth",
-            "inject_mcp_notifications", "verbose_mode", "apply_compliance",
+            "extract_session_id",
+            "forward_oauth",
+            "inject_mcp_notifications",
+            "verbose_mode",
+            "apply_compliance",
         )
         for name in hook_names:
             assert name in text

@@ -53,6 +53,18 @@ def _run_dump(flow: http.HTTPFlow | None, flow_id: str) -> str:
         return saver.ccproxy_dump(flow_id)
 
 
+def _run_dump_multi(flows_by_id: dict[str, http.HTTPFlow | None], flow_ids_csv: str) -> str:
+    """Invoke ccproxy_dump with multiple flows identified by comma-separated ids."""
+    saver = MultiHARSaver()
+    view = MagicMock()
+    view.get_by_id.side_effect = lambda fid: flows_by_id.get(fid)
+    master = MagicMock()
+    master.addons.get.return_value = view
+    with patch("ccproxy.inspector.multi_har_saver.ctx") as mock_ctx:
+        mock_ctx.master = master
+        return saver.ccproxy_dump(flow_ids_csv)
+
+
 class TestFlowLookup:
     """ccproxy.dump looks up the flow via view.get_by_id."""
 
@@ -201,3 +213,66 @@ class TestSnapshotMissingFallback:
         flow.metadata[InspectorMeta.RECORD] = record
         har = json.loads(_run_dump(flow, flow.id))
         assert len(har["log"]["entries"]) == 2
+
+
+class TestMultiFlowDump:
+    """ccproxy.dump with comma-separated flow ids → N-page HAR."""
+
+    def test_two_flows_produces_two_pages_four_entries(self) -> None:
+        f1 = _make_flow_with_snapshot(forwarded_url="https://api.one.example/v1")
+        f2 = _make_flow_with_snapshot(forwarded_url="https://api.two.example/v1")
+        har = json.loads(_run_dump_multi({f1.id: f1, f2.id: f2}, f"{f1.id},{f2.id}"))
+        assert len(har["log"]["pages"]) == 2
+        assert len(har["log"]["entries"]) == 4
+
+    def test_three_flows_produces_three_pages_six_entries(self) -> None:
+        flows = [_make_flow_with_snapshot() for _ in range(3)]
+        by_id = {f.id: f for f in flows}
+        csv = ",".join(f.id for f in flows)
+        har = json.loads(_run_dump_multi(by_id, csv))
+        assert len(har["log"]["pages"]) == 3
+        assert len(har["log"]["entries"]) == 6
+
+    def test_pageref_pairing_correct(self) -> None:
+        f1 = _make_flow_with_snapshot()
+        f2 = _make_flow_with_snapshot()
+        har = json.loads(_run_dump_multi({f1.id: f1, f2.id: f2}, f"{f1.id},{f2.id}"))
+        entries = har["log"]["entries"]
+        assert entries[0]["pageref"] == f1.id
+        assert entries[1]["pageref"] == f1.id
+        assert entries[2]["pageref"] == f2.id
+        assert entries[3]["pageref"] == f2.id
+
+    def test_page_ids_match_flow_ids(self) -> None:
+        f1 = _make_flow_with_snapshot()
+        f2 = _make_flow_with_snapshot()
+        har = json.loads(_run_dump_multi({f1.id: f1, f2.id: f2}, f"{f1.id},{f2.id}"))
+        page_ids = [p["id"] for p in har["log"]["pages"]]
+        assert page_ids == [f1.id, f2.id]
+
+    def test_flow_order_preserved(self) -> None:
+        f1 = _make_flow_with_snapshot(forwarded_url="https://first.example/v1")
+        f2 = _make_flow_with_snapshot(forwarded_url="https://second.example/v1")
+        har = json.loads(_run_dump_multi({f1.id: f1, f2.id: f2}, f"{f1.id},{f2.id}"))
+        assert "first.example" in har["log"]["entries"][0]["request"]["url"]
+        assert "second.example" in har["log"]["entries"][2]["request"]["url"]
+
+    def test_whitespace_in_comma_separated_trimmed(self) -> None:
+        f1 = _make_flow_with_snapshot()
+        f2 = _make_flow_with_snapshot()
+        har = json.loads(
+            _run_dump_multi(
+                {f1.id: f1, f2.id: f2},
+                f" {f1.id} , {f2.id} ",
+            )
+        )
+        assert len(har["log"]["pages"]) == 2
+
+    def test_empty_string_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="no flow ids provided"):
+            _run_dump_multi({}, "")
+
+    def test_one_missing_id_in_list_raises_value_error(self) -> None:
+        f1 = _make_flow_with_snapshot()
+        with pytest.raises(ValueError, match="no flow with id missing"):
+            _run_dump_multi({f1.id: f1}, f"{f1.id},missing")

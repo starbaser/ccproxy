@@ -166,10 +166,12 @@ class TestLoadHooks:
         assert result == []
 
     def test_priority_assignment_preserved(self) -> None:
-        result = load_hooks([
-            "ccproxy.hooks.forward_oauth",
-            "ccproxy.hooks.verbose_mode",
-        ])
+        result = load_hooks(
+            [
+                "ccproxy.hooks.forward_oauth",
+                "ccproxy.hooks.verbose_mode",
+            ]
+        )
         names = [s.name for s in result]
         assert "forward_oauth" in names
         assert "verbose_mode" in names

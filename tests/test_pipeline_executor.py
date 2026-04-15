@@ -272,6 +272,7 @@ class TestPipelineExecutorIntrospection:
         assert len(groups) == 1
         assert groups[0] == {"x", "y"}
 
+
 class TestHookSpec:
     def _make_flow_ctx(self, body: dict | None = None) -> Context:
         flow = _make_flow(body)

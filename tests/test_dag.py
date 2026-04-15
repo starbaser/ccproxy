@@ -179,5 +179,3 @@ class TestDependencyQueries:
         dag = HookDAG(hooks)
         assert dag.get_dependents("writer") == {"reader"}
         assert dag.get_dependents("reader") == set()
-
-

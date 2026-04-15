@@ -1,20 +1,18 @@
 """ccproxy multi-page HAR saver addon.
 
-Registers `ccproxy.dump`: a mitmproxy command that returns a page-grouped
-HAR 1.2 JSON string for a single flow id. Delegates all HAR entry
-construction to `mitmproxy.addons.savehar.SaveHar.make_har()` — ccproxy
-does not reimplement the HAR spec.
+Registers ``ccproxy.dump``: a mitmproxy command that returns a page-grouped
+HAR 1.2 JSON string for one or more flow ids (comma-separated). Delegates
+all HAR entry construction to ``mitmproxy.addons.savehar.SaveHar.make_har()``
+— ccproxy does not reimplement the HAR spec.
 
-Layout (one page per flow, two complete entries by documented index):
+Layout (one page per flow, two complete entries per page by index):
 
-    entries[0]  [fwdreq, fwdres]  real flow (authoritative)
-    entries[1]  [clireq, fwdres]  clone with .request rebuilt from the
-                                  `ClientRequest` snapshot, response duplicated
-                                  so the HAR pair stays complete
+    entries[2i]    [fwdreq, fwdres]  real flow (authoritative)
+    entries[2i+1]  [clireq, fwdres]  clone with .request rebuilt from the
+                                     ``ClientRequest`` snapshot, response
+                                     duplicated so the HAR pair stays complete
 
-Both entries share ``pageref == flow.id``; the page id is ``flow.id`` too.
-Future work will aggregate multiple flows per conversation turn into one HAR
-with multiple pages — this contract scales there unchanged.
+Both entries in a page share ``pageref == flow.id``.
 """
 
 from __future__ import annotations
@@ -32,47 +30,57 @@ logger = logging.getLogger(__name__)
 
 
 class MultiHARSaver:
-    """Addon exposing `ccproxy.dump` — single-page HAR export for a flow."""
+    """Addon exposing ``ccproxy.dump`` — multi-page HAR export."""
 
     def __init__(self) -> None:
         self._savehar = SaveHar()  # standalone — we only use make_har()
 
     @command.command("ccproxy.dump")  # type: ignore[untyped-decorator]
-    def ccproxy_dump(self, flow_id: str) -> str:
-        """Return a JSON-serialized single-page HAR for the given flow.
+    def ccproxy_dump(self, flow_ids: str) -> str:
+        """Return a JSON-serialized multi-page HAR for one or more flows.
 
-        mitmproxy's command return-type registry does not include `dict` —
-        only `str` — so we serialize here and let the CLI pass the JSON
-        through unchanged.
+        ``flow_ids`` is a comma-separated list of mitmproxy flow ids.
+        Each flow becomes one page with 2 entries:
+        ``[fwdreq, fwdres]`` followed by ``[clireq, fwdres]``.
         """
-        flow = self._find_http_flow(flow_id)
-        if flow is None:
-            raise ValueError(f"no flow with id {flow_id}")
+        ids = [fid.strip() for fid in flow_ids.split(",") if fid.strip()]
+        if not ids:
+            raise ValueError("no flow ids provided")
 
-        # Clone the real flow (keeping its real response) and swap the clone's
-        # .request for a synthetic http.Request rebuilt from the ClientRequest
-        # snapshot. Both entries are complete, valid HAR pairs.
-        client_clone = self._build_client_clone(flow)
+        real_flows: list[http.HTTPFlow] = []
+        clones: list[http.HTTPFlow] = []
+        for fid in ids:
+            flow = self._find_http_flow(fid)
+            if flow is None:
+                raise ValueError(f"no flow with id {fid}")
+            real_flows.append(flow)
+            clones.append(self._build_client_clone(flow))
 
-        har = self._savehar.make_har([flow, client_clone])
-        # entries[0] = [fwdreq, fwdres]  (real flow — authoritative)
-        # entries[1] = [clireq, fwdres]  (clone — client-request perspective)
+        # Interleave: [real_0, clone_0, real_1, clone_1, ...]
+        interleaved: list[http.HTTPFlow] = []
+        for real, clone in zip(real_flows, clones, strict=True):
+            interleaved.append(real)
+            interleaved.append(clone)
 
-        # Stamp pageref: one page per flow (future: per conversation turn).
-        page_id = flow.id
-        for entry in har["log"]["entries"]:
-            entry["pageref"] = page_id
+        har = self._savehar.make_har(interleaved)
+        entries = har["log"]["entries"]
 
-        started_iso = har["log"]["entries"][0]["startedDateTime"]
-        har["log"]["pages"] = [
-            {
-                "id": page_id,
-                "title": f"ccproxy flow {page_id}",
-                "startedDateTime": started_iso,
-                "pageTimings": {"onContentLoad": -1, "onLoad": -1},
-            },
-        ]
+        pages = []
+        for i, flow in enumerate(real_flows):
+            page_id = flow.id
+            entries[2 * i]["pageref"] = page_id
+            entries[2 * i + 1]["pageref"] = page_id
+            started_iso = entries[2 * i]["startedDateTime"]
+            pages.append(
+                {
+                    "id": page_id,
+                    "title": f"ccproxy flow {page_id}",
+                    "startedDateTime": started_iso,
+                    "pageTimings": {"onContentLoad": -1, "onLoad": -1},
+                },
+            )
 
+        har["log"]["pages"] = pages
         har["log"]["creator"] = {"name": "ccproxy", "version": "dev", "comment": ""}
 
         return json.dumps(har, indent=2)
