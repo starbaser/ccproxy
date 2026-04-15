@@ -76,7 +76,15 @@ class MitmwebClient:
 
     def delete_flow(self, flow_id: str) -> None:
         """DELETE /flows/{id} — remove a single flow from mitmweb."""
-        resp = self._client.delete(f"/flows/{flow_id}")
+        import secrets as _secrets
+
+        if not self._xsrf:
+            self._xsrf = _secrets.token_hex(16)
+        self._client.cookies.set("_xsrf", self._xsrf)
+        resp = self._client.delete(
+            f"/flows/{flow_id}",
+            headers={"X-XSRFToken": self._xsrf},
+        )
         resp.raise_for_status()
 
     def clear(self) -> None:
