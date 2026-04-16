@@ -10,7 +10,6 @@
       gemini = {
         command = "jq -r '.access_token' ~/.gemini/oauth_creds.json";
         destinations = [
-          "generativelanguage.googleapis.com"
           "cloudcode-pa.googleapis.com"
         ];
         user_agent = "GeminiCLI";
@@ -19,6 +18,7 @@
     hooks = {
       inbound = [
         "ccproxy.hooks.forward_oauth"
+        "ccproxy.hooks.reroute_gemini"
         "ccproxy.hooks.extract_session_id"
         # Example: uncomment to work around google-gemini/gemini-cli#21691 —
         # the Gemini CLI wipes its own refresh_token during access_token

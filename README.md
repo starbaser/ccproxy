@@ -15,13 +15,13 @@ proxy subprocess, no gateway server.
 
 The hook pipeline is your extension point for building mods and taking control of
 your LLM usage while respecting terms of service:
-- **Privacy** — route traffic through a configurable VPN layer to block
+- **Privacy**: route traffic through a configurable VPN layer to block
   telemetry and other undesired connections.
-- **Compliance** — built-in hooks learn legitimate request shapes from your own
+- **Compliance**: built-in hooks learn legitimate request shapes from your own
   reference traffic (via WireGuard observation) and stamp those compliance
   profiles onto proxied requests, keeping you within provider terms of service.
   *(beta)*
-- **MCP bridging** — add unsupported MCP features to any client:
+- **MCP bridging**: add unsupported MCP features to any client:
   [sampling](https://modelcontextprotocol.io/specification/2025-11-25/client/sampling)
   via sentinel key detection,
   [server notifications](https://modelcontextprotocol.io/specification/2025-11-25/basic/index#notifications)
@@ -52,14 +52,14 @@ ccproxy init
 ccproxy start
 ```
 
-**SDK use** — point any OpenAI-compatible client at the reverse proxy listener:
+**SDK use**: point any OpenAI-compatible client at the reverse proxy listener:
 
 ```bash
 export ANTHROPIC_BASE_URL=http://localhost:4000
 claude -p "hello"
 ```
 
-**Transparent capture** — run a command inside the WireGuard namespace jail (all
+**Transparent capture**: run a command inside the WireGuard namespace jail (all
 traffic intercepted):
 
 ```bash
@@ -105,7 +105,7 @@ read from `$CCPROXY_CONFIG_DIR/ccproxy.yaml`.
 ccproxy:
   port: 4000
 
-  # OAuth token sources — map provider names to shell commands or file paths.
+  # OAuth token sources: map provider names to shell commands or file paths.
   # Tokens are substituted when the sentinel key sk-ant-oat-ccproxy-{provider} is used.
   oat_sources:
     anthropic:
@@ -121,7 +121,7 @@ ccproxy:
 
   inspector:
     transforms:
-      # Passthrough rules are checked first — matched hosts bypass transformation.
+      # Passthrough rules are checked first: matched hosts bypass transformation.
       - mode: passthrough
         match_host: cloudcode-pa.googleapis.com
 
@@ -133,11 +133,11 @@ ccproxy:
         dest_api_key_ref: anthropic
 ```
 
-**Transform matching** — `match_host` (optional, checked against `pretty_host` +
+**Transform matching**: `match_host` (optional, checked against `pretty_host` +
 Host header), `match_path` (prefix), `match_model` (substring in request body).
 First match wins.
 
-**Hook config** — hooks in each stage list are topologically sorted by
+**Hook config**: hooks in each stage list are topologically sorted by
 `@hook(reads=..., writes=...)` dependency declarations and executed in parallel DAG
 order. Hooks can be parameterized:
 
@@ -380,7 +380,7 @@ startup.
 
 ### TLS certificate errors in `ccproxy run`
 
-`ccproxy run` (without `--inspect`) does not intercept TLS — it only sets env
+`ccproxy run` (without `--inspect`) does not intercept TLS. It only sets env
 vars pointing at the reverse proxy HTTP listener.
 If the target tool performs its own TLS verification against the upstream API,
 no cert installation is needed.
