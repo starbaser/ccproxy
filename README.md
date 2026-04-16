@@ -1,442 +1,394 @@
-# `ccproxy` - Claude Code Proxy [![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/starbased-co/ccproxy)
+# `ccproxy` — CLI Proxy [![Version](https://img.shields.io/badge/version-2.0-red.svg)](https://github.com/starbaser/ccproxy)
 
 > [Discord](https://starbased.net/discord)
 
-`ccproxy` unlocks the full potential of your Claude Code by enabling Claude use alongside other LLM providers like OpenAI, Gemini, and Perplexity
+ccproxy is a transparent network interceptor for LLM tooling and AI harnesses,
+built on mitmproxy and WireGuard with full TLS inspection and Wireshark keylog export.
+Originally purpose-built for Claude Code, ccproxy now works with any LLM client:
+Aider, Cursor, OpenAI SDK, or anything else that speaks HTTP. It jails a process
+inside a rootless WireGuard namespace, intercepts at the network layer, and
+feeds it through a DAG-driven pipeline that can decompose, transform, and
+re-route traffic between providers.
+Cross-provider request and response transformation is handled by `lightllm`, a
+surgical connector into LiteLLM’s `BaseConfig` completion layer — no LiteLLM
+proxy subprocess, no gateway server.
 
-It works by intercepting Claude Code's requests through a [LiteLLM Proxy Server](https://docs.litellm.ai/docs/simple_proxy), allowing you to route different types of requests to the most suitable model - keep your unlimited Claude for standard coding, send large contexts to Gemini's 2M token window, route web searches to Perplexity, all while Claude Code thinks it's talking to the standard API.
+The hook pipeline is your extension point for building mods and taking control of
+your LLM usage while respecting terms of service:
+- **Privacy**: route traffic through a configurable VPN layer to block
+  telemetry and other undesired connections.
+- **Compliance**: built-in hooks learn legitimate request shapes from your own
+  reference traffic (via WireGuard observation) and stamp those compliance
+  profiles onto proxied requests, keeping you within provider terms of service.
+  *(beta)*
+- **MCP bridging**: add unsupported MCP features to any client:
+  [sampling](https://modelcontextprotocol.io/specification/2025-11-25/client/sampling)
+  via sentinel key detection,
+  [server notifications](https://modelcontextprotocol.io/specification/2025-11-25/basic/index#notifications)
+  bridged into the LLM context via ccproxy’s `/mcp` endpoint, and experimental
+  [tasks](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks)
+  support.
 
-> ⚠️⚠️ **`main` Branch Status**: As of 2026-02-05, the current release may not be stable for ALL Claude Code versions. Progress towards the next release candidate is ongoing, please consider the Discord before filing an issue.
-
-> ⚠️ **Note**: While core functionality is complete, real-world testing and community input are welcomed. Please [open an issue](https://github.com/starbased-co/ccproxy/issues) to share your experience, report bugs, or suggest improvements, or even better, submit a PR!
+> Feedback and contributions welcome —
+> [open an issue](https://github.com/starbaser/ccproxy/issues) or submit a PR.
 
 ## Installation
 
-**Important:** ccproxy must be installed with LiteLLM in the same environment so that LiteLLM can import the ccproxy handler.
-
-### Recommended: Install as uv tool
-
 ```bash
-# Install from PyPI
-uv tool install claude-ccproxy --with 'litellm[proxy]'
+# Recommended: uv tool
+uv tool install claude-ccproxy
 
-# Or install from GitHub (latest)
-uv tool install git+https://github.com/starbased-co/ccproxy.git --with 'litellm[proxy]'
+# Alternative: pip
+pip install claude-ccproxy
 ```
 
-This installs:
-
-- `ccproxy` command (for managing the proxy)
-- `litellm` bundled in the same environment (so it can import ccproxy's handler)
-
-### Alternative: Install with pip
+## Quick Start
 
 ```bash
-# Install both packages in the same virtual environment
-pip install git+https://github.com/starbased-co/ccproxy.git
-pip install 'litellm[proxy]'
+# Initialize config template at ~/.config/ccproxy/ccproxy.yaml
+ccproxy init
+
+# Start the inspector server (foreground)
+ccproxy start
 ```
 
-**Note:** With pip, both packages must be in the same virtual environment.
-
-### Verify Installation
+**SDK use**: point any OpenAI-compatible client at the reverse proxy listener:
 
 ```bash
-ccproxy --help
-# Should show ccproxy commands
-
-which litellm
-# Should point to litellm in ccproxy's environment
+export ANTHROPIC_BASE_URL=http://localhost:4000
+claude -p "hello"
 ```
 
-## Usage
-
-Run the automated setup:
+**Transparent capture**: run a command inside the WireGuard namespace jail (all
+traffic intercepted):
 
 ```bash
-# This will create all necessary configuration files in ~/.ccproxy
-ccproxy install
-
-tree ~/.ccproxy
-# ~/.ccproxy
-# ├── ccproxy.yaml
-# └── config.yaml
-
-# ccproxy.py is auto-generated when you start the proxy
-
-# Start the proxy server
-ccproxy start --detach
-
-# Start Claude Code
-ccproxy run claude
-# Or add to your .zshrc/.bashrc
-export ANTHROPIC_BASE_URL="http://localhost:4000"
-# Or use an alias
-alias claude-proxy='ANTHROPIC_BASE_URL="http://localhost:4000" claude'
+ccproxy run --inspect -- claude -p "hello"
 ```
 
-Congrats, you have installed `ccproxy`! The installed configuration files are intended to be a simple demonstration, thus continuing on to the next section to configure `ccproxy` is **recommended**.
+## Architecture
 
-### Configuration
+Traffic enters through one of two listeners, passes through a fixed three-stage
+addon chain, and exits directly to the provider API.
 
-#### `ccproxy.yaml`
+```mermaid
+flowchart TD
+    subgraph Listeners
+        RP["Reverse Proxy :4000"]
+        WG["WireGuard CLI"]
+    end
+    RP --> Chain
+    WG --> Chain
+    subgraph Chain["Addon Chain"]
+        IN["inbound<br/>DAG hooks"] --> TX["transform<br/>lightllm"] --> OUT["outbound<br/>DAG hooks"]
+    end
+    Chain --> API["Provider API"]
+```
 
-This file controls how `ccproxy` hooks into your Claude Code requests and how to route them to different LLM models based on rules. Here you specify rules, their evaluation order, and criteria like token count, model type, or tool usage.
+**Addon chain** (fixed order):
+`ReadySignal → InspectorAddon → inbound DAG → transform → outbound DAG`
+
+**lightllm** invokes LiteLLM’s `BaseConfig` transformation pipeline directly —
+URL rewriting, auth signing, request/response format conversion — without the
+proxy server, cost tracking, or callback machinery.
+
+**SSE streaming**: `SseTransformer` handles cross-provider streaming by parsing
+SSE events, transforming each chunk via LiteLLM’s per-provider
+`ModelResponseIterator`, and re-serializing as OpenAI-format SSE.
+
+## Configuration
+
+`ccproxy init` writes a template to `~/.config/ccproxy/ccproxy.yaml`. Config is also
+read from `$CCPROXY_CONFIG_DIR/ccproxy.yaml`.
 
 ```yaml
 ccproxy:
-  debug: true
+  port: 4000
 
-  # OAuth token sources - map provider names to shell commands
-  # Tokens are loaded at startup for SDK/API access outside Claude Code
+  # OAuth token sources: map provider names to shell commands or file paths.
+  # Tokens are substituted when the sentinel key sk-ant-oat-ccproxy-{provider} is used.
   oat_sources:
-    anthropic: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
-    # Extended format with custom User-Agent:
-    # gemini:
-    #   command: "jq -r '.token' ~/.gemini/creds.json"
-    #   user_agent: "MyApp/1.0"
+    anthropic:
+      command: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
 
   hooks:
-    - ccproxy.hooks.rule_evaluator # evaluates rules against request (needed for routing)
-    - ccproxy.hooks.model_router # routes to appropriate model
-    - ccproxy.hooks.forward_oauth # forwards OAuth token to provider
-    - ccproxy.hooks.extract_session_id # extracts session ID for LangFuse tracking
-    # - ccproxy.hooks.capture_headers  # logs HTTP headers (with redaction)
-    # - ccproxy.hooks.forward_apikey   # forwards x-api-key header
-  rules:
-    # example rules
-    - name: token_count
-      rule: ccproxy.rules.TokenCountRule
-      params:
-        - threshold: 60000
-    - name: web_search
-      rule: ccproxy.rules.MatchToolRule
-      params:
-        - tool_name: WebSearch
-    # basic rules
-    - name: background
-      rule: ccproxy.rules.MatchModelRule
-      params:
-        - model_name: claude-3-5-haiku-20241022
-    - name: think
-      rule: ccproxy.rules.ThinkingRule
+    inbound:
+      - ccproxy.hooks.forward_oauth
+      - ccproxy.hooks.extract_session_id
+    outbound:
+      - ccproxy.hooks.add_beta_headers
+      - ccproxy.hooks.inject_claude_code_identity
 
-litellm:
-  host: 127.0.0.1
-  port: 4000
-  num_workers: 4
-  debug: true
-  detailed_debug: true
+  inspector:
+    transforms:
+      # Passthrough rules are checked first: matched hosts bypass transformation.
+      - mode: passthrough
+        match_host: cloudcode-pa.googleapis.com
+
+      # Transform rules rewrite request/response to the destination provider.
+      - match_path: /v1/chat/completions
+        match_model: gpt-4o
+        dest_provider: anthropic
+        dest_model: claude-haiku-4-5-20251001
+        dest_api_key_ref: anthropic
 ```
 
-When `ccproxy` receives a request from Claude Code, the `rule_evaluator` hook labels the request with the first matching rule:
+**Transform matching**: `match_host` (optional, checked against `pretty_host` +
+Host header), `match_path` (prefix), `match_model` (substring in request body).
+First match wins.
 
-1. `MatchModelRule`: A request with `model: claude-3-5-haiku-20241022` is labeled: `background`
-2. `ThinkingRule`: A request with `thinking: {enabled: true}` is labeled: `think`
-
-If a request doesn't match any rule, it receives the `default` label.
-
-#### `config.yaml`
-
-[LiteLLM's proxy configuration file](https://docs.litellm.ai/docs/proxy/config_settings) is where your model deployments are defined. The `model_router` hook takes advantage of [LiteLLM's model alias feature](https://docs.litellm.ai/docs/completion/model_alias) to dynamically rewrite the model field in requests based on rule criteria before LiteLLM selects a deployment. When a request is labeled (e.g., think), the hook changes the model from whatever Claude Code requested to the corresponding alias, allowing seamless redirection to different models.
-
-The diagram shows how routing labels (⚡ default, 🧠 think, 🍃 background) map to their corresponding model deployments:
-
-```mermaid
-graph LR
-    subgraph ccproxy_yaml["<code>ccproxy.yaml</code>"]
-        R1["<div style='text-align:left'><code>rules:</code><br/><code>- name: default</code><br/><code>- name: think</code><br/><code>- name: background</code></div>"]
-    end
-
-    subgraph config_yaml["<code>config.yaml</code>"]
-        subgraph aliases[" "]
-            A1["<div style='text-align:left'><code>model_name: default</code><br/><code>litellm_params:</code><br/><code>&nbsp;&nbsp;model: claude-sonnet-4-5-20250929</code></div>"]
-            A2["<div style='text-align:left'><code>model_name: think</code><br/><code>litellm_params:</code><br/><code>&nbsp;&nbsp;model: claude-opus-4-5-20251101</code></div>"]
-            A3["<div style='text-align:left'><code>model_name: background</code><br/><code>litellm_params:</code><br/><code>&nbsp;&nbsp;model: claude-3-5-haiku-20241022</code></div>"]
-        end
-
-        subgraph models[" "]
-            M1["<div style='text-align:left'><code>model_name: claude-sonnet-4-5-20250929</code><br/><code>litellm_params:</code><br/><code>&nbsp;&nbsp;model: anthropic/claude-sonnet-4-5-20250929</code></div>"]
-            M2["<div style='text-align:left'><code>model_name: claude-opus-4-5-20251101</code><br/><code>litellm_params:</code><br/><code>&nbsp;&nbsp;model: anthropic/claude-opus-4-5-20251101</code></div>"]
-            M3["<div style='text-align:left'><code>model_name: claude-3-5-haiku-20241022</code><br/><code>litellm_params:</code><br/><code>&nbsp;&nbsp;model: anthropic/claude-3-5-haiku-20241022</code></div>"]
-        end
-    end
-
-    R1 ==>|"⚡ <code>default</code>"| A1
-    R1 ==>|"🧠 <code>think</code>"| A2
-    R1 ==>|"🍃 <code>background</code>"| A3
-
-    A1 -->|"<code>alias</code>"| M1
-    A2 -->|"<code>alias</code>"| M2
-    A3 -->|"<code>alias</code>"| M3
-
-    style R1 fill:#e6f3ff,stroke:#4a90e2,stroke-width:2px,color:#000
-
-    style A1 fill:#fffbf0,stroke:#ffa500,stroke-width:2px,color:#000
-    style A2 fill:#fff0f5,stroke:#ff1493,stroke-width:2px,color:#000
-    style A3 fill:#f0fff0,stroke:#32cd32,stroke-width:2px,color:#000
-
-    style M1 fill:#f8f9fa,stroke:#6c757d,stroke-width:1px,color:#000
-    style M2 fill:#f8f9fa,stroke:#6c757d,stroke-width:1px,color:#000
-    style M3 fill:#f8f9fa,stroke:#6c757d,stroke-width:1px,color:#000
-
-    style aliases fill:#f0f8ff,stroke:#333,stroke-width:1px
-    style models fill:#f5f5f5,stroke:#333,stroke-width:1px
-    style ccproxy_yaml fill:#e8f4fd,stroke:#2196F3,stroke-width:2px
-    style config_yaml fill:#ffffff,stroke:#333,stroke-width:2px
-```
-
-And the corresponding `config.yaml`:
-
-```yaml
-# config.yaml
-model_list:
-  # aliases here are used to select a deployment below
-  - model_name: default
-    litellm_params:
-      model: claude-sonnet-4-5-20250929
-
-  - model_name: think
-    litellm_params:
-      model: claude-opus-4-5-20251101
-
-  - model_name: background
-    litellm_params:
-      model: claude-3-5-haiku-20241022
-
-  # deployments
-  - model_name: claude-sonnet-4-5-20250929
-    litellm_params:
-      model: anthropic/claude-sonnet-4-5-20250929
-      api_base: https://api.anthropic.com
-
-  - model_name: claude-opus-4-5-20251101
-    litellm_params:
-      model: anthropic/claude-opus-4-5-20251101
-      api_base: https://api.anthropic.com
-
-  - model_name: claude-3-5-haiku-20241022
-    litellm_params:
-      model: anthropic/claude-3-5-haiku-20241022
-      api_base: https://api.anthropic.com
-
-litellm_settings:
-  callbacks:
-    - ccproxy.handler
-general_settings:
-  forward_client_headers_to_llm_api: true
-```
-
-See [docs/configuration.md](docs/configuration.md) for more information on how to customize your Claude Code experience using `ccproxy`.
-
-<!-- ## Extended Thinking -->
-
-<!-- Normally, when you send a message, Claude Code does a simple keyword scan for words/phrases like "think deeply" to determine whether or not to enable thinking, as well the size of the thinking token budget. [Simply including the word "ultrathink](https://claudelog.com/mechanics/ultrathink-plus-plus/) sets the thinking token budget to the maximum of `31999`. -->
-
-## Routing Rules
-
-`ccproxy` provides several built-in rules as an homage to [claude-code-router](https://github.com/musistudio/claude-code-router):
-
-- **MatchModelRule**: Routes based on the requested model name
-- **ThinkingRule**: Routes requests containing a "thinking" field
-- **TokenCountRule**: Routes requests with large token counts to high-capacity models
-- **MatchToolRule**: Routes based on tool usage (e.g., WebSearch)
-
-See [`rules.py`](src/ccproxy/rules.py) for implementing your own rules.
-
-Custom rules (and hooks) are loaded with the same mechanism that LiteLLM uses to import the custom callbacks, that is, they are imported as by the LiteLLM python process as named module from within it's virtual environment (e.g. `import custom_rule_file.custom_rule_function`), or as a python script adjacent to `config.yaml`.
-
-## Hooks
-
-Hooks are functions that process requests at different stages. Configure them in `ccproxy.yaml`:
-
-| Hook                 | Description                                                                         |
-| -------------------- | ----------------------------------------------------------------------------------- |
-| `rule_evaluator`     | Evaluates rules and labels requests for routing                                     |
-| `model_router`       | Routes requests to appropriate model based on labels                                |
-| `forward_oauth`      | Forwards OAuth tokens to providers (supports multi-provider with custom User-Agent) |
-| `forward_apikey`     | Forwards `x-api-key` header to proxied requests                                     |
-| `extract_session_id` | Extracts session ID from Claude Code's `user_id` for LangFuse tracking              |
-| `capture_headers`    | Logs HTTP headers as LangFuse trace metadata (with sensitive value redaction)       |
-
-Hooks can accept parameters via configuration:
+**Hook config**: hooks in each stage list are topologically sorted by
+`@hook(reads=..., writes=...)` dependency declarations and executed in parallel DAG
+order. Hooks can be parameterized:
 
 ```yaml
 hooks:
-  - hook: ccproxy.hooks.capture_headers
-    params:
-      - headers: ["user-agent", "x-request-id"] # Optional: filter specific headers
+  outbound:
+    - hook: ccproxy.hooks.some_hook
+      params:
+        key: value
 ```
 
-See [`hooks.py`](src/ccproxy/hooks.py) for implementing custom hooks.
+Per-request overrides via header: `x-ccproxy-hooks: +hook_name,-other_hook`.
 
-## CLI Commands
+## Hook Pipeline
 
-`ccproxy` provides several commands for managing the proxy server:
+| Hook | Stage | Purpose |
+| --- | --- | --- |
+| `forward_oauth` | inbound | Sentinel key (`sk-ant-oat-ccproxy-{provider}`) substitution from `oat_sources` |
+| `extract_session_id` | inbound | Parses `metadata.user_id` → stores session_id on `flow.metadata` |
+| `add_beta_headers` | outbound | Merges required `anthropic-beta` headers |
+| `inject_claude_code_identity` | outbound | Prepends system prompt prefix for OAuth requests to Anthropic |
+| `inject_mcp_notifications` | outbound | Injects buffered MCP terminal events as synthetic tool_use/tool_result |
+| `verbose_mode` | outbound | Strips `redact-thinking-*` from `anthropic-beta` header |
+
+## CLI Reference
 
 ```bash
-# Install configuration files
-ccproxy install [--force]
+ccproxy start                          # Start server (inspector mode, foreground)
+ccproxy run [--inspect] -- <command>   # Run command with proxy env vars / WireGuard namespace jail
+ccproxy status [--json]                # Show running state
+ccproxy init [--force]                 # Initialize config in ~/.config/ccproxy/
+ccproxy logs [-f] [-n LINES]           # View logs
 
-# Start LiteLLM
-ccproxy start [--detach]
-
-# Stop LiteLLM
-ccproxy stop
-
-# Check proxy server status (includes url field for tool detection)
-ccproxy status         # Human-readable output
-ccproxy status --json  # JSON output with url field
-
-# View proxy server logs
-ccproxy logs [-f] [-n LINES]
-
-# Run any command with proxy environment variables
-ccproxy run <command> [args...]
+# Flow inspection (all commands accept repeatable --jq filters)
+ccproxy flows list [--json] [--jq FILTER]...     # List flow set
+ccproxy flows dump [--jq FILTER]...              # Multi-page HAR of flow set
+ccproxy flows diff [--jq FILTER]...              # Sliding-window diff across set
+ccproxy flows compare [--jq FILTER]...           # Per-flow client-vs-forwarded diff
+ccproxy flows clear [--all] [--jq FILTER]...     # Clear flow set (--all bypasses filters)
 ```
 
-After installation and setup, you can run any command through the `ccproxy`:
+`ccproxy run` (without `--inspect`) sets `ANTHROPIC_BASE_URL`,
+`OPENAI_BASE_URL`, and `OPENAI_API_BASE` in the subprocess environment and
+routes traffic through the reverse proxy listener.
+
+`ccproxy run --inspect` wraps the command in a rootless WireGuard network
+namespace jail — all outbound traffic is transparently intercepted regardless of
+SDK configuration.
+
+## Inspecting Flows
+
+All `flows` subcommands operate on a resolved **set** of flows.
+The set is built by a pipeline:
+
+```
+GET /flows → config default_jq_filters → CLI --jq filters → final set
+```
+
+The `--jq` flag is repeatable.
+Each filter must consume a JSON array and produce a JSON array.
+Multiple filters chain via jq’s `|` operator:
 
 ```bash
-# Run Claude Code through the proxy
-ccproxy run claude --version
-ccproxy run claude -p "Explain quantum computing"
+# Only Anthropic API calls
+ccproxy flows list --jq 'map(select(.request.pretty_host == "api.anthropic.com"))'
 
-# Run other tools through the proxy
-ccproxy run curl http://localhost:4000/health
-ccproxy run python my_script.py
+# Only POST /v1/messages
+ccproxy flows list --jq 'map(select(.request.path | startswith("/v1/messages")))'
 
+# Chain filters: Anthropic POSTs with 200 status
+ccproxy flows list \
+  --jq 'map(select(.request.pretty_host == "api.anthropic.com"))' \
+  --jq 'map(select(.request.method == "POST"))' \
+  --jq 'map(select(.response.status_code == 200))'
 ```
 
-The `ccproxy run` command sets up the following environment variables:
+Config-level defaults apply before CLI filters, so you can set a baseline in
+`ccproxy.yaml`:
 
-- `ANTHROPIC_BASE_URL` - For Anthropic SDK compatibility
-- `OPENAI_API_BASE` - For OpenAI SDK compatibility
-- `OPENAI_BASE_URL` - For OpenAI SDK compatibility
+```yaml
+flows:
+  default_jq_filters:
+    - 'map(select(.request.path | startswith("/v1/messages")))'
+```
+
+### Listing flows
+
+```bash
+# Rich table (default)
+ccproxy flows list
+
+# Raw JSON
+ccproxy flows list --json
+
+# Filtered table
+ccproxy flows list --jq 'map(select(.request.path | startswith("/v1/messages")))'
+```
+
+```
+┏━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━┓
+┃ ID       ┃ Method  ┃  Code ┃ Host      ┃ Path      ┃ UA       ┃ Time         ┃
+┡━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━┩
+│ 3c9c224c │ POST    │   200 │ api.anth… │ /v1/mess… │ claude-… │ 42 seconds   │
+│          │         │       │           │           │ (extern… │ ago          │
+│ 6cc161e9 │ POST    │   200 │ api.anth… │ /v1/mess… │ claude-… │ 29 seconds   │
+│          │         │       │           │           │ (extern… │ ago          │
+└──────────┴─────────┴───────┴───────────┴───────────┴──────────┴──────────────┘
+```
+
+### Diffing consecutive requests
+
+`flows diff` performs a sliding-window unified diff over request bodies.
+For a set `[f0, f1, f2]`, it produces diffs `f0→f1` and `f1→f2`. Requires at
+least 2 flows.
+
+```bash
+ccproxy flows diff --jq 'map(select(.request.path | startswith("/v1/messages")))'
+```
+
+```diff
+--- flow:3c9c224c
++++ flow:6cc161e9
+@@ -26,7 +26,7 @@
+         {
+           "type": "text",
+-          "text": "what's 2+2",
++          "text": "what's 3+3",
+           "cache_control": {
+```
+
+### Comparing client vs forwarded requests
+
+`flows compare` diffs the pre-pipeline client request against the post-pipeline
+forwarded request for each flow.
+This shows what ccproxy’s hook pipeline and lightllm transform actually changed.
+Supports 1+ flows.
+
+```bash
+ccproxy flows compare --jq 'map(select(.request.path | startswith("/v1/messages")))'
+```
+
+When the pipeline rewrites the request (e.g. Anthropic → Gemini transform),
+you’ll see URL changes and body diffs:
+
+```
+╭──────── URL change — abc12345 ────────╮
+│ - https://api.anthropic.com/v1/messages│
+│ + https://generativelanguage.googleapi…│
+╰───────────────────────────────────────╯
+╭──────── Body diff — abc12345 ─────────╮
+│ --- client:abc12345                    │
+│ +++ forwarded:abc12345                 │
+│ @@ -1,5 +1,5 @@                       │
+│ ...                                    │
+╰───────────────────────────────────────╯
+```
+
+When no transform is applied (same-provider passthrough), the output confirms
+the bodies are identical:
+
+```
+3c9c224c: request bodies are identical.
+6cc161e9: request bodies are identical.
+```
+
+### Dumping HAR
+
+`flows dump` exports the flow set as a multi-page HAR 1.2 file.
+Each flow becomes one page with two entries:
+
+| Entry | Content |
+| --- | --- |
+| `entries[2i]` | Forwarded request + upstream response |
+| `entries[2i+1]` | Client request (pre-pipeline snapshot) + upstream response |
+
+```bash
+# Dump all flows to a HAR file (open in Chrome DevTools / Charles / Fiddler)
+ccproxy flows dump > all.har
+
+# Dump only LLM requests
+ccproxy flows dump --jq 'map(select(.request.path | startswith("/v1/messages")))' > llm.har
+
+# Query HAR with jq
+ccproxy flows dump | jq '.log.pages | length'           # page count
+ccproxy flows dump | jq '.log.entries[0].request.url'    # first forwarded URL
+```
+
+### Clearing flows
+
+```bash
+# Clear only matching flows (respects --jq filters)
+ccproxy flows clear --jq 'map(select(.request.path | startswith("/v1/messages")))'
+# => Cleared 2 flow(s).
+
+# Clear everything (bypasses all filters)
+ccproxy flows clear --all
+```
 
 ## Development
 
-### Request Lifecycle
-
-```mermaid
-sequenceDiagram
-    participant CC as cli app
-    participant CP as litellm request → ccproxy
-    participant LP as ccproxy ← litellm response
-    participant API as api.anthropic.com
-
-    Note over CC,API: Request Flow
-    CC->>CP: API Request<br/>(messages, model, tools, etc.)
-    Note over CP,LP: <Add hooks in any working order here>
-
-    Note right of CP: ccproxy.hooks.rule_evaluator
-    CP-->>CP: ↓
-    Note right of CP: ccproxy.hooks.model_router
-    CP-->>CP: ↓
-    Note right of CP: ccproxy.hooks.forward_oauth
-    CP-->>CP: ↓
-    Note right of CP: <Your code here>
-    CP->>API: LiteLLM: Outbound Modified Provider-specific Request
-
-    Note over CC,API: Response Flow (Streaming)
-    API-->>LP: Streamed Response
-    Note right of CP: First to see response<br/>Can modify/hook into stream
-    LP-->>CC: Streamed Response<br/>(forwarded to cli app)
-```
-
-### Local Setup
-
-When developing ccproxy locally:
-
 ```bash
-cd /path/to/ccproxy
+git clone https://github.com/starbaser/ccproxy.git
+cd ccproxy
+direnv allow        # activates the nix devShell
 
-# Install in editable mode with litellm bundled
-# Changes to source code are reflected immediately without reinstalling
-uv tool install --editable . --with 'litellm[proxy]' --force
-
-# Restart the proxy to pick up code changes
-ccproxy stop
-ccproxy start --detach
-
-# Run tests
-uv run pytest
-
-# Linting & formatting
-uv run ruff format .
-uv run ruff check --fix .
+just up             # start dev services (process-compose, detached, port 4001)
+just down           # stop dev services
+just test           # uv run pytest
+just lint           # uv run ruff check .
+just fmt            # uv run ruff format .
+just typecheck      # uv run mypy src/ccproxy
 ```
 
-The `--editable` flag enables live code changes without reinstallation. The handler file (`~/.ccproxy/ccproxy.py`) is automatically regenerated on every `ccproxy start`.
-
-**Note:** Custom `ccproxy.py` files are preserved - auto-generation only overwrites files containing the `# AUTO-GENERATED` marker.
+The dev instance runs on port 4001 (production default: 4000). Inspector UI at
+port 8083. Config and cert store at `.ccproxy/` inside the project directory.
 
 ## Troubleshooting
 
-### ImportError: Could not import handler from ccproxy
+### Inspector prerequisites
 
-**Symptom:** LiteLLM fails to start with import errors like:
+The WireGuard namespace jail (`ccproxy run --inspect`) requires `slirp4netns`,
+`wg`, `unshare`, `nsenter`, and `ip` to be available on `PATH`. On NixOS these
+are provided by the devShell; on other systems install them via your package
+manager.
 
-```
-ImportError: Could not import handler from ccproxy
-```
+### OAuth token errors
 
-**Cause:** LiteLLM and ccproxy are in different isolated environments.
-
-**Solution:** Reinstall ccproxy with litellm bundled:
-
-```bash
-# Using uv tool (from PyPI)
-uv tool install claude-ccproxy --with 'litellm[proxy]' --force
-
-# Or from GitHub (latest)
-uv tool install git+https://github.com/starbased-co/ccproxy.git --with 'litellm[proxy]' --force
-
-# Or for local development (editable mode)
-cd /path/to/ccproxy
-uv tool install --editable . --with 'litellm[proxy]' --force
-```
-
-### Handler Configuration Not Updating
-
-**Symptom:** Changes to `handler` field in `ccproxy.yaml` don't take effect.
-
-**Cause:** Handler file is only regenerated on `ccproxy start`.
-
-**Solution:**
+OAuth tokens are loaded at startup from `oat_sources`. If a token command fails
+or returns an empty string, the sentinel key substitution is skipped and the raw
+sentinel key is forwarded — which will be rejected by the provider.
+Verify your token command works standalone:
 
 ```bash
-ccproxy stop
-ccproxy start --detach
-# This regenerates ~/.ccproxy/ccproxy.py
+jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json
 ```
 
-### Verifying Installation
+Tokens are refreshed automatically (TTL-based every 30 min, immediate on 401).
+Set `oat_sources` correctly and restart `ccproxy start` if tokens were stale at
+startup.
 
-Check that ccproxy is accessible to litellm:
+### TLS certificate errors in `ccproxy run`
 
-```bash
-# Find litellm's environment
-which litellm
+`ccproxy run` (without `--inspect`) does not intercept TLS. It only sets env
+vars pointing at the reverse proxy HTTP listener.
+If the target tool performs its own TLS verification against the upstream API,
+no cert installation is needed.
 
-# Check if ccproxy is installed in the same environment
-$(dirname $(which litellm))/python -c "import ccproxy; print(ccproxy.__file__)"
-# Should print path without errors
-```
+`ccproxy run --inspect` intercepts all traffic including TLS. The mitmproxy CA
+is combined with system CAs and injected via `SSL_CERT_FILE`,
+`NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, and `CURL_CA_BUNDLE` into the
+subprocess environment automatically.
 
-## Contributing
-
-I welcome contributions! Please see the [Contributing Guide](CONTRIBUTING.md) for details on:
-
-- Reporting issues and asking questions
-- Setting up development environment
-- Code style and testing requirements
-- Submitting pull requests
-
-Since this is a new project, I especially appreciate:
-
-- Bug reports and feedback
-- Documentation improvements
-- Test coverage additions
-- Feature suggestions
-- Any of your implementations using `ccproxy`
+If a tool still fails certificate verification, ensure the mitmproxy CA
+(`~/.config/ccproxy/mitmproxy-ca-cert.pem`) is trusted by the tool’s runtime.

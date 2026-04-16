@@ -1,22 +1,44 @@
 """Utility functions for ccproxy."""
 
 import inspect
+import json
+import secrets
+import socket
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from rich import box
 from rich.console import Console
 from rich.table import Table
 
 
+def parse_session_id(user_id: str) -> str | None:
+    """Extract session_id from Claude Code's user_id field.
+
+    Supports two formats:
+    - JSON object: {"device_id": "...", "account_uuid": "...", "session_id": "<uuid>"}
+    - Legacy compound string: user_{hash}_account_{uuid}_session_{uuid}
+    """
+    if user_id.startswith("{"):
+        try:
+            obj = json.loads(user_id)
+            if isinstance(obj, dict):
+                sid: str | None = cast("str | None", cast(dict[str, Any], obj).get("session_id"))
+                if sid:
+                    return str(sid)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    if "_session_" in user_id:
+        parts = user_id.split("_session_")
+        if len(parts) == 2:
+            return parts[1]
+
+    return None
+
+
 def get_templates_dir() -> Path:
     """Get the path to the templates directory.
-
-    This function handles both development (running from source) and
-    production (installed package) scenarios.
-
-    Returns:
-        Path to the templates directory
 
     Raises:
         RuntimeError: If templates directory cannot be found
@@ -39,12 +61,6 @@ def get_templates_dir() -> Path:
 def get_template_file(filename: str) -> Path:
     """Get the path to a specific template file.
 
-    Args:
-        filename: Name of the template file
-
-    Returns:
-        Path to the template file
-
     Raises:
         FileNotFoundError: If the template file doesn't exist
     """
@@ -57,17 +73,27 @@ def get_template_file(filename: str) -> Path:
     return template_path
 
 
+def find_available_port(start: int = 49152, end: int = 65535) -> int:
+    """Find a random available port in the ephemeral range.
+
+    Raises:
+        RuntimeError: If no available port found after 100 attempts
+    """
+    for _ in range(100):
+        port = secrets.randbelow(end - start + 1) + start
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(("127.0.0.1", port))
+                return port
+            except OSError:
+                continue
+    raise RuntimeError(f"Could not find available port in range {start}-{end}")
+
+
 def calculate_duration_ms(start_time: Any, end_time: Any) -> float:
     """Calculate duration in milliseconds between two timestamps.
 
     Handles both float timestamps and timedelta objects.
-
-    Args:
-        start_time: Start timestamp (float or timedelta)
-        end_time: End timestamp (float or timedelta)
-
-    Returns:
-        Duration in milliseconds, rounded to 2 decimal places
     """
     try:
         if isinstance(end_time, float) and isinstance(start_time, float):
@@ -82,7 +108,6 @@ def calculate_duration_ms(start_time: Any, end_time: Any) -> float:
     return round(duration_ms, 2)
 
 
-# Debug printing utilities
 console = Console()
 
 
@@ -93,19 +118,12 @@ def debug_table(
     show_methods: bool = False,
     compact: bool = True,
 ) -> None:
-    """Print any object as a compact debug table.
-
-    Args:
-        obj: Object to debug print
-        title: Optional title for the table
-        max_width: Maximum width for values
-        show_methods: Include methods in output
-        compact: Use compact table style
-    """
+    """Print any object as a compact debug table."""
     if isinstance(obj, dict):
-        _print_dict(obj, title or "Dict", max_width, compact)
+        _print_dict(cast(dict[Any, Any], obj), title or "Dict", max_width, compact)
     elif isinstance(obj, list | tuple):
-        _print_list(obj, title or type(obj).__name__, max_width, compact)
+        seq = cast("list[Any] | tuple[Any, ...]", obj)
+        _print_list(seq, title or type(seq).__name__, max_width, compact)
     elif hasattr(obj, "__dict__"):
         _print_object(obj, title or obj.__class__.__name__, max_width, show_methods, compact)
     else:
@@ -120,7 +138,7 @@ def _print_dict(data: dict[Any, Any], title: str, max_width: int | None, compact
         title=f"[cyan]{title}[/cyan]",
         box=box.SIMPLE if compact else box.ROUNDED,
         show_edge=not compact,
-        padding=(0, 1) if compact else (0, 1),
+        padding=(0, 1),
         collapse_padding=compact,
     )
 
@@ -140,7 +158,7 @@ def _print_list(data: list[Any] | tuple[Any, ...], title: str, max_width: int | 
         title=f"[cyan]{title}[/cyan] ({len(data)} items)",
         box=box.SIMPLE if compact else box.ROUNDED,
         show_edge=not compact,
-        padding=(0, 1) if compact else (0, 1),
+        padding=(0, 1),
     )
 
     table.add_column("#", style="dim", justify="right", width=4)
@@ -159,29 +177,27 @@ def _print_object(obj: Any, title: str, max_width: int | None, show_methods: boo
         title=f"[cyan]{title}[/cyan]",
         box=box.SIMPLE if compact else box.ROUNDED,
         show_edge=not compact,
-        padding=(0, 1) if compact else (0, 1),
+        padding=(0, 1),
     )
 
     table.add_column("Attribute", style="yellow", no_wrap=True)
     table.add_column("Value", max_width=max_width)
     table.add_column("Type", style="dim cyan")
 
-    # Get all attributes
-    attrs = {}
-    for name in dir(obj):
-        if name.startswith("_"):
+    attrs: dict[str, Any] = {}
+    for attr_name in dir(obj):
+        if attr_name.startswith("_"):
             continue
         try:
-            value = getattr(obj, name)
-            if not show_methods and callable(value):
+            attr_value: Any = getattr(obj, attr_name)
+            if not show_methods and callable(attr_value):
                 continue
-            attrs[name] = value
+            attrs[attr_name] = attr_value
         except Exception:
-            attrs[name] = "<unable to access>"
+            attrs[attr_name] = "<unable to access>"
 
-    # Sort and display
     for name in sorted(attrs.keys()):
-        value = attrs[name]
+        value: Any = attrs[name]
         table.add_row(name, _format_value(value, max_width), type(value).__name__)
 
     console.print(table)
@@ -202,9 +218,11 @@ def _format_value(value: Any, max_width: int | None = None) -> str:
             s = s[: max_width - 3] + "..."
         return f'"{s}"'
     elif isinstance(value, list | tuple):
-        return f"[dim]{type(value).__name__}[{len(value)}][/dim]"
+        seq = cast("list[Any] | tuple[Any, ...]", value)
+        return f"[dim]{type(seq).__name__}[{len(seq)}][/dim]"
     elif isinstance(value, dict):
-        return f"[dim]dict[{len(value)}][/dim]"
+        d = cast(dict[Any, Any], value)
+        return f"[dim]dict[{len(d)}][/dim]"
     elif callable(value):
         return f"[magenta]{value.__name__}()[/magenta]"
     else:
@@ -226,10 +244,7 @@ def dv(*args: Any, **kwargs: Any) -> None:
         var_names = [f"arg{i}" for i in range(len(args))]
     else:
         code_context = inspect.getframeinfo(frame.f_back).code_context
-        if code_context:
-            code = code_context[0].strip()
-        else:
-            code = ""
+        code = code_context[0].strip() if code_context else ""
 
         # Extract variable names from the call
         import re
@@ -266,17 +281,19 @@ def p(obj: Any) -> None:
     if isinstance(obj, dict):
         table.add_column("Key", style="yellow")
         table.add_column("Value")
-        for k, v in obj.items():
+        typed_dict = cast(dict[Any, Any], obj)
+        for k, v in typed_dict.items():
             table.add_row(str(k), repr(v))
     elif isinstance(obj, list | tuple):
         table.add_column("#", style="dim")
         table.add_column("Value")
-        for i, v in enumerate(obj):
+        typed_seq = cast("list[Any] | tuple[Any, ...]", obj)
+        for i, v in enumerate(typed_seq):
             table.add_row(str(i), repr(v))
     elif hasattr(obj, "__dict__"):
         table.add_column("Attr", style="yellow")
         table.add_column("Value")
-        for k, v in obj.__dict__.items():
+        for k, v in cast(dict[str, Any], obj.__dict__).items():
             if not k.startswith("_"):
                 table.add_row(k, repr(v))
     else:

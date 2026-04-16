@@ -49,6 +49,7 @@ coverage.xml
 .env
 .env.local
 .env.*.local
+.claude/
 
 # Logs
 *.log
@@ -69,16 +70,7 @@ poetry.lock
 .envrc
 dumps
 langfuse/
+!stubs/langfuse/
 handoff.md
-
-# ML artifacts
-checkpoints/
-*.pt
-*.pth
-*.ckpt
-tensorboard/
-runs/
-
-# Prisma generated client
-prisma/migrations/
-node_modules/
+.mcp.json
+scripts/verify_cch.py

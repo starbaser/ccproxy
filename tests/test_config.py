@@ -1,108 +1,42 @@
 """Tests for configuration management."""
 
+import subprocess
 import tempfile
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 from ccproxy.config import (
     CCProxyConfig,
-    RuleConfig,
+    CredentialSource,
+    OAuthSource,
+    _read_credential_file,
+    _run_credential_command,
     clear_config_instance,
     get_config,
+    get_config_dir,
 )
 
 
 class TestCCProxyConfig:
     """Tests for main config class."""
 
-    def test_default_config(self) -> None:
+    def test_default_config(self, monkeypatch: mock.MagicMock) -> None:
         """Test default configuration values."""
+        monkeypatch.delenv("CCPROXY_HOST", raising=False)
+        monkeypatch.delenv("CCPROXY_PORT", raising=False)
         config = CCProxyConfig()
-        assert config.debug is False
-        assert config.metrics_enabled is True
-        assert config.litellm_config_path == Path("./config.yaml")
+        assert config.log_level == "INFO"
+        assert config.host == "127.0.0.1"
+        assert config.port == 4000
         assert config.ccproxy_config_path == Path("./ccproxy.yaml")
-        assert config.rules == []
 
     def test_config_attributes(self) -> None:
         """Test config attributes can be set directly."""
         config = CCProxyConfig()
-        config.debug = True
-        config.metrics_enabled = False
-        assert config.debug is True
-        assert config.metrics_enabled is False
-
-    def test_rule_config(self) -> None:
-        """Test rule configuration."""
-        # Create a rule config
-        rule = RuleConfig("test_name", "ccproxy.rules.TokenCountRule", [{"threshold": 5000}])
-        assert rule.model_name == "test_name"
-        assert rule.rule_path == "ccproxy.rules.TokenCountRule"
-        assert rule.params == [{"threshold": 5000}]
-
-        # Create instance
-        instance = rule.create_instance()
-        from ccproxy.rules import TokenCountRule
-
-        assert isinstance(instance, TokenCountRule)
-
-    def test_from_yaml_files(self) -> None:
-        """Test loading configuration from ccproxy.yaml."""
-        ccproxy_yaml_content = """
-ccproxy:
-  debug: true
-  metrics_enabled: false
-  rules:
-    - name: token_count
-      rule: ccproxy.rules.TokenCountRule
-      params:
-        - threshold: 80000
-    - name: background
-      rule: ccproxy.rules.MatchModelRule
-      params:
-        - model_name: claude-haiku-4-5-20251001
-"""
-        litellm_yaml_content = """
-model_list:
-  - model_name: default
-    litellm_params:
-      model: claude-sonnet-4-5-20250929
-  - model_name: background
-    litellm_params:
-      model: claude-haiku-4-5-20251001-20241022
-  - model_name: think
-    litellm_params:
-      model: claude-opus-4-5-20251101
-  - model_name: token_count
-    litellm_params:
-      model: gemini-2.5-pro
-  - model_name: web_search
-    litellm_params:
-      model: perplexity/llama-3.1-sonar-large-128k-online
-"""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as ccproxy_file:
-            ccproxy_file.write(ccproxy_yaml_content)
-            ccproxy_path = Path(ccproxy_file.name)
-
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as litellm_file:
-            litellm_file.write(litellm_yaml_content)
-            litellm_path = Path(litellm_file.name)
-
-        try:
-            config = CCProxyConfig.from_yaml(ccproxy_path, litellm_config_path=litellm_path)
-
-            # Check ccproxy settings
-            assert config.debug is True
-            assert config.metrics_enabled is False
-            assert len(config.rules) == 2
-            assert config.rules[0].model_name == "token_count"
-            assert config.rules[1].model_name == "background"
-
-            # Model lookup functionality has been moved to router.py
-
-        finally:
-            ccproxy_path.unlink()
-            litellm_path.unlink()
+        config.log_level = "DEBUG"
+        assert config.log_level == "DEBUG"
 
     def test_from_yaml_no_ccproxy_section(self) -> None:
         """Test loading ccproxy.yaml without ccproxy section."""
@@ -118,38 +52,7 @@ other_settings:
         try:
             config = CCProxyConfig.from_yaml(yaml_path)
 
-            # Should use defaults
-            assert config.debug is False
-            assert config.metrics_enabled is True
-            assert config.rules == []
-
-        finally:
-            yaml_path.unlink()
-
-    def test_yaml_config_values(self) -> None:
-        """Test that YAML config values are loaded correctly."""
-        yaml_content = """
-ccproxy:
-  debug: true
-  metrics_enabled: false
-  rules:
-    - name: custom_rule
-      rule: ccproxy.rules.TokenCountRule
-      params:
-        - threshold: 70000
-"""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write(yaml_content)
-            yaml_path = Path(f.name)
-
-        try:
-            config = CCProxyConfig.from_yaml(yaml_path)
-            # YAML values should be loaded
-            assert config.debug is True
-            assert config.metrics_enabled is False
-            assert len(config.rules) == 1
-            assert config.rules[0].model_name == "custom_rule"
-            assert config.rules[0].params == [{"threshold": 70000}]
+            assert config.log_level == "INFO"
 
         finally:
             yaml_path.unlink()
@@ -158,7 +61,6 @@ ccproxy:
         """Test that hooks with parameters are loaded correctly."""
         yaml_content = """
 ccproxy:
-  debug: false
   hooks:
     - ccproxy.hooks.rule_evaluator
     - hook: ccproxy.hooks.capture_headers
@@ -172,7 +74,6 @@ ccproxy:
         try:
             config = CCProxyConfig.from_yaml(yaml_path)
 
-            # Both hook formats should be in hooks list
             assert len(config.hooks) == 2
             assert config.hooks[0] == "ccproxy.hooks.rule_evaluator"
             assert config.hooks[1] == {
@@ -180,58 +81,77 @@ ccproxy:
                 "params": {"headers": ["user-agent", "x-request-id"]},
             }
 
-            # load_hooks should return tuples of (func, params)
-            loaded = config.load_hooks()
-            assert len(loaded) == 2
+        finally:
+            yaml_path.unlink()
 
-            # First hook - string format, empty params
-            func1, params1 = loaded[0]
-            assert callable(func1)
-            assert func1.__name__ == "rule_evaluator"
-            assert params1 == {}
+    def test_host_port_from_yaml(self, monkeypatch: mock.MagicMock) -> None:
+        """Test that host and port are loaded from the ccproxy section of YAML."""
+        monkeypatch.delenv("CCPROXY_HOST", raising=False)
+        monkeypatch.delenv("CCPROXY_PORT", raising=False)
 
-            # Second hook - dict format with params
-            func2, params2 = loaded[1]
-            assert callable(func2)
-            assert func2.__name__ == "capture_headers"
-            assert params2 == {"headers": ["user-agent", "x-request-id"]}
+        yaml_content = """
+ccproxy:
+  host: "0.0.0.0"
+  port: 9999
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(yaml_content)
+            yaml_path = Path(f.name)
+
+        try:
+            config = CCProxyConfig.from_yaml(yaml_path)
+
+            assert config.host == "0.0.0.0"
+            assert config.port == 9999
 
         finally:
             yaml_path.unlink()
 
-    def test_model_loading_from_yaml(self) -> None:
-        """Test that model configuration can be loaded from YAML files."""
-        litellm_yaml_content = """
-model_list:
-  - model_name: default
-    litellm_params:
-      model: gpt-4
-  - model_name: background
-    litellm_params:
-      model: gpt-3.5-turbo
-"""
-        ccproxy_yaml_content = """
-ccproxy:
-  debug: false
-"""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as litellm_file:
-            litellm_file.write(litellm_yaml_content)
-            litellm_path = Path(litellm_file.name)
+    def test_host_port_env_override(self, monkeypatch: mock.MagicMock) -> None:
+        """Test that CCPROXY_PORT env var takes precedence over YAML value."""
+        monkeypatch.setenv("CCPROXY_PORT", "5555")
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as ccproxy_file:
-            ccproxy_file.write(ccproxy_yaml_content)
-            ccproxy_path = Path(ccproxy_file.name)
+        yaml_content = """
+ccproxy:
+  port: 9999
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(yaml_content)
+            yaml_path = Path(f.name)
 
         try:
-            config = CCProxyConfig.from_yaml(ccproxy_path, litellm_config_path=litellm_path)
+            config = CCProxyConfig.from_yaml(yaml_path)
 
-            # Config should have the litellm_config_path set
-            assert config.litellm_config_path == litellm_path
-            # Model lookup functionality has been moved to router.py
+            assert config.port == 5555
 
         finally:
-            litellm_path.unlink()
-            ccproxy_path.unlink()
+            yaml_path.unlink()
+
+    def test_resolved_log_file_relative(self, tmp_path: Path) -> None:
+        """Relative log_file resolves against ccproxy_config_path.parent."""
+        yaml_path = tmp_path / "ccproxy.yaml"
+        config = CCProxyConfig(
+            ccproxy_config_path=yaml_path,
+            log_file=Path("ccproxy.log"),
+        )
+        assert config.resolved_log_file == tmp_path / "ccproxy.log"
+
+    def test_resolved_log_file_absolute(self, tmp_path: Path) -> None:
+        """Absolute log_file passes through unchanged."""
+        abs_path = tmp_path / "custom" / "ccproxy.log"
+        config = CCProxyConfig(
+            ccproxy_config_path=tmp_path / "ccproxy.yaml",
+            log_file=abs_path,
+        )
+        assert config.resolved_log_file == abs_path
+
+    def test_resolved_log_file_none(self, tmp_path: Path) -> None:
+        """log_file=None returns None."""
+        config = CCProxyConfig(
+            ccproxy_config_path=tmp_path / "ccproxy.yaml",
+            log_file=None,
+        )
+        assert config.resolved_log_file is None
 
 
 class TestConfigSingleton:
@@ -239,11 +159,10 @@ class TestConfigSingleton:
 
     def test_get_config_singleton(self) -> None:
         """Test that get_config returns the same instance."""
-        # Clear any existing instance
         clear_config_instance()
 
         # Create a custom config instance and set it directly
-        custom_config = CCProxyConfig(debug=True, metrics_enabled=False)
+        custom_config = CCProxyConfig(log_level="DEBUG")
         from ccproxy.config import set_config_instance
 
         set_config_instance(custom_config)
@@ -253,171 +172,56 @@ class TestConfigSingleton:
             config2 = get_config()
 
             assert config1 is config2
-            assert config1.debug is True
-            assert config1.metrics_enabled is False
+            assert config1.log_level == "DEBUG"
 
         finally:
             clear_config_instance()
 
-
-class TestProxyRuntimeConfig:
-    """Tests for loading configuration from proxy_server runtime."""
-
-    def test_from_proxy_runtime_with_ccproxy_yaml(self) -> None:
-        """Test loading config from ccproxy.yaml in the same directory as config.yaml."""
-        # Create a temp directory with config.yaml and ccproxy.yaml
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-
-            # Create config.yaml (LiteLLM config)
-            config_yaml = temp_path / "config.yaml"
-            config_yaml.write_text("""
-model_list:
-  - model_name: default
-    litellm_params:
-      model: gpt-4
-""")
-
-            # Create ccproxy.yaml in same directory
-            ccproxy_yaml = temp_path / "ccproxy.yaml"
-            ccproxy_yaml.write_text("""
-ccproxy:
-  debug: true
-  metrics_enabled: false
-  rules:
-    - name: test
-      rule: ccproxy.rules.TokenCountRule
-      params:
-        - threshold: 75000
-""")
-
-            # Mock Path("config.yaml") to return our temp config.yaml
-            with mock.patch("ccproxy.config.Path") as mock_path:
-                mock_path.return_value = config_yaml
-                config = CCProxyConfig.from_proxy_runtime()
-
-                assert config.debug is True
-                assert config.metrics_enabled is False
-                assert len(config.rules) == 1
-                assert config.rules[0].model_name == "test"
-
-    def test_from_proxy_runtime_without_ccproxy_yaml(self) -> None:
-        """Test loading config when ccproxy.yaml doesn't exist."""
-        # Create a temporary directory without ccproxy.yaml
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-            config_yaml = temp_path / "config.yaml"
-            config_yaml.write_text("model_list: []")
-
-            # Mock Path("config.yaml") to return our temp config.yaml
-            with mock.patch("ccproxy.config.Path") as mock_path:
-                mock_path.return_value = config_yaml
-                config = CCProxyConfig.from_proxy_runtime()
-
-                # Should use defaults
-                assert config.debug is False
-                assert config.metrics_enabled is True
-                assert config.rules == []
-
-    def test_from_proxy_runtime_default_paths(self) -> None:
-        """Test loading config with default paths."""
-        # Create paths that don't exist
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-            config_yaml = temp_path / "config.yaml"  # Don't create it
-
-            # Mock Path to return our non-existent config.yaml
-            with mock.patch("ccproxy.config.Path") as mock_path:
-                mock_path.return_value = config_yaml
-                config = CCProxyConfig.from_proxy_runtime()
-
-                # Should use defaults
-                assert config.debug is False
-                assert config.metrics_enabled is True
-                assert config.rules == []
-
-    def test_config_from_runtime(self) -> None:
-        """Test loading configuration from proxy_server runtime."""
-        # Mock proxy_server
-        mock_proxy_server = mock.MagicMock()
-        mock_proxy_server.general_settings = {}
-        mock_proxy_server.llm_router = mock.MagicMock()
-        mock_proxy_server.llm_router.model_list = [
-            {
-                "model_name": "default",
-                "litellm_params": {
-                    "model": "anthropic/claude-sonnet-4-5-20250929",
-                    "api_base": "https://api.anthropic.com",
-                },
-            },
-            {
-                "model_name": "background",
-                "litellm_params": {
-                    "model": "anthropic/claude-haiku-4-5-20251001-20241022",
-                    "api_base": "https://api.anthropic.com",
-                },
-            },
-        ]
-
-        with mock.patch("ccproxy.config.proxy_server", mock_proxy_server):
-            config = CCProxyConfig.from_proxy_runtime()
-
-            # Config should be created successfully
-            assert config is not None
-            # Model lookup functionality has been moved to router.py
-
-    def test_get_config_uses_runtime_when_available(self) -> None:
-        """Test that get_config prefers runtime config when available."""
-        # Clear any existing instance
+    def test_get_config_uses_ccproxy_yaml(self) -> None:
+        """Test that get_config reads settings from ccproxy.yaml."""
         clear_config_instance()
 
-        # Mock proxy_server
-        mock_proxy_server = mock.MagicMock()
-        mock_proxy_server.general_settings = {}
-
-        # Create temporary ccproxy.yaml
         ccproxy_yaml_content = """
 ccproxy:
-  debug: true
-  rules:
-    - name: runtime_test
-      rule: ccproxy.rules.TokenCountRule
-      params:
-        - threshold: 90000
+  log_level: DEBUG
 """
 
-        # Create a temp directory for the config files
         with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-
-            # Create config.yaml
-            config_yaml = temp_path / "config.yaml"
-            config_yaml.write_text("model_list: []")
-
-            # Create ccproxy.yaml
-            ccproxy_yaml = temp_path / "ccproxy.yaml"
-            ccproxy_yaml.write_text(ccproxy_yaml_content)
-
-            # Change to the temp directory so ./ccproxy.yaml exists
             import os
+
+            ccproxy_yaml = Path(temp_dir) / "ccproxy.yaml"
+            ccproxy_yaml.write_text(ccproxy_yaml_content)
 
             original_cwd = Path.cwd()
             os.chdir(temp_dir)
 
             try:
-                # Set environment variable to point to test directory
-                with (
-                    mock.patch("ccproxy.config.proxy_server", mock_proxy_server),
-                    mock.patch.dict(os.environ, {"CCPROXY_CONFIG_DIR": temp_dir}),
-                ):
+                with mock.patch.dict(os.environ, {"CCPROXY_CONFIG_DIR": temp_dir}):
                     config = get_config()
-                    assert config.debug is True
-                    assert len(config.rules) == 1
-                    assert config.rules[0].params == [{"threshold": 90000}]
+                    assert config.log_level == "DEBUG"
             finally:
                 os.chdir(original_cwd)
 
         clear_config_instance()
+
+
+class TestGetConfigDir:
+    """Tests for get_config_dir() resolution."""
+
+    def test_env_var_wins(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path / "explicit"))
+        assert get_config_dir() == tmp_path / "explicit"
+
+    def test_xdg_config_home(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.delenv("CCPROXY_CONFIG_DIR", raising=False)
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+        assert get_config_dir() == tmp_path / "xdg" / "ccproxy"
+
+    def test_default_fallback(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.delenv("CCPROXY_CONFIG_DIR", raising=False)
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        with mock.patch.object(Path, "home", return_value=tmp_path):
+            assert get_config_dir() == tmp_path / ".config" / "ccproxy"
 
 
 class TestThreadSafety:
@@ -429,28 +233,20 @@ class TestThreadSafety:
         import os
         import threading
 
-        # Clear any existing instance
         clear_config_instance()
 
         yaml_content = """
 ccproxy:
-  debug: true
-  rules:
-    - name: concurrent_test
-      rule: ccproxy.rules.TokenCountRule
-      params:
-        - threshold: 50000
+  log_level: DEBUG
 """
         with tempfile.TemporaryDirectory() as temp_dir:
             ccproxy_path = Path(temp_dir) / "ccproxy.yaml"
             ccproxy_path.write_text(yaml_content)
 
-            # Change to temp directory so ./ccproxy.yaml exists
             original_cwd = Path.cwd()
             os.chdir(temp_dir)
 
             try:
-                # Track which thread created the config
                 config_ids: set[int] = set()
                 lock = threading.Lock()
 
@@ -459,13 +255,252 @@ ccproxy:
                     with lock:
                         config_ids.add(id(config))
 
-                # Run multiple threads
                 with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
                     futures = [executor.submit(get_and_track) for _ in range(50)]
                     concurrent.futures.wait(futures)
 
-                # All threads should get the same instance
                 assert len(config_ids) == 1
             finally:
                 os.chdir(original_cwd)
                 clear_config_instance()
+
+
+class TestReadCredentialFile:
+    def test_existing_file_returns_stripped_content(self, tmp_path: Path) -> None:
+        f = tmp_path / "cred.txt"
+        f.write_text("   secret-token   \n")
+        assert _read_credential_file(str(f), "TestCred") == "secret-token"
+
+    def test_non_existent_file_returns_none(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        f = tmp_path / "missing.txt"
+        assert _read_credential_file(str(f), "TestCred") is None
+        assert "TestCred file not found" in caplog.text
+
+    def test_empty_file_returns_none(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        f = tmp_path / "empty.txt"
+        f.write_text(" \n \t  ")
+        assert _read_credential_file(str(f), "TestCred") is None
+        assert "TestCred file is empty" in caplog.text
+
+    def test_exception_returns_none(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        original_resolve = Path.resolve
+
+        def mock_resolve(self: Path, *args: object, **kwargs: object) -> Path:
+            if str(self).endswith("error.txt"):
+                raise PermissionError("Access Denied")
+            return original_resolve(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "resolve", mock_resolve)
+        f = tmp_path / "error.txt"
+        assert _read_credential_file(str(f), "TestCred") is None
+        assert "Failed to read TestCred file" in caplog.text
+
+
+class TestRunCredentialCommand:
+    def test_success_returns_stripped_stdout(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_result = mock.MagicMock(returncode=0, stdout="   cmd-token   \n")
+        monkeypatch.setattr(subprocess, "run", mock.Mock(return_value=mock_result))
+        assert _run_credential_command("echo cmd-token", "TestCmd") == "cmd-token"
+
+    def test_non_zero_exit_returns_none(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_result = mock.MagicMock(returncode=127, stderr=" command not found \n")
+        monkeypatch.setattr(subprocess, "run", mock.Mock(return_value=mock_result))
+        assert _run_credential_command("badcmd", "TestCmd") is None
+        assert "TestCmd command failed (exit 127)" in caplog.text
+
+    def test_empty_stdout_returns_none(self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+        mock_result = mock.MagicMock(returncode=0, stdout="\n   \n")
+        monkeypatch.setattr(subprocess, "run", mock.Mock(return_value=mock_result))
+        assert _run_credential_command("echo", "TestCmd") is None
+        assert "TestCmd command returned empty output" in caplog.text
+
+    def test_timeout_expired_returns_none(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        def mock_run_timeout(*args: object, **kwargs: object) -> None:
+            raise subprocess.TimeoutExpired(cmd="sleep", timeout=5)
+
+        monkeypatch.setattr(subprocess, "run", mock_run_timeout)
+        assert _run_credential_command("sleep 10", "TestCmd") is None
+        assert "TestCmd command timed out after 5 seconds" in caplog.text
+
+    def test_other_exception_returns_none(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        def mock_run_error(*args: object, **kwargs: object) -> None:
+            raise OSError("No such file or directory")
+
+        monkeypatch.setattr(subprocess, "run", mock_run_error)
+        assert _run_credential_command("missing", "TestCmd") is None
+        assert "Failed to execute TestCmd command" in caplog.text
+
+
+class TestCredentialSource:
+    def test_resolve_file(self, tmp_path: Path) -> None:
+        f = tmp_path / "cred.txt"
+        f.write_text("file-credential")
+        source = CredentialSource(file=str(f))
+        assert source.resolve() == "file-credential"
+
+    def test_resolve_command(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_result = mock.MagicMock(returncode=0, stdout="cmd-credential")
+        monkeypatch.setattr(subprocess, "run", mock.Mock(return_value=mock_result))
+        source = CredentialSource(command="echo cmd")
+        assert source.resolve() == "cmd-credential"
+
+    def test_requires_exactly_one_source(self) -> None:
+        import pydantic
+
+        with pytest.raises(pydantic.ValidationError):
+            CredentialSource()  # neither file nor command
+
+
+class TestRefreshOAuthToken:
+    def test_token_changes_returns_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        config = CCProxyConfig(oat_sources={"provider1": "echo new-token"})
+        config._oat_values["provider1"] = "old-token"
+        mock_result = mock.MagicMock(returncode=0, stdout="new-token")
+        monkeypatch.setattr(subprocess, "run", mock.Mock(return_value=mock_result))
+
+        token, changed = config.refresh_oauth_token("provider1")
+
+        assert token == "new-token"  # noqa: S105
+        assert changed is True
+        assert config._oat_values["provider1"] == "new-token"
+
+    def test_token_unchanged_returns_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        config = CCProxyConfig(oat_sources={"provider1": "echo current-token"})
+        config._oat_values["provider1"] = "current-token"
+        mock_result = mock.MagicMock(returncode=0, stdout="current-token")
+        monkeypatch.setattr(subprocess, "run", mock.Mock(return_value=mock_result))
+
+        token, changed = config.refresh_oauth_token("provider1")
+
+        assert token == "current-token"  # noqa: S105
+        assert changed is False
+
+    def test_provider_not_configured_returns_none(self) -> None:
+        config = CCProxyConfig()
+        token, changed = config.refresh_oauth_token("missing-provider")
+        assert token is None
+        assert changed is False
+
+    def test_user_agent_stored(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        config = CCProxyConfig(oat_sources={"provider1": OAuthSource(command="echo tok", user_agent="CustomAgent/1.0")})
+        mock_result = mock.MagicMock(returncode=0, stdout="tok")
+        monkeypatch.setattr(subprocess, "run", mock.Mock(return_value=mock_result))
+
+        config.refresh_oauth_token("provider1")
+
+        assert config._oat_user_agents.get("provider1") == "CustomAgent/1.0"
+
+
+class TestGetAuthProviderUA:
+    def test_returns_stored_user_agent(self) -> None:
+        config = CCProxyConfig()
+        config._oat_user_agents["prov"] = "TestAgent/1.0"
+        assert config.get_auth_provider_ua("prov") == "TestAgent/1.0"
+
+    def test_returns_none_for_unknown_provider(self) -> None:
+        config = CCProxyConfig()
+        assert config.get_auth_provider_ua("unknown") is None
+
+
+class TestGetAuthHeader:
+    def test_oauth_source_with_auth_header(self) -> None:
+        config = CCProxyConfig(oat_sources={"prov": OAuthSource(command="echo t", auth_header="x-api-key")})
+        assert config.get_auth_header("prov") == "x-api-key"
+
+    def test_string_source_returns_none(self) -> None:
+        config = CCProxyConfig(oat_sources={"prov": "echo token"})
+        assert config.get_auth_header("prov") is None
+
+    def test_missing_provider_returns_none(self) -> None:
+        config = CCProxyConfig()
+        assert config.get_auth_header("unknown") is None
+
+
+class TestGetProviderForDestination:
+    def test_none_api_base_returns_none(self) -> None:
+        config = CCProxyConfig()
+        assert config.get_provider_for_destination(None) is None
+
+    def test_empty_api_base_returns_none(self) -> None:
+        config = CCProxyConfig()
+        assert config.get_provider_for_destination("") is None
+
+    def test_matching_destination_case_insensitive(self) -> None:
+        config = CCProxyConfig(
+            oat_sources={"anthropic": OAuthSource(command="cmd", destinations=["api.anthropic.com"])}
+        )
+        assert config.get_provider_for_destination("https://API.ANTHROPIC.COM/v1") == "anthropic"
+
+    def test_no_matching_destination_returns_none(self) -> None:
+        config = CCProxyConfig(
+            oat_sources={"anthropic": OAuthSource(command="cmd", destinations=["api.anthropic.com"])}
+        )
+        assert config.get_provider_for_destination("api.openai.com") is None
+
+    def test_string_source_skipped(self) -> None:
+        config = CCProxyConfig(oat_sources={"prov": "echo tok"})
+        assert config.get_provider_for_destination("api.test.com") is None
+
+    def test_dict_source_matching(self) -> None:
+        config = CCProxyConfig(oat_sources={"prov": {"command": "echo t", "destinations": ["api.z.ai"]}})
+        assert config.get_provider_for_destination("https://api.z.ai/v1") == "prov"
+
+
+class TestLoadCredentials:
+    def test_empty_oat_sources_clears_values(self) -> None:
+        config = CCProxyConfig()
+        config._oat_values = {"stale": "data"}
+        config._load_credentials()
+        assert config._oat_values == {}
+        assert config._oat_user_agents == {}
+
+    def test_single_provider_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        config = CCProxyConfig(oat_sources={"prov1": "echo tok1"})
+        mock_result = mock.MagicMock(returncode=0, stdout="tok1")
+        monkeypatch.setattr(subprocess, "run", mock.Mock(return_value=mock_result))
+
+        config._load_credentials()
+
+        assert config._oat_values["prov1"] == "tok1"
+
+    def test_partial_failure_logs_warning(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        config = CCProxyConfig(oat_sources={"prov1": "echo tok1", "prov2": "fail"})
+
+        def mock_run(cmd: str, **kwargs: object) -> mock.MagicMock:
+            m = mock.MagicMock()
+            if "tok1" in cmd:
+                m.returncode = 0
+                m.stdout = "tok1"
+            else:
+                m.returncode = 1
+                m.stderr = "error"
+            return m
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        config._load_credentials()
+
+        assert config._oat_values == {"prov1": "tok1"}
+        assert "but 1 provider(s) failed to load" in caplog.text
+
+    def test_all_providers_fail_logs_error(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        config = CCProxyConfig(oat_sources={"prov1": "fail1", "prov2": "fail2"})
+        mock_result = mock.MagicMock(returncode=1, stderr="err")
+        monkeypatch.setattr(subprocess, "run", mock.Mock(return_value=mock_result))
+
+        config._load_credentials()
+
+        assert config._oat_values == {}
+        assert "Failed to load OAuth tokens for all 2 provider(s)" in caplog.text

@@ -1,0 +1,19 @@
+services:
+  # Jaeger for OpenTelemetry trace collection and visualization
+  ccproxy-jaeger:
+    image: jaegertracing/all-in-one:latest
+    restart: unless-stopped
+    container_name: ccproxy-jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+      SPAN_STORAGE_TYPE: "memory"
+    ports:
+      - "127.0.0.1:4317:4317"    # OTLP gRPC receiver
+      - "127.0.0.1:4318:4318"    # OTLP HTTP receiver
+      - "127.0.0.1:16686:16686"  # Jaeger UI
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:14269/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s

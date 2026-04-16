@@ -1,0 +1,3 @@
+from typing import Any
+
+def _load_beta_headers_config() -> dict[str, Any]: ...

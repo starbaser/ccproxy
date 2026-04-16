@@ -1,0 +1,17 @@
+version: "0.5"
+
+processes:
+  ccproxy:
+    command: "ccproxy start"
+    readiness_probe:
+      exec:
+        command: "ccproxy status --proxy"
+      initial_delay_seconds: 5
+      period_seconds: 30
+      timeout_seconds: 10
+      failure_threshold: 6
+    availability:
+      restart: on_failure
+      backoff_seconds: 2
+      max_restarts: 5
+    namespace: dev

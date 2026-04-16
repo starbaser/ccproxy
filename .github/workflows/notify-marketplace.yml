@@ -2,7 +2,7 @@ name: Notify Marketplace
 
 on:
   push:
-    branches: [starbased/dev]
+    branches: [main, starbased/dev, dev]
 
 jobs:
   dispatch:
