@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-<!-- @/home/eigenmage/dev/projects/eigenpy/CONVENTIONS.md -->
+@/home/eigenmage/dev/projects/eigenpy/CONVENTIONS.md
 
 ## Project Overview
 
@@ -71,13 +71,16 @@ ccproxy start
 ```
 Provider API responds
   -> InspectorAddon.responseheaders()
-     ├─ SSE (text/event-stream) + cross-provider transform → flow.response.stream = SseTransformer(...)
+     ├─ SSE + cross-provider transform → flow.response.stream = SseTransformer(...), stash ref
      ├─ SSE + no transform → flow.response.stream = True  (passthrough)
-     └─ not SSE → (buffered by mitmproxy)
-  -> response phase
-     ├─ streamed → already handled chunk-by-chunk above
-     └─ buffered + transform → transform_to_openai() on full body (RESPONSE route)
-  -> InspectorAddon.response() → OTel span finish
+     └─ not SSE → (buffered by mitmproxy, store_streamed_bodies=True)
+  -> InspectorAddon.response()
+     ├─ snapshot raw provider response → record.provider_response (from SseTransformer.raw_body or content)
+     ├─ 401 retry / Gemini unwrap mutations
+     └─ OTel span finish
+  -> transform RESPONSE route
+     ├─ streamed → already handled chunk-by-chunk by SseTransformer
+     └─ buffered + transform → transform_to_openai() overwrites flow.response.content
 ```
 
 No LiteLLM subprocess. No gateway namespace. No second WireGuard tunnel.
@@ -96,7 +99,7 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 **`lightllm/`** — Surgical nerve connector into LiteLLM's `BaseConfig` transformation pipeline.
 - **Request** (`transform_to_provider`): Standard providers: `validate_environment -> get_complete_url -> transform_request -> sign_request`. Gemini/Vertex AI: `_get_gemini_url` + `_transform_request_body` directly. For Gemini with API key auth, the `Authorization` header from `validate_environment()` is stripped — Google rejects API keys as Bearer tokens; auth is via `?key=` in the URL only.
 - **Response non-streaming** (`transform_to_openai`): `BaseConfig.transform_response()` via `MitmResponseShim` (duck-types `httpx.Response` for mitmproxy's `flow.response`).
-- **Response streaming** (`SseTransformer`): Stateful `flow.response.stream` callable. Parses SSE events, transforms each via LiteLLM's per-provider `ModelResponseIterator.chunk_parser()`, re-serializes as OpenAI-format SSE. Provider dispatch in `_make_response_iterator()`: Anthropic → `handler.py:ModelResponseIterator`, Gemini → `vertex_and_google_ai_studio_gemini.py:ModelResponseIterator`, others → `config.get_model_response_iterator()`.
+- **Response streaming** (`SseTransformer`): Stateful `flow.response.stream` callable. Parses SSE events, transforms each via LiteLLM's per-provider `ModelResponseIterator.chunk_parser()`, re-serializes as OpenAI-format SSE. Tees raw input chunks via `_raw_chunks` / `raw_body` property for pre-transform capture. Provider dispatch in `_make_response_iterator()`: Anthropic → `handler.py:ModelResponseIterator`, Gemini → `vertex_and_google_ai_studio_gemini.py:ModelResponseIterator`, others → `config.get_model_response_iterator()`.
 - **Context caching** (`context_cache.py`): Gemini/Vertex AI provider-side KV caching via Google's `cachedContents` API. `resolve_cached_content()` detects `cache_control: {type: "ephemeral"}` annotations on messages (Anthropic format), separates cached messages, creates or finds existing cached content resources via paginated GET + POST to Google's API, and returns the resource name + filtered messages. The `cachedContent` name is passed through `_transform_request_body()` into the `generateContent` request body. Surgically imports LiteLLM's pure transformation functions (`separate_cached_messages`, `transform_openai_messages_to_gemini_context_caching`, `is_cached_message`). Owns the HTTP layer (plain `httpx.Client`). Cache key is SHA-256 of messages+tools+model, stored as `displayName` for deduplication. Minimum 1024 cached tokens required. Best-effort: any API failure falls through gracefully.
 - `registry.py` wraps `ProviderConfigManager` — all LiteLLM providers for free
 - `NoopLogging` duck-types LiteLLM's `Logging` class to bypass cost/callback machinery (includes `optional_params` for Gemini iterator)
@@ -111,15 +114,15 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 - `overrides.py` — `x-ccproxy-hooks: +hook,-hook` header for per-request force-run/force-skip.
 
 **`inspector/`** — mitmproxy addon layer:
-- `addon.py` — `InspectorAddon`: OTel span lifecycle, FlowRecord creation, direction detection, client request snapshot. All flows are `"inbound"`. Snapshots the full pre-pipeline request (`ClientRequest`) before any hooks mutate the flow. `responseheaders()` hook enables SSE streaming for all `text/event-stream` responses — sets `flow.response.stream` to `True` (passthrough) or `SseTransformer` (cross-provider transform). Exposes `ccproxy.clientrequest` mitmproxy command for structured JSON access to client requests.
+- `addon.py` — `InspectorAddon`: OTel span lifecycle, FlowRecord creation, direction detection, client request snapshot, provider response capture. All flows are `"inbound"`. Snapshots the pre-pipeline request as `HttpSnapshot` before hooks mutate the flow. `responseheaders()` enables SSE streaming — sets `flow.response.stream` to `True` (passthrough) or `SseTransformer` (cross-provider transform); stashes the `SseTransformer` ref in `flow.metadata["ccproxy.sse_transformer"]`. `response()` captures raw provider response into `record.provider_response` before 401 retry, Gemini unwrap, and transform mutations — reads `SseTransformer.raw_body` for streaming transform flows. Exposes `ccproxy.clientrequest` mitmproxy command for structured JSON access to client requests.
 - `process.py` — In-process mitmweb via WebMaster API. Two listeners (reverse + WireGuard). Options applied via `update_defer()`.
 - `pipeline.py` — `build_executor()` bridges hook registry with mitmproxy addons. `register_pipeline_routes()` wires DAG executors as xepor route handlers.
 - `router.py` — Vendored xepor `InterceptedAPI` subclass with mitmproxy 12.x fixes (keyword `Server(address=...)`, `name` dedup, `host=None` wildcard).
 - `routes/transform.py` — REQUEST handler: three modes, `transform` (rewrite body + destination via lightllm dispatch), `redirect` (rewrite destination host, preserve body), and `passthrough` (forward unchanged). For Gemini transform flows, calls `resolve_cached_content()` before `transform_to_provider()` to resolve context caching. Unmatched reverse proxy flows get 501; unmatched WireGuard flows pass through. RESPONSE handler: transforms non-streaming provider responses back to OpenAI format via `transform_to_openai()`. `TransformMeta` persisted on `FlowRecord` during request phase for response handler access.
 - `namespace.py` — Rootless user+net namespace via `unshare` + `slirp4netns` + WireGuard. Network topology: namespace TAP IP `10.0.2.100/24`, gateway (host) `10.0.2.2`, DNS `10.0.2.3`. Default route replaced with `wg0` so all internet traffic goes through WireGuard tunnel → mitmproxy. `route_localnet` sysctl enabled for iptables OUTPUT DNAT on loopback. Three DNAT rules: PREROUTING inbound (tap0→localhost), OUTPUT outbound (localhost→gateway), OUTPUT port remap (default port→running port). `PortForwarder` polls `/proc/{pid}/net/tcp` for dynamic `add_hostfwd` port forwarding. Requires `slirp4netns`, `wg`, `unshare`, `nsenter`, `ip`, `iptables`, `sysctl`.
-- `contentview.py` — Custom mitmproxy content view "Client-Request" showing the pre-pipeline request (method, URL, headers, body). Registered via `contentviews.add()`. Accessible at `GET /flows/{id}/request/content/client-request`.
-- `flow_store.py` — TTL store keyed by `x-ccproxy-flow-id` header for cross-addon state. `ClientRequest` dataclass snapshots the full client request (method, scheme, host, port, path, headers, body) before pipeline mutation. `TransformMeta` carries provider/model/request_data/is_streaming from request phase to response phase.
-- `multi_har_saver.py` — `MultiHARSaver` addon registering the `ccproxy.dump` mitmproxy command. Accepts comma-separated flow IDs, builds a multi-page HAR 1.2 via `SaveHar.make_har()`. Layout: `entries[2i] = [fwdreq, fwdres]`, `entries[2i+1] = [clireq, fwdres]` (clone rebuilt from `ClientRequest` snapshot). One page per flow, `pageref == flow.id`. Registered in `process.py` addon chain.
+- `contentview.py` — Custom mitmproxy content views. `ClientRequestContentview` shows the pre-pipeline request (method, URL, headers, body). `ProviderResponseContentview` shows the raw provider response before transforms. Both registered via `contentviews.add()`.
+- `flow_store.py` — TTL store keyed by `x-ccproxy-flow-id` header for cross-addon state. `HttpSnapshot` dataclass is the unified HTTP message snapshot (headers, body, optional method/url for requests, optional status_code for responses). `FlowRecord` carries `client_request: HttpSnapshot` (pre-pipeline request), `provider_response: HttpSnapshot` (raw provider response before mutations), and `TransformMeta` (provider/model/request_data/is_streaming from request phase to response phase). `ClientRequest` is an alias for `HttpSnapshot`.
+- `multi_har_saver.py` — `MultiHARSaver` addon registering the `ccproxy.dump` mitmproxy command. Accepts comma-separated flow IDs, builds a multi-page HAR 1.2 via `SaveHar.make_har()`. Layout: `entries[2i] = [fwdreq, provider_response]` (forwarded request + raw provider response), `entries[2i+1] = [clireq, client_response]` (client request + post-transform response). `_build_provider_clone()` replaces response with raw snapshot; `_build_client_clone()` replaces request with client snapshot. Falls back when snapshots are absent. One page per flow, `pageref == flow.id`. Registered in `process.py` addon chain.
 - `telemetry.py` — Three-mode OTel: real OTLP export, no-op, or stub.
 - `wg_keylog.py` — Writes Wireshark-compatible keylog for WireGuard tunnel decryption.
 
@@ -136,7 +139,7 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 **`compliance/`** — Provider-agnostic compliance profile learning system:
 - `models.py` — `ComplianceProfile`, `ObservationAccumulator`, feature dataclasses
 - `classifier.py` — Feature classification (content vs envelope vs auth vs dynamic)
-- `extractor.py` — Feature extraction from `ClientRequest` snapshots
+- `extractor.py` — Feature extraction from `HttpSnapshot` snapshots
 - `store.py` — `ProfileStore` singleton with JSON persistence at `{config_dir}/compliance_profiles.json`
 - `merger.py` — `ComplianceMerger` class with 5 idempotent merge operations as public methods: `merge_headers`, `merge_session_metadata`, `wrap_body`, `merge_body_fields`, `merge_system`. `merge()` calls all 5 in order. Subclass to override, skip, reorder, or extend individual operations. `resolve_merger_class()` resolves a dotted import path to a `ComplianceMerger` subclass. Config: `compliance.merger_class` (default `"ccproxy.compliance.merger.ComplianceMerger"`).
 - Observation is built into `InspectorAddon.request()` pre-pipeline, triggered by WireGuard flows or configured UA patterns. Profiles keyed by `(provider, user_agent)` with stability detection across N observations.
@@ -147,9 +150,9 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 - **Auth**: Bearer token resolved from `inspector.mitmproxy.web_password` config (mitmproxy 12+ accepts `Authorization: Bearer` on the REST API directly).
 - **Set model**: all subcommands operate on a resolved flow set: `GET /flows` → config `flows.default_jq_filters` → CLI `--jq` filters → final set. Filters are jq expressions that consume and produce JSON arrays (e.g. `map(select(.request.host | endswith("anthropic.com")))`). Multiple `--jq` flags chain via `|`. The `jq` binary (subprocess) is used — no pypi dependency.
 - **Client methods**: `list_flows()`, `get_request_body(id)`, `dump_har(ids: list[str])` (invokes the `ccproxy.dump` mitmproxy command via `POST /commands/ccproxy.dump` with comma-joined ids), `delete_flow(id)`, `clear()`. `_make_client()` reads auth from ccproxy config.
-- **HAR output**: `ccproxy flows dump` emits multi-page HAR 1.2 JSON built server-side by `MultiHARSaver.ccproxy_dump` (see `inspector/multi_har_saver.py`). One page per flow, two complete HAR entries per page by documented index: `entries[2i] = [fwdreq, fwdres]`, `entries[2i+1] = [clireq, fwdres]`. All HAR details delegated to `mitmproxy.addons.savehar.SaveHar.make_har()`.
+- **HAR output**: `ccproxy flows dump` emits multi-page HAR 1.2 JSON built server-side by `MultiHARSaver.ccproxy_dump` (see `inspector/multi_har_saver.py`). One page per flow, two complete HAR entries per page: `entries[2i] = [fwdreq, provider_response]` (raw), `entries[2i+1] = [clireq, client_response]` (post-transform). All HAR details delegated to `mitmproxy.addons.savehar.SaveHar.make_har()`.
 - **HAR consumption**: `ccproxy flows dump > all.har` (opens in Chrome DevTools / Charles / Fiddler). Query with jq: `... | jq '.log.entries[0].request.url'` for forwarded URL, `... | jq '.log.pages | length'` for page count.
-- **diff vs compare**: `diff` does a sliding-window diff of request bodies across consecutive flows in the set (requires >= 2). `compare` diffs client-request vs forwarded-request within each flow (1+ flows).
+- **diff vs compare**: `diff` does a sliding-window diff of request bodies across consecutive flows in the set (requires >= 2). `compare` diffs client-request vs forwarded-request within each flow (1+ flows), plus provider-response vs client-response body diff for transform flows.
 
 ### Configuration
 
