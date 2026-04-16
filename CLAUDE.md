@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-@~/.claude/standards-python-extended.md
+<!-- @/home/eigenmage/dev/projects/eigenpy/CONVENTIONS.md -->
 
 ## Project Overview
 

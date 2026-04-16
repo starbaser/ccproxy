@@ -79,7 +79,7 @@ class InspectorMeta:
 
 _flow_store: dict[str, tuple[FlowRecord, float]] = {}
 _store_lock = threading.Lock()
-_STORE_TTL = 120.0
+_STORE_TTL = 3600
 
 
 def create_flow_record(direction: Literal["inbound"]) -> tuple[str, FlowRecord]:
