@@ -2,12 +2,12 @@
 """Example using Anthropic SDK with Z.AI GLM models via ccproxy.
 
 Demonstrates routing GLM-4.7 requests through ccproxy with prompt caching.
-The proxy handles authentication via ZAI_API_KEY configured in ~/.ccproxy/config.yaml.
+The proxy handles authentication via ZAI_API_KEY configured in ~/.config/ccproxy/config.yaml.
 
 Requirements:
 - ccproxy running: `ccproxy start --detach`
 - ZAI_API_KEY configured in environment (for config.yaml)
-- glm-4.7 model defined in ~/.ccproxy/config.yaml
+- glm-4.7 model defined in ~/.config/ccproxy/config.yaml
 
 Prompt Caching:
 - Z.AI accepts cache_control in requests but may not create/read cache entries
@@ -340,7 +340,7 @@ def main() -> None:
         console.print(
             "\n[yellow]Troubleshooting:[/yellow]",
             "1. Start ccproxy: [cyan]ccproxy start[/cyan]",
-            "2. Verify ZAI routing in ~/.ccproxy/ccproxy.yaml inspector.transforms",
+            "2. Verify ZAI routing in ~/.config/ccproxy/ccproxy.yaml inspector.transforms",
             "3. Ensure ZAI_API_KEY is set in environment",
             sep="\n",
         )

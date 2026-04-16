@@ -29,7 +29,7 @@ When ccproxy sees this sentinel key, it:
 4. Injects the "You are Claude Code" system message prefix (for OAuth compliance)
 
 **Requirements:**
-- OAuth credentials configured in `~/.ccproxy/ccproxy.yaml` under `oat_sources`
+- OAuth credentials configured in `~/.config/ccproxy/ccproxy.yaml` under `oat_sources`
 - Pipeline hooks enabled: `inject_claude_code_identity`, `add_beta_headers`, `forward_oauth`
 - (Optional) MITM mode provides redundant safety net for header injection at HTTP layer
 
@@ -94,7 +94,7 @@ Direct usage of the Anthropic SDK with ccproxy using OAuth credential forwarding
 # Install anthropic SDK
 uv add anthropic
 
-# Configure OAuth credentials in ~/.ccproxy/ccproxy.yaml
+# Configure OAuth credentials in ~/.config/ccproxy/ccproxy.yaml
 # Start ccproxy
 ccproxy start --detach
 ```
@@ -127,7 +127,7 @@ Using LiteLLM's Python SDK with async completion API.
 # Install litellm
 uv add litellm
 
-# Configure credentials in ~/.ccproxy/ccproxy.yaml
+# Configure credentials in ~/.config/ccproxy/ccproxy.yaml
 # Start ccproxy
 ccproxy start --detach
 ```
@@ -172,7 +172,7 @@ uv run python docs/sdk/zai_anthropic_sdk.py
 
 **Features:**
 - Routes through ccproxy at `http://127.0.0.1:4000`
-- Model: `glm-4.7` (defined in ~/.ccproxy/config.yaml)
+- Model: `glm-4.7` (defined in ~/.config/ccproxy/config.yaml)
 - Dummy API key - ccproxy handles real authentication
 
 ## Common Setup
@@ -194,8 +194,8 @@ ccproxy status
 
 Examples expect ccproxy running with:
 - **Proxy port**: 4000 (default)
-- **OAuth credentials**: Configured in `~/.ccproxy/ccproxy.yaml` under `oat_sources`
-- **Model routing**: Configured via `inspector.transforms` in `~/.ccproxy/ccproxy.yaml`
+- **OAuth credentials**: Configured in `~/.config/ccproxy/ccproxy.yaml` under `oat_sources`
+- **Model routing**: Configured via `inspector.transforms` in `~/.config/ccproxy/ccproxy.yaml`
 
 ### Example ccproxy.yaml OAuth Configuration
 
@@ -212,7 +212,7 @@ ccproxy:
 If examples fail:
 
 1. **Verify ccproxy is running**: `ccproxy status`
-2. **Check OAuth credentials**: Verify `oat_sources` in `~/.ccproxy/ccproxy.yaml`
+2. **Check OAuth credentials**: Verify `oat_sources` in `~/.config/ccproxy/ccproxy.yaml`
 3. **Review logs**: `ccproxy logs -f` for detailed error messages
 4. **Check pipeline hooks**: Ensure `inject_claude_code_identity`, `add_beta_headers`, and `forward_oauth` are enabled in hooks configuration
 5. **Verify port**: Default is 4000, ensure it's not blocked or in use

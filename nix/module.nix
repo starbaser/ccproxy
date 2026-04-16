@@ -20,7 +20,7 @@ in
 
     configDir = lib.mkOption {
       type = lib.types.str;
-      default = ".ccproxy";
+      default = ".config/ccproxy";
       description = "Config directory relative to home.";
     };
 

@@ -58,4 +58,4 @@ ccproxy:
   # Inspector settings
   inspector:
     port: 8083
-    cert_dir: ~/.ccproxy
+    cert_dir: ~/.config/ccproxy

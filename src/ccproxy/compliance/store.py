@@ -211,14 +211,10 @@ def get_store() -> ProfileStore:
 
 
 def _create_store() -> ProfileStore:
-    import os
-
-    from ccproxy.config import get_config
+    from ccproxy.config import get_config, get_config_dir
 
     config = get_config()
-
-    env_dir = os.environ.get("CCPROXY_CONFIG_DIR")
-    config_dir = Path(env_dir) if env_dir else Path.home() / ".ccproxy"
+    config_dir = get_config_dir()
 
     store_path = config_dir / "compliance_profiles.json"
 

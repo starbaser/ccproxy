@@ -24,7 +24,7 @@ ccproxy status
 ccproxy logs -f
 
 # 3. Verify config
-cat $CCPROXY_CONFIG_DIR/ccproxy.yaml   # or: cat ~/.ccproxy/ccproxy.yaml
+cat $CCPROXY_CONFIG_DIR/ccproxy.yaml   # or: cat ~/.config/ccproxy/ccproxy.yaml
 
 # 4. Test OAuth command manually
 jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json

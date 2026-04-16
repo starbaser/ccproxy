@@ -41,7 +41,7 @@ Provider API directly
 
 ## ccproxy.yaml configuration
 
-All configuration lives in a single file: `~/.ccproxy/ccproxy.yaml` (or `$CCPROXY_CONFIG_DIR/ccproxy.yaml`).
+All configuration lives in a single file: `~/.config/ccproxy/ccproxy.yaml` (or `$CCPROXY_CONFIG_DIR/ccproxy.yaml`).
 
 ### Full OAuth configuration
 

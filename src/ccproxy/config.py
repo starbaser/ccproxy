@@ -3,13 +3,14 @@
 Config discovery precedence:
 
 1. ``CCPROXY_CONFIG_DIR`` env var → ``$CCPROXY_CONFIG_DIR/ccproxy.yaml``
-2. ``~/.ccproxy/ccproxy.yaml`` (fallback)
+2. ``$XDG_CONFIG_HOME/ccproxy/ccproxy.yaml`` (defaults to ``~/.config/ccproxy/ccproxy.yaml``)
 
 Individual fields can be overridden via ``CCPROXY_`` prefixed env vars
 (e.g. ``CCPROXY_PORT=4001``).
 """
 
 import logging
+import os
 import subprocess
 import threading
 from pathlib import Path
@@ -571,25 +572,30 @@ _config_instance: CCProxyConfig | None = None
 _config_lock = threading.Lock()
 
 
+def get_config_dir() -> Path:
+    """Resolve the ccproxy configuration directory.
+
+    Resolution order:
+
+    1. ``CCPROXY_CONFIG_DIR`` env var
+    2. ``$XDG_CONFIG_HOME/ccproxy`` (defaults to ``~/.config/ccproxy``)
+    """
+    env_dir = os.environ.get("CCPROXY_CONFIG_DIR")
+    if env_dir:
+        return Path(env_dir)
+    xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
+    base = Path(xdg_config_home) if xdg_config_home else Path.home() / ".config"
+    return base / "ccproxy"
+
+
 def get_config() -> CCProxyConfig:
     global _config_instance
 
     if _config_instance is None:
         with _config_lock:
             if _config_instance is None:
-                import os
-
-                config_path: Path | None = None
-
-                # Priority 1: CCPROXY_CONFIG_DIR env var
-                env_config_dir = os.environ.get("CCPROXY_CONFIG_DIR")
-                if env_config_dir:
-                    config_path = Path(env_config_dir)
-                    logger.info(f"Using config directory from environment: {config_path}")
-
-                # Priority 2: ~/.ccproxy fallback
-                if config_path is None:
-                    config_path = Path.home() / ".ccproxy"
+                config_path = get_config_dir()
+                logger.info(f"Using config directory: {config_path}")
 
                 ccproxy_yaml = config_path / "ccproxy.yaml"
                 if ccproxy_yaml.exists():

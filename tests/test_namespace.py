@@ -673,7 +673,7 @@ class TestCliInspectHardFailure:
         from ccproxy.cli import Run, main
 
         cmd = Run(command=["--inspect", "--", "echo", "hello"])
-        main(cmd, config_dir=tmp_path)
+        main(cmd, config=tmp_path)
 
         mock_run.assert_called_once_with(tmp_path, ["echo", "hello"], inspect=True)
 

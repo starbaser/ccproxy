@@ -15,6 +15,7 @@ from ccproxy.config import (
     _run_credential_command,
     clear_config_instance,
     get_config,
+    get_config_dir,
 )
 
 
@@ -202,6 +203,25 @@ ccproxy:
                 os.chdir(original_cwd)
 
         clear_config_instance()
+
+
+class TestGetConfigDir:
+    """Tests for get_config_dir() resolution."""
+
+    def test_env_var_wins(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path / "explicit"))
+        assert get_config_dir() == tmp_path / "explicit"
+
+    def test_xdg_config_home(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.delenv("CCPROXY_CONFIG_DIR", raising=False)
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+        assert get_config_dir() == tmp_path / "xdg" / "ccproxy"
+
+    def test_default_fallback(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.delenv("CCPROXY_CONFIG_DIR", raising=False)
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        with mock.patch.object(Path, "home", return_value=tmp_path):
+            assert get_config_dir() == tmp_path / ".config" / "ccproxy"
 
 
 class TestThreadSafety:

@@ -46,7 +46,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _GEMINI_CREDS_PATH = Path.home() / ".gemini" / "oauth_creds.json"
-_BACKUP_PATH = Path.home() / ".ccproxy" / "gemini_refresh_token.bak"
 _REFRESH_CMD = "gemini -m gemini-2.5-flash -p hi 2>/dev/null"
 _EXPIRY_BUFFER_MS = 120_000  # Refresh when < 2 minutes remaining
 _REFRESH_TIMEOUT_SEC = 30
@@ -63,6 +62,12 @@ _PROXY_ENV_VARS = frozenset(
 _BUG_SIGNATURES = ("No refresh token is set", "Failed to clear OAuth credentials")
 
 _refresh_token_stash: str | None = None
+
+
+def _backup_path() -> Path:
+    from ccproxy.config import get_config_dir
+
+    return get_config_dir() / "gemini_refresh_token.bak"
 
 
 def gemini_oauth_refresh_guard(ctx: Context) -> bool:
@@ -148,9 +153,9 @@ def _maybe_stash_refresh_token(creds: dict[str, Any]) -> None:
         return
     _refresh_token_stash = rt
     try:
-        _BACKUP_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _BACKUP_PATH.write_text(rt)
-        _BACKUP_PATH.chmod(stat.S_IRUSR | stat.S_IWUSR)
+        _backup_path().parent.mkdir(parents=True, exist_ok=True)
+        _backup_path().write_text(rt)
+        _backup_path().chmod(stat.S_IRUSR | stat.S_IWUSR)
     except OSError as e:
         logger.debug("Cannot write refresh_token backup: %s", e)
 
@@ -158,8 +163,8 @@ def _maybe_stash_refresh_token(creds: dict[str, Any]) -> None:
 def _read_disk_backup() -> str | None:
     """Read the last-known-good refresh_token from disk backup."""
     try:
-        if _BACKUP_PATH.is_file():
-            return _BACKUP_PATH.read_text().strip() or None
+        if _backup_path().is_file():
+            return _backup_path().read_text().strip() or None
     except OSError as e:
         logger.debug("Cannot read refresh_token backup: %s", e)
     return None

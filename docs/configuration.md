@@ -7,7 +7,7 @@ ccproxy reads a single configuration file: `ccproxy.yaml`.
 **Discovery order** (highest to lowest precedence):
 
 1. `$CCPROXY_CONFIG_DIR/ccproxy.yaml`
-2. `~/.ccproxy/ccproxy.yaml`
+2. `~/.config/ccproxy/ccproxy.yaml`
 
 ## Installation
 
@@ -23,7 +23,7 @@ Initialize the config file:
 ccproxy init
 ```
 
-This writes `~/.ccproxy/ccproxy.yaml` with defaults. Use `--force` to overwrite an existing file.
+This writes `~/.config/ccproxy/ccproxy.yaml` with defaults. Use `--force` to overwrite an existing file.
 
 ## Full Config Reference
 
@@ -225,5 +225,5 @@ ccproxy:
 
 | Variable | Description |
 |---|---|
-| `CCPROXY_CONFIG_DIR` | Override the config directory (takes precedence over `~/.ccproxy`) |
+| `CCPROXY_CONFIG_DIR` | Override the config directory (takes precedence over `~/.config/ccproxy`) |
 | `CCPROXY_PORT` | Override the listen port (takes precedence over `ccproxy.port` in the config file) |

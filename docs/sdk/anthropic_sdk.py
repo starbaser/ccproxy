@@ -7,7 +7,7 @@ triggers automatic OAuth token substitution from ccproxy's cached credentials.
 
 Requirements:
 - ccproxy running: `ccproxy start --detach`
-- OAuth credentials configured in ~/.ccproxy/ccproxy.yaml under oat_sources
+- OAuth credentials configured in ~/.config/ccproxy/ccproxy.yaml under oat_sources
 """
 
 import anthropic
@@ -98,7 +98,7 @@ def main() -> None:
         console.print(
             "\n[yellow]Troubleshooting:[/yellow]",
             "1. Start ccproxy: [cyan]ccproxy start --detach[/cyan]",
-            "2. Verify oat_sources in ~/.ccproxy/ccproxy.yaml",
+            "2. Verify oat_sources in ~/.config/ccproxy/ccproxy.yaml",
             "3. Check logs: [cyan]ccproxy logs -f[/cyan]",
             sep="\n",
         )

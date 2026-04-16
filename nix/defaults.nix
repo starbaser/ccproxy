@@ -44,7 +44,7 @@
     };
     inspector = {
       port = 8083;
-      cert_dir = "~/.ccproxy";
+      cert_dir = "~/.config/ccproxy";
       transforms = [
         { match_host = "cloudcode-pa.googleapis.com"; mode = "passthrough"; }
         { match_path = "/v1/messages"; mode = "redirect"; dest_provider = "anthropic"; dest_host = "api.anthropic.com"; dest_path = "/v1/messages"; dest_api_key_ref = "anthropic"; }

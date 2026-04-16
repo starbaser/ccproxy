@@ -12,7 +12,7 @@ The inspector is ccproxy's core interception engine. It embeds mitmweb in-proces
 
 Starts the inspector in the foreground. Under the hood:
 
-1. Loads config from `$CCPROXY_CONFIG_DIR/ccproxy.yaml` (or `~/.ccproxy/ccproxy.yaml`).
+1. Loads config from `$CCPROXY_CONFIG_DIR/ccproxy.yaml` (or `~/.config/ccproxy/ccproxy.yaml`).
 2. Runs preflight port checks on the proxy port (default 4000) and inspector UI port (default 8083).
 3. Sets `MITMPROXY_SSLKEYLOGFILE` **before any mitmproxy import** (the TLS keylog path is evaluated at module import time in `mitmproxy.net.tls`).
 4. Calls `run_inspector()` which creates a `WebMaster` instance with two listener modes:

@@ -31,7 +31,7 @@ programs.ccproxy = {
 };
 ```
 
-This installs the `ccproxy` binary, generates `~/.ccproxy/ccproxy.yaml` from Nix, and creates a `systemd --user` service that auto-restarts on config changes.
+This installs the `ccproxy` binary, generates `~/.config/ccproxy/ccproxy.yaml` from Nix, and creates a `systemd --user` service that auto-restarts on config changes.
 
 ### Standalone (any Linux)
 
@@ -42,11 +42,11 @@ cd ccproxy
 nix develop   # or: direnv allow
 
 # Initialize config
-ccproxy init          # copies template to ~/.ccproxy/ccproxy.yaml
+ccproxy init          # copies template to ~/.config/ccproxy/ccproxy.yaml
 ccproxy init --force  # overwrites existing config
 
 # Edit config
-$EDITOR ~/.ccproxy/ccproxy.yaml
+$EDITOR ~/.config/ccproxy/ccproxy.yaml
 
 # Start
 ccproxy start
@@ -185,7 +185,7 @@ export ANTHROPIC_API_KEY="sk-ant-oat-ccproxy-anthropic"
 
 ## Configuration
 
-All config lives in `$CCPROXY_CONFIG_DIR/ccproxy.yaml` (default `~/.ccproxy/ccproxy.yaml`).
+All config lives in `$CCPROXY_CONFIG_DIR/ccproxy.yaml` (default `~/.config/ccproxy/ccproxy.yaml`).
 
 ```yaml
 ccproxy:
@@ -217,7 +217,7 @@ ccproxy:
 
   inspector:
     port: 8083
-    cert_dir: ~/.ccproxy
+    cert_dir: ~/.config/ccproxy
     transforms:
       - match_path: /v1/messages
         mode: redirect

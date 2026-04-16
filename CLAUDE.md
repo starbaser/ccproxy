@@ -155,7 +155,7 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 
 **Config discovery** (highest to lowest precedence):
 1. `$CCPROXY_CONFIG_DIR/ccproxy.yaml`
-2. `~/.ccproxy/ccproxy.yaml`
+2. `~/.config/ccproxy/ccproxy.yaml`
 
 **Hook config format** — two-stage dict:
 ```yaml

@@ -707,7 +707,7 @@ def show_status(
 def main(
     cmd: Annotated[Command, tyro.conf.arg(name="")],
     *,
-    config_dir: Annotated[Path | None, tyro.conf.arg(help="Configuration directory", metavar="PATH")] = None,
+    config: Annotated[Path | None, tyro.conf.arg(help="Configuration directory", metavar="PATH")] = None,
     verbose: Annotated[
         bool,
         tyro.conf.arg(
@@ -721,10 +721,9 @@ def main(
     Transparent mitmproxy-based pipeline with DAG-driven hooks for OAuth
     injection, model transformation, and identity management.
     """
-    if config_dir is None:
-        env_config_dir = os.environ.get("CCPROXY_CONFIG_DIR")
-        config_dir = Path(env_config_dir) if env_config_dir else Path.home() / ".ccproxy"
+    from ccproxy.config import get_config_dir
 
+    config_dir = config if config is not None else get_config_dir()
     os.environ.setdefault("CCPROXY_CONFIG_DIR", str(config_dir))
 
     # Tyro wraps nested subcommand unions (like Flows) in a DummyWrapper when
@@ -735,17 +734,17 @@ def main(
         cmd = cmd.__tyro_dummy_inner__  # type: ignore[attr-defined]
     from ccproxy.config import get_config
 
-    config = get_config()
+    cfg = get_config()
     is_daemon = isinstance(cmd, Start)
     # LOG_LEVEL env var overrides config.log_level — standard convention
     # used across Django / FastAPI / uvicorn. Python's stdlib has no
     # built-in env var support for logging; LOG_LEVEL is the de-facto name.
-    log_level = os.environ.get("LOG_LEVEL") or config.log_level
+    log_level = os.environ.get("LOG_LEVEL") or cfg.log_level
     setup_logging(
         config_dir,
         log_level=log_level,
-        log_file=config.resolved_log_file if is_daemon else None,
-        use_journal=config.use_journal and is_daemon,
+        log_file=cfg.resolved_log_file if is_daemon else None,
+        use_journal=cfg.use_journal and is_daemon,
         verbose=is_daemon or verbose,
     )
 

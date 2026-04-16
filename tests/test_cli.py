@@ -493,7 +493,7 @@ class TestMainFunction:
         monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
         clear_config_instance()
         cmd = Start()
-        main(cmd, config_dir=tmp_path)
+        main(cmd, config=tmp_path)
 
         mock_start.assert_called_once_with(tmp_path)
 
@@ -503,7 +503,7 @@ class TestMainFunction:
         monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
         clear_config_instance()
         cmd = Init(force=True)
-        main(cmd, config_dir=tmp_path)
+        main(cmd, config=tmp_path)
 
         mock_init.assert_called_once_with(tmp_path, force=True)
 
@@ -513,7 +513,7 @@ class TestMainFunction:
         monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
         clear_config_instance()
         cmd = Run(command=["echo", "hello", "world"])
-        main(cmd, config_dir=tmp_path)
+        main(cmd, config=tmp_path)
 
         mock_run.assert_called_once_with(tmp_path, ["echo", "hello", "world"], inspect=False)
 
@@ -524,22 +524,23 @@ class TestMainFunction:
         cmd = Run(command=[])
 
         with pytest.raises(SystemExit) as exc_info:
-            main(cmd, config_dir=tmp_path)
+            main(cmd, config=tmp_path)
 
         assert exc_info.value.code == 0
         captured = capsys.readouterr()
         assert "usage: ccproxy run" in captured.out
 
     def test_main_default_config_dir(self, tmp_path: Path) -> None:
-        """Test main uses default config directory when not specified."""
-        default_dir = tmp_path / ".ccproxy"
-        default_dir.mkdir()
+        """Test main uses XDG default config directory when not specified."""
+        default_dir = tmp_path / ".config" / "ccproxy"
+        default_dir.mkdir(parents=True)
         with (
             patch.dict(os.environ, {}, clear=False),
             patch.object(Path, "home", return_value=tmp_path),
             patch("ccproxy.cli.start_server") as mock_start,
         ):
             os.environ.pop("CCPROXY_CONFIG_DIR", None)
+            os.environ.pop("XDG_CONFIG_HOME", None)
             cmd = Start()
             main(cmd)
 
@@ -551,7 +552,7 @@ class TestMainFunction:
         monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
         clear_config_instance()
         cmd = Logs(follow=True, lines=50)
-        main(cmd, config_dir=tmp_path)
+        main(cmd, config=tmp_path)
 
         mock_logs.assert_called_once_with(follow=True, lines=50, config_dir=tmp_path)
 
@@ -561,7 +562,7 @@ class TestMainFunction:
         monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
         clear_config_instance()
         cmd = Status(json_output=False)
-        main(cmd, config_dir=tmp_path)
+        main(cmd, config=tmp_path)
 
         mock_status.assert_called_once_with(tmp_path, json_output=False, check_proxy=False, check_inspect=False)
 
@@ -571,7 +572,7 @@ class TestMainFunction:
         monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
         clear_config_instance()
         cmd = Status(json_output=True)
-        main(cmd, config_dir=tmp_path)
+        main(cmd, config=tmp_path)
 
         mock_status.assert_called_once_with(tmp_path, json_output=True, check_proxy=False, check_inspect=False)
 

@@ -15,16 +15,15 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Any
 
 
 def _resolve_store_path() -> Path:
-    env_dir = os.environ.get("CCPROXY_CONFIG_DIR")
-    config_dir = Path(env_dir) if env_dir else Path.home() / ".ccproxy"
-    return config_dir / "compliance_profiles.json"
+    from ccproxy.config import get_config_dir
+
+    return get_config_dir() / "compliance_profiles.json"
 
 
 def _load_store(path: Path) -> dict[str, Any]:

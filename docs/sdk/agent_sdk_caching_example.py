@@ -91,7 +91,7 @@ async def main() -> None:
     - cli.py: Tyro-based CLI interface for managing the proxy server
 
     Configuration Files:
-    - ~/.ccproxy/ccproxy.yaml - ccproxy configuration (hooks, transforms, oat_sources)
+    - ~/.config/ccproxy/ccproxy.yaml - ccproxy configuration (hooks, transforms, oat_sources)
 
     OAuth tokens are cached at startup. On 401, the credential source is
     re-resolved — if the token changed, the request is retried automatically.
