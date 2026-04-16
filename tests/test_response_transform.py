@@ -198,6 +198,31 @@ class TestSseTransformer:
         assert result == b""
 
 
+class TestSseTransformerRawBody:
+    """Tests for the raw chunk tee buffer on SseTransformer."""
+
+    def test_raw_body_accumulates_chunks(self) -> None:
+        with patch("ccproxy.lightllm.dispatch._make_response_iterator", return_value=None):
+            transformer = SseTransformer("openai", "gpt-4o", {})
+
+        transformer(b"chunk1")
+        transformer(b"chunk2")
+        assert transformer.raw_body == b"chunk1chunk2"
+
+    def test_raw_body_includes_empty_sentinel(self) -> None:
+        with patch("ccproxy.lightllm.dispatch._make_response_iterator", return_value=None):
+            transformer = SseTransformer("openai", "gpt-4o", {})
+
+        transformer(b"data: hi\n\n")
+        transformer(b"")
+        assert transformer.raw_body == b"data: hi\n\n"
+
+    def test_raw_body_empty_initially(self) -> None:
+        with patch("ccproxy.lightllm.dispatch._make_response_iterator", return_value=None):
+            transformer = SseTransformer("openai", "gpt-4o", {})
+        assert transformer.raw_body == b""
+
+
 class TestMakeSseTransformer:
     def test_returns_sse_transformer(self) -> None:
         with patch("ccproxy.lightllm.dispatch._make_response_iterator", return_value=None):

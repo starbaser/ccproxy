@@ -19,7 +19,7 @@ from mitmproxy.proxy.mode_specs import ReverseMode, WireGuardMode
 
 from ccproxy.inspector.flow_store import (
     FLOW_ID_HEADER,
-    ClientRequest,
+    HttpSnapshot,
     InspectorMeta,
     create_flow_record,
     get_flow_record,
@@ -63,7 +63,7 @@ class InspectorAddon:
         return None
 
     @staticmethod
-    def _observe_compliance(flow: http.HTTPFlow, client_request: ClientRequest) -> None:
+    def _observe_compliance(flow: http.HTTPFlow, client_request: HttpSnapshot) -> None:
         """Submit flow for compliance profile learning if applicable."""
         try:
             from ccproxy.config import get_config
@@ -109,15 +109,11 @@ class InspectorAddon:
         if record is None:
             flow_id, record = create_flow_record(direction)
             flow.request.headers[FLOW_ID_HEADER] = flow_id
-            record.client_request = ClientRequest(
-                method=flow.request.method,
-                scheme=flow.request.scheme,
-                host=flow.request.pretty_host,
-                port=flow.request.port,
-                path=flow.request.path,
+            record.client_request = HttpSnapshot(
                 headers=dict(flow.request.headers.items()),  # type: ignore[no-untyped-call]
                 body=flow.request.content or b"",
-                content_type=flow.request.headers.get("content-type", ""),
+                method=flow.request.method,
+                url=flow.request.pretty_url,
             )
 
         flow.metadata[InspectorMeta.DIRECTION] = direction
@@ -168,11 +164,13 @@ class InspectorAddon:
 
             optional_params = {k: v for k, v in transform.request_data.items() if k != "messages"}
             try:
-                flow.response.stream = make_sse_transformer(
+                transformer = make_sse_transformer(
                     transform.provider,
                     transform.model,
                     optional_params,
                 )
+                flow.response.stream = transformer
+                flow.metadata["ccproxy.sse_transformer"] = transformer
             except Exception:
                 logger.warning(
                     "Failed to create SSE transformer, falling back to passthrough",
@@ -187,6 +185,23 @@ class InspectorAddon:
             response = flow.response
             if not response:
                 return
+
+            record = flow.metadata.get(InspectorMeta.RECORD)
+            if record is not None:
+                transformer = flow.metadata.pop("ccproxy.sse_transformer", None)
+                raw_body = getattr(transformer, "raw_body", None) if transformer else None
+                if raw_body is not None:
+                    record.provider_response = HttpSnapshot(
+                        headers=dict(response.headers.items()),  # type: ignore[no-untyped-call]
+                        body=raw_body,
+                        status_code=response.status_code,
+                    )
+                elif response.content is not None:
+                    record.provider_response = HttpSnapshot(
+                        headers=dict(response.headers.items()),  # type: ignore[no-untyped-call]
+                        body=response.content,
+                        status_code=response.status_code,
+                    )
 
             if response.status_code == 401 and flow.metadata.get("ccproxy.oauth_injected"):
                 retried = await self._retry_with_refreshed_token(flow)
@@ -334,7 +349,7 @@ class InspectorAddon:
                 {
                     "flow_id": f.id,
                     "method": cr.method,
-                    "url": f"{cr.scheme}://{cr.host}:{cr.port}{cr.path}",
+                    "url": cr.url,
                     "headers": cr.headers,
                     "body": body_parsed,
                 }

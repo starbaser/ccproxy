@@ -3,24 +3,20 @@
 import json
 
 from ccproxy.compliance.extractor import extract_observation
-from ccproxy.inspector.flow_store import ClientRequest
+from ccproxy.inspector.flow_store import HttpSnapshot
 
 
 def _make_client_request(
     headers: dict[str, str] | None = None,
     body: dict | None = None,
-) -> ClientRequest:
+) -> HttpSnapshot:
     headers = headers or {}
     body_bytes = json.dumps(body).encode() if body else b""
-    return ClientRequest(
-        method="POST",
-        scheme="https",
-        host="api.anthropic.com",
-        port=443,
-        path="/v1/messages",
+    return HttpSnapshot(
         headers=headers,
         body=body_bytes,
-        content_type="application/json",
+        method="POST",
+        url="https://api.anthropic.com:443/v1/messages",
     )
 
 
@@ -74,15 +70,11 @@ class TestExtractObservation:
         assert "system" not in bundle.body_envelope
 
     def test_handles_non_json_body(self):
-        cr = ClientRequest(
-            method="GET",
-            scheme="https",
-            host="example.com",
-            port=443,
-            path="/health",
+        cr = HttpSnapshot(
             headers={"user-agent": "test"},
             body=b"not json",
-            content_type="text/plain",
+            method="GET",
+            url="https://example.com:443/health",
         )
         bundle = extract_observation(cr, "unknown")
         assert bundle.body_envelope == {}

@@ -6,27 +6,21 @@ import json
 from unittest.mock import MagicMock
 
 from ccproxy.inspector.contentview import ClientRequestContentview
-from ccproxy.inspector.flow_store import ClientRequest, FlowRecord, InspectorMeta
+from ccproxy.inspector.contentview import ProviderResponseContentview
+from ccproxy.inspector.flow_store import FlowRecord, HttpSnapshot, InspectorMeta
 
 
 def _make_cr(
     method: str = "POST",
-    scheme: str = "https",
-    host: str = "api.example.com",
-    port: int = 443,
-    path: str = "/v1/messages",
+    url: str = "https://api.example.com:443/v1/messages",
     headers: dict[str, str] | None = None,
     body: bytes = b"",
-) -> ClientRequest:
-    return ClientRequest(
-        method=method,
-        scheme=scheme,
-        host=host,
-        port=port,
-        path=path,
+) -> HttpSnapshot:
+    return HttpSnapshot(
         headers=headers or {},
         body=body,
-        content_type="application/json",
+        method=method,
+        url=url,
     )
 
 
@@ -73,7 +67,7 @@ class TestContentviewPrettify:
 
     def test_first_line_format(self) -> None:
         cv = ClientRequestContentview()
-        cr = _make_cr(method="GET", scheme="http", host="localhost", port=8080, path="/health")
+        cr = _make_cr(method="GET", url="http://localhost:8080/health")
         meta = _make_metadata(FlowRecord(direction="inbound", client_request=cr))
         result = cv.prettify(b"", meta)
         assert result.startswith("GET http://localhost:8080/health")
@@ -126,3 +120,45 @@ class TestContentviewPrettify:
         result = cv.prettify(b"", meta)
         assert "--- Headers ---" in result
         assert "--- Body ---" in result
+
+
+class TestProviderResponseContentview:
+    def test_name(self) -> None:
+        cv = ProviderResponseContentview()
+        assert cv.name == "Provider-Response"
+
+    def test_no_flow_returns_fallback(self) -> None:
+        cv = ProviderResponseContentview()
+        meta = MagicMock()
+        meta.flow = None
+        assert cv.prettify(b"", meta) == "(no flow context)"
+
+    def test_no_provider_response_returns_fallback(self) -> None:
+        cv = ProviderResponseContentview()
+        record = FlowRecord(direction="inbound")
+        meta = _make_metadata(record=record)
+        assert cv.prettify(b"", meta) == "(no provider response snapshot)"
+
+    def test_status_code_rendered(self) -> None:
+        cv = ProviderResponseContentview()
+        pr = HttpSnapshot(
+            headers={"content-type": "application/json"},
+            body=b'{"id": "msg_123"}',
+            status_code=200,
+        )
+        record = FlowRecord(direction="inbound", provider_response=pr)
+        meta = _make_metadata(record=record)
+        result = cv.prettify(b"", meta)
+        assert result.startswith("HTTP 200")
+
+    def test_json_body_pretty_printed(self) -> None:
+        cv = ProviderResponseContentview()
+        pr = HttpSnapshot(
+            headers={},
+            body=b'{"choices": [{"text": "hello"}]}',
+            status_code=200,
+        )
+        record = FlowRecord(direction="inbound", provider_response=pr)
+        meta = _make_metadata(record=record)
+        result = cv.prettify(b"", meta)
+        assert '"choices"' in result

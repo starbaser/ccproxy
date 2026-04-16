@@ -9,7 +9,7 @@ import pytest
 from mitmproxy import http
 from mitmproxy.test import tflow
 
-from ccproxy.inspector.flow_store import ClientRequest, FlowRecord, InspectorMeta
+from ccproxy.inspector.flow_store import FlowRecord, HttpSnapshot, InspectorMeta
 from ccproxy.inspector.multi_har_saver import MultiHARSaver
 
 
@@ -27,15 +27,11 @@ def _make_flow_with_snapshot(
     flow.request.content = b'{"model": "claude-haiku"}'  # mutated (forwarded) body
 
     record = FlowRecord(direction="inbound")
-    record.client_request = ClientRequest(
-        method=method,
-        scheme="https",
-        host="api.anthropic.com",
-        port=443,
-        path="/v1/messages",
+    record.client_request = HttpSnapshot(
         headers={"content-type": content_type, "user-agent": "claude-code/1.0"},
         body=client_body,
-        content_type=content_type,
+        method=method,
+        url="https://api.anthropic.com:443/v1/messages",
     )
     flow.metadata[InspectorMeta.RECORD] = record
     return flow
@@ -135,7 +131,7 @@ class TestPageGrouping:
 
 
 class TestEntryZero:
-    """entries[0] = [fwdreq, fwdres] — the real flow, authoritative."""
+    """entries[0] = [fwdreq, provider_response] — forwarded request + raw provider response."""
 
     def test_entry_0_request_is_forwarded_url(self) -> None:
         flow = _make_flow_with_snapshot(
@@ -153,7 +149,7 @@ class TestEntryZero:
 
 
 class TestEntryOne:
-    """entries[1] = [clireq, fwdres] — clone with request rebuilt from snapshot."""
+    """entries[1] = [clireq, client_response] — client request + post-transform response."""
 
     def test_entry_1_request_url_from_snapshot(self) -> None:
         flow = _make_flow_with_snapshot()

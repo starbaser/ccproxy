@@ -145,8 +145,8 @@ class FlowsDump(_FlowsBase):
     Output contains one page per flow (pageref = flow.id), each page
     containing two HAR entries:
 
-      entries[2i]     [fwdreq, fwdres]  real forwarded request + upstream response
-      entries[2i+1]   [clireq, fwdres]  clone with .request from ClientRequest snapshot
+      entries[2i]     [fwdreq, provider_response]  forwarded request + raw provider response
+      entries[2i+1]   [clireq, client_response]   client request + post-transform response
 
     Pipe to a file and open in Chrome DevTools / Charles / Fiddler:
 
@@ -440,9 +440,28 @@ def _do_compare(
         console.print(
             Panel(
                 Syntax(diff_text, "diff", theme="monokai", word_wrap=True),
-                title=f"Body diff — {flow_id[:8]}",
+                title=f"Request body diff — {flow_id[:8]}",
             )
         )
+
+        fwd_response = _format_body(fwd_entry["response"].get("content", {}).get("text"))
+        cli_response = _format_body(cli_entry["response"].get("content", {}).get("text"))
+        resp_diff_lines = list(
+            difflib.unified_diff(
+                fwd_response.splitlines(keepends=True),
+                cli_response.splitlines(keepends=True),
+                fromfile=f"provider:{flow_id[:8]}",
+                tofile=f"client:{flow_id[:8]}",
+            )
+        )
+        if resp_diff_lines:
+            resp_diff_text = "".join(resp_diff_lines)
+            console.print(
+                Panel(
+                    Syntax(resp_diff_text, "diff", theme="monokai", word_wrap=True),
+                    title=f"Response body diff — {flow_id[:8]}",
+                )
+            )
 
 
 def _do_clear(
