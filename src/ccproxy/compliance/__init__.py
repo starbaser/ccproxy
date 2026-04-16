@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 
 from mitmproxy.proxy.mode_specs import WireGuardMode
 
@@ -18,12 +19,12 @@ from ccproxy.compliance.store import get_store
 if TYPE_CHECKING:
     from mitmproxy.http import HTTPFlow
 
-    from ccproxy.inspector.flow_store import ClientRequest
+    from ccproxy.inspector.flow_store import HttpSnapshot
 
 logger = logging.getLogger(__name__)
 
 
-def observe_flow(flow: HTTPFlow, client_request: ClientRequest) -> None:
+def observe_flow(flow: HTTPFlow, client_request: HttpSnapshot) -> None:
     """Observe a flow for compliance profile learning.
 
     Called from InspectorAddon.request() after the ClientRequest
@@ -33,9 +34,10 @@ def observe_flow(flow: HTTPFlow, client_request: ClientRequest) -> None:
     if not _should_observe(flow, client_request):
         return
 
-    provider = _resolve_provider(client_request.host)
+    host: str = urlparse(client_request.url or "").hostname or ""
+    provider = _resolve_provider(host)
     if not provider:
-        logger.debug("Compliance: no provider for host %s, skipping observation", client_request.host)
+        logger.debug("Compliance: no provider for host %s, skipping observation", host)
         return
 
     extra_headers: frozenset[str] = frozenset()
@@ -63,7 +65,7 @@ def observe_flow(flow: HTTPFlow, client_request: ClientRequest) -> None:
         logger.exception("Compliance: failed to submit observation for %s", provider)
 
 
-def _should_observe(flow: HTTPFlow, client_request: ClientRequest) -> bool:
+def _should_observe(flow: HTTPFlow, client_request: HttpSnapshot) -> bool:
     """Determine if this flow should be observed as reference traffic."""
     if isinstance(flow.client_conn.proxy_mode, WireGuardMode):
         return True

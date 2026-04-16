@@ -14,13 +14,13 @@ from ccproxy.compliance.classifier import should_skip_body_field, should_skip_he
 from ccproxy.compliance.models import ObservationBundle
 
 if TYPE_CHECKING:
-    from ccproxy.inspector.flow_store import ClientRequest
+    from ccproxy.inspector.flow_store import HttpSnapshot
 
 logger = logging.getLogger(__name__)
 
 
 def extract_observation(
-    client_request: ClientRequest,
+    client_request: HttpSnapshot,
     provider: str,
     *,
     additional_header_exclusions: frozenset[str] = frozenset(),

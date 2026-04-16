@@ -8,8 +8,8 @@ import pytest
 from ccproxy.inspector.addon import InspectorAddon
 from ccproxy.inspector.flow_store import (
     FLOW_ID_HEADER,
-    ClientRequest,
     FlowRecord,
+    HttpSnapshot,
     InspectorMeta,
     TransformMeta,
     create_flow_record,
@@ -373,6 +373,82 @@ class TestResponseAndError:
         assert args.args[2] is None  # duration_ms
 
 
+class TestProviderResponseCapture:
+    """Tests for provider_response snapshot in response()."""
+
+    @pytest.mark.asyncio
+    async def test_captures_provider_response_before_mutations(self) -> None:
+        addon = InspectorAddon()
+        record = FlowRecord(direction="inbound")
+        flow = MagicMock()
+        flow.response = MagicMock()
+        flow.response.status_code = 200
+        flow.response.content = b'{"raw": "provider data"}'
+        flow.response.headers = MagicMock()
+        flow.response.headers.items.return_value = [("content-type", "application/json")]
+        flow.response.timestamp_end = 1000.5
+        flow.request.timestamp_start = 1000.0
+        flow.request.pretty_url = "https://api.anthropic.com/v1/messages"
+        flow.id = "capture-flow"
+        flow.metadata = {InspectorMeta.RECORD: record}
+
+        await addon.response(flow)
+
+        assert record.provider_response is not None
+        assert record.provider_response.status_code == 200
+        assert record.provider_response.body == b'{"raw": "provider data"}'
+
+    @pytest.mark.asyncio
+    async def test_captures_raw_body_from_sse_transformer(self) -> None:
+        addon = InspectorAddon()
+        record = FlowRecord(direction="inbound")
+
+        class FakeTransformer:
+            @property
+            def raw_body(self) -> bytes:
+                return b"data: raw sse\n\n"
+
+        flow = MagicMock()
+        flow.response = MagicMock()
+        flow.response.status_code = 200
+        flow.response.content = b"data: transformed\n\n"
+        flow.response.headers = MagicMock()
+        flow.response.headers.items.return_value = [("content-type", "text/event-stream")]
+        flow.response.timestamp_end = 1000.5
+        flow.request.timestamp_start = 1000.0
+        flow.request.pretty_url = "https://api.anthropic.com/v1/messages"
+        flow.id = "sse-capture"
+        flow.metadata = {
+            InspectorMeta.RECORD: record,
+            "ccproxy.sse_transformer": FakeTransformer(),
+        }
+
+        await addon.response(flow)
+
+        assert record.provider_response is not None
+        assert record.provider_response.body == b"data: raw sse\n\n"
+
+    @pytest.mark.asyncio
+    async def test_no_capture_when_content_is_none(self) -> None:
+        addon = InspectorAddon()
+        record = FlowRecord(direction="inbound")
+        flow = MagicMock()
+        flow.response = MagicMock()
+        flow.response.status_code = 200
+        flow.response.content = None
+        flow.response.headers = MagicMock()
+        flow.response.headers.items.return_value = []
+        flow.response.timestamp_end = 1000.5
+        flow.request.timestamp_start = 1000.0
+        flow.request.pretty_url = "https://api.example.com/v1"
+        flow.id = "null-content"
+        flow.metadata = {InspectorMeta.RECORD: record}
+
+        await addon.response(flow)
+
+        assert record.provider_response is None
+
+
 class TestResponseRetryPath:
     """Tests for the 401 retry codepath inside response()."""
 
@@ -632,22 +708,15 @@ class TestGetClientRequestCommand:
         self,
         flow_id: str = "flow-abc-123",
         method: str = "POST",
-        scheme: str = "https",
-        host: str = "api.anthropic.com",
-        port: int = 443,
-        path: str = "/v1/messages",
+        url: str = "https://api.anthropic.com:443/v1/messages",
         headers: dict[str, str] | None = None,
         body: bytes = b'{"model": "claude-3"}',
     ) -> MagicMock:
-        cr = ClientRequest(
-            method=method,
-            scheme=scheme,
-            host=host,
-            port=port,
-            path=path,
+        cr = HttpSnapshot(
             headers=headers or {"content-type": "application/json"},
             body=body,
-            content_type="application/json",
+            method=method,
+            url=url,
         )
         record = FlowRecord(direction="inbound")
         record.client_request = cr
@@ -662,10 +731,7 @@ class TestGetClientRequestCommand:
         flow = self._make_flow_with_client_request(
             flow_id="test-flow-1",
             method="POST",
-            scheme="https",
-            host="api.anthropic.com",
-            port=443,
-            path="/v1/messages",
+            url="https://api.anthropic.com:443/v1/messages",
             headers={"content-type": "application/json", "x-api-key": "sk-test"},
             body=b'{"model": "claude-3", "messages": []}',
         )

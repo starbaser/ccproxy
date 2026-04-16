@@ -292,8 +292,11 @@ class SseTransformer:
     def __init__(self, provider: str, model: str, optional_params: dict[str, Any]) -> None:
         self._iterator = _make_response_iterator(provider, model, optional_params)
         self._buf = b""
+        self._raw_chunks: list[bytes] = []
 
     def __call__(self, data: bytes) -> bytes | Iterable[bytes]:
+        self._raw_chunks.append(data)
+
         if self._iterator is None:
             return data
 
@@ -338,6 +341,11 @@ class SseTransformer:
         if model_chunk is None:
             return b""
         return b"data: " + json.dumps(model_chunk.model_dump(mode="json", exclude_none=True)).encode() + b"\n\n"
+
+    @property
+    def raw_body(self) -> bytes:
+        """Reassembled raw provider response body (pre-transform)."""
+        return b"".join(self._raw_chunks)
 
 
 def make_sse_transformer(

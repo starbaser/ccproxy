@@ -1,8 +1,10 @@
-"""Custom mitmproxy content view: client request (pre-pipeline).
+"""Custom mitmproxy content views for pre-mutation HTTP snapshots.
 
-Shows the original request as sent by the client, before ccproxy's addon
-pipeline (OAuth substitution, header injection, lightllm transform) mutates it.
-The default mitmproxy views show the forwarded request (post-pipeline).
+ClientRequestContentview: the original request as sent by the client,
+before ccproxy's addon pipeline mutates it.
+
+ProviderResponseContentview: the raw response from the upstream provider,
+before response transforms (Gemini unwrap, OpenAI normalization) mutate it.
 """
 
 from __future__ import annotations
@@ -33,7 +35,7 @@ class ClientRequestContentview(Contentview):
 
         cr = record.client_request
         lines = [
-            f"{cr.method} {cr.scheme}://{cr.host}:{cr.port}{cr.path}",
+            f"{cr.method} {cr.url}",
             "",
             "--- Headers ---",
         ]
@@ -48,6 +50,46 @@ class ClientRequestContentview(Contentview):
                 lines.append(json.dumps(json.loads(cr.body), indent=2))
             except Exception:
                 lines.append(cr.body.decode("utf-8", errors="replace"))
+        return "\n".join(lines)
+
+    def render_priority(self, data: bytes, metadata: Metadata) -> float:
+        return -1
+
+
+class ProviderResponseContentview(Contentview):
+    @property
+    def name(self) -> str:
+        return "Provider-Response"
+
+    @property
+    def syntax_highlight(self) -> SyntaxHighlight:
+        return "yaml"
+
+    def prettify(self, data: bytes, metadata: Metadata) -> str:
+        flow = metadata.flow
+        if flow is None:
+            return "(no flow context)"
+        record = flow.metadata.get(InspectorMeta.RECORD)
+        if record is None or record.provider_response is None:
+            return "(no provider response snapshot)"
+
+        pr = record.provider_response
+        lines = [
+            f"HTTP {pr.status_code}",
+            "",
+            "--- Headers ---",
+        ]
+        for k, v in pr.headers.items():
+            lines.append(f"  {k}: {v}")
+        lines.append("")
+        lines.append("--- Body ---")
+        if not pr.body:
+            lines.append("(empty)")
+        else:
+            try:
+                lines.append(json.dumps(json.loads(pr.body), indent=2))
+            except Exception:
+                lines.append(pr.body.decode("utf-8", errors="replace"))
         return "\n".join(lines)
 
     def render_priority(self, data: bytes, metadata: Metadata) -> float:

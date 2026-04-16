@@ -82,6 +82,7 @@ def _build_opts(
             deferred[field_name] = value
 
     deferred["web_port"] = inspector.port
+    deferred["store_streamed_bodies"] = True
 
     opts.update_defer(**deferred)  # type: ignore[no-untyped-call]
 
@@ -127,10 +128,11 @@ def _build_addons(
 
     from ccproxy.config import get_config
     from ccproxy.inspector.addon import InspectorAddon
-    from ccproxy.inspector.contentview import ClientRequestContentview
+    from ccproxy.inspector.contentview import ClientRequestContentview, ProviderResponseContentview
     from ccproxy.inspector.multi_har_saver import MultiHARSaver
 
     contentviews.add(ClientRequestContentview())
+    contentviews.add(ProviderResponseContentview())
 
     config = get_config()
     otel = config.otel

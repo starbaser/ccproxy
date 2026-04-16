@@ -35,17 +35,17 @@ class OtelMeta:
 
 
 @dataclass
-class ClientRequest:
-    """Snapshot of the client request before the pipeline mutates it."""
+class HttpSnapshot:
+    """Frozen copy of an HTTP message (request or response)."""
 
-    method: str
-    scheme: str
-    host: str
-    port: int
-    path: str
     headers: dict[str, str]
     body: bytes
-    content_type: str
+    method: str | None = None
+    url: str | None = None
+    status_code: int | None = None
+
+
+ClientRequest = HttpSnapshot
 
 
 @dataclass
@@ -66,7 +66,8 @@ class FlowRecord:
     direction: Literal["inbound"]
     auth: AuthMeta | None = None
     otel: OtelMeta | None = None
-    client_request: ClientRequest | None = None
+    client_request: HttpSnapshot | None = None
+    provider_response: HttpSnapshot | None = None
     transform: TransformMeta | None = None
 
 
