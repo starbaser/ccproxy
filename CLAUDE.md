@@ -2,8 +2,6 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-@/home/eigenmage/dev/projects/eigenpy/CONVENTIONS.md
-
 ## Project Overview
 
 **IMPERATIVE**: Auth failures through ccproxy are OUR bug until proven otherwise. ccproxy is the intermediary — every header, token, and credential passes through our code. When a request fails with 401/403, triage ccproxy first: check what we're injecting, stripping, or mangling before blaming the upstream provider or expired tokens. For Gemini specifically: if all Gemini requests fail with 401, run `gemini -m gemini-2.5-flash -p "hi"` directly (no ccproxy) to force an OAuth token refresh, then retry through ccproxy.
