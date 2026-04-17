@@ -19,10 +19,10 @@ command (registered by ``MultiHARSaver`` in ``ccproxy.inspector.multi_har_saver`
 from __future__ import annotations
 
 import contextlib
-import difflib
 import json
 import subprocess
 import sys
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
@@ -32,9 +32,6 @@ import humanize
 import tyro
 from pydantic import BaseModel, Field
 from rich.console import Console
-from rich.panel import Panel
-from rich.rule import Rule
-from rich.syntax import Syntax
 from rich.table import Table
 
 
@@ -290,7 +287,7 @@ def _do_list(
             ts = f["request"].get("timestamp_start")
             if ts:
                 f["time"] = _dt(ts).strftime("%Y-%m-%d %H:%M:%S UTC")
-        console.print_json(json.dumps(flow_set, indent=2))
+        print(json.dumps(flow_set, indent=2))
         return
 
     if not flow_set:
@@ -346,15 +343,33 @@ def _format_body(text: str | None) -> str:
     return text
 
 
+def _git_diff(text_a: str, text_b: str, label_a: str, label_b: str) -> None:
+    """Diff two strings via git diff --no-index. Output goes directly to stdout."""
+    with (
+        tempfile.NamedTemporaryFile(mode="w", suffix=".json", prefix=f"{label_a}_", delete=True) as fa,
+        tempfile.NamedTemporaryFile(mode="w", suffix=".json", prefix=f"{label_b}_", delete=True) as fb,
+    ):
+        fa.write(text_a)
+        fa.flush()
+        fb.write(text_b)
+        fb.flush()
+        subprocess.run(  # noqa: S603
+            ["git", "--no-pager", "diff", "--no-index", "--color=auto",  # noqa: S607
+                f"--src-prefix={label_a}/", f"--dst-prefix={label_b}/",
+                "--", fa.name, fb.name],
+            check=False,
+        )
+
+
 def _do_diff(
-    console: Console,
     client: MitmwebClient,
     flow_set: list[dict[str, Any]],
 ) -> None:
     """Sliding-window diff over the set."""
     if len(flow_set) < 2:
-        console.print(
-            f"[yellow]diff needs at least 2 flows in the set (got {len(flow_set)})[/yellow]",
+        print(
+            f"diff needs at least 2 flows in the set (got {len(flow_set)})",
+            file=sys.stderr,
         )
         sys.exit(1)
 
@@ -368,34 +383,19 @@ def _do_diff(
         body_a = _format_body(body_a) or body_a
         body_b = _format_body(body_b) or body_b
 
-        diff_lines = list(
-            difflib.unified_diff(
-                body_a.splitlines(keepends=True),
-                body_b.splitlines(keepends=True),
-                fromfile=f"flow:{id_a[:8]}",
-                tofile=f"flow:{id_b[:8]}",
-            )
-        )
-
         if i > 0:
-            console.print(Rule())
+            print()
 
-        if not diff_lines:
-            console.print(f"[green]{id_a[:8]} → {id_b[:8]}: bodies are identical.[/green]")
-            continue
-
-        diff_text = "".join(diff_lines)
-        console.print(Syntax(diff_text, "diff", theme="monokai", word_wrap=True))
+        _git_diff(body_a, body_b, f"flow:{id_a[:8]}", f"flow:{id_b[:8]}")
 
 
 def _do_compare(
-    console: Console,
     client: MitmwebClient,
     flow_set: list[dict[str, Any]],
 ) -> None:
     """Per-flow client-request vs forwarded-request diff."""
     if not flow_set:
-        console.print("[yellow]No flows in set[/yellow]")
+        print("No flows in set.", file=sys.stderr)
         sys.exit(1)
 
     flow_ids = [f["id"] for f in flow_set]
@@ -413,55 +413,18 @@ def _do_compare(
         cli_body = _format_body(cli_entry["request"].get("postData", {}).get("text"))
 
         if i > 0:
-            console.print(Rule())
+            print()
 
         if cli_url != fwd_url:
-            console.print(
-                Panel(
-                    f"[red]- {cli_url}[/red]\n[green]+ {fwd_url}[/green]",
-                    title=f"URL change — {flow_id[:8]}",
-                )
-            )
+            print(f"--- URL change: {flow_id[:8]} ---")
+            print(f"- {cli_url}")
+            print(f"+ {fwd_url}")
 
-        diff_lines = list(
-            difflib.unified_diff(
-                cli_body.splitlines(keepends=True),
-                fwd_body.splitlines(keepends=True),
-                fromfile=f"client:{flow_id[:8]}",
-                tofile=f"forwarded:{flow_id[:8]}",
-            )
-        )
-
-        if not diff_lines:
-            console.print(f"[green]{flow_id[:8]}: request bodies are identical.[/green]")
-            continue
-
-        diff_text = "".join(diff_lines)
-        console.print(
-            Panel(
-                Syntax(diff_text, "diff", theme="monokai", word_wrap=True),
-                title=f"Request body diff — {flow_id[:8]}",
-            )
-        )
+        _git_diff(cli_body, fwd_body, f"client:{flow_id[:8]}", f"forwarded:{flow_id[:8]}")
 
         fwd_response = _format_body(fwd_entry["response"].get("content", {}).get("text"))
         cli_response = _format_body(cli_entry["response"].get("content", {}).get("text"))
-        resp_diff_lines = list(
-            difflib.unified_diff(
-                fwd_response.splitlines(keepends=True),
-                cli_response.splitlines(keepends=True),
-                fromfile=f"provider:{flow_id[:8]}",
-                tofile=f"client:{flow_id[:8]}",
-            )
-        )
-        if resp_diff_lines:
-            resp_diff_text = "".join(resp_diff_lines)
-            console.print(
-                Panel(
-                    Syntax(resp_diff_text, "diff", theme="monokai", word_wrap=True),
-                    title=f"Response body diff — {flow_id[:8]}",
-                )
-            )
+        _git_diff(fwd_response, cli_response, f"provider:{flow_id[:8]}", f"client:{flow_id[:8]}")
 
 
 def _do_clear(
@@ -494,27 +457,27 @@ def handle_flows(
     """Dispatch flows subcommand actions by isinstance."""
     from ccproxy.config import get_config
 
-    console = Console()
+    err = Console(stderr=True)
     config = get_config()
     try:
         with _make_client() as client:
             flow_set = _resolve_flow_set(client, cmd, config.flows)
             if isinstance(cmd, FlowsList):
-                _do_list(console, flow_set, json_output=cmd.json_output)
+                _do_list(Console(), flow_set, json_output=cmd.json_output)
             elif isinstance(cmd, FlowsDump):
                 _do_dump(client, flow_set)
             elif isinstance(cmd, FlowsDiff):
-                _do_diff(console, client, flow_set)
+                _do_diff(client, flow_set)
             elif isinstance(cmd, FlowsCompare):
-                _do_compare(console, client, flow_set)
+                _do_compare(client, flow_set)
             elif isinstance(cmd, FlowsClear):
-                _do_clear(console, client, flow_set, clear_all=cmd.all)
+                _do_clear(err, client, flow_set, clear_all=cmd.all)
     except httpx.ConnectError:
-        console.print("[red]Cannot connect to mitmweb. Is ccproxy running?[/red]")
+        err.print("[red]Cannot connect to mitmweb. Is ccproxy running?[/red]")
         sys.exit(1)
     except httpx.HTTPStatusError as e:
-        console.print(f"[red]HTTP {e.response.status_code}: {e.response.text[:200]}[/red]")
+        err.print(f"[red]HTTP {e.response.status_code}: {e.response.text[:200]}[/red]")
         sys.exit(1)
     except ValueError as e:
-        console.print(f"[red]{e}[/red]")
+        err.print(f"[red]{e}[/red]")
         sys.exit(1)

@@ -18,6 +18,7 @@ from ccproxy.tools.flows import (
     _do_dump,
     _do_list,
     _format_body,
+    _git_diff,
     _header_value,
     _make_client,
     _run_jq,
@@ -371,6 +372,28 @@ class TestFormatBody:
         assert _format_body(None) == ""
 
 
+class TestGitDiff:
+    """Tests for _git_diff — uses git diff --no-index."""
+
+    @patch("subprocess.run")
+    def test_invokes_git_diff_no_index(self, mock_run: MagicMock) -> None:
+        _git_diff("aaa", "bbb", "left", "right")
+
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args.args[0]
+        assert cmd[:2] == ["git", "--no-pager"]
+        assert "--no-index" in cmd
+        assert "--color=auto" in cmd
+
+    @patch("subprocess.run")
+    def test_passes_label_prefixes(self, mock_run: MagicMock) -> None:
+        _git_diff("a", "b", "client:abc", "fwd:abc")
+
+        cmd = mock_run.call_args.args[0]
+        assert "--src-prefix=client:abc/" in cmd
+        assert "--dst-prefix=fwd:abc/" in cmd
+
+
 class TestRunJq:
     """Tests for _run_jq — shells out to jq binary (available in devShell)."""
 
@@ -438,13 +461,15 @@ class TestDoList:
         console.print.assert_called_once()
         assert "No flows" in str(console.print.call_args)
 
-    def test_list_json_output(self) -> None:
+    def test_list_json_output(self, capsys: pytest.CaptureFixture[str]) -> None:
         console = MagicMock()
         flow_set = [self._make_mock_flow()]
 
         _do_list(console, flow_set, json_output=True)
 
-        console.print_json.assert_called_once()
+        captured = capsys.readouterr()
+        assert '"id"' in captured.out
+        console.print.assert_not_called()
 
     def test_list_flow_no_response(self) -> None:
         console = MagicMock()
@@ -477,8 +502,8 @@ class TestDoDump:
 class TestDoDiff:
     """Tests for _do_diff — sliding window over the flow set."""
 
-    def test_two_flows_one_diff(self) -> None:
-        console = MagicMock()
+    @patch("ccproxy.tools.flows._git_diff")
+    def test_two_flows_one_diff(self, mock_gd: MagicMock) -> None:
         client = MagicMock()
         client.get_request_body.side_effect = [
             b'{"model": "claude"}',
@@ -486,13 +511,13 @@ class TestDoDiff:
         ]
         flow_set = [{"id": "aaa"}, {"id": "bbb"}]
 
-        _do_diff(console, client, flow_set)
+        _do_diff(client, flow_set)
 
         assert client.get_request_body.call_count == 2
-        console.print.assert_called()
+        mock_gd.assert_called_once()
 
-    def test_three_flows_two_diffs(self) -> None:
-        console = MagicMock()
+    @patch("ccproxy.tools.flows._git_diff")
+    def test_three_flows_two_diffs(self, mock_gd: MagicMock) -> None:
         client = MagicMock()
         client.get_request_body.side_effect = [
             b'{"v": 1}',
@@ -502,34 +527,33 @@ class TestDoDiff:
         ]
         flow_set = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
 
-        _do_diff(console, client, flow_set)
+        _do_diff(client, flow_set)
 
         assert client.get_request_body.call_count == 4
+        assert mock_gd.call_count == 2
 
-    def test_identical_bodies_reports_identical(self) -> None:
-        console = MagicMock()
+    @patch("ccproxy.tools.flows._git_diff")
+    def test_identical_bodies_delegates_to_git(self, mock_gd: MagicMock) -> None:
         client = MagicMock()
         body = b'{"model": "claude"}'
         client.get_request_body.return_value = body
         flow_set = [{"id": "a"}, {"id": "b"}]
 
-        _do_diff(console, client, flow_set)
+        _do_diff(client, flow_set)
 
-        assert "identical" in str(console.print.call_args).lower()
+        mock_gd.assert_called_once()
 
     def test_single_flow_exits(self) -> None:
-        console = MagicMock()
         client = MagicMock()
 
         with pytest.raises(SystemExit):
-            _do_diff(console, client, [{"id": "a"}])
+            _do_diff(client, [{"id": "a"}])
 
     def test_empty_set_exits(self) -> None:
-        console = MagicMock()
         client = MagicMock()
 
         with pytest.raises(SystemExit):
-            _do_diff(console, client, [])
+            _do_diff(client, [])
 
 
 class TestDoCompare:
@@ -549,8 +573,8 @@ class TestDoCompare:
             entries.append({"request": cli, "response": {}})
         return json.dumps({"log": {"pages": pages, "entries": entries}})
 
-    def test_single_flow_shows_diff(self) -> None:
-        console = MagicMock()
+    @patch("ccproxy.tools.flows._git_diff")
+    def test_single_flow_shows_diff(self, mock_gd: MagicMock) -> None:
         client = MagicMock()
         client.dump_har.return_value = self._make_har_json(
             [
@@ -564,15 +588,13 @@ class TestDoCompare:
             ]
         )
 
-        _do_compare(console, client, [{"id": "abc"}])
+        _do_compare(client, [{"id": "abc"}])
 
         client.dump_har.assert_called_once_with(["abc"])
-        assert console.print.call_count >= 1
+        mock_gd.assert_called()
 
-    def test_url_change_shown(self) -> None:
-        from rich.panel import Panel
-
-        console = MagicMock()
+    @patch("ccproxy.tools.flows._git_diff")
+    def test_url_change_shown(self, mock_gd: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
         client = MagicMock()
         client.dump_har.return_value = self._make_har_json(
             [
@@ -586,14 +608,13 @@ class TestDoCompare:
             ]
         )
 
-        _do_compare(console, client, [{"id": "abc"}])
+        _do_compare(client, [{"id": "abc"}])
 
-        # Find the Panel call that shows the URL change
-        panel_calls = [c for c in console.print.call_args_list if c.args and isinstance(c.args[0], Panel)]
-        assert any("URL change" in str(p.kwargs.get("title", "") or p.args[0].title) for p in panel_calls)
+        captured = capsys.readouterr()
+        assert "URL change" in captured.out
 
-    def test_multiple_flows_shows_one_diff_per_flow(self) -> None:
-        console = MagicMock()
+    @patch("ccproxy.tools.flows._git_diff")
+    def test_multiple_flows_shows_one_diff_per_flow(self, mock_gd: MagicMock) -> None:
         client = MagicMock()
         client.dump_har.return_value = self._make_har_json(
             [
@@ -614,16 +635,15 @@ class TestDoCompare:
             ]
         )
 
-        _do_compare(console, client, [{"id": "f1"}, {"id": "f2"}])
+        _do_compare(client, [{"id": "f1"}, {"id": "f2"}])
 
         client.dump_har.assert_called_once_with(["f1", "f2"])
 
     def test_empty_set_exits(self) -> None:
-        console = MagicMock()
         client = MagicMock()
 
         with pytest.raises(SystemExit):
-            _do_compare(console, client, [])
+            _do_compare(client, [])
 
 
 class TestDoClear:
@@ -731,7 +751,7 @@ class TestHandleFlows:
         handle_flows(FlowsDiff(), Path("/tmp"))  # noqa: S108
 
         mock_diff.assert_called_once()
-        assert mock_diff.call_args.args[2] == flow_set
+        assert mock_diff.call_args.args[1] == flow_set
 
     @patch("ccproxy.config.get_config")
     @patch("ccproxy.tools.flows._make_client")
@@ -753,7 +773,7 @@ class TestHandleFlows:
         handle_flows(FlowsCompare(), Path("/tmp"))  # noqa: S108
 
         mock_compare.assert_called_once()
-        assert mock_compare.call_args.args[2] == flow_set
+        assert mock_compare.call_args.args[1] == flow_set
 
     @patch("ccproxy.config.get_config")
     @patch("ccproxy.tools.flows._make_client")
