@@ -41,6 +41,7 @@
     compliance = {
       enabled = true;
       min_observations = 1;
+      profile_path = "~/.config/ccproxy/compliance_profiles.json";
     };
     inspector = {
       port = 8083;

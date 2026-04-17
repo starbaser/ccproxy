@@ -109,6 +109,13 @@ class ComplianceConfig(BaseModel):
     enabled: bool = True
     """Master switch for compliance observation and application."""
 
+    profile_path: str | None = None
+    """Explicit path to the compliance profiles JSON file.
+
+    When set, all instances share this file instead of each writing to
+    ``{config_dir}/compliance_profiles.json``.
+    """
+
     min_observations: int = 3
     """Observations before a profile is finalized."""
 

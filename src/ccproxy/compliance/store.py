@@ -216,7 +216,10 @@ def _create_store() -> ProfileStore:
     config = get_config()
     config_dir = get_config_dir()
 
-    store_path = config_dir / "compliance_profiles.json"
+    if config.compliance.profile_path:
+        store_path = Path(config.compliance.profile_path).expanduser()
+    else:
+        store_path = config_dir / "compliance_profiles.json"
 
     seed_profiles: list[ComplianceProfile] | None = None
     if config.compliance.seed_anthropic:
