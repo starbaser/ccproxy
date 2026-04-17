@@ -15,7 +15,6 @@ once via ``loadCodeAssist`` and cached for the process lifetime.
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 import uuid
@@ -55,24 +54,42 @@ def reroute_gemini_guard(ctx: Context) -> bool:
     return _get_flow_host(ctx) == _GEMINI_API_HOST
 
 
-def _resolve_project(auth_header: str) -> str | None:
-    """Resolve the cloudaicompanion project ID via loadCodeAssist."""
+def _resolve_project(auth_header: str, ctx: Context | None = None) -> str | None:
+    """Resolve the cloudaicompanion project ID via loadCodeAssist.
+
+    On 401, refreshes the Gemini OAuth token and retries once. Updates
+    ``ctx.authorization`` with the fresh token so the forwarded request
+    also uses it.
+    """
     global _cached_project
     if _cached_project is not None:
         return _cached_project
 
     import httpx
 
-    try:
-        resp = httpx.post(
+    from ccproxy.config import get_config
+
+    def _call(token: str) -> httpx.Response:
+        return httpx.post(
             f"https://{_CLOUDCODE_HOST}/v1internal:loadCodeAssist",
-            headers={
-                "Authorization": auth_header,
-                "Content-Type": "application/json",
-            },
+            headers={"Authorization": token, "Content-Type": "application/json"},
             json={},
             timeout=10,
         )
+
+    try:
+        resp = _call(auth_header)
+        if resp.status_code == 401:
+            config = get_config()
+            config.refresh_oauth_token("gemini")
+            fresh_token = config.get_oauth_token("gemini")
+            if fresh_token:
+                fresh_auth = f"Bearer {fresh_token}"
+                if ctx is not None:
+                    ctx.set_header("authorization", fresh_auth)
+                resp = _call(fresh_auth)
+                logger.info("loadCodeAssist retried after token refresh → %d", resp.status_code)
+
         if resp.status_code == 200:
             data = resp.json()
             project = data.get("cloudaicompanionProject")
@@ -110,14 +127,16 @@ def reroute_gemini(ctx: Context, _: dict[str, Any]) -> Context:
 
     # Resolve project ID from loadCodeAssist
     auth = ctx.authorization
-    project = _resolve_project(auth) if auth else None
+    project = _resolve_project(auth, ctx) if auth else None
 
     # Wrap body in v1internal envelope.
     # Must replace ctx._body (not flow.request.content) because
     # ctx.commit() at pipeline end serializes _body back to the flow.
+    request_body = dict(ctx._body)
+    request_body.pop("metadata", None)
     envelope: dict[str, Any] = {
         "model": model,
-        "request": dict(ctx._body),
+        "request": request_body,
     }
     if project:
         envelope["project"] = project
