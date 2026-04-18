@@ -19,6 +19,7 @@ from ccproxy.inspector.namespace import (
     _safe_close,
     _safe_kill,
     _slirp_add_hostfwd,
+    _warmup_ignore_hosts,
     check_namespace_capabilities,
     cleanup_namespace,
     create_namespace,
@@ -466,6 +467,11 @@ class TestCreateNamespace:
 
 
 class TestRunInNamespace:
+    @pytest.fixture(autouse=True)
+    def _skip_warmup(self):
+        with patch("ccproxy.inspector.namespace._warmup_ignore_hosts"):
+            yield
+
     def test_returns_exit_code(self, mock_ctx: NamespaceContext) -> None:
         """Subprocess exit code is propagated."""
         with patch("ccproxy.inspector.namespace.subprocess.Popen") as mock_popen:
@@ -547,6 +553,51 @@ class TestRunInNamespace:
             result = run_in_namespace(mock_ctx, ["nonexistent"], {})
 
         assert result == 127
+
+
+# =============================================================================
+# _warmup_ignore_hosts — TLS passthrough priming
+# =============================================================================
+
+
+class TestWarmupIgnoreHosts:
+    def test_runs_curl_for_each_ignore_host(self) -> None:
+        with (
+            patch("ccproxy.config.get_config") as mock_cfg,
+            patch("ccproxy.inspector.namespace.subprocess.run") as mock_run,
+        ):
+            mock_cfg.return_value.inspector.mitmproxy.ignore_hosts = [
+                r"oauth2\.googleapis\.com",
+                r"accounts\.google\.com",
+            ]
+            _warmup_ignore_hosts(42, {"PATH": "/bin"})
+
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        assert "nsenter" in cmd[0]
+        assert "42" in cmd
+        sh_script = cmd[-1]
+        assert "oauth2.googleapis.com" in sh_script
+        assert "accounts.google.com" in sh_script
+
+    def test_skips_when_no_ignore_hosts(self) -> None:
+        with (
+            patch("ccproxy.config.get_config") as mock_cfg,
+            patch("ccproxy.inspector.namespace.subprocess.run") as mock_run,
+        ):
+            mock_cfg.return_value.inspector.mitmproxy.ignore_hosts = []
+            _warmup_ignore_hosts(42, {})
+
+        mock_run.assert_not_called()
+
+    def test_skips_on_config_error(self) -> None:
+        with (
+            patch("ccproxy.config.get_config", side_effect=RuntimeError),
+            patch("ccproxy.inspector.namespace.subprocess.run") as mock_run,
+        ):
+            _warmup_ignore_hosts(42, {})
+
+        mock_run.assert_not_called()
 
 
 # =============================================================================
