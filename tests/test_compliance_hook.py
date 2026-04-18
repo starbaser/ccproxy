@@ -9,8 +9,7 @@ import pytest
 
 from ccproxy.compliance.models import (
     ComplianceProfile,
-    ProfileFeatureHeader,
-    ProfileFeatureSystem,
+    Envelope,
 )
 from ccproxy.compliance.store import ProfileStore, clear_store_instance
 from ccproxy.hooks.stamp_compliance import stamp_compliance, stamp_compliance_guard
@@ -113,8 +112,7 @@ class TestStampCompliance:
             updated_at="2025-01-01T00:00:00+00:00",
             observation_count=1,
             is_complete=True,
-            headers=[ProfileFeatureHeader(name="x-app", value="cli")],
-            body_fields=[],
+            envelope=Envelope(headers={"x-app": "cli"}),
         )
         store.set_profile("anthropic/seed", profile)
 
@@ -131,9 +129,7 @@ class TestStampCompliance:
             updated_at="2025-01-01T00:00:00+00:00",
             observation_count=1,
             is_complete=True,
-            headers=[],
-            body_fields=[],
-            system=ProfileFeatureSystem(structure=[{"type": "text", "text": "You are Claude"}]),
+            envelope=Envelope(system=[{"type": "text", "text": "You are Claude"}]),
         )
         store.set_profile("anthropic/seed", profile)
 

@@ -7,9 +7,8 @@ import pytest
 
 from ccproxy.compliance.models import (
     ComplianceProfile,
+    Envelope,
     ObservationAccumulator,
-    ObservationBundle,
-    ProfileFeatureHeader,
 )
 from ccproxy.compliance.store import ProfileStore, _build_anthropic_seed_profile
 
@@ -27,7 +26,7 @@ def store(store_path: Path) -> ProfileStore:
 def _make_profile(
     provider: str = "anthropic",
     ua: str = "cli/1.0",
-    headers: list[ProfileFeatureHeader] | None = None,
+    headers: dict[str, str] | None = None,
     updated_at: str = "2025-01-01T00:00:00+00:00",
 ) -> ComplianceProfile:
     return ComplianceProfile(
@@ -37,8 +36,7 @@ def _make_profile(
         updated_at=updated_at,
         observation_count=1,
         is_complete=True,
-        headers=headers or [ProfileFeatureHeader(name="x-app", value="cli")],
-        body_fields=[],
+        envelope=Envelope(headers=headers or {"x-app": "cli"}),
     )
 
 
@@ -91,7 +89,7 @@ class TestPersistence:
         store.set_profile("anthropic/seed", _make_profile())
         assert store_path.exists()
         data = json.loads(store_path.read_text())
-        assert data["format_version"] == 1
+        assert data["format_version"] == 2
         assert len(data["profiles"]) == 1
 
     def test_loads_from_disk(self, store_path: Path):
@@ -141,7 +139,7 @@ class TestPersistence:
         store_path.write_text(
             json.dumps(
                 {
-                    "format_version": 1,
+                    "format_version": 2,
                     "profiles": {},
                     "accumulators": {"anthropic/cli": {"provider": "anthropic"}},
                 }
@@ -157,10 +155,9 @@ class TestAnthropicSeed:
         profile = store.get_profile("anthropic")
         assert profile is not None
         assert profile.user_agent == "v0-seed"
-        names = {h.name for h in profile.headers}
-        assert "anthropic-beta" in names
-        assert "anthropic-version" in names
-        assert profile.system is not None
+        assert "anthropic-beta" in profile.envelope.headers
+        assert "anthropic-version" in profile.envelope.headers
+        assert profile.envelope.system is not None
 
     def test_skips_seed_if_profile_exists(self, store_path: Path):
         store1 = ProfileStore(store_path, seed_profiles=None)
@@ -184,8 +181,6 @@ class TestAnthropicSeed:
             updated_at="1970-01-01T00:00:00+00:00",
             observation_count=0,
             is_complete=True,
-            headers=[],
-            body_fields=[],
         )
         store = ProfileStore(
             store_path,
@@ -210,27 +205,19 @@ class TestAccumulatorFinalize:
     def test_stable_headers(self):
         acc = ObservationAccumulator(provider="anthropic", user_agent="cli/1.0")
         for _ in range(3):
-            acc.submit(ObservationBundle(
-                provider="anthropic",
-                user_agent="cli/1.0",
+            acc.submit(Envelope(
                 headers={"x-app": "cli", "beta": "flag1"},
-                body_envelope={},
             ))
         profile = acc.finalize()
-        names = {h.name for h in profile.headers}
-        assert "x-app" in names
-        assert "beta" in names
+        assert "x-app" in profile.envelope.headers
+        assert "beta" in profile.envelope.headers
 
     def test_variable_headers_excluded(self):
         acc = ObservationAccumulator(provider="anthropic", user_agent="cli/1.0")
         for i in range(3):
-            acc.submit(ObservationBundle(
-                provider="anthropic",
-                user_agent="cli/1.0",
+            acc.submit(Envelope(
                 headers={"x-app": "cli", "x-req-id": f"r{i}"},
-                body_envelope={},
             ))
         profile = acc.finalize()
-        names = {h.name for h in profile.headers}
-        assert "x-app" in names
-        assert "x-req-id" not in names
+        assert "x-app" in profile.envelope.headers
+        assert "x-req-id" not in profile.envelope.headers
