@@ -513,20 +513,6 @@ class TestResponseHeadersEdgeCases:
         assert flow.response.stream is True
 
 
-class TestObserveCompliance:
-    """Tests for _observe_compliance static method."""
-
-    def test_compliance_disabled_skips(self) -> None:
-        mock_config = MagicMock()
-        mock_config.compliance.enabled = False
-        with patch("ccproxy.config.get_config", return_value=mock_config):
-            InspectorAddon._observe_compliance(MagicMock(), MagicMock())
-
-    def test_compliance_exception_handled(self) -> None:
-        with patch("ccproxy.config.get_config", side_effect=RuntimeError("oops")):
-            InspectorAddon._observe_compliance(MagicMock(), MagicMock())
-
-
 class TestSetTracer:
     def test_set_tracer(self) -> None:
         addon = InspectorAddon()

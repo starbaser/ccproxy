@@ -18,6 +18,7 @@
     hooks = {
       inbound = [
         "ccproxy.hooks.forward_oauth"
+        "ccproxy.hooks.gemini_cli_compat"
         "ccproxy.hooks.reroute_gemini"
         "ccproxy.hooks.extract_session_id"
         # Example: uncomment to work around google-gemini/gemini-cli#21691 —
@@ -40,7 +41,6 @@
     };
     compliance = {
       enabled = true;
-      min_observations = 1;
       profile_path = "~/.config/ccproxy/compliance_profiles.json";
     };
     inspector = {

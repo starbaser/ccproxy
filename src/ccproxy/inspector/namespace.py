@@ -459,7 +459,48 @@ def create_namespace(wg_client_conf: str, *, proxy_port: int = 4000) -> Namespac
         raise
 
 
+def _warmup_ignore_hosts(ns_pid: int, env: dict[str, str]) -> None:
+    """Prime mitmproxy's TLS passthrough for ignore_hosts domains.
+
+    The first TLS connection to an ignore_hosts domain through the WireGuard
+    tunnel can fail (mitmproxy race in SNI-based passthrough decision). A
+    throwaway connection attempt primes the path so the real client succeeds.
+    """
+    try:
+        from ccproxy.config import get_config
+
+        hosts = get_config().inspector.mitmproxy.ignore_hosts
+    except Exception:
+        return
+
+    if not hosts:
+        return
+
+    domains = []
+    for pattern in hosts:
+        domain = pattern.replace(r"\.", ".").strip("^$")
+        if domain and "." in domain:
+            domains.append(domain)
+
+    if not domains:
+        return
+
+    warmup_script = "; ".join(
+        f"curl -sf --max-time 2 -o /dev/null https://{d}/ 2>/dev/null"
+        for d in domains
+    )
+    nsenter_cmd = [
+        "nsenter", "-t", str(ns_pid),
+        "--net", "--user", "--preserve-credentials",
+        "--", "sh", "-c", warmup_script,
+    ]
+    subprocess.run(nsenter_cmd, env=env, capture_output=True, timeout=10)  # noqa: S603
+    logger.debug("Warmed up ignore_hosts TLS passthrough for %s", domains)
+
+
 def run_in_namespace(ctx: NamespaceContext, command: list[str], env: dict[str, str]) -> int:
+    _warmup_ignore_hosts(ctx.ns_pid, env)
+
     nsenter_cmd = [
         "nsenter",
         "-t",

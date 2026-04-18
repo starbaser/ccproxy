@@ -1,7 +1,7 @@
 """ProfileStore — persistent compliance profile storage.
 
-Thread-safe singleton that persists profiles and accumulators to a
-JSON file in the config directory. Atomic writes via temp+rename.
+Thread-safe singleton that persists profiles to a JSON file in the
+config directory.  Atomic writes via temp+rename.
 """
 
 from __future__ import annotations
@@ -14,8 +14,6 @@ from typing import Any
 
 from ccproxy.compliance.models import (
     ComplianceProfile,
-    ObservationAccumulator,
-    ObservationBundle,
     ProfileFeatureHeader,
     ProfileFeatureSystem,
 )
@@ -31,15 +29,12 @@ class ProfileStore:
     def __init__(
         self,
         store_path: Path,
-        min_observations: int = 3,
         seed_profiles: list[ComplianceProfile] | None = None,
     ) -> None:
         self._path = store_path
-        self._min_observations = min_observations
         self._lock = threading.Lock()
 
         self._profiles: dict[str, ComplianceProfile] = {}
-        self._accumulators: dict[str, ObservationAccumulator] = {}
         self._is_degraded: bool = False
 
         self._load()
@@ -55,37 +50,11 @@ class ProfileStore:
             if seeded:
                 self._flush()
 
-    def submit_observation(self, bundle: ObservationBundle) -> None:
-        key = _make_key(bundle.provider, bundle.user_agent)
-
+    def set_profile(self, key: str, profile: ComplianceProfile) -> None:
+        """Store a profile directly and persist to disk."""
         with self._lock:
-            acc = self._accumulators.get(key)
-            if acc is None:
-                acc = ObservationAccumulator(provider=bundle.provider, user_agent=bundle.user_agent)
-                self._accumulators[key] = acc
-
-            acc.submit(bundle)
-            logger.info(
-                "Compliance observation %d/%d for %s (ua=%s)",
-                acc.observation_count,
-                self._min_observations,
-                bundle.provider,
-                bundle.user_agent,
-            )
-
-            if acc.observation_count >= self._min_observations:
-                profile = acc.finalize()
-                self._profiles[key] = profile
-                logger.info(
-                    "Compliance profile finalized for %s: %d headers, %d body fields, system=%s",
-                    bundle.provider,
-                    len(profile.headers),
-                    len(profile.body_fields),
-                    profile.system is not None,
-                )
-                self._flush()
-            elif acc.observation_count % 10 == 0:
-                self._flush()
+            self._profiles[key] = profile
+            self._flush()
 
     def get_profile(self, provider: str, ua_hint: str | None = None) -> ComplianceProfile | None:
         """Look up a complete profile for a provider.
@@ -121,7 +90,7 @@ class ProfileStore:
         try:
             data = json.loads(self._path.read_text())
             if data.get("format_version") != _FORMAT_VERSION:
-                has_data = bool(data.get("profiles") or data.get("accumulators"))
+                has_data = bool(data.get("profiles"))
                 if has_data:
                     self._is_degraded = True
                     logger.warning(
@@ -142,13 +111,9 @@ class ProfileStore:
             for key, pd in data.get("profiles", {}).items():
                 self._profiles[key] = ComplianceProfile.from_dict(pd)
 
-            for key, ad in data.get("accumulators", {}).items():
-                self._accumulators[key] = ObservationAccumulator.from_dict(ad)
-
             logger.info(
-                "Loaded %d compliance profiles, %d accumulators from %s",
+                "Loaded %d compliance profiles from %s",
                 len(self._profiles),
-                len(self._accumulators),
                 self._path,
             )
         except (json.JSONDecodeError, KeyError, TypeError) as e:
@@ -159,7 +124,6 @@ class ProfileStore:
         data: dict[str, Any] = {
             "format_version": _FORMAT_VERSION,
             "profiles": {k: v.to_dict() for k, v in self._profiles.items()},
-            "accumulators": {k: v.to_dict() for k, v in self._accumulators.items()},
         }
 
         try:
@@ -227,7 +191,6 @@ def _create_store() -> ProfileStore:
 
     return ProfileStore(
         store_path=store_path,
-        min_observations=config.compliance.min_observations,
         seed_profiles=seed_profiles,
     )
 

@@ -128,6 +128,7 @@ def _build_addons(
 
     from ccproxy.config import get_config
     from ccproxy.inspector.addon import InspectorAddon
+    from ccproxy.inspector.compliance_seeder import ComplianceSeeder
     from ccproxy.inspector.contentview import ClientRequestContentview, ProviderResponseContentview
     from ccproxy.inspector.multi_har_saver import MultiHARSaver
 
@@ -172,7 +173,7 @@ def _build_addons(
     inbound_hooks = hooks_cfg.get("inbound", []) if isinstance(hooks_cfg, dict) else hooks_cfg
     outbound_hooks = hooks_cfg.get("outbound", []) if isinstance(hooks_cfg, dict) else []
 
-    addons: list[Any] = [addon, MultiHARSaver()]
+    addons: list[Any] = [addon, MultiHARSaver(), ComplianceSeeder()]
 
     if inbound_hooks:
         addons.append(_make_pipeline_router("ccproxy_inbound", inbound_hooks))

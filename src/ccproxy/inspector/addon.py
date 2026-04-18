@@ -62,22 +62,6 @@ class InspectorAddon:
 
         return None
 
-    @staticmethod
-    def _observe_compliance(flow: http.HTTPFlow, client_request: HttpSnapshot) -> None:
-        """Submit flow for compliance profile learning if applicable."""
-        try:
-            from ccproxy.config import get_config
-
-            config = get_config()
-            if not config.compliance.enabled:
-                return
-
-            from ccproxy.compliance import observe_flow
-
-            observe_flow(flow, client_request)
-        except Exception:
-            logger.debug("Compliance observation skipped", exc_info=True)
-
     def _extract_session_id(self, request: http.Request) -> str | None:
         """Extract session_id from Claude Code's metadata.user_id field."""
         if not request.content:
@@ -118,9 +102,6 @@ class InspectorAddon:
 
         flow.metadata[InspectorMeta.DIRECTION] = direction
         flow.metadata[InspectorMeta.RECORD] = record
-
-        if record.client_request is not None:
-            self._observe_compliance(flow, record.client_request)
 
         host = flow.request.pretty_host
 

@@ -48,11 +48,10 @@ ccproxy:
       - ccproxy.hooks.verbose_mode
       - ccproxy.hooks.apply_compliance
 
-  # Compliance learning: observes WireGuard reference traffic, applies
-  # learned headers/body/system to reverse proxy flows.
+  # Compliance profiles: seeded from curated flows via `ccproxy flows seed`,
+  # applied to reverse proxy flows via the apply_compliance hook.
   compliance:
     enabled: true
-    min_observations: 3
     seed_anthropic: true
 
   # Inspector settings
