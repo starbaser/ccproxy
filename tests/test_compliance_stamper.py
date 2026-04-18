@@ -5,12 +5,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ccproxy.compliance.stamper import ComplianceStamper, resolve_stamper_class
+from ccproxy.compliance.stamper import ComplianceStamper, MaterializedEnvelope, resolve_stamper_class
 from ccproxy.compliance.models import (
     ComplianceProfile,
-    ProfileFeatureBodyField,
-    ProfileFeatureHeader,
-    ProfileFeatureSystem,
+    Envelope,
 )
 from ccproxy.inspector.flow_store import FlowRecord, InspectorMeta, TransformMeta
 from ccproxy.pipeline.context import Context
@@ -34,22 +32,85 @@ def _make_profile(**kwargs) -> ComplianceProfile:
         "updated_at": "2026-01-01T00:00:00Z",
         "observation_count": 3,
         "is_complete": True,
-        "headers": [],
-        "body_fields": [],
-        "system": None,
+        "envelope": Envelope(),
     }
     defaults.update(kwargs)
     return ComplianceProfile(**defaults)
+
+
+class TestPrepareEnvelope:
+    def test_copies_headers(self):
+        profile = _make_profile(envelope=Envelope(headers={"x-app": "cli", "anthropic-version": "2023-06-01"}))
+        env = ComplianceStamper(_make_context(), profile).prepare_envelope()
+        assert env.headers == {"x-app": "cli", "anthropic-version": "2023-06-01"}
+
+    def test_filters_exclusions(self):
+        profile = _make_profile(
+            envelope=Envelope(
+                body_fields={
+                    "thinking": {"type": "enabled"},
+                    "context_management": {"edits": []},
+                    "output_config": {"effort": "max"},
+                    "some_field": "val",
+                }
+            )
+        )
+        env = ComplianceStamper(_make_context(), profile).prepare_envelope()
+        assert "thinking" not in env.body_fields
+        assert "context_management" not in env.body_fields
+        assert "output_config" not in env.body_fields
+        assert env.body_fields["some_field"] == "val"
+
+    def test_generates_user_prompt_id(self):
+        profile = _make_profile(
+            envelope=Envelope(body_fields={"user_prompt_id": "placeholder"})
+        )
+        env = ComplianceStamper(_make_context(), profile).prepare_envelope()
+        assert env.body_fields["user_prompt_id"] != "placeholder"
+        assert len(env.body_fields["user_prompt_id"]) == 13
+
+    def test_extracts_identity_from_metadata(self):
+        profile = _make_profile(
+            envelope=Envelope(
+                body_fields={
+                    "metadata": {"user_id": json.dumps({"device_id": "dev123", "account_uuid": "acc456"})},
+                }
+            )
+        )
+        env = ComplianceStamper(_make_context(), profile).prepare_envelope()
+        assert "metadata" not in env.body_fields
+        assert env.metadata_user_id is not None
+        identity = json.loads(env.metadata_user_id)
+        assert identity["device_id"] == "dev123"
+        assert identity["account_uuid"] == "acc456"
+        assert "session_id" in identity
+
+    def test_no_identity_returns_none(self):
+        profile = _make_profile(
+            envelope=Envelope(body_fields={"some_field": "val"})
+        )
+        env = ComplianceStamper(_make_context(), profile).prepare_envelope()
+        assert env.metadata_user_id is None
+
+    def test_passes_through_system_and_wrapper(self):
+        profile = _make_profile(
+            envelope=Envelope(
+                system=[{"type": "text", "text": "You are Claude"}],
+                body_wrapper="request",
+            )
+        )
+        env = ComplianceStamper(_make_context(), profile).prepare_envelope()
+        assert env.system == [{"type": "text", "text": "You are Claude"}]
+        assert env.body_wrapper == "request"
 
 
 class TestStampHeaders:
     def test_adds_missing_headers(self):
         ctx = _make_context()
         profile = _make_profile(
-            headers=[
-                ProfileFeatureHeader(name="x-app", value="cli"),
-                ProfileFeatureHeader(name="anthropic-beta", value="flag1,flag2"),
-            ]
+            envelope=Envelope(
+                headers={"x-app": "cli", "anthropic-beta": "flag1,flag2"},
+            )
         )
         ComplianceStamper(ctx, profile).stamp()
         assert ctx.get_header("x-app") == "cli"
@@ -58,28 +119,25 @@ class TestStampHeaders:
     def test_overwrites_existing(self):
         ctx = _make_context(headers={"x-app": "sdk"})
         profile = _make_profile(
-            headers=[
-                ProfileFeatureHeader(name="x-app", value="cli"),
-            ]
+            envelope=Envelope(headers={"x-app": "cli"})
         )
         ComplianceStamper(ctx, profile).stamp()
         assert ctx.get_header("x-app") == "cli"
 
     def test_no_headers_no_op(self):
         ctx = _make_context(headers={"existing": "val"})
-        profile = _make_profile(headers=[])
+        profile = _make_profile()
         ComplianceStamper(ctx, profile).stamp()
         assert ctx.get_header("existing") == "val"
 
     def test_unions_anthropic_beta_tokens(self):
         ctx = _make_context(headers={"anthropic-beta": "oauth-2025-04-20"})
         profile = _make_profile(
-            headers=[
-                ProfileFeatureHeader(
-                    name="anthropic-beta",
-                    value="oauth-2025-04-20,claude-code-20250219,interleaved-thinking-2025-05-14",
-                ),
-            ]
+            envelope=Envelope(
+                headers={
+                    "anthropic-beta": "oauth-2025-04-20,claude-code-20250219,interleaved-thinking-2025-05-14",
+                },
+            )
         )
         ComplianceStamper(ctx, profile).stamp()
         assert ctx.get_header("anthropic-beta") == (
@@ -89,12 +147,9 @@ class TestStampHeaders:
     def test_union_preserves_existing_order(self):
         ctx = _make_context(headers={"anthropic-beta": "custom-flag,oauth-2025-04-20"})
         profile = _make_profile(
-            headers=[
-                ProfileFeatureHeader(
-                    name="anthropic-beta",
-                    value="oauth-2025-04-20,claude-code-20250219",
-                ),
-            ]
+            envelope=Envelope(
+                headers={"anthropic-beta": "oauth-2025-04-20,claude-code-20250219"},
+            )
         )
         ComplianceStamper(ctx, profile).stamp()
         tokens = ctx.get_header("anthropic-beta").split(",")
@@ -104,9 +159,7 @@ class TestStampHeaders:
         full = "oauth-2025-04-20,claude-code-20250219,interleaved-thinking-2025-05-14"
         ctx = _make_context(headers={"anthropic-beta": full})
         profile = _make_profile(
-            headers=[
-                ProfileFeatureHeader(name="anthropic-beta", value=full),
-            ]
+            envelope=Envelope(headers={"anthropic-beta": full})
         )
         ComplianceStamper(ctx, profile).stamp()
         assert ctx.get_header("anthropic-beta") == full
@@ -114,9 +167,9 @@ class TestStampHeaders:
     def test_non_list_header_overwrites(self):
         ctx = _make_context(headers={"anthropic-version": "2024-99-99"})
         profile = _make_profile(
-            headers=[
-                ProfileFeatureHeader(name="anthropic-version", value="2023-06-01"),
-            ]
+            envelope=Envelope(
+                headers={"anthropic-version": "2023-06-01"},
+            )
         )
         ComplianceStamper(ctx, profile).stamp()
         assert ctx.get_header("anthropic-version") == "2023-06-01"
@@ -124,9 +177,9 @@ class TestStampHeaders:
     def test_union_handles_whitespace_in_csv(self):
         ctx = _make_context(headers={"anthropic-beta": "oauth-2025-04-20, custom-flag"})
         profile = _make_profile(
-            headers=[
-                ProfileFeatureHeader(name="anthropic-beta", value="claude-code-20250219"),
-            ]
+            envelope=Envelope(
+                headers={"anthropic-beta": "claude-code-20250219"},
+            )
         )
         ComplianceStamper(ctx, profile).stamp()
         tokens = ctx.get_header("anthropic-beta").split(",")
@@ -137,9 +190,9 @@ class TestStampBodyFields:
     def test_adds_missing_compliance_fields(self):
         ctx = _make_context(body={"model": "test"})
         profile = _make_profile(
-            body_fields=[
-                ProfileFeatureBodyField(path="some_envelope", value={"key": "val"}),
-            ]
+            envelope=Envelope(
+                body_fields={"some_envelope": {"key": "val"}},
+            )
         )
         ComplianceStamper(ctx, profile).stamp()
         assert ctx._body["some_envelope"] == {"key": "val"}
@@ -147,9 +200,9 @@ class TestStampBodyFields:
     def test_does_not_overwrite_existing(self):
         ctx = _make_context(body={"some_envelope": {"key": "old"}})
         profile = _make_profile(
-            body_fields=[
-                ProfileFeatureBodyField(path="some_envelope", value={"key": "new"}),
-            ]
+            envelope=Envelope(
+                body_fields={"some_envelope": {"key": "new"}},
+            )
         )
         ComplianceStamper(ctx, profile).stamp()
         assert ctx._body["some_envelope"] == {"key": "old"}
@@ -157,22 +210,22 @@ class TestStampBodyFields:
     def test_generates_user_prompt_id_when_missing(self):
         ctx = _make_context(body={"model": "test"})
         profile = _make_profile(
-            body_fields=[
-                ProfileFeatureBodyField(path="user_prompt_id", value="placeholder"),
-            ]
+            envelope=Envelope(
+                body_fields={"user_prompt_id": "placeholder"},
+            )
         )
         ComplianceStamper(ctx, profile).stamp()
         generated = ctx._body.get("user_prompt_id")
         assert generated is not None
-        assert len(generated) == 13  # uuid4 hex[:13]
+        assert len(generated) == 13
         assert generated != "placeholder"
 
     def test_preserves_existing_user_prompt_id(self):
         ctx = _make_context(body={"model": "test", "user_prompt_id": "existing-id"})
         profile = _make_profile(
-            body_fields=[
-                ProfileFeatureBodyField(path="user_prompt_id", value="placeholder"),
-            ]
+            envelope=Envelope(
+                body_fields={"user_prompt_id": "placeholder"},
+            )
         )
         ComplianceStamper(ctx, profile).stamp()
         assert ctx._body["user_prompt_id"] == "existing-id"
@@ -180,12 +233,14 @@ class TestStampBodyFields:
     def test_excludes_feature_config_fields(self):
         ctx = _make_context(body={"model": "test"})
         profile = _make_profile(
-            body_fields=[
-                ProfileFeatureBodyField(path="thinking", value={"type": "enabled"}),
-                ProfileFeatureBodyField(path="context_management", value={"edits": []}),
-                ProfileFeatureBodyField(path="output_config", value={"effort": "max"}),
-                ProfileFeatureBodyField(path="metadata", value={"user_id": "test"}),
-            ]
+            envelope=Envelope(
+                body_fields={
+                    "thinking": {"type": "enabled"},
+                    "context_management": {"edits": []},
+                    "output_config": {"effort": "max"},
+                    "metadata": {"user_id": "test"},
+                },
+            )
         )
         ComplianceStamper(ctx, profile).stamp()
         assert "thinking" not in ctx._body
@@ -197,8 +252,8 @@ class TestStampSystem:
     def test_sets_system_when_none(self):
         ctx = _make_context(body={"model": "test"})
         profile = _make_profile(
-            system=ProfileFeatureSystem(
-                structure=[{"type": "text", "text": "You are Claude"}],
+            envelope=Envelope(
+                system=[{"type": "text", "text": "You are Claude"}],
             )
         )
         ComplianceStamper(ctx, profile).stamp()
@@ -207,8 +262,8 @@ class TestStampSystem:
     def test_wraps_string_system(self):
         ctx = _make_context(body={"system": "Be helpful"})
         profile = _make_profile(
-            system=ProfileFeatureSystem(
-                structure=[{"type": "text", "text": "You are Claude"}],
+            envelope=Envelope(
+                system=[{"type": "text", "text": "You are Claude"}],
             )
         )
         ComplianceStamper(ctx, profile).stamp()
@@ -226,8 +281,8 @@ class TestStampSystem:
             }
         )
         profile = _make_profile(
-            system=ProfileFeatureSystem(
-                structure=[{"type": "text", "text": "You are Claude"}],
+            envelope=Envelope(
+                system=[{"type": "text", "text": "You are Claude"}],
             )
         )
         ComplianceStamper(ctx, profile).stamp()
@@ -246,8 +301,8 @@ class TestStampSystem:
             }
         )
         profile = _make_profile(
-            system=ProfileFeatureSystem(
-                structure=[{"type": "text", "text": "You are Claude"}],
+            envelope=Envelope(
+                system=[{"type": "text", "text": "You are Claude"}],
             )
         )
         ComplianceStamper(ctx, profile).stamp()
@@ -264,8 +319,8 @@ class TestStampSystem:
             }
         )
         profile = _make_profile(
-            system=ProfileFeatureSystem(
-                structure=[{"type": "text", "text": "You are Claude Code"}],
+            envelope=Envelope(
+                system=[{"type": "text", "text": "You are Claude Code"}],
             )
         )
         ComplianceStamper(ctx, profile).stamp()
@@ -282,8 +337,8 @@ class TestStampSystem:
             }
         )
         profile = _make_profile(
-            system=ProfileFeatureSystem(
-                structure=[{"type": "text", "text": "You are Claude"}],
+            envelope=Envelope(
+                system=[{"type": "text", "text": "You are Claude"}],
             )
         )
         ComplianceStamper(ctx, profile).stamp()
@@ -303,8 +358,8 @@ class TestStampSystem:
             }
         )
         profile = _make_profile(
-            system=ProfileFeatureSystem(
-                structure=[{"type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude."}],
+            envelope=Envelope(
+                system=[{"type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude."}],
             )
         )
         ComplianceStamper(ctx, profile).stamp()
@@ -319,11 +374,11 @@ class TestStampSystem:
             }
         )
         profile = _make_profile(
-            system=ProfileFeatureSystem(
-                structure=[
+            envelope=Envelope(
+                system=[
                     {"type": "text", "text": "You are Claude Code"},
                     {"type": "text", "text": "Second system block"},
-                ]
+                ],
             )
         )
         ComplianceStamper(ctx, profile).stamp()
@@ -341,12 +396,12 @@ class TestStampSystem:
             }
         )
         profile = _make_profile(
-            system=ProfileFeatureSystem(
-                structure=[
+            envelope=Envelope(
+                system=[
                     {"type": "image", "source": "ignored"},
                     {"type": "text", "text": ""},
                     {"type": "text", "text": "You are Claude"},
-                ]
+                ],
             )
         )
         ComplianceStamper(ctx, profile).stamp()
@@ -358,13 +413,13 @@ class TestStampSystem:
 
     def test_no_profile_system_no_op(self):
         ctx = _make_context(body={"system": "Original"})
-        profile = _make_profile(system=None)
+        profile = _make_profile()
         ComplianceStamper(ctx, profile).stamp()
         assert ctx.system == "Original"
 
     def test_empty_profile_structure_no_op(self):
         ctx = _make_context(body={"system": "Original"})
-        profile = _make_profile(system=ProfileFeatureSystem(structure=[]))
+        profile = _make_profile(envelope=Envelope(system=[]))
         ComplianceStamper(ctx, profile).stamp()
         assert ctx.system == "Original"
 
@@ -373,12 +428,11 @@ class TestStampSessionMetadata:
     def test_synthesizes_session_from_profile(self):
         ctx = _make_context(body={"model": "test"})
         profile = _make_profile(
-            body_fields=[
-                ProfileFeatureBodyField(
-                    path="metadata",
-                    value={"user_id": json.dumps({"device_id": "dev123", "account_uuid": "acc456"})},
-                ),
-            ]
+            envelope=Envelope(
+                body_fields={
+                    "metadata": {"user_id": json.dumps({"device_id": "dev123", "account_uuid": "acc456"})},
+                },
+            )
         )
         ComplianceStamper(ctx, profile).stamp()
         metadata = ctx._body.get("metadata", {})
@@ -391,12 +445,11 @@ class TestStampSessionMetadata:
     def test_does_not_overwrite_existing_user_id(self):
         ctx = _make_context(body={"metadata": {"user_id": "existing"}})
         profile = _make_profile(
-            body_fields=[
-                ProfileFeatureBodyField(
-                    path="metadata",
-                    value={"user_id": json.dumps({"device_id": "dev123"})},
-                ),
-            ]
+            envelope=Envelope(
+                body_fields={
+                    "metadata": {"user_id": json.dumps({"device_id": "dev123"})},
+                },
+            )
         )
         ComplianceStamper(ctx, profile).stamp()
         assert ctx._body["metadata"]["user_id"] == "existing"
@@ -404,9 +457,7 @@ class TestStampSessionMetadata:
     def test_no_identity_fields_no_op(self):
         ctx = _make_context(body={"model": "test"})
         profile = _make_profile(
-            body_fields=[
-                ProfileFeatureBodyField(path="some_field", value="val"),
-            ]
+            envelope=Envelope(body_fields={"some_field": "val"})
         )
         ComplianceStamper(ctx, profile).stamp()
         assert "metadata" not in ctx._body or "user_id" not in ctx._body.get("metadata", {})
@@ -416,9 +467,11 @@ class TestIdempotency:
     def test_double_apply_same_result(self):
         ctx = _make_context(body={"model": "test", "system": "Be helpful"})
         profile = _make_profile(
-            headers=[ProfileFeatureHeader(name="x-app", value="cli")],
-            system=ProfileFeatureSystem(structure=[{"type": "text", "text": "Prefix"}]),
-            body_fields=[ProfileFeatureBodyField(path="some_env", value=True)],
+            envelope=Envelope(
+                headers={"x-app": "cli"},
+                system=[{"type": "text", "text": "Prefix"}],
+                body_fields={"some_env": True},
+            )
         )
         ComplianceStamper(ctx, profile).stamp()
         first_system = ctx.system
@@ -435,15 +488,10 @@ class TestIdempotency:
             body={"system": [{"type": "text", "text": "User block"}]},
         )
         profile = _make_profile(
-            headers=[
-                ProfileFeatureHeader(
-                    name="anthropic-beta",
-                    value="oauth-2025-04-20,claude-code-20250219",
-                )
-            ],
-            system=ProfileFeatureSystem(
-                structure=[{"type": "text", "text": "You are Claude"}],
-            ),
+            envelope=Envelope(
+                headers={"anthropic-beta": "oauth-2025-04-20,claude-code-20250219"},
+                system=[{"type": "text", "text": "You are Claude"}],
+            )
         )
         ComplianceStamper(ctx, profile).stamp()
         first_system = list(ctx.system)
@@ -460,10 +508,8 @@ class TestIdempotency:
 class TestWrapBody:
     def test_wraps_body_into_wrapper_field(self) -> None:
         ctx = _make_context(body={"model": "gemini-pro", "messages": [], "stream": False})
-        profile = _make_profile(body_wrapper="request")
-
-        ComplianceStamper(ctx, profile).wrap_body()
-
+        profile = _make_profile(envelope=Envelope(body_wrapper="request"))
+        ComplianceStamper(ctx, profile).stamp()
         assert "request" in ctx._body
         assert ctx._body["model"] == "gemini-pro"
         assert ctx._body["request"] == {"messages": [], "stream": False}
@@ -471,18 +517,14 @@ class TestWrapBody:
     def test_noop_when_no_body_wrapper(self) -> None:
         original_body = {"model": "claude-3", "messages": []}
         ctx = _make_context(body=dict(original_body))
-        profile = _make_profile(body_wrapper=None)
-
-        ComplianceStamper(ctx, profile).wrap_body()
-
+        profile = _make_profile()
+        ComplianceStamper(ctx, profile).stamp()
         assert ctx._body == original_body
 
     def test_idempotent_when_already_wrapped(self) -> None:
         ctx = _make_context(body={"model": "gemini-pro", "request": {"messages": []}})
-        profile = _make_profile(body_wrapper="request")
-
-        ComplianceStamper(ctx, profile).wrap_body()
-
+        profile = _make_profile(envelope=Envelope(body_wrapper="request"))
+        ComplianceStamper(ctx, profile).stamp()
         assert ctx._body["model"] == "gemini-pro"
         assert ctx._body["request"] == {"messages": []}
 
@@ -501,10 +543,8 @@ class TestWrapBody:
         flow.metadata = {InspectorMeta.RECORD: record}
         ctx = Context.from_flow(flow)
 
-        profile = _make_profile(body_wrapper="request")
-
-        ComplianceStamper(ctx, profile).wrap_body()
-
+        profile = _make_profile(envelope=Envelope(body_wrapper="request"))
+        ComplianceStamper(ctx, profile).stamp()
         assert ctx._body["model"] == "gemini-2.5-flash"
         assert "request" in ctx._body
 
@@ -516,10 +556,8 @@ class TestWrapBody:
         flow.metadata = {}
         ctx = Context.from_flow(flow)
 
-        profile = _make_profile(body_wrapper="request")
-
-        ComplianceStamper(ctx, profile).wrap_body()
-
+        profile = _make_profile(envelope=Envelope(body_wrapper="request"))
+        ComplianceStamper(ctx, profile).stamp()
         assert ctx._body.get("model") == "gemini-pro"
         assert "request" in ctx._body
 
@@ -531,10 +569,8 @@ class TestWrapBody:
         flow.metadata = {}
         ctx = Context.from_flow(flow)
 
-        profile = _make_profile(body_wrapper="request")
-
-        ComplianceStamper(ctx, profile).wrap_body()
-
+        profile = _make_profile(envelope=Envelope(body_wrapper="request"))
+        ComplianceStamper(ctx, profile).stamp()
         assert "model" not in ctx._body
         assert ctx._body["request"] == {"messages": []}
 
@@ -553,10 +589,8 @@ class TestWrapBody:
         flow.metadata = {InspectorMeta.RECORD: record}
         ctx = Context.from_flow(flow)
 
-        profile = _make_profile(body_wrapper="request")
-
-        ComplianceStamper(ctx, profile).wrap_body()
-
+        profile = _make_profile(envelope=Envelope(body_wrapper="request"))
+        ComplianceStamper(ctx, profile).stamp()
         assert ctx._body["model"] == "explicit-model"
         assert ctx._body["request"] == {"messages": []}
 
@@ -589,55 +623,57 @@ class TestExtractModelFromPath:
 
 
 class TestSubclass:
-    def test_override_skips_operation(self):
-        class SkipHeaders(ComplianceStamper):
-            def stamp_headers(self):  # noqa: PLR6301
-                pass
+    def test_override_prepare_envelope_modifies_headers(self):
+        class CustomEnvelope(ComplianceStamper):
+            def prepare_envelope(self):
+                env = super().prepare_envelope()
+                env.headers.pop("x-app", None)
+                return env
 
         ctx = _make_context()
         profile = _make_profile(
-            headers=[ProfileFeatureHeader(name="x-app", value="cli")],
-            system=ProfileFeatureSystem(structure=[{"type": "text", "text": "You are Claude"}]),
+            envelope=Envelope(
+                headers={"x-app": "cli"},
+                system=[{"type": "text", "text": "You are Claude"}],
+            )
         )
-        SkipHeaders(ctx, profile).stamp()
+        CustomEnvelope(ctx, profile).stamp()
         assert ctx.get_header("x-app") == ""
         assert ctx.system == [{"type": "text", "text": "You are Claude"}]
 
-    def test_override_extends_with_super(self):
-        class ExtendedHeaders(ComplianceStamper):
-            def stamp_headers(self):
-                super().stamp_headers()
+    def test_override_wrap_extends_behavior(self):
+        class ExtendedWrap(ComplianceStamper):
+            def wrap(self, envelope):
+                super().wrap(envelope)
                 self.ctx.set_header("x-custom", "injected")
 
         ctx = _make_context()
-        profile = _make_profile(headers=[ProfileFeatureHeader(name="x-app", value="cli")])
-        ExtendedHeaders(ctx, profile).stamp()
+        profile = _make_profile(envelope=Envelope(headers={"x-app": "cli"}))
+        ExtendedWrap(ctx, profile).stamp()
         assert ctx.get_header("x-app") == "cli"
         assert ctx.get_header("x-custom") == "injected"
 
-    def test_override_stamp_reorders_operations(self):
+    def test_override_stamp_custom_orchestration(self):
         call_order = []
 
-        class ReorderedStamper(ComplianceStamper):
-            def stamp(self):
-                self.stamp_system()
-                self.stamp_headers()
+        class CustomStamper(ComplianceStamper):
+            def prepare_envelope(self):
+                call_order.append("prepare")
+                return super().prepare_envelope()
 
-            def stamp_headers(self):
-                call_order.append("headers")
-                super().stamp_headers()
-
-            def stamp_system(self):
-                call_order.append("system")
-                super().stamp_system()
+            def wrap(self, envelope):
+                call_order.append("wrap")
+                super().wrap(envelope)
 
         ctx = _make_context(body={"model": "test"})
         profile = _make_profile(
-            headers=[ProfileFeatureHeader(name="x-app", value="cli")],
-            system=ProfileFeatureSystem(structure=[{"type": "text", "text": "Prefix"}]),
+            envelope=Envelope(
+                headers={"x-app": "cli"},
+                system=[{"type": "text", "text": "Prefix"}],
+            )
         )
-        ReorderedStamper(ctx, profile).stamp()
-        assert call_order == ["system", "headers"]
+        CustomStamper(ctx, profile).stamp()
+        assert call_order == ["prepare", "wrap"]
         assert ctx.get_header("x-app") == "cli"
         assert ctx.system == [{"type": "text", "text": "Prefix"}]
 

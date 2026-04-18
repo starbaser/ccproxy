@@ -13,7 +13,7 @@ from typing import Any
 
 from mitmproxy import command, ctx, http
 
-from ccproxy.compliance.extractor import extract_observation
+from ccproxy.compliance.extractor import extract_envelope
 from ccproxy.compliance.models import ObservationAccumulator
 from ccproxy.compliance.store import get_store
 from ccproxy.inspector.flow_store import InspectorMeta
@@ -61,13 +61,12 @@ class ComplianceSeeder:
                     user_agent = ua
                     acc.user_agent = user_agent
 
-            bundle = extract_observation(
+            envelope = extract_envelope(
                 snapshot,
-                provider,
                 additional_header_exclusions=extra_headers,
                 additional_body_content_fields=extra_fields,
             )
-            acc.submit(bundle)
+            acc.submit(envelope)
             snapshots_used += 1
 
         if snapshots_used == 0:
@@ -79,24 +78,25 @@ class ComplianceSeeder:
         store = get_store()
         store.set_profile(key, profile)
 
+        env = profile.envelope
         summary: dict[str, Any] = {
             "status": "ok",
             "key": key,
             "flows_used": snapshots_used,
             "user_agent": profile.user_agent,
-            "headers": len(profile.headers),
-            "body_fields": len(profile.body_fields),
-            "system": profile.system is not None,
-            "body_wrapper": profile.body_wrapper,
+            "headers": len(env.headers),
+            "body_fields": len(env.body_fields),
+            "system": env.system is not None,
+            "body_wrapper": env.body_wrapper,
         }
 
         logger.info(
             "Seeded compliance profile %s: %d flows, %d headers, %d body fields, system=%s",
             key,
             snapshots_used,
-            len(profile.headers),
-            len(profile.body_fields),
-            profile.system is not None,
+            len(env.headers),
+            len(env.body_fields),
+            env.system is not None,
         )
 
         return json.dumps(summary)

@@ -1,7 +1,7 @@
-"""Feature extraction from ClientRequest snapshots.
+"""Feature extraction from HttpSnapshot snapshots.
 
-Produces an ObservationBundle containing profiled headers and body
-envelope fields, with content fields and sensitive headers excluded.
+Produces an Envelope containing profiled headers and body envelope
+fields, with content fields and sensitive headers excluded.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from ccproxy.compliance.classifier import should_skip_body_field, should_skip_header
-from ccproxy.compliance.models import ObservationBundle
+from ccproxy.compliance.models import Envelope
 
 if TYPE_CHECKING:
     from ccproxy.inspector.flow_store import HttpSnapshot
@@ -19,28 +19,26 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def extract_observation(
+def extract_envelope(
     client_request: HttpSnapshot,
-    provider: str,
     *,
     additional_header_exclusions: frozenset[str] = frozenset(),
     additional_body_content_fields: frozenset[str] = frozenset(),
-) -> ObservationBundle:
-    """Extract an ObservationBundle from a raw ClientRequest snapshot.
+) -> Envelope:
+    """Extract an Envelope from a raw HttpSnapshot.
 
     Filters out content fields (messages, tools, etc.), auth tokens,
     and transport headers. Everything else is candidate envelope.
     """
     lc_headers = {k.lower(): v for k, v in client_request.headers.items()}
-    user_agent = lc_headers.get("user-agent", "unknown")
 
     headers: dict[str, str] = {}
     for name, value in lc_headers.items():
         if not should_skip_header(name, additional_header_exclusions):
             headers[name] = value
 
-    body_envelope: dict[str, Any] = {}
-    system: Any = None
+    body_fields: dict[str, Any] = {}
+    system: list[dict[str, Any]] | None = None
     body_wrapper: str | None = None
 
     if client_request.body:
@@ -49,9 +47,11 @@ def extract_observation(
             if isinstance(body, dict):
                 for key, value in body.items():
                     if key == "system":
-                        system = value
+                        if isinstance(value, list):
+                            system = value
+                        elif isinstance(value, str):
+                            system = [{"type": "text", "text": value}]
                     elif not should_skip_body_field(key, additional_body_content_fields):
-                        # Detect wrapper: a dict field containing primary payload fields
                         payload_markers = ("contents", "messages", "prompt")
                         if (
                             body_wrapper is None
@@ -60,15 +60,13 @@ def extract_observation(
                         ):
                             body_wrapper = key
                         else:
-                            body_envelope[key] = value
+                            body_fields[key] = value
         except (json.JSONDecodeError, UnicodeDecodeError):
-            logger.debug("Non-JSON body, skipping body extraction for %s", provider)
+            logger.debug("Non-JSON body, skipping body extraction")
 
-    return ObservationBundle(
-        provider=provider,
-        user_agent=user_agent,
+    return Envelope(
         headers=headers,
-        body_envelope=body_envelope,
+        body_fields=body_fields,
         system=system,
         body_wrapper=body_wrapper,
     )

@@ -89,9 +89,8 @@ class TestComplianceSeeder:
 
         profile = store.get_profile("anthropic")
         assert profile is not None
-        names = {h.name for h in profile.headers}
-        assert "x-app" in names
-        assert "beta" in names
+        assert "x-app" in profile.envelope.headers
+        assert "beta" in profile.envelope.headers
 
     def test_variable_headers_excluded_across_flows(self, store: ProfileStore):
         flow1 = _make_flow_with_snapshot(flow_id="f1", headers={"x-app": "cli", "x-req-id": "r1"})
@@ -107,9 +106,8 @@ class TestComplianceSeeder:
 
         profile = store.get_profile("anthropic")
         assert profile is not None
-        names = {h.name for h in profile.headers}
-        assert "x-app" in names
-        assert "x-req-id" not in names
+        assert "x-app" in profile.envelope.headers
+        assert "x-req-id" not in profile.envelope.headers
 
     def test_skips_flow_without_snapshot(self, store: ProfileStore):
         flow_good = _make_flow_with_snapshot(flow_id="good")
@@ -163,8 +161,6 @@ class TestComplianceSeeder:
             updated_at="2020-01-01T00:00:00+00:00",
             observation_count=1,
             is_complete=True,
-            headers=[],
-            body_fields=[],
         )
         store.set_profile("anthropic/seed", old)
 

@@ -72,12 +72,13 @@ def stamp_compliance(ctx: Context, params: dict[str, Any]) -> Context:
         logger.debug("No compliance profile for provider %s", provider)
         return ctx
 
+    env = profile.envelope
     logger.info(
         "Stamping compliance profile for %s (ua=%s, %d headers, %d body fields)",
         provider,
         profile.user_agent,
-        len(profile.headers),
-        len(profile.body_fields),
+        len(env.headers),
+        len(env.body_fields),
     )
 
     from ccproxy.config import get_config

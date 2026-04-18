@@ -12,15 +12,11 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from ccproxy.compliance.models import (
-    ComplianceProfile,
-    ProfileFeatureHeader,
-    ProfileFeatureSystem,
-)
+from ccproxy.compliance.models import ComplianceProfile, Envelope
 
 logger = logging.getLogger(__name__)
 
-_FORMAT_VERSION = 1
+_FORMAT_VERSION = 2
 
 
 class ProfileStore:
@@ -150,12 +146,13 @@ def _build_anthropic_seed_profile() -> ComplianceProfile:
         updated_at="1970-01-01T00:00:00+00:00",
         observation_count=0,
         is_complete=True,
-        headers=[
-            ProfileFeatureHeader(name="anthropic-beta", value=",".join(ANTHROPIC_BETA_HEADERS)),
-            ProfileFeatureHeader(name="anthropic-version", value="2023-06-01"),
-        ],
-        body_fields=[],
-        system=ProfileFeatureSystem(structure=[{"type": "text", "text": CLAUDE_CODE_SYSTEM_PREFIX}]),
+        envelope=Envelope(
+            headers={
+                "anthropic-beta": ",".join(ANTHROPIC_BETA_HEADERS),
+                "anthropic-version": "2023-06-01",
+            },
+            system=[{"type": "text", "text": CLAUDE_CODE_SYSTEM_PREFIX}],
+        ),
     )
 
 
