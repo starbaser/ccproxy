@@ -127,8 +127,8 @@ class ComplianceConfig(BaseModel):
     additional_body_content_fields: list[str] = Field(default_factory=list)
     """Additional top-level body field names to treat as content (not envelope)."""
 
-    merger_class: str = "ccproxy.compliance.merger.ComplianceMerger"
-    """Dotted import path to a ComplianceMerger subclass for profile application."""
+    stamper_class: str = "ccproxy.compliance.stamper.ComplianceStamper"
+    """Dotted import path to a ComplianceStamper subclass for profile application."""
 
 
 class FlowsConfig(BaseModel):
@@ -376,7 +376,7 @@ class CCProxyConfig(BaseSettings):
             "outbound": [
                 "ccproxy.hooks.inject_mcp_notifications",
                 "ccproxy.hooks.verbose_mode",
-                "ccproxy.hooks.apply_compliance",
+                "ccproxy.hooks.stamp_compliance",
             ],
         },
     )

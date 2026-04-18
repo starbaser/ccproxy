@@ -46,10 +46,10 @@ ccproxy:
     outbound:
       - ccproxy.hooks.inject_mcp_notifications
       - ccproxy.hooks.verbose_mode
-      - ccproxy.hooks.apply_compliance
+      - ccproxy.hooks.stamp_compliance
 
   # Compliance profiles: seeded from curated flows via `ccproxy flows seed`,
-  # applied to reverse proxy flows via the apply_compliance hook.
+  # stamped onto reverse proxy flows via the stamp_compliance hook.
   compliance:
     enabled: true
     seed_anthropic: true

@@ -1,8 +1,8 @@
-"""Apply learned compliance profile to outbound requests.
+"""Stamp learned compliance profile onto outbound requests.
 
 Runs last in the outbound pipeline. For reverse proxy flows that have
 been transformed by lightllm, loads the best compliance profile for the
-destination provider and merges it onto the request.
+destination provider and stamps it onto the request.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from mitmproxy.proxy.mode_specs import ReverseMode
 
-from ccproxy.compliance.merger import resolve_merger_class
+from ccproxy.compliance.stamper import resolve_stamper_class
 from ccproxy.compliance.store import get_store
 from ccproxy.inspector.flow_store import InspectorMeta
 from ccproxy.pipeline.hook import hook
@@ -33,7 +33,7 @@ def _get_provider_ua_hint(provider: str) -> str | None:
         return None
 
 
-def apply_compliance_guard(ctx: Context) -> bool:
+def stamp_compliance_guard(ctx: Context) -> bool:
     """Guard: run on reverse proxy or OAuth-injected flows with a completed transform."""
     is_reverse = isinstance(ctx.flow.client_conn.proxy_mode, ReverseMode)
     is_oauth = ctx.flow.metadata.get("ccproxy.oauth_injected", False)
@@ -48,8 +48,8 @@ def apply_compliance_guard(ctx: Context) -> bool:
     reads=["system", "metadata"],
     writes=["system", "metadata"],
 )
-def apply_compliance(ctx: Context, params: dict[str, Any]) -> Context:
-    """Apply the compliance profile for the destination provider."""
+def stamp_compliance(ctx: Context, params: dict[str, Any]) -> Context:
+    """Stamp the compliance profile for the destination provider."""
     record = ctx.flow.metadata.get(InspectorMeta.RECORD)
     transform = getattr(record, "transform", None)
     if transform is None:
@@ -73,7 +73,7 @@ def apply_compliance(ctx: Context, params: dict[str, Any]) -> Context:
         return ctx
 
     logger.info(
-        "Applying compliance profile for %s (ua=%s, %d headers, %d body fields)",
+        "Stamping compliance profile for %s (ua=%s, %d headers, %d body fields)",
         provider,
         profile.user_agent,
         len(profile.headers),
@@ -82,6 +82,6 @@ def apply_compliance(ctx: Context, params: dict[str, Any]) -> Context:
 
     from ccproxy.config import get_config
 
-    merger_cls = resolve_merger_class(get_config().compliance.merger_class)
-    merger_cls(ctx, profile).merge()
+    stamper_cls = resolve_stamper_class(get_config().compliance.stamper_class)
+    stamper_cls(ctx, profile).stamp()
     return ctx

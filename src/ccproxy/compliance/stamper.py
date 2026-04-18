@@ -1,6 +1,6 @@
-"""Merge a compliance profile onto a pipeline Context.
+"""Apply a compliance profile onto a pipeline Context.
 
-All merge operations are idempotent. Subclass ComplianceMerger to
+All stamp operations are idempotent. Subclass ComplianceStamper to
 override individual operations.
 """
 
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Body fields that are feature config, not compliance — never stamped
-_BODY_MERGE_EXCLUSIONS = frozenset(
+_BODY_STAMP_EXCLUSIONS = frozenset(
     {
         "thinking",
         "context_management",
@@ -35,44 +35,46 @@ _BODY_GENERATE_FIELDS = frozenset(
     }
 )
 
-# Headers whose value is a comma-separated token list — merged via union,
-# not clobbered or skipped. Keep minimal; extend deliberately.
+# Headers whose value is a comma-separated token list — merged via union
+# rather than direct overwrite. Keep minimal; extend deliberately.
 _LIST_VALUED_HEADERS = frozenset({"anthropic-beta"})
 
 
-class ComplianceMerger:
-    """Base compliance merger. Subclass to override individual operations."""
+class ComplianceStamper:
+    """Applies a compliance profile onto a request context.
+
+    Subclass to override individual stamp operations.
+    """
 
     def __init__(self, ctx: Context, profile: ComplianceProfile) -> None:
         self.ctx = ctx
         self.profile = profile
 
-    def merge(self) -> None:
-        self.merge_headers()
-        self.merge_session_metadata()
+    def stamp(self) -> None:
+        self.stamp_headers()
+        self.stamp_session_metadata()
         self.wrap_body()
-        self.merge_body_fields()
-        self.merge_system()
+        self.stamp_body_fields()
+        self.stamp_system()
 
-    def merge_headers(self) -> None:
-        """Add profile-declared headers onto the request.
+    def stamp_headers(self) -> None:
+        """Set profile-declared headers onto the request.
 
-        - Missing header: set profile value.
-        - Existing header, not list-valued: leave untouched.
-        - Existing header, list-valued: union profile tokens into the
-          existing comma-separated list, preserving order and deduping.
+        - List-valued headers (e.g. anthropic-beta): union profile tokens
+          into the existing comma-separated list.
+        - All other headers: set to the profile value unconditionally.
         """
         for feature in self.profile.headers:
-            existing = self.ctx.get_header(feature.name)
-            if not existing:
-                self.ctx.set_header(feature.name, feature.value)
-                logger.debug("Compliance: added header %s", feature.name)
-                continue
             if feature.name.lower() in _LIST_VALUED_HEADERS:
-                merged = self._union_csv_tokens(existing, feature.value)
-                if merged != existing:
-                    self.ctx.set_header(feature.name, merged)
-                    logger.debug("Compliance: unioned tokens in %s", feature.name)
+                existing = self.ctx.get_header(feature.name)
+                if existing:
+                    merged = self._union_csv_tokens(existing, feature.value)
+                    if merged != existing:
+                        self.ctx.set_header(feature.name, merged)
+                        logger.debug("Compliance: unioned tokens in %s", feature.name)
+                    continue
+            self.ctx.set_header(feature.name, feature.value)
+            logger.debug("Compliance: set header %s", feature.name)
 
     @staticmethod
     def _union_csv_tokens(existing: str, additional: str) -> str:
@@ -86,7 +88,7 @@ class ComplianceMerger:
                 result.append(token)
         return ",".join(result)
 
-    def merge_session_metadata(self) -> None:
+    def stamp_session_metadata(self) -> None:
         """Synthesize session metadata from profile identity fields.
 
         Uses device_id and account_uuid from the profile, generates a
@@ -153,7 +155,7 @@ class ComplianceMerger:
 
         logger.debug("Compliance: wrapped body in '%s'", wrapper_field)
 
-    def merge_body_fields(self) -> None:
+    def stamp_body_fields(self) -> None:
         """Add compliance-relevant body envelope fields that are missing.
 
         Skips feature config fields (thinking, context_management, output_config)
@@ -162,7 +164,7 @@ class ComplianceMerger:
         """
         body = self.ctx._body
         for feature in self.profile.body_fields:
-            if feature.path in _BODY_MERGE_EXCLUSIONS:
+            if feature.path in _BODY_STAMP_EXCLUSIONS:
                 continue
             if feature.path in _BODY_GENERATE_FIELDS:
                 if feature.path not in body:
@@ -173,7 +175,7 @@ class ComplianceMerger:
                 body[feature.path] = feature.value
                 logger.debug("Compliance: added body field %s", feature.path)
 
-    def merge_system(self) -> None:
+    def stamp_system(self) -> None:
         """Inject the profile's system blocks into the client request.
 
         - None / missing: set to profile blocks.
@@ -246,11 +248,11 @@ class ComplianceMerger:
             pass
 
 
-def resolve_merger_class(dotted_path: str) -> type[ComplianceMerger]:
-    """Resolve a dotted import path to a ComplianceMerger subclass."""
+def resolve_stamper_class(dotted_path: str) -> type[ComplianceStamper]:
+    """Resolve a dotted import path to a ComplianceStamper subclass."""
     module_path, _, class_name = dotted_path.rpartition(".")
     mod = importlib.import_module(module_path)
     cls = getattr(mod, class_name)
-    if not (isinstance(cls, type) and issubclass(cls, ComplianceMerger)):
-        raise TypeError(f"{dotted_path} is not a ComplianceMerger subclass")
+    if not (isinstance(cls, type) and issubclass(cls, ComplianceStamper)):
+        raise TypeError(f"{dotted_path} is not a ComplianceStamper subclass")
     return cls
