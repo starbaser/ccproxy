@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 import yaml
-from pydantic import BaseModel, Field, PrivateAttr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -104,10 +104,12 @@ class OAuthSource(CredentialSource):
 
 
 class ComplianceConfig(BaseModel):
-    """Configuration for the compliance profile learning system."""
+    """Configuration for the compliance profile system."""
+
+    model_config = ConfigDict(extra="ignore")
 
     enabled: bool = True
-    """Master switch for compliance observation and application."""
+    """Master switch for compliance application."""
 
     profile_path: str | None = None
     """Explicit path to the compliance profiles JSON file.
@@ -115,12 +117,6 @@ class ComplianceConfig(BaseModel):
     When set, all instances share this file instead of each writing to
     ``{config_dir}/compliance_profiles.json``.
     """
-
-    min_observations: int = 3
-    """Observations before a profile is finalized."""
-
-    reference_user_agents: list[str] = Field(default_factory=list)
-    """Additional User-Agent patterns that trigger observation (beyond WireGuard detection)."""
 
     seed_anthropic: bool = True
     """Seed an Anthropic v0 profile from existing constants on first run."""

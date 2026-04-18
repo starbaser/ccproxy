@@ -2,7 +2,7 @@
 """Show compliance profile status and contents.
 
 Reads the compliance profiles JSON directly and displays profile
-summaries, accumulator progress, and detailed profile contents.
+summaries and detailed profile contents.
 
 Usage:
     uv run python scripts/compliance_status.py
@@ -28,7 +28,7 @@ def _resolve_store_path() -> Path:
 
 def _load_store(path: Path) -> dict[str, Any]:
     if not path.exists():
-        return {"format_version": 1, "profiles": {}, "accumulators": {}}
+        return {"format_version": 1, "profiles": {}}
     try:
         data = json.loads(path.read_text())
         if data.get("format_version") != 1:
@@ -37,15 +37,6 @@ def _load_store(path: Path) -> dict[str, Any]:
     except (json.JSONDecodeError, KeyError) as e:
         print(f"Error: Malformed compliance profiles: {e}", file=sys.stderr)
         sys.exit(1)
-
-
-def _get_min_observations() -> int:
-    try:
-        from ccproxy.config import get_config
-
-        return get_config().compliance.min_observations
-    except Exception:
-        return 3
 
 
 def _profile_summary(key: str, profile: dict[str, Any]) -> dict[str, Any]:
@@ -62,21 +53,6 @@ def _profile_summary(key: str, profile: dict[str, Any]) -> dict[str, Any]:
         "body_wrapper": profile.get("body_wrapper"),
         "updated_at": profile.get("updated_at", ""),
         "is_seed": profile.get("user_agent") == "v0-seed" and profile.get("observation_count", 0) == 0,
-    }
-
-
-def _accumulator_summary(key: str, acc: dict[str, Any], min_obs: int) -> dict[str, Any]:
-    count = acc.get("observation_count", 0)
-    remaining = max(0, min_obs - count)
-    pct = min(100.0, (count / min_obs * 100)) if min_obs > 0 else 100.0
-    return {
-        "key": key,
-        "provider": acc["provider"],
-        "user_agent": acc["user_agent"],
-        "observation_count": count,
-        "observations_needed": min_obs,
-        "remaining": remaining,
-        "progress_pct": round(pct, 1),
     }
 
 
@@ -104,7 +80,6 @@ def _profile_detail(profile: dict[str, Any]) -> dict[str, Any]:
 
 def _print_rich(
     profiles: list[dict[str, Any]],
-    accumulators: list[dict[str, Any]],
     detail: dict[str, Any] | None,
     seed_status: dict[str, Any] | None,
 ) -> None:
@@ -114,7 +89,6 @@ def _print_rich(
 
     console = Console()
 
-    # Profiles table
     if profiles:
         table = Table(title="Compliance Profiles", show_header=True, header_style="bold")
         table.add_column("Provider", style="cyan")
@@ -146,31 +120,6 @@ def _print_rich(
     else:
         console.print("[dim]No compliance profiles.[/dim]")
 
-    # Accumulators table
-    if accumulators:
-        table = Table(title="Accumulator Progress", show_header=True, header_style="bold")
-        table.add_column("Provider", style="cyan")
-        table.add_column("User Agent", max_width=40)
-        table.add_column("Observations", justify="right")
-        table.add_column("Needed", justify="right")
-        table.add_column("Remaining", justify="right")
-        table.add_column("Progress")
-
-        for a in accumulators:
-            pct = a["progress_pct"]
-            bar_len = int(pct / 5)
-            bar = "[green]" + "=" * bar_len + "[/green]" + "[dim]" + "-" * (20 - bar_len) + "[/dim]"
-            table.add_row(
-                a["provider"],
-                a["user_agent"][:40],
-                str(a["observation_count"]),
-                str(a["observations_needed"]),
-                str(a["remaining"]),
-                f"{bar} {pct}%",
-            )
-        console.print(table)
-
-    # Detail view
     if detail:
         parts = [f"Provider: {detail['provider']}", f"User Agent: {detail['user_agent']}"]
         parts.append(f"Observations: {detail['observation_count']}")
@@ -199,16 +148,15 @@ def _print_rich(
 
         console.print(Panel("\n".join(parts), title="Profile Detail"))
 
-    # Seed status
     if seed_status:
         if seed_status["active"]:
             console.print(
-                f"[yellow]Anthropic v0 seed is ACTIVE[/yellow] — no learned profile has superseded it yet. "
-                f"Run Claude Code through WireGuard ({seed_status['remaining']} more observations needed)."
+                "[yellow]Anthropic v0 seed is ACTIVE[/yellow] — no user-seeded profile has superseded it yet. "
+                "Run `ccproxy flows seed --provider anthropic` with captured flows."
             )
         else:
             console.print(
-                f"[green]Anthropic v0 seed is SUPERSEDED[/green] by learned profile "
+                f"[green]Anthropic v0 seed is SUPERSEDED[/green] by profile "
                 f"(ua={seed_status['learned_ua'][:40]}, {seed_status['learned_obs']} observations)"
             )
 
@@ -222,12 +170,9 @@ def main() -> None:
 
     store_path = _resolve_store_path()
     data = _load_store(store_path)
-    min_obs = _get_min_observations()
 
     profiles = [_profile_summary(k, p) for k, p in data.get("profiles", {}).items()]
-    accumulators = [_accumulator_summary(k, a, min_obs) for k, a in data.get("accumulators", {}).items()]
 
-    # Detail for --provider
     detail: dict[str, Any] | None = None
     if args.provider:
         for p in data.get("profiles", {}).values():
@@ -235,7 +180,6 @@ def main() -> None:
                 detail = _profile_detail(p)
                 break
 
-    # Seed status
     seed_status: dict[str, Any] | None = None
     if args.seed_status:
         seed_profile = None
@@ -252,27 +196,18 @@ def main() -> None:
             ):
                 learned_profile = p
 
-        # Check accumulator progress
-        acc_remaining = min_obs
-        for a in data.get("accumulators", {}).values():
-            if a["provider"] == "anthropic":
-                acc_remaining = max(0, min_obs - a.get("observation_count", 0))
-
         seed_status = {
             "seed_exists": seed_profile is not None,
             "active": learned_profile is None,
-            "remaining": acc_remaining,
             "learned_ua": learned_profile.get("user_agent", "") if learned_profile else "",
             "learned_obs": learned_profile.get("observation_count", 0) if learned_profile else 0,
         }
 
     if args.json:
-        output = {
+        output: dict[str, Any] = {
             "store_path": str(store_path),
             "store_exists": store_path.exists(),
-            "min_observations": min_obs,
             "profiles": profiles,
-            "accumulators": accumulators,
         }
         if detail:
             output["detail"] = detail
@@ -281,7 +216,7 @@ def main() -> None:
         json.dump(output, sys.stdout, indent=2, default=str)
         print()
     else:
-        _print_rich(profiles, accumulators, detail, seed_status)
+        _print_rich(profiles, detail, seed_status)
 
 
 if __name__ == "__main__":

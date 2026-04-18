@@ -108,6 +108,10 @@
                 web_password = {
                   command = "opc secret op://dev/ccproxy/web_password";
                 };
+                ignore_hosts = [
+                  "oauth2\\.googleapis\\.com"
+                  "accounts\\.google\\.com"
+                ];
               };
             };
           };

@@ -107,6 +107,19 @@ class MitmwebClient:
         resp.raise_for_status()
         return resp
 
+    def seed_profile(self, flow_ids: list[str], provider: str) -> dict[str, Any]:
+        """Invoke ``ccproxy.seed`` with flow ids and provider; returns summary dict."""
+        if not flow_ids:
+            raise ValueError("seed_profile: flow_ids must be non-empty")
+        resp = self._post(
+            "/commands/ccproxy.seed",
+            json_body={"arguments": [",".join(flow_ids), provider]},
+        )
+        payload = resp.json()
+        if "error" in payload:
+            raise ValueError(payload["error"])
+        return json.loads(payload["value"])  # type: ignore[no-any-return]
+
     def close(self) -> None:
         self._client.close()
 
@@ -174,6 +187,21 @@ class FlowsCompare(_FlowsBase):
     """
 
 
+class FlowsSeed(_FlowsBase):
+    """Seed a compliance profile from the resolved flow set.
+
+    Extracts compliance features from the selected flows' pre-pipeline
+    client request snapshots. Stable features (identical across all
+    selected flows) become the profile. Persists to the profile store.
+
+        ccproxy flows seed --provider anthropic
+        ccproxy flows seed --provider anthropic --jq 'map(select(.request.pretty_host | endswith("anthropic.com")))'
+    """
+
+    provider: str
+    """Target provider name (e.g., 'anthropic', 'gemini')."""
+
+
 class FlowsClear(_FlowsBase):
     """Clear the resolved flow set (or everything with --all)."""
 
@@ -186,6 +214,7 @@ Flows = Annotated[
     | Annotated[FlowsDump, tyro.conf.subcommand(name="dump")]
     | Annotated[FlowsDiff, tyro.conf.subcommand(name="diff")]
     | Annotated[FlowsCompare, tyro.conf.subcommand(name="compare")]
+    | Annotated[FlowsSeed, tyro.conf.subcommand(name="seed")]
     | Annotated[FlowsClear, tyro.conf.subcommand(name="clear")],
     tyro.conf.subcommand(
         name="flows",
@@ -427,6 +456,28 @@ def _do_compare(
         _git_diff(fwd_response, cli_response, f"provider:{flow_id[:8]}", f"client:{flow_id[:8]}")
 
 
+def _do_seed(
+    console: Console,
+    client: MitmwebClient,
+    flow_set: list[dict[str, Any]],
+    *,
+    provider: str,
+) -> None:
+    """Seed a compliance profile from the flow set."""
+    if not flow_set:
+        console.print("[red]No flows in set.[/red]")
+        sys.exit(1)
+    flow_ids = [f["id"] for f in flow_set]
+    result = client.seed_profile(flow_ids, provider)
+    console.print(
+        f"Seeded profile [bold]{result['key']}[/bold]: "
+        f"{result['flows_used']} flows, "
+        f"{result['headers']} headers, "
+        f"{result['body_fields']} body fields, "
+        f"system={'yes' if result['system'] else 'no'}"
+    )
+
+
 def _do_clear(
     console: Console,
     client: MitmwebClient,
@@ -451,7 +502,7 @@ def _do_clear(
 
 
 def handle_flows(
-    cmd: FlowsList | FlowsDump | FlowsDiff | FlowsCompare | FlowsClear,
+    cmd: FlowsList | FlowsDump | FlowsDiff | FlowsCompare | FlowsSeed | FlowsClear,
     _config_dir: Path,
 ) -> None:
     """Dispatch flows subcommand actions by isinstance."""
@@ -470,6 +521,8 @@ def handle_flows(
                 _do_diff(client, flow_set)
             elif isinstance(cmd, FlowsCompare):
                 _do_compare(client, flow_set)
+            elif isinstance(cmd, FlowsSeed):
+                _do_seed(err, client, flow_set, provider=cmd.provider)
             elif isinstance(cmd, FlowsClear):
                 _do_clear(err, client, flow_set, clear_all=cmd.all)
     except httpx.ConnectError:

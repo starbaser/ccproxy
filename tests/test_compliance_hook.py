@@ -7,6 +7,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from ccproxy.compliance.models import (
+    ComplianceProfile,
+    ProfileFeatureHeader,
+    ProfileFeatureSystem,
+)
 from ccproxy.compliance.store import ProfileStore, clear_store_instance
 from ccproxy.hooks.apply_compliance import apply_compliance, apply_compliance_guard
 from ccproxy.inspector.flow_store import InspectorMeta
@@ -85,7 +90,7 @@ class TestApplyCompliance:
 
         set_config_instance(CCProxyConfig())
 
-        store = ProfileStore(tmp_path / "profiles.json", min_observations=1, seed_profiles=None)
+        store = ProfileStore(tmp_path / "profiles.json", seed_profiles=None)
 
         import ccproxy.compliance.store as store_mod
 
@@ -95,17 +100,17 @@ class TestApplyCompliance:
         clear_store_instance()
 
     def test_applies_profile_headers(self, store: ProfileStore):
-        from ccproxy.compliance.models import ObservationBundle
-
-        store.submit_observation(
-            ObservationBundle(
-                provider="anthropic",
-                user_agent="cli/1.0",
-                headers={"x-app": "cli"},
-                body_envelope={},
-                system=None,
-            )
+        profile = ComplianceProfile(
+            provider="anthropic",
+            user_agent="cli/1.0",
+            created_at="2025-01-01T00:00:00+00:00",
+            updated_at="2025-01-01T00:00:00+00:00",
+            observation_count=1,
+            is_complete=True,
+            headers=[ProfileFeatureHeader(name="x-app", value="cli")],
+            body_fields=[],
         )
+        store.set_profile("anthropic/seed", profile)
 
         flow = _make_flow(reverse=True, has_transform=True, provider="anthropic")
         ctx = Context.from_flow(flow)
@@ -113,17 +118,18 @@ class TestApplyCompliance:
         assert result.get_header("x-app") == "cli"
 
     def test_applies_system_prompt(self, store: ProfileStore):
-        from ccproxy.compliance.models import ObservationBundle
-
-        store.submit_observation(
-            ObservationBundle(
-                provider="anthropic",
-                user_agent="cli/1.0",
-                headers={},
-                body_envelope={},
-                system="You are Claude",
-            )
+        profile = ComplianceProfile(
+            provider="anthropic",
+            user_agent="cli/1.0",
+            created_at="2025-01-01T00:00:00+00:00",
+            updated_at="2025-01-01T00:00:00+00:00",
+            observation_count=1,
+            is_complete=True,
+            headers=[],
+            body_fields=[],
+            system=ProfileFeatureSystem(structure=[{"type": "text", "text": "You are Claude"}]),
         )
+        store.set_profile("anthropic/seed", profile)
 
         flow = _make_flow(
             reverse=True, has_transform=True, provider="anthropic", body={"model": "test", "system": "Help me"}
