@@ -31,7 +31,7 @@
       outbound = [
         "ccproxy.hooks.inject_mcp_notifications"
         "ccproxy.hooks.verbose_mode"
-        "ccproxy.hooks.apply_compliance"
+        "ccproxy.hooks.stamp_compliance"
       ];
     };
     otel = {

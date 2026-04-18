@@ -1,4 +1,4 @@
-"""Tests for the apply_compliance outbound hook."""
+"""Tests for the stamp_compliance outbound hook."""
 
 import json
 from dataclasses import dataclass
@@ -13,7 +13,7 @@ from ccproxy.compliance.models import (
     ProfileFeatureSystem,
 )
 from ccproxy.compliance.store import ProfileStore, clear_store_instance
-from ccproxy.hooks.apply_compliance import apply_compliance, apply_compliance_guard
+from ccproxy.hooks.stamp_compliance import stamp_compliance, stamp_compliance_guard
 from ccproxy.inspector.flow_store import InspectorMeta
 from ccproxy.pipeline.context import Context
 
@@ -59,36 +59,36 @@ def _make_flow(
     return flow
 
 
-class TestApplyComplianceGuard:
+class TestStampComplianceGuard:
     def test_passes_on_reverse_with_transform(self):
         flow = _make_flow(reverse=True, has_transform=True)
         ctx = Context.from_flow(flow)
-        assert apply_compliance_guard(ctx) is True
+        assert stamp_compliance_guard(ctx) is True
 
     def test_rejects_wireguard_without_oauth(self):
         flow = _make_flow(reverse=False, has_transform=True)
         ctx = Context.from_flow(flow)
-        assert apply_compliance_guard(ctx) is False
+        assert stamp_compliance_guard(ctx) is False
 
     def test_passes_wireguard_with_oauth_injected(self):
         flow = _make_flow(reverse=False, has_transform=True)
         flow.metadata["ccproxy.oauth_injected"] = True
         ctx = Context.from_flow(flow)
-        assert apply_compliance_guard(ctx) is True
+        assert stamp_compliance_guard(ctx) is True
 
     def test_rejects_no_transform(self):
         flow = _make_flow(reverse=True, has_transform=False)
         ctx = Context.from_flow(flow)
-        assert apply_compliance_guard(ctx) is False
+        assert stamp_compliance_guard(ctx) is False
 
     def test_rejects_no_record(self):
         flow = _make_flow(reverse=True)
         flow.metadata = {}
         ctx = Context.from_flow(flow)
-        assert apply_compliance_guard(ctx) is False
+        assert stamp_compliance_guard(ctx) is False
 
 
-class TestApplyCompliance:
+class TestStampCompliance:
     @pytest.fixture()
     def store(self, tmp_path: Path) -> ProfileStore:
         from ccproxy.compliance.store import _store_lock
@@ -105,7 +105,7 @@ class TestApplyCompliance:
         yield store
         clear_store_instance()
 
-    def test_applies_profile_headers(self, store: ProfileStore):
+    def test_stamps_profile_headers(self, store: ProfileStore):
         profile = ComplianceProfile(
             provider="anthropic",
             user_agent="cli/1.0",
@@ -120,10 +120,10 @@ class TestApplyCompliance:
 
         flow = _make_flow(reverse=True, has_transform=True, provider="anthropic")
         ctx = Context.from_flow(flow)
-        result = apply_compliance(ctx, {})
+        result = stamp_compliance(ctx, {})
         assert result.get_header("x-app") == "cli"
 
-    def test_applies_system_prompt(self, store: ProfileStore):
+    def test_stamps_system_prompt(self, store: ProfileStore):
         profile = ComplianceProfile(
             provider="anthropic",
             user_agent="cli/1.0",
@@ -141,7 +141,7 @@ class TestApplyCompliance:
             reverse=True, has_transform=True, provider="anthropic", body={"model": "test", "system": "Help me"}
         )
         ctx = Context.from_flow(flow)
-        result = apply_compliance(ctx, {})
+        result = stamp_compliance(ctx, {})
         assert isinstance(result.system, list)
         assert result.system[0]["text"] == "You are Claude"
         assert result.system[1]["text"] == "Help me"
@@ -149,5 +149,5 @@ class TestApplyCompliance:
     def test_no_profile_no_changes(self, store: ProfileStore):
         flow = _make_flow(reverse=True, has_transform=True, provider="gemini")
         ctx = Context.from_flow(flow)
-        result = apply_compliance(ctx, {})
+        result = stamp_compliance(ctx, {})
         assert result.get_header("x-app") == ""

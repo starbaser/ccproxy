@@ -735,7 +735,7 @@ class TestStatusPipeline:
         """Pipeline panel in show_status renders all 5 production hooks.
 
         Regression guard: the deleted dag-viz command had a hardcoded import list
-        that omitted verbose_mode and apply_compliance. This test verifies that
+        that omitted verbose_mode and stamp_compliance. This test verifies that
         show_status via load_hooks + render_pipeline produces output containing
         every hook declared in the config.
         """
@@ -757,7 +757,7 @@ ccproxy:
     outbound:
       - ccproxy.hooks.inject_mcp_notifications
       - ccproxy.hooks.verbose_mode
-      - ccproxy.hooks.apply_compliance
+      - ccproxy.hooks.stamp_compliance
 """)
 
         monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
@@ -777,7 +777,7 @@ ccproxy:
             "extract_session_id",
             "inject_mcp_notifications",
             "verbose_mode",
-            "apply_compliance",
+            "stamp_compliance",
         ):
             assert hook_name in out, f"Expected hook '{hook_name}' in status output"
         assert "lightllm transform" in out

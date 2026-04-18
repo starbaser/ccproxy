@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**IMPERATIVE**: ALL failures through ccproxy are OUR bug until proven otherwise. ccproxy is the intermediary — every header, token, body field, and user-agent passes through our code. When a request fails with any error (401/403/429/5xx), triage ccproxy first: check what we're injecting, stripping, mangling, or failing to masquerade before blaming the upstream provider. For Gemini specifically: if all Gemini requests fail with 401, run `gemini -m gemini-2.5-flash -p "hi"` directly (no ccproxy) to force an OAuth token refresh, then retry through ccproxy. For 429 `MODEL_CAPACITY_EXHAUSTED`, verify `gemini_cli_compat` is in the pipeline (SDK user-agent masquerading).
+**IMPERATIVE**: ALL failures through ccproxy are OUR bug until proven otherwise. ccproxy is the intermediary — every header, token, body field, and user-agent passes through our code. When a request fails with any error (401/403/429/5xx), triage ccproxy first: check what we're injecting, stripping, mangling, or failing to masquerade before blaming the upstream provider. For Gemini specifically: if all Gemini requests fail with 401, run `gemini -m gemini-2.5-flash -p "hi"` directly (no ccproxy) to force an OAuth token refresh, then retry through ccproxy.
+
+**IMPERATIVE**: All API keys in MCP server configs and client environments MUST be ccproxy sentinel keys (`sk-ant-oat-ccproxy-{provider}`). Using raw provider keys (OpenRouter, direct API keys, etc.) bypasses the `forward_oauth` hook and the compliance pipeline — traffic escapes ccproxy's control. If a provider isn't routable through a sentinel key, add an `oat_sources` entry for it.
 
 **CRITICAL**: The project name is `ccproxy` (lowercase). The PascalCase form is used exclusively for class names (e.g., `CCProxyConfig`).
 

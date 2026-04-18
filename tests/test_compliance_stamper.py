@@ -1,11 +1,11 @@
-"""Tests for compliance profile merge logic."""
+"""Tests for compliance profile stamping logic."""
 
 import json
 from unittest.mock import MagicMock
 
 import pytest
 
-from ccproxy.compliance.merger import ComplianceMerger, resolve_merger_class
+from ccproxy.compliance.stamper import ComplianceStamper, resolve_stamper_class
 from ccproxy.compliance.models import (
     ComplianceProfile,
     ProfileFeatureBodyField,
@@ -42,7 +42,7 @@ def _make_profile(**kwargs) -> ComplianceProfile:
     return ComplianceProfile(**defaults)
 
 
-class TestMergeHeaders:
+class TestStampHeaders:
     def test_adds_missing_headers(self):
         ctx = _make_context()
         profile = _make_profile(
@@ -51,24 +51,24 @@ class TestMergeHeaders:
                 ProfileFeatureHeader(name="anthropic-beta", value="flag1,flag2"),
             ]
         )
-        ComplianceMerger(ctx, profile).merge()
+        ComplianceStamper(ctx, profile).stamp()
         assert ctx.get_header("x-app") == "cli"
         assert ctx.get_header("anthropic-beta") == "flag1,flag2"
 
-    def test_does_not_overwrite_existing(self):
+    def test_overwrites_existing(self):
         ctx = _make_context(headers={"x-app": "sdk"})
         profile = _make_profile(
             headers=[
                 ProfileFeatureHeader(name="x-app", value="cli"),
             ]
         )
-        ComplianceMerger(ctx, profile).merge()
-        assert ctx.get_header("x-app") == "sdk"
+        ComplianceStamper(ctx, profile).stamp()
+        assert ctx.get_header("x-app") == "cli"
 
     def test_no_headers_no_op(self):
         ctx = _make_context(headers={"existing": "val"})
         profile = _make_profile(headers=[])
-        ComplianceMerger(ctx, profile).merge()
+        ComplianceStamper(ctx, profile).stamp()
         assert ctx.get_header("existing") == "val"
 
     def test_unions_anthropic_beta_tokens(self):
@@ -81,7 +81,7 @@ class TestMergeHeaders:
                 ),
             ]
         )
-        ComplianceMerger(ctx, profile).merge()
+        ComplianceStamper(ctx, profile).stamp()
         assert ctx.get_header("anthropic-beta") == (
             "oauth-2025-04-20,claude-code-20250219,interleaved-thinking-2025-05-14"
         )
@@ -96,7 +96,7 @@ class TestMergeHeaders:
                 ),
             ]
         )
-        ComplianceMerger(ctx, profile).merge()
+        ComplianceStamper(ctx, profile).stamp()
         tokens = ctx.get_header("anthropic-beta").split(",")
         assert tokens == ["custom-flag", "oauth-2025-04-20", "claude-code-20250219"]
 
@@ -108,18 +108,18 @@ class TestMergeHeaders:
                 ProfileFeatureHeader(name="anthropic-beta", value=full),
             ]
         )
-        ComplianceMerger(ctx, profile).merge()
+        ComplianceStamper(ctx, profile).stamp()
         assert ctx.get_header("anthropic-beta") == full
 
-    def test_non_list_header_still_strict(self):
+    def test_non_list_header_overwrites(self):
         ctx = _make_context(headers={"anthropic-version": "2024-99-99"})
         profile = _make_profile(
             headers=[
                 ProfileFeatureHeader(name="anthropic-version", value="2023-06-01"),
             ]
         )
-        ComplianceMerger(ctx, profile).merge()
-        assert ctx.get_header("anthropic-version") == "2024-99-99"
+        ComplianceStamper(ctx, profile).stamp()
+        assert ctx.get_header("anthropic-version") == "2023-06-01"
 
     def test_union_handles_whitespace_in_csv(self):
         ctx = _make_context(headers={"anthropic-beta": "oauth-2025-04-20, custom-flag"})
@@ -128,12 +128,12 @@ class TestMergeHeaders:
                 ProfileFeatureHeader(name="anthropic-beta", value="claude-code-20250219"),
             ]
         )
-        ComplianceMerger(ctx, profile).merge()
+        ComplianceStamper(ctx, profile).stamp()
         tokens = ctx.get_header("anthropic-beta").split(",")
         assert tokens == ["oauth-2025-04-20", "custom-flag", "claude-code-20250219"]
 
 
-class TestMergeBodyFields:
+class TestStampBodyFields:
     def test_adds_missing_compliance_fields(self):
         ctx = _make_context(body={"model": "test"})
         profile = _make_profile(
@@ -141,7 +141,7 @@ class TestMergeBodyFields:
                 ProfileFeatureBodyField(path="some_envelope", value={"key": "val"}),
             ]
         )
-        ComplianceMerger(ctx, profile).merge()
+        ComplianceStamper(ctx, profile).stamp()
         assert ctx._body["some_envelope"] == {"key": "val"}
 
     def test_does_not_overwrite_existing(self):
@@ -151,7 +151,7 @@ class TestMergeBodyFields:
                 ProfileFeatureBodyField(path="some_envelope", value={"key": "new"}),
             ]
         )
-        ComplianceMerger(ctx, profile).merge()
+        ComplianceStamper(ctx, profile).stamp()
         assert ctx._body["some_envelope"] == {"key": "old"}
 
     def test_generates_user_prompt_id_when_missing(self):
@@ -161,7 +161,7 @@ class TestMergeBodyFields:
                 ProfileFeatureBodyField(path="user_prompt_id", value="placeholder"),
             ]
         )
-        ComplianceMerger(ctx, profile).merge()
+        ComplianceStamper(ctx, profile).stamp()
         generated = ctx._body.get("user_prompt_id")
         assert generated is not None
         assert len(generated) == 13  # uuid4 hex[:13]
@@ -174,7 +174,7 @@ class TestMergeBodyFields:
                 ProfileFeatureBodyField(path="user_prompt_id", value="placeholder"),
             ]
         )
-        ComplianceMerger(ctx, profile).merge()
+        ComplianceStamper(ctx, profile).stamp()
         assert ctx._body["user_prompt_id"] == "existing-id"
 
     def test_excludes_feature_config_fields(self):
@@ -187,13 +187,13 @@ class TestMergeBodyFields:
                 ProfileFeatureBodyField(path="metadata", value={"user_id": "test"}),
             ]
         )
-        ComplianceMerger(ctx, profile).merge()
+        ComplianceStamper(ctx, profile).stamp()
         assert "thinking" not in ctx._body
         assert "context_management" not in ctx._body
         assert "output_config" not in ctx._body
 
 
-class TestMergeSystem:
+class TestStampSystem:
     def test_sets_system_when_none(self):
         ctx = _make_context(body={"model": "test"})
         profile = _make_profile(
@@ -201,7 +201,7 @@ class TestMergeSystem:
                 structure=[{"type": "text", "text": "You are Claude"}],
             )
         )
-        ComplianceMerger(ctx, profile).merge()
+        ComplianceStamper(ctx, profile).stamp()
         assert ctx.system == [{"type": "text", "text": "You are Claude"}]
 
     def test_wraps_string_system(self):
@@ -211,7 +211,7 @@ class TestMergeSystem:
                 structure=[{"type": "text", "text": "You are Claude"}],
             )
         )
-        ComplianceMerger(ctx, profile).merge()
+        ComplianceStamper(ctx, profile).stamp()
         assert isinstance(ctx.system, list)
         assert len(ctx.system) == 2
         assert ctx.system[0] == {"type": "text", "text": "You are Claude"}
@@ -230,7 +230,7 @@ class TestMergeSystem:
                 structure=[{"type": "text", "text": "You are Claude"}],
             )
         )
-        ComplianceMerger(ctx, profile).merge()
+        ComplianceStamper(ctx, profile).stamp()
         assert ctx.system == [
             {"type": "text", "text": "You are Claude"},
             {"type": "text", "text": "User block"},
@@ -250,7 +250,7 @@ class TestMergeSystem:
                 structure=[{"type": "text", "text": "You are Claude"}],
             )
         )
-        ComplianceMerger(ctx, profile).merge()
+        ComplianceStamper(ctx, profile).stamp()
         assert len(ctx.system) == 2
         assert ctx.system[0]["text"] == "You are Claude"
         assert ctx.system[1]["text"] == "User block"
@@ -268,12 +268,12 @@ class TestMergeSystem:
                 structure=[{"type": "text", "text": "You are Claude Code"}],
             )
         )
-        ComplianceMerger(ctx, profile).merge()
+        ComplianceStamper(ctx, profile).stamp()
         assert ctx.system[0] == {"type": "text", "text": "You are Claude Code"}
         assert ctx.system[1]["text"] == "Dictation prompt"
         assert ctx.system[1]["cache_control"] == {"type": "ephemeral"}
 
-    def test_list_merge_idempotent(self):
+    def test_list_stamp_idempotent(self):
         ctx = _make_context(
             body={
                 "system": [
@@ -286,9 +286,9 @@ class TestMergeSystem:
                 structure=[{"type": "text", "text": "You are Claude"}],
             )
         )
-        ComplianceMerger(ctx, profile).merge()
+        ComplianceStamper(ctx, profile).stamp()
         snapshot = list(ctx.system)
-        ComplianceMerger(ctx, profile).merge()
+        ComplianceStamper(ctx, profile).stamp()
         assert ctx.system == snapshot
 
     def test_prefix_match_detects_appended_content(self):
@@ -307,7 +307,7 @@ class TestMergeSystem:
                 structure=[{"type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude."}],
             )
         )
-        ComplianceMerger(ctx, profile).merge()
+        ComplianceStamper(ctx, profile).stamp()
         assert len(ctx.system) == 1
 
     def test_multi_block_profile_prepends_all(self):
@@ -326,7 +326,7 @@ class TestMergeSystem:
                 ]
             )
         )
-        ComplianceMerger(ctx, profile).merge()
+        ComplianceStamper(ctx, profile).stamp()
         assert len(ctx.system) == 3
         assert ctx.system[0]["text"] == "You are Claude Code"
         assert ctx.system[1]["text"] == "Second system block"
@@ -349,7 +349,7 @@ class TestMergeSystem:
                 ]
             )
         )
-        ComplianceMerger(ctx, profile).merge()
+        ComplianceStamper(ctx, profile).stamp()
         assert len(ctx.system) == 4
         assert ctx.system[0]["type"] == "image"
         assert ctx.system[1]["text"] == ""
@@ -359,17 +359,17 @@ class TestMergeSystem:
     def test_no_profile_system_no_op(self):
         ctx = _make_context(body={"system": "Original"})
         profile = _make_profile(system=None)
-        ComplianceMerger(ctx, profile).merge()
+        ComplianceStamper(ctx, profile).stamp()
         assert ctx.system == "Original"
 
     def test_empty_profile_structure_no_op(self):
         ctx = _make_context(body={"system": "Original"})
         profile = _make_profile(system=ProfileFeatureSystem(structure=[]))
-        ComplianceMerger(ctx, profile).merge()
+        ComplianceStamper(ctx, profile).stamp()
         assert ctx.system == "Original"
 
 
-class TestMergeSessionMetadata:
+class TestStampSessionMetadata:
     def test_synthesizes_session_from_profile(self):
         ctx = _make_context(body={"model": "test"})
         profile = _make_profile(
@@ -380,7 +380,7 @@ class TestMergeSessionMetadata:
                 ),
             ]
         )
-        ComplianceMerger(ctx, profile).merge()
+        ComplianceStamper(ctx, profile).stamp()
         metadata = ctx._body.get("metadata", {})
         assert "user_id" in metadata
         uid = json.loads(metadata["user_id"])
@@ -398,7 +398,7 @@ class TestMergeSessionMetadata:
                 ),
             ]
         )
-        ComplianceMerger(ctx, profile).merge()
+        ComplianceStamper(ctx, profile).stamp()
         assert ctx._body["metadata"]["user_id"] == "existing"
 
     def test_no_identity_fields_no_op(self):
@@ -408,7 +408,7 @@ class TestMergeSessionMetadata:
                 ProfileFeatureBodyField(path="some_field", value="val"),
             ]
         )
-        ComplianceMerger(ctx, profile).merge()
+        ComplianceStamper(ctx, profile).stamp()
         assert "metadata" not in ctx._body or "user_id" not in ctx._body.get("metadata", {})
 
 
@@ -420,11 +420,11 @@ class TestIdempotency:
             system=ProfileFeatureSystem(structure=[{"type": "text", "text": "Prefix"}]),
             body_fields=[ProfileFeatureBodyField(path="some_env", value=True)],
         )
-        ComplianceMerger(ctx, profile).merge()
+        ComplianceStamper(ctx, profile).stamp()
         first_system = ctx.system
         first_body = dict(ctx._body)
 
-        ComplianceMerger(ctx, profile).merge()
+        ComplianceStamper(ctx, profile).stamp()
         assert ctx.system == first_system
         assert ctx._body["some_env"] == first_body["some_env"]
         assert ctx.get_header("x-app") == "cli"
@@ -445,11 +445,11 @@ class TestIdempotency:
                 structure=[{"type": "text", "text": "You are Claude"}],
             ),
         )
-        ComplianceMerger(ctx, profile).merge()
+        ComplianceStamper(ctx, profile).stamp()
         first_system = list(ctx.system)
         first_beta = ctx.get_header("anthropic-beta")
 
-        ComplianceMerger(ctx, profile).merge()
+        ComplianceStamper(ctx, profile).stamp()
         assert ctx.system == first_system
         assert ctx.get_header("anthropic-beta") == first_beta
         assert first_beta == "oauth-2025-04-20,claude-code-20250219"
@@ -462,7 +462,7 @@ class TestWrapBody:
         ctx = _make_context(body={"model": "gemini-pro", "messages": [], "stream": False})
         profile = _make_profile(body_wrapper="request")
 
-        ComplianceMerger(ctx, profile).wrap_body()
+        ComplianceStamper(ctx, profile).wrap_body()
 
         assert "request" in ctx._body
         assert ctx._body["model"] == "gemini-pro"
@@ -473,7 +473,7 @@ class TestWrapBody:
         ctx = _make_context(body=dict(original_body))
         profile = _make_profile(body_wrapper=None)
 
-        ComplianceMerger(ctx, profile).wrap_body()
+        ComplianceStamper(ctx, profile).wrap_body()
 
         assert ctx._body == original_body
 
@@ -481,7 +481,7 @@ class TestWrapBody:
         ctx = _make_context(body={"model": "gemini-pro", "request": {"messages": []}})
         profile = _make_profile(body_wrapper="request")
 
-        ComplianceMerger(ctx, profile).wrap_body()
+        ComplianceStamper(ctx, profile).wrap_body()
 
         assert ctx._body["model"] == "gemini-pro"
         assert ctx._body["request"] == {"messages": []}
@@ -503,7 +503,7 @@ class TestWrapBody:
 
         profile = _make_profile(body_wrapper="request")
 
-        ComplianceMerger(ctx, profile).wrap_body()
+        ComplianceStamper(ctx, profile).wrap_body()
 
         assert ctx._body["model"] == "gemini-2.5-flash"
         assert "request" in ctx._body
@@ -518,7 +518,7 @@ class TestWrapBody:
 
         profile = _make_profile(body_wrapper="request")
 
-        ComplianceMerger(ctx, profile).wrap_body()
+        ComplianceStamper(ctx, profile).wrap_body()
 
         assert ctx._body.get("model") == "gemini-pro"
         assert "request" in ctx._body
@@ -533,7 +533,7 @@ class TestWrapBody:
 
         profile = _make_profile(body_wrapper="request")
 
-        ComplianceMerger(ctx, profile).wrap_body()
+        ComplianceStamper(ctx, profile).wrap_body()
 
         assert "model" not in ctx._body
         assert ctx._body["request"] == {"messages": []}
@@ -555,7 +555,7 @@ class TestWrapBody:
 
         profile = _make_profile(body_wrapper="request")
 
-        ComplianceMerger(ctx, profile).wrap_body()
+        ComplianceStamper(ctx, profile).wrap_body()
 
         assert ctx._body["model"] == "explicit-model"
         assert ctx._body["request"] == {"messages": []}
@@ -567,7 +567,7 @@ class TestExtractModelFromPath:
         flow.request.path = path
         ctx = MagicMock()
         ctx.flow = flow
-        return ComplianceMerger(ctx, _make_profile())._extract_model_from_path()
+        return ComplianceStamper(ctx, _make_profile())._extract_model_from_path()
 
     def test_extracts_model_from_standard_models_path(self) -> None:
         assert self._extract("/v1beta/models/gemini-pro:generateContent") == "gemini-pro"
@@ -590,8 +590,8 @@ class TestExtractModelFromPath:
 
 class TestSubclass:
     def test_override_skips_operation(self):
-        class SkipHeaders(ComplianceMerger):
-            def merge_headers(self):
+        class SkipHeaders(ComplianceStamper):
+            def stamp_headers(self):  # noqa: PLR6301
                 pass
 
         ctx = _make_context()
@@ -599,62 +599,62 @@ class TestSubclass:
             headers=[ProfileFeatureHeader(name="x-app", value="cli")],
             system=ProfileFeatureSystem(structure=[{"type": "text", "text": "You are Claude"}]),
         )
-        SkipHeaders(ctx, profile).merge()
+        SkipHeaders(ctx, profile).stamp()
         assert ctx.get_header("x-app") == ""
         assert ctx.system == [{"type": "text", "text": "You are Claude"}]
 
     def test_override_extends_with_super(self):
-        class ExtendedHeaders(ComplianceMerger):
-            def merge_headers(self):
-                super().merge_headers()
+        class ExtendedHeaders(ComplianceStamper):
+            def stamp_headers(self):
+                super().stamp_headers()
                 self.ctx.set_header("x-custom", "injected")
 
         ctx = _make_context()
         profile = _make_profile(headers=[ProfileFeatureHeader(name="x-app", value="cli")])
-        ExtendedHeaders(ctx, profile).merge()
+        ExtendedHeaders(ctx, profile).stamp()
         assert ctx.get_header("x-app") == "cli"
         assert ctx.get_header("x-custom") == "injected"
 
-    def test_override_merge_reorders_operations(self):
+    def test_override_stamp_reorders_operations(self):
         call_order = []
 
-        class ReorderedMerger(ComplianceMerger):
-            def merge(self):
-                self.merge_system()
-                self.merge_headers()
+        class ReorderedStamper(ComplianceStamper):
+            def stamp(self):
+                self.stamp_system()
+                self.stamp_headers()
 
-            def merge_headers(self):
+            def stamp_headers(self):
                 call_order.append("headers")
-                super().merge_headers()
+                super().stamp_headers()
 
-            def merge_system(self):
+            def stamp_system(self):
                 call_order.append("system")
-                super().merge_system()
+                super().stamp_system()
 
         ctx = _make_context(body={"model": "test"})
         profile = _make_profile(
             headers=[ProfileFeatureHeader(name="x-app", value="cli")],
             system=ProfileFeatureSystem(structure=[{"type": "text", "text": "Prefix"}]),
         )
-        ReorderedMerger(ctx, profile).merge()
+        ReorderedStamper(ctx, profile).stamp()
         assert call_order == ["system", "headers"]
         assert ctx.get_header("x-app") == "cli"
         assert ctx.system == [{"type": "text", "text": "Prefix"}]
 
 
-class TestResolveMergerClass:
+class TestResolveStamperClass:
     def test_resolves_default_class(self):
-        cls = resolve_merger_class("ccproxy.compliance.merger.ComplianceMerger")
-        assert cls is ComplianceMerger
+        cls = resolve_stamper_class("ccproxy.compliance.stamper.ComplianceStamper")
+        assert cls is ComplianceStamper
 
     def test_rejects_non_subclass(self):
-        with pytest.raises(TypeError, match="not a ComplianceMerger subclass"):
-            resolve_merger_class("builtins.dict")
+        with pytest.raises(TypeError, match="not a ComplianceStamper subclass"):
+            resolve_stamper_class("builtins.dict")
 
     def test_rejects_nonexistent_module(self):
         with pytest.raises(ModuleNotFoundError):
-            resolve_merger_class("nonexistent.module.Foo")
+            resolve_stamper_class("nonexistent.module.Foo")
 
     def test_rejects_nonexistent_attr(self):
         with pytest.raises(AttributeError):
-            resolve_merger_class("ccproxy.compliance.merger.NoSuchClass")
+            resolve_stamper_class("ccproxy.compliance.stamper.NoSuchClass")

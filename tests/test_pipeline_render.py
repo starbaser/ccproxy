@@ -118,7 +118,7 @@ class TestRenderPipeline:
         outbound = [
             _spec("inject_mcp_notifications", reads=["messages"], writes=["messages"]),
             _spec("verbose_mode", reads=["anthropic-beta"], writes=["anthropic-beta"]),
-            _spec("apply_compliance", reads=["headers"], writes=["headers"]),
+            _spec("stamp_compliance", reads=["headers"], writes=["headers"]),
         ]
         text = _render(*inbound, outbound=outbound)
 
@@ -131,7 +131,7 @@ class TestRenderPipeline:
             "forward_oauth",
             "inject_mcp_notifications",
             "verbose_mode",
-            "apply_compliance",
+            "stamp_compliance",
         )
         for name in hook_names:
             assert name in text
