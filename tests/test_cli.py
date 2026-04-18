@@ -421,6 +421,7 @@ ccproxy:
     def test_status_json_no_config(self, mock_conn: Mock, tmp_path: Path, capsys, monkeypatch) -> None:
         """Test status JSON output with no config files."""
         monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
+        monkeypatch.chdir(tmp_path)
         clear_config_instance()
 
         show_status(tmp_path, json_output=True)

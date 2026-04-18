@@ -34,8 +34,10 @@ def _get_provider_ua_hint(provider: str) -> str | None:
 
 
 def apply_compliance_guard(ctx: Context) -> bool:
-    """Guard: run on reverse proxy flows with a completed transform."""
-    if not isinstance(ctx.flow.client_conn.proxy_mode, ReverseMode):
+    """Guard: run on reverse proxy or OAuth-injected flows with a completed transform."""
+    is_reverse = isinstance(ctx.flow.client_conn.proxy_mode, ReverseMode)
+    is_oauth = ctx.flow.metadata.get("ccproxy.oauth_injected", False)
+    if not (is_reverse or is_oauth):
         return False
 
     record = ctx.flow.metadata.get(InspectorMeta.RECORD)

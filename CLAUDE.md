@@ -133,7 +133,7 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 | `extract_session_id` | inbound | Parses `metadata.user_id` → stores session_id on `flow.metadata` (NOT body metadata) |
 | `inject_mcp_notifications` | outbound | Injects buffered MCP terminal events as synthetic tool_use/tool_result |
 | `verbose_mode` | outbound | Strips `redact-thinking-*` from `anthropic-beta` header |
-| `apply_compliance` | outbound | Applies learned compliance profile (headers, body envelope, system prompt) to reverse proxy flows |
+| `apply_compliance` | outbound | Applies compliance profile (headers, body envelope, system prompt) to reverse proxy and OAuth-injected flows |
 
 **`compliance/`** — Provider-agnostic compliance profile learning system:
 - `models.py` — `ComplianceProfile`, `ObservationAccumulator`, feature dataclasses

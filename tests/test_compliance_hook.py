@@ -65,10 +65,16 @@ class TestApplyComplianceGuard:
         ctx = Context.from_flow(flow)
         assert apply_compliance_guard(ctx) is True
 
-    def test_rejects_wireguard_mode(self):
+    def test_rejects_wireguard_without_oauth(self):
         flow = _make_flow(reverse=False, has_transform=True)
         ctx = Context.from_flow(flow)
         assert apply_compliance_guard(ctx) is False
+
+    def test_passes_wireguard_with_oauth_injected(self):
+        flow = _make_flow(reverse=False, has_transform=True)
+        flow.metadata["ccproxy.oauth_injected"] = True
+        ctx = Context.from_flow(flow)
+        assert apply_compliance_guard(ctx) is True
 
     def test_rejects_no_transform(self):
         flow = _make_flow(reverse=True, has_transform=False)
