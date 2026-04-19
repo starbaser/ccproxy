@@ -38,14 +38,23 @@ class HookDAG:
                 self._key_writers[key].add(name)
 
     def _build_dependencies(self) -> dict[str, set[str]]:
-        """Build dependency graph from reads/writes."""
+        """Build dependency graph from reads/writes, gated by priority.
+
+        A hook only depends on writers whose priority is strictly lower.
+        This makes list order (= priority) the canonical sequence and
+        reduces reads/writes to a parallelism hint: hooks that share no
+        keys with any earlier hook can run in the same parallel group.
+        Cycles are impossible because priority is a total order.
+        """
         deps: dict[str, set[str]] = {name: set() for name in self._hooks}
 
         for hook_name, spec in self._hooks.items():
             for read_key in spec.reads:
                 writers = self._key_writers.get(read_key, set())
                 for writer in writers:
-                    if writer != hook_name:
+                    if writer == hook_name:
+                        continue
+                    if self._hooks[writer].priority < spec.priority:
                         deps[hook_name].add(writer)
 
         return deps
