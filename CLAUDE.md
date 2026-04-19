@@ -135,15 +135,17 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 | `extract_session_id` | inbound | Parses `metadata.user_id` → stores session_id on `flow.metadata` (NOT body metadata) |
 | `inject_mcp_notifications` | outbound | Injects buffered MCP terminal events as synthetic tool_use/tool_result |
 | `verbose_mode` | outbound | Strips `redact-thinking-*` from `anthropic-beta` header |
-| `apply_compliance` | outbound | Applies compliance profile (headers, body envelope, system prompt) to reverse proxy and OAuth-injected flows |
+| `husk` | outbound | Picks a per-provider seed flow, strips its original content via `prepare` fns, inhabits it with the incoming request via `fill` fns, applies to the outbound flow |
 
-**`compliance/`** — Provider-agnostic compliance profile learning system:
-- `models.py` — `ComplianceProfile`, `ObservationAccumulator`, feature dataclasses
-- `classifier.py` — Feature classification (content vs envelope vs auth vs dynamic)
-- `extractor.py` — Feature extraction from `HttpSnapshot` snapshots
-- `store.py` — `ProfileStore` singleton with JSON persistence at `{config_dir}/compliance_profiles.json`
-- `merger.py` — `ComplianceMerger` class with 5 idempotent merge operations as public methods: `merge_headers`, `merge_session_metadata`, `wrap_body`, `merge_body_fields`, `merge_system`. `merge()` calls all 5 in order. Subclass to override, skip, reorder, or extend individual operations. `resolve_merger_class()` resolves a dotted import path to a `ComplianceMerger` subclass. Config: `compliance.merger_class` (default `"ccproxy.compliance.merger.ComplianceMerger"`).
-- Observation is built into `InspectorAddon.request()` pre-pipeline, triggered by WireGuard flows or configured UA patterns. Profiles keyed by `(provider, user_agent)` with stability detection across N observations.
+**`compliance/`** — Seed/husk request-shaping framework:
+- **Seed**: a user-curated ``mitmproxy.http.HTTPFlow`` persisted verbatim on disk. One ``{provider}.mflow`` file per provider under ``seeds_dir``, appended to on each seed. Captured via ``ccproxy flows seed --provider X`` (invokes the ``ccproxy.seed`` mitmproxy command).
+- **Husk**: a runtime working copy of ``seed.request`` — alias ``Husk = mitmproxy.http.Request``. Created per outbound request via ``http.Request.from_state(seed.request.get_state())``. Prepare fns strip seed content; fill fns inhabit with incoming content; ``apply_husk()`` field-copies the working request onto ``ctx.flow.request`` and syncs ``ctx._body``.
+- `models.py` — ``Husk`` type alias + ``apply_husk(husk, ctx)`` free function.
+- `body.py` — JSON body helpers (``get_body``, ``set_body``, ``mutate_body``) used by prepare/fill functions.
+- `store.py` — ``SeedStore`` singleton wrapping a directory of ``.mflow`` files. Uses ``mitmproxy.io.FlowWriter``/``FlowReader``. ``pick()`` returns the most recently appended flow for a provider.
+- `prepare.py` — default prepare fns (``strip_request_content``, ``strip_auth_headers``, ``strip_transport_headers``, ``strip_system_blocks_except_first``). Signature: ``Callable[[http.Request], None]``.
+- `fill.py` — default fill fns (``fill_model``, ``fill_messages``, ``fill_tools``, ``fill_system_append``, ``fill_stream_passthrough``, ``regenerate_user_prompt_id``, ``regenerate_session_id``). Signature: ``Callable[[http.Request, Context], None]``.
+- The ``husk`` hook composes prepare/fill via dotted-path lists (``HuskParams``), letting users override, extend, or replace the default pipeline without subclassing.
 
 **`mcp/`** — Thread-safe notification buffer (`NotificationBuffer` singleton) + `POST /mcp/notify` FastAPI endpoint for MCP terminal event ingestion.
 
@@ -161,7 +163,7 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 1. `$CCPROXY_CONFIG_DIR/ccproxy.yaml`
 2. `~/.config/ccproxy/ccproxy.yaml`
 
-**Hook config format** — two-stage dict:
+**Hook config format** — two-stage dict. Each entry is either a dotted module path (bare hook with empty params) or a ``{hook, params}`` dict for hooks with a ``model=`` Pydantic schema:
 ```yaml
 hooks:
   inbound:
@@ -170,7 +172,14 @@ hooks:
   outbound:
     - ccproxy.hooks.inject_mcp_notifications
     - ccproxy.hooks.verbose_mode
-    - ccproxy.hooks.apply_compliance
+    - hook: ccproxy.hooks.husk
+      params:
+        prepare:
+          - ccproxy.compliance.prepare.strip_request_content
+          - ccproxy.compliance.prepare.strip_auth_headers
+        fill:
+          - ccproxy.compliance.fill.fill_model
+          - ccproxy.compliance.fill.fill_messages
 ```
 
 **Transform config** — `inspector.transforms` list, first match wins:
@@ -188,12 +197,13 @@ inspector:
 
 Matching fields: `match_host` (optional, checked against pretty_host + Host header), `match_path` (prefix), `match_model` (substring in request body). Vertex AI fields: `dest_vertex_project` and `dest_vertex_location` (required for Gemini context caching with `vertex_ai`/`vertex_ai_beta` providers).
 
-**Compliance merger config** — `compliance.merger_class` dotted path to a `ComplianceMerger` subclass:
+**Compliance config** — seeds directory and the husk hook's prepare/fill lists:
 ```yaml
 compliance:
-  merger_class: mypackage.custom_merger.MyMerger
+  enabled: true
+  seeds_dir: ~/.config/ccproxy/compliance/seeds  # optional; defaults to {config_dir}/compliance/seeds
 ```
-Default: `ccproxy.compliance.merger.ComplianceMerger`. Subclass overrides individual methods (`merge_headers`, `merge_session_metadata`, `wrap_body`, `merge_body_fields`, `merge_system`) or `merge()` itself to reorder/skip operations.
+Customization is done at the hook-params level (``ccproxy.hooks.husk.params.prepare``/``fill`` lists of dotted paths), not by subclassing. Any module with a ``Callable[[http.Request], None]`` or ``Callable[[http.Request, Context], None]`` can be referenced.
 
 **Flows config** — `flows.default_jq_filters` list of jq expressions applied before CLI `--jq` filters:
 ```yaml
@@ -205,7 +215,7 @@ Each filter must consume a JSON array and produce a JSON array. Filters chain in
 
 ### Singleton Patterns
 
-`CCProxyConfig`, `NotificationBuffer`, `FlowStore`, and `ProfileStore` use thread-safe singletons. Tests reset them via the `cleanup` autouse fixture (`clear_config_instance()`, `clear_buffer()`, `clear_flow_store()`, `clear_store_instance()`).
+`CCProxyConfig`, `NotificationBuffer`, `FlowStore`, and `SeedStore` use thread-safe singletons. Tests reset them via the `cleanup` autouse fixture (`clear_config_instance()`, `clear_buffer()`, `clear_flow_store()`, `clear_store_instance()`).
 
 ### OAuth
 
