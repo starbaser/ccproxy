@@ -46,13 +46,30 @@ ccproxy:
     outbound:
       - ccproxy.hooks.inject_mcp_notifications
       - ccproxy.hooks.verbose_mode
-      - ccproxy.hooks.stamp_compliance
+      # Husk: pick a recorded seed for the destination provider, strip its
+      # original content via `prepare` fns, inhabit it with the incoming
+      # request's content via `fill` fns, apply to the outbound flow.
+      - hook: ccproxy.hooks.husk
+        params:
+          prepare:
+            - ccproxy.compliance.prepare.strip_request_content
+            - ccproxy.compliance.prepare.strip_auth_headers
+            - ccproxy.compliance.prepare.strip_transport_headers
+            - ccproxy.compliance.prepare.strip_system_blocks_except_first
+          fill:
+            - ccproxy.compliance.fill.fill_model
+            - ccproxy.compliance.fill.fill_messages
+            - ccproxy.compliance.fill.fill_tools
+            - ccproxy.compliance.fill.fill_system_append
+            - ccproxy.compliance.fill.fill_stream_passthrough
+            - ccproxy.compliance.fill.regenerate_user_prompt_id
+            - ccproxy.compliance.fill.regenerate_session_id
 
-  # Compliance profiles: seeded from curated flows via `ccproxy flows seed`,
-  # stamped onto reverse proxy flows via the stamp_compliance hook.
+  # Compliance seeds: curated via `ccproxy flows seed --provider X` into
+  # per-provider .mflow files, picked at request time by the husk hook.
   compliance:
     enabled: true
-    seed_anthropic: true
+    # seeds_dir: ~/.config/ccproxy/compliance/seeds
 
   # Inspector settings
   inspector:
