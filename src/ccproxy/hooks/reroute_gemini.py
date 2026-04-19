@@ -43,8 +43,8 @@ def _get_flow_host(ctx: Context) -> str:
     """Resolve the target hostname from the flow."""
     host = ctx.flow.request.headers.get("host", "")
     if host:
-        return host.split(":")[0]
-    return ctx.flow.request.pretty_host
+        return str(host).split(":")[0]
+    return str(ctx.flow.request.pretty_host)
 
 
 def reroute_gemini_guard(ctx: Context) -> bool:
@@ -94,9 +94,9 @@ def _resolve_project(auth_header: str, ctx: Context | None = None) -> str | None
             data = resp.json()
             project = data.get("cloudaicompanionProject")
             if project:
-                _cached_project = project
-                logger.info("Resolved cloudaicompanion project: %s", project)
-                return project
+                _cached_project = str(project)
+                logger.info("Resolved cloudaicompanion project: %s", _cached_project)
+                return _cached_project
         logger.warning("loadCodeAssist returned %d", resp.status_code)
     except Exception:
         logger.warning("Failed to resolve cloudaicompanion project", exc_info=True)
