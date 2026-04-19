@@ -22,7 +22,7 @@ _PRODUCTION_HOOK_MODULES = [
     "ccproxy.hooks.extract_session_id",
     "ccproxy.hooks.inject_mcp_notifications",
     "ccproxy.hooks.verbose_mode",
-    "ccproxy.hooks.stamp_compliance",
+    "ccproxy.hooks.husk",
 ]
 
 

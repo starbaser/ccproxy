@@ -5,8 +5,7 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock
 
-from ccproxy.inspector.contentview import ClientRequestContentview
-from ccproxy.inspector.contentview import ProviderResponseContentview
+from ccproxy.inspector.contentview import ClientRequestContentview, ProviderResponseContentview
 from ccproxy.inspector.flow_store import FlowRecord, HttpSnapshot, InspectorMeta
 
 
