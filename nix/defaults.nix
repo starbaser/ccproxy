@@ -31,7 +31,26 @@
       outbound = [
         "ccproxy.hooks.inject_mcp_notifications"
         "ccproxy.hooks.verbose_mode"
-        "ccproxy.hooks.stamp_compliance"
+        {
+          hook = "ccproxy.hooks.husk";
+          params = {
+            prepare = [
+              "ccproxy.compliance.prepare.strip_request_content"
+              "ccproxy.compliance.prepare.strip_auth_headers"
+              "ccproxy.compliance.prepare.strip_transport_headers"
+              "ccproxy.compliance.prepare.strip_system_blocks_except_first"
+            ];
+            fill = [
+              "ccproxy.compliance.fill.fill_model"
+              "ccproxy.compliance.fill.fill_messages"
+              "ccproxy.compliance.fill.fill_tools"
+              "ccproxy.compliance.fill.fill_system_append"
+              "ccproxy.compliance.fill.fill_stream_passthrough"
+              "ccproxy.compliance.fill.regenerate_user_prompt_id"
+              "ccproxy.compliance.fill.regenerate_session_id"
+            ];
+          };
+        }
       ];
     };
     otel = {
@@ -41,7 +60,7 @@
     };
     compliance = {
       enabled = true;
-      profile_path = "~/.config/ccproxy/compliance_profiles.json";
+      seeds_dir = "~/.config/ccproxy/compliance/seeds";
     };
     inspector = {
       port = 8083;

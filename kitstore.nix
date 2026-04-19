@@ -135,5 +135,14 @@
         src = { include = [ "rich/**/*.py" ]; chunk_by = "symbols"; };
       };
     };
+    "sdk/anthropic-python" = {
+      url = "https://github.com/anthropics/anthropic-sdk-python";
+    };
+    "sdk/openai-python" = {
+      url = "https://github.com/openai/openai-python";
+    };
+    "sdk/google-genai-python" = {
+      url = "https://github.com/googleapis/python-genai";
+    };
   };
 }
