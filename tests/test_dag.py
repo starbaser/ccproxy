@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from graphlib import CycleError
-
 import pytest
 
 from ccproxy.pipeline.dag import HookDAG
@@ -37,10 +35,10 @@ class TestExecutionOrder:
         assert len(dag.execution_order) == 3
 
     def test_dependency_ordering(self):
-        """Writer must precede reader."""
+        """Writer must precede reader when priority is consistent."""
         hooks = [
-            make_spec("reader", reads=["key"]),
-            make_spec("writer", writes=["key"]),
+            make_spec("reader", reads=["key"], priority=1),
+            make_spec("writer", writes=["key"], priority=0),
         ]
         dag = HookDAG(hooks)
         order = dag.execution_order
@@ -49,22 +47,23 @@ class TestExecutionOrder:
     def test_chain_ordering(self):
         """A writes key1 -> B reads key1 writes key2 -> C reads key2."""
         hooks = [
-            make_spec("c", reads=["key2"]),
-            make_spec("a", writes=["key1"]),
-            make_spec("b", reads=["key1"], writes=["key2"]),
+            make_spec("c", reads=["key2"], priority=2),
+            make_spec("a", writes=["key1"], priority=0),
+            make_spec("b", reads=["key1"], writes=["key2"], priority=1),
         ]
         dag = HookDAG(hooks)
         order = dag.execution_order
         assert order.index("a") < order.index("b")
         assert order.index("b") < order.index("c")
 
-    def test_cycle_raises(self):
+    def test_bidirectional_keys_resolve_via_priority(self):
+        """Two hooks that read+write overlapping keys order by priority."""
         hooks = [
-            make_spec("x", reads=["b_key"], writes=["a_key"]),
-            make_spec("y", reads=["a_key"], writes=["b_key"]),
+            make_spec("x", reads=["b_key"], writes=["a_key"], priority=0),
+            make_spec("y", reads=["a_key"], writes=["b_key"], priority=1),
         ]
-        with pytest.raises(CycleError):
-            HookDAG(hooks)
+        dag = HookDAG(hooks)
+        assert dag.execution_order == ["x", "y"]
 
 
 class TestPriorityTiebreaking:
@@ -80,16 +79,28 @@ class TestPriorityTiebreaking:
             f"Expected priority ordering, got {dag.execution_order}"
         )
 
-    def test_priority_respects_dependencies(self):
-        """Dependencies override priority ordering."""
+    def test_priority_gates_dependencies(self):
+        """Dependency edges only form from lower-priority writer to higher-priority reader.
+
+        Here the writer has a later priority than the reader, so the reader
+        does not observe the writer's state — list order (priority) wins.
+        """
         hooks = [
-            make_spec("a_hook", writes=["key"], priority=2),
-            make_spec("b_hook", reads=["key"], priority=0),
+            make_spec("late_writer", writes=["key"], priority=2),
+            make_spec("early_reader", reads=["key"], priority=0),
         ]
         dag = HookDAG(hooks)
-        assert dag.execution_order == ["a_hook", "b_hook"], (
-            f"Dependencies should override priority, got {dag.execution_order}"
-        )
+        assert dag.execution_order == ["early_reader", "late_writer"]
+
+    def test_dependency_when_priority_is_consistent(self):
+        """Writer with lower priority → reader with higher priority gets an edge."""
+        hooks = [
+            make_spec("writer", writes=["key"], priority=0),
+            make_spec("reader", reads=["key"], priority=1),
+        ]
+        dag = HookDAG(hooks)
+        assert dag.execution_order == ["writer", "reader"]
+        assert dag.get_dependencies("reader") == {"writer"}
 
     def test_priority_default_is_zero(self):
         spec = make_spec("h")
@@ -129,9 +140,9 @@ class TestParallelGroups:
 
     def test_chain_produces_sequential_groups(self):
         hooks = [
-            make_spec("a", writes=["k1"]),
-            make_spec("b", reads=["k1"], writes=["k2"]),
-            make_spec("c", reads=["k2"]),
+            make_spec("a", writes=["k1"], priority=0),
+            make_spec("b", reads=["k1"], writes=["k2"], priority=1),
+            make_spec("c", reads=["k2"], priority=2),
         ]
         dag = HookDAG(hooks)
         groups = dag.parallel_groups
@@ -141,7 +152,11 @@ class TestParallelGroups:
         assert groups[2] == {"c"}
 
     def test_parallel_groups_contain_all_hooks(self):
-        hooks = [make_spec("a", writes=["k"]), make_spec("b"), make_spec("c", reads=["k"])]
+        hooks = [
+            make_spec("a", writes=["k"], priority=0),
+            make_spec("b", priority=1),
+            make_spec("c", reads=["k"], priority=2),
+        ]
         dag = HookDAG(hooks)
         all_hooks = set()
         for g in dag.parallel_groups:
@@ -151,7 +166,10 @@ class TestParallelGroups:
 
 class TestGetHooksInOrder:
     def test_returns_specs_in_order(self):
-        hooks = [make_spec("writer", writes=["k"]), make_spec("reader", reads=["k"])]
+        hooks = [
+            make_spec("writer", writes=["k"], priority=0),
+            make_spec("reader", reads=["k"], priority=1),
+        ]
         dag = HookDAG(hooks)
         specs = dag.get_hooks_in_order()
         assert [s.name for s in specs] == dag.execution_order
@@ -169,13 +187,19 @@ class TestGetHooksInOrder:
 
 class TestDependencyQueries:
     def test_get_dependencies(self):
-        hooks = [make_spec("writer", writes=["k"]), make_spec("reader", reads=["k"])]
+        hooks = [
+            make_spec("writer", writes=["k"], priority=0),
+            make_spec("reader", reads=["k"], priority=1),
+        ]
         dag = HookDAG(hooks)
         assert dag.get_dependencies("reader") == {"writer"}
         assert dag.get_dependencies("writer") == set()
 
     def test_get_dependents(self):
-        hooks = [make_spec("writer", writes=["k"]), make_spec("reader", reads=["k"])]
+        hooks = [
+            make_spec("writer", writes=["k"], priority=0),
+            make_spec("reader", reads=["k"], priority=1),
+        ]
         dag = HookDAG(hooks)
         assert dag.get_dependents("writer") == {"reader"}
         assert dag.get_dependents("reader") == set()

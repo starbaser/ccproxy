@@ -1,168 +1,70 @@
-"""ProfileStore — persistent compliance profile storage.
+"""SeedStore — per-provider on-disk store of raw mitmproxy flow seeds.
 
-Thread-safe singleton that persists profiles to a JSON file in the
-config directory.  Atomic writes via temp+rename.
+One ``.mflow`` file per provider under ``seeds_dir``. Append on seed,
+read all on pick. Files are native mitmproxy tnetstring dumps, openable
+in ``mitmweb --rfile``.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import threading
 from pathlib import Path
-from typing import Any
 
-from ccproxy.compliance.models import ComplianceProfile, Envelope
+from mitmproxy import http
+from mitmproxy.io import FlowReader, FlowWriter
 
 logger = logging.getLogger(__name__)
 
-_FORMAT_VERSION = 2
 
+class SeedStore:
+    """Thread-safe per-provider store of raw mitmproxy HTTPFlow seeds."""
 
-class ProfileStore:
-    """Thread-safe persistent store for compliance profiles."""
-
-    def __init__(
-        self,
-        store_path: Path,
-        seed_profiles: list[ComplianceProfile] | None = None,
-    ) -> None:
-        self._path = store_path
+    def __init__(self, seeds_dir: Path) -> None:
+        self._dir = seeds_dir
+        self._dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
 
-        self._profiles: dict[str, ComplianceProfile] = {}
-        self._is_degraded: bool = False
+    def add(self, provider: str, flow: http.HTTPFlow) -> None:
+        """Append a flow to the provider's seed file."""
+        path = self._path(provider)
+        with self._lock, path.open("ab") as fo:
+            FlowWriter(fo).add(flow)  # type: ignore[no-untyped-call]
+        logger.info("Seeded flow %s under provider %s", flow.id, provider)
 
-        self._load()
+    def pick(self, provider: str) -> http.HTTPFlow | None:
+        """Return the most recently added seed for the provider, or None."""
+        path = self._path(provider)
+        if not path.exists():
+            return None
+        flows: list[http.HTTPFlow] = []
+        with self._lock, path.open("rb") as fo:
+            for f in FlowReader(fo).stream():  # type: ignore[no-untyped-call]
+                if isinstance(f, http.HTTPFlow):
+                    flows.append(f)
+        return flows[-1] if flows else None
 
-        if seed_profiles:
-            seeded = False
-            for profile in seed_profiles:
-                key = _make_key(profile.provider, profile.user_agent)
-                if key not in self._profiles:
-                    self._profiles[key] = profile
-                    logger.info("Seeded compliance profile for %s (ua=%s)", profile.provider, profile.user_agent)
-                    seeded = True
-            if seeded:
-                self._flush()
-
-    def set_profile(self, key: str, profile: ComplianceProfile) -> None:
-        """Store a profile directly and persist to disk."""
+    def clear(self, provider: str) -> None:
+        """Delete the provider's seed file, if any."""
         with self._lock:
-            self._profiles[key] = profile
-            self._flush()
+            self._path(provider).unlink(missing_ok=True)
 
-    def get_profile(self, provider: str, ua_hint: str | None = None) -> ComplianceProfile | None:
-        """Look up a complete profile for a provider.
-
-        If ``ua_hint`` is given, only profiles whose user_agent contains
-        the hint (substring match) are considered. Returns the most
-        recently updated match, or None.
-        """
+    def list_providers(self) -> list[str]:
+        """Return sorted list of providers with at least one seed file."""
         with self._lock:
-            match: ComplianceProfile | None = None
-            for profile in self._profiles.values():
-                if profile.provider != provider or not profile.is_complete:
-                    continue
-                if ua_hint and ua_hint not in profile.user_agent:
-                    continue
-                if match is None or profile.updated_at > match.updated_at:
-                    match = profile
-            return match
+            return sorted(p.stem for p in self._dir.glob("*.mflow"))
 
-    def get_all_profiles(self) -> dict[str, ComplianceProfile]:
-        with self._lock:
-            return dict(self._profiles)
-
-    @property
-    def is_degraded(self) -> bool:
-        """True when the store discarded profiles due to a format version mismatch."""
-        return self._is_degraded
-
-    def _load(self) -> None:
-        if not self._path.exists():
-            return
-
-        try:
-            data = json.loads(self._path.read_text())
-            if data.get("format_version") != _FORMAT_VERSION:
-                has_data = bool(data.get("profiles"))
-                if has_data:
-                    self._is_degraded = True
-                    logger.warning(
-                        "Compliance profile format version %r (expected %r) — "
-                        "profiles discarded. Delete %s to start fresh.",
-                        data.get("format_version"),
-                        _FORMAT_VERSION,
-                        self._path,
-                    )
-                else:
-                    logger.debug(
-                        "Compliance profile format version %r (expected %r), no data present",
-                        data.get("format_version"),
-                        _FORMAT_VERSION,
-                    )
-                return
-
-            for key, pd in data.get("profiles", {}).items():
-                self._profiles[key] = ComplianceProfile.from_dict(pd)
-
-            logger.info(
-                "Loaded %d compliance profiles from %s",
-                len(self._profiles),
-                self._path,
-            )
-        except (json.JSONDecodeError, KeyError, TypeError) as e:
-            logger.warning("Malformed compliance profiles file, starting fresh: %s", e)
-
-    def _flush(self) -> None:
-        """Persist current state to disk atomically."""
-        data: dict[str, Any] = {
-            "format_version": _FORMAT_VERSION,
-            "profiles": {k: v.to_dict() for k, v in self._profiles.items()},
-        }
-
-        try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self._path.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(data, indent=2, default=str))
-            tmp.rename(self._path)
-        except OSError as e:
-            logger.error("Failed to write compliance profiles: %s", e)
-
-
-def _make_key(provider: str, user_agent: str) -> str:
-    return f"{provider}/{user_agent}"
-
-
-def _build_anthropic_seed_profile() -> ComplianceProfile:
-    """Construct the Anthropic v0 seed ComplianceProfile from known constants."""
-    from ccproxy.constants import ANTHROPIC_BETA_HEADERS, CLAUDE_CODE_SYSTEM_PREFIX
-
-    return ComplianceProfile(
-        provider="anthropic",
-        user_agent="v0-seed",
-        created_at="1970-01-01T00:00:00+00:00",
-        updated_at="1970-01-01T00:00:00+00:00",
-        observation_count=0,
-        is_complete=True,
-        envelope=Envelope(
-            headers={
-                "anthropic-beta": ",".join(ANTHROPIC_BETA_HEADERS),
-                "anthropic-version": "2023-06-01",
-            },
-            system=[{"type": "text", "text": CLAUDE_CODE_SYSTEM_PREFIX}],
-        ),
-    )
+    def _path(self, provider: str) -> Path:
+        return self._dir / f"{provider}.mflow"
 
 
 # --- Singleton ---
 
-_store_instance: ProfileStore | None = None
+_store_instance: SeedStore | None = None
 _store_lock = threading.Lock()
 
 
-def get_store() -> ProfileStore:
+def get_store() -> SeedStore:
     global _store_instance
     if _store_instance is None:
         with _store_lock:
@@ -171,28 +73,21 @@ def get_store() -> ProfileStore:
     return _store_instance
 
 
-def _create_store() -> ProfileStore:
+def _create_store() -> SeedStore:
     from ccproxy.config import get_config, get_config_dir
 
     config = get_config()
     config_dir = get_config_dir()
 
-    if config.compliance.profile_path:
-        store_path = Path(config.compliance.profile_path).expanduser()
+    if config.compliance.seeds_dir:
+        seeds_dir = Path(config.compliance.seeds_dir).expanduser()
     else:
-        store_path = config_dir / "compliance_profiles.json"
+        seeds_dir = config_dir / "compliance" / "seeds"
 
-    seed_profiles: list[ComplianceProfile] | None = None
-    if config.compliance.seed_anthropic:
-        seed_profiles = [_build_anthropic_seed_profile()]
-
-    return ProfileStore(
-        store_path=store_path,
-        seed_profiles=seed_profiles,
-    )
+    return SeedStore(seeds_dir=seeds_dir)
 
 
 def clear_store_instance() -> None:
-    """Clear the singleton (for testing)."""
+    """Reset the singleton (for tests)."""
     global _store_instance
     _store_instance = None

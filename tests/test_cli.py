@@ -732,13 +732,7 @@ class TestStatusPipeline:
     def test_status_renders_pipeline_panel_with_all_5_hooks(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Pipeline panel in show_status renders all 5 production hooks.
-
-        Regression guard: the deleted dag-viz command had a hardcoded import list
-        that omitted verbose_mode and stamp_compliance. This test verifies that
-        show_status via load_hooks + render_pipeline produces output containing
-        every hook declared in the config.
-        """
+        """Pipeline panel in show_status renders all 5 production hooks."""
         import socket as _socket
 
         from ccproxy.config import clear_config_instance
@@ -757,13 +751,12 @@ ccproxy:
     outbound:
       - ccproxy.hooks.inject_mcp_notifications
       - ccproxy.hooks.verbose_mode
-      - ccproxy.hooks.stamp_compliance
+      - ccproxy.hooks.husk
 """)
 
         monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
         clear_config_instance()
 
-        # Proxy and inspector are not running — socket probes must fail cleanly.
         monkeypatch.setattr(_socket, "create_connection", Mock(side_effect=OSError))
 
         show_status(tmp_path, json_output=False, check_proxy=False, check_inspect=False)
@@ -777,7 +770,7 @@ ccproxy:
             "extract_session_id",
             "inject_mcp_notifications",
             "verbose_mode",
-            "stamp_compliance",
+            "husk",
         ):
             assert hook_name in out, f"Expected hook '{hook_name}' in status output"
         assert "lightllm transform" in out

@@ -1,183 +1,146 @@
-"""Tests for the ComplianceSeeder addon."""
+"""Tests for ComplianceSeeder — raw flow saving to SeedStore."""
+
+from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from mitmproxy import http
+from mitmproxy.test import tflow
 
-from ccproxy.compliance.models import ComplianceProfile
-from ccproxy.compliance.store import ProfileStore, clear_store_instance
-from ccproxy.inspector.compliance_seeder import ComplianceSeeder, _load_classifier_config
-from ccproxy.inspector.flow_store import FlowRecord, HttpSnapshot, InspectorMeta
+from ccproxy.compliance.store import SeedStore, clear_store_instance
+from ccproxy.inspector.compliance_seeder import ComplianceSeeder
 
 
 @pytest.fixture()
-def store(tmp_path: Path) -> ProfileStore:
+def store(tmp_path: Path) -> Any:
     from ccproxy.compliance.store import _store_lock
     from ccproxy.config import CCProxyConfig, set_config_instance
 
     set_config_instance(CCProxyConfig())
-
-    store = ProfileStore(tmp_path / "profiles.json", seed_profiles=None)
+    seed_store = SeedStore(tmp_path / "seeds")
 
     import ccproxy.compliance.store as store_mod
 
     with _store_lock:
-        store_mod._store_instance = store
-    yield store
+        store_mod._store_instance = seed_store
+    yield seed_store
     clear_store_instance()
 
 
-def _make_flow_with_snapshot(
-    flow_id: str = "abc123",
-    headers: dict[str, str] | None = None,
-    body: dict | None = None,
-    user_agent: str = "test-cli/1.0",
-) -> MagicMock:
-    """Create a mock flow with a FlowRecord containing an HttpSnapshot."""
-    snapshot_headers = {"user-agent": user_agent, **(headers or {"x-app": "cli"})}
-    snapshot_body = json.dumps(body or {"model": "test", "messages": [{"role": "user", "content": "hi"}]}).encode()
-
-    snapshot = HttpSnapshot(
-        headers=snapshot_headers,
-        body=snapshot_body,
-        method="POST",
-        url="https://api.anthropic.com/v1/messages",
+def _flow(flow_id: str = "abc123") -> http.HTTPFlow:
+    f = tflow.tflow()
+    f.id = flow_id
+    f.request = http.Request.make(
+        "POST",
+        "https://api.anthropic.com/v1/messages",
+        b'{"model": "claude", "messages": [{"role": "user", "content": "hi"}]}',
+        {"x-app": "cli", "user-agent": "test-cli/1.0"},
     )
-    record = FlowRecord(direction="inbound", client_request=snapshot)
+    return f
 
-    flow = MagicMock()
-    flow.id = flow_id
-    flow.metadata = {InspectorMeta.RECORD: record}
-    return flow
+
+def _run_seed(
+    seeder: ComplianceSeeder,
+    flows_by_id: dict[str, http.HTTPFlow],
+    ids: str,
+    provider: str,
+) -> dict[str, Any]:
+    with patch.object(
+        seeder,
+        "_find_http_flow",
+        side_effect=lambda fid: flows_by_id.get(fid),
+    ):
+        result = seeder.ccproxy_seed(ids, provider)
+    return json.loads(result)
 
 
 class TestComplianceSeeder:
-    def test_seeds_profile_from_single_flow(self, store: ProfileStore):
-        flow = _make_flow_with_snapshot()
+    def test_single_flow(self, store: SeedStore) -> None:
         seeder = ComplianceSeeder()
-
-        with patch.object(seeder, "_find_http_flow", return_value=flow):
-            result_json = seeder.ccproxy_seed("abc123", "anthropic")
-
-        result = json.loads(result_json)
+        result = _run_seed(seeder, {"abc123": _flow("abc123")}, "abc123", "anthropic")
         assert result["status"] == "ok"
-        assert result["key"] == "anthropic/seed"
-        assert result["flows_used"] == 1
-        assert result["user_agent"] == "test-cli/1.0"
+        assert result["provider"] == "anthropic"
+        assert result["flows_saved"] == 1
+        assert result["missing"] == []
+        assert store.pick("anthropic") is not None
 
-        profile = store.get_profile("anthropic")
-        assert profile is not None
-        assert profile.is_complete is True
-
-    def test_seeds_profile_from_multiple_flows(self, store: ProfileStore):
-        flow1 = _make_flow_with_snapshot(flow_id="f1", headers={"x-app": "cli", "beta": "v1"})
-        flow2 = _make_flow_with_snapshot(flow_id="f2", headers={"x-app": "cli", "beta": "v1"})
-        flow3 = _make_flow_with_snapshot(flow_id="f3", headers={"x-app": "cli", "beta": "v1"})
-
+    def test_multiple_flows(self, store: SeedStore) -> None:
+        flows = {fid: _flow(fid) for fid in ("f1", "f2", "f3")}
         seeder = ComplianceSeeder()
+        result = _run_seed(seeder, flows, "f1,f2,f3", "anthropic")
+        assert result["flows_saved"] == 3
 
-        def find_flow(fid: str) -> MagicMock | None:
-            return {"f1": flow1, "f2": flow2, "f3": flow3}.get(fid)
-
-        with patch.object(seeder, "_find_http_flow", side_effect=find_flow):
-            result_json = seeder.ccproxy_seed("f1,f2,f3", "anthropic")
-
-        result = json.loads(result_json)
-        assert result["flows_used"] == 3
-
-        profile = store.get_profile("anthropic")
-        assert profile is not None
-        assert "x-app" in profile.envelope.headers
-        assert "beta" in profile.envelope.headers
-
-    def test_variable_headers_excluded_across_flows(self, store: ProfileStore):
-        flow1 = _make_flow_with_snapshot(flow_id="f1", headers={"x-app": "cli", "x-req-id": "r1"})
-        flow2 = _make_flow_with_snapshot(flow_id="f2", headers={"x-app": "cli", "x-req-id": "r2"})
-
+    def test_skips_missing_flows(self, store: SeedStore) -> None:
         seeder = ComplianceSeeder()
+        result = _run_seed(
+            seeder,
+            {"exists": _flow("exists")},
+            "exists,missing",
+            "anthropic",
+        )
+        assert result["flows_saved"] == 1
+        assert result["missing"] == ["missing"]
 
-        def find_flow(fid: str) -> MagicMock | None:
-            return {"f1": flow1, "f2": flow2}.get(fid)
-
-        with patch.object(seeder, "_find_http_flow", side_effect=find_flow):
-            seeder.ccproxy_seed("f1,f2", "anthropic")
-
-        profile = store.get_profile("anthropic")
-        assert profile is not None
-        assert "x-app" in profile.envelope.headers
-        assert "x-req-id" not in profile.envelope.headers
-
-    def test_skips_flow_without_snapshot(self, store: ProfileStore):
-        flow_good = _make_flow_with_snapshot(flow_id="good")
-        flow_bad = MagicMock()
-        flow_bad.id = "bad"
-        flow_bad.metadata = {InspectorMeta.RECORD: FlowRecord(direction="inbound")}
-
-        seeder = ComplianceSeeder()
-
-        def find_flow(fid: str) -> MagicMock | None:
-            return {"good": flow_good, "bad": flow_bad}.get(fid)
-
-        with patch.object(seeder, "_find_http_flow", side_effect=find_flow):
-            result_json = seeder.ccproxy_seed("good,bad", "anthropic")
-
-        result = json.loads(result_json)
-        assert result["flows_used"] == 1
-
-    def test_skips_missing_flow(self, store: ProfileStore):
-        flow = _make_flow_with_snapshot(flow_id="exists")
-        seeder = ComplianceSeeder()
-
-        def find_flow(fid: str) -> MagicMock | None:
-            return flow if fid == "exists" else None
-
-        with patch.object(seeder, "_find_http_flow", side_effect=find_flow):
-            result_json = seeder.ccproxy_seed("exists,missing", "anthropic")
-
-        result = json.loads(result_json)
-        assert result["flows_used"] == 1
-
-    def test_raises_on_no_valid_flows(self, store: ProfileStore):
-        seeder = ComplianceSeeder()
-
-        with (
-            patch.object(seeder, "_find_http_flow", return_value=None),
-            pytest.raises(ValueError, match="no valid flows"),
-        ):
-            seeder.ccproxy_seed("missing", "anthropic")
-
-    def test_raises_on_empty_ids(self, store: ProfileStore):
+    def test_empty_ids_raises(self) -> None:
         seeder = ComplianceSeeder()
         with pytest.raises(ValueError, match="no flow ids"):
             seeder.ccproxy_seed("", "anthropic")
 
-    def test_overwrites_existing_profile(self, store: ProfileStore):
-        old = ComplianceProfile(
-            provider="anthropic",
-            user_agent="old",
-            created_at="2020-01-01T00:00:00+00:00",
-            updated_at="2020-01-01T00:00:00+00:00",
-            observation_count=1,
-            is_complete=True,
-        )
-        store.set_profile("anthropic/seed", old)
-
-        flow = _make_flow_with_snapshot(headers={"x-new": "header"})
+    def test_all_missing_reports_empty(self, store: SeedStore) -> None:
         seeder = ComplianceSeeder()
+        result = _run_seed(seeder, {}, "missing", "anthropic")
+        assert result["status"] == "empty"
+        assert result["flows_saved"] == 0
+        assert result["missing"] == ["missing"]
 
-        with patch.object(seeder, "_find_http_flow", return_value=flow):
-            seeder.ccproxy_seed("abc123", "anthropic")
+    def test_strips_whitespace_and_empty_tokens(self, store: SeedStore) -> None:
+        seeder = ComplianceSeeder()
+        result = _run_seed(
+            seeder,
+            {"f1": _flow("f1")},
+            " f1 , ,",
+            "anthropic",
+        )
+        assert result["flows_saved"] == 1
 
-        profile = store.get_profile("anthropic")
-        assert profile is not None
-        assert profile.user_agent == "test-cli/1.0"
+    def test_preserves_full_flow_on_disk(self, store: SeedStore) -> None:
+        seeder = ComplianceSeeder()
+        _run_seed(seeder, {"abc123": _flow("abc123")}, "abc123", "anthropic")
+        picked = store.pick("anthropic")
+        assert picked is not None
+        assert picked.request is not None
+        assert picked.request.method == "POST"
+        assert picked.request.pretty_host == "api.anthropic.com"
+        assert picked.request.headers.get("user-agent") == "test-cli/1.0"
 
 
-class TestLoadClassifierConfig:
-    def test_returns_empty_on_no_config(self):
-        with patch("ccproxy.config.get_config", side_effect=RuntimeError):
-            headers, fields = _load_classifier_config()
-        assert headers == frozenset()
-        assert fields == frozenset()
+class TestFindHttpFlow:
+    def test_returns_none_when_view_missing(self) -> None:
+        master = MagicMock()
+        master.addons.get.return_value = None
+        with patch("ccproxy.inspector.compliance_seeder.ctx") as mock_ctx:
+            mock_ctx.master = master
+            assert ComplianceSeeder._find_http_flow("x") is None
+
+    def test_returns_flow_when_found(self) -> None:
+        flow = _flow("abc")
+        view = MagicMock()
+        view.get_by_id.return_value = flow
+        master = MagicMock()
+        master.addons.get.return_value = view
+        with patch("ccproxy.inspector.compliance_seeder.ctx") as mock_ctx:
+            mock_ctx.master = master
+            assert ComplianceSeeder._find_http_flow("abc") is flow
+
+    def test_returns_none_for_non_http_flow(self) -> None:
+        view = MagicMock()
+        view.get_by_id.return_value = object()
+        master = MagicMock()
+        master.addons.get.return_value = view
+        with patch("ccproxy.inspector.compliance_seeder.ctx") as mock_ctx:
+            mock_ctx.master = master
+            assert ComplianceSeeder._find_http_flow("x") is None
