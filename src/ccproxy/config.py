@@ -104,31 +104,18 @@ class OAuthSource(CredentialSource):
 
 
 class ComplianceConfig(BaseModel):
-    """Configuration for the compliance profile system."""
+    """Configuration for the compliance seed/husk system."""
 
     model_config = ConfigDict(extra="ignore")
 
     enabled: bool = True
-    """Master switch for compliance application."""
+    """Master switch for seed storage and husk application."""
 
-    profile_path: str | None = None
-    """Explicit path to the compliance profiles JSON file.
+    seeds_dir: str | None = None
+    """Directory holding per-provider ``{provider}.mflow`` seed files.
 
-    When set, all instances share this file instead of each writing to
-    ``{config_dir}/compliance_profiles.json``.
+    Defaults to ``{config_dir}/compliance/seeds`` when unset.
     """
-
-    seed_anthropic: bool = True
-    """Seed an Anthropic v0 profile from existing constants on first run."""
-
-    additional_header_exclusions: list[str] = Field(default_factory=list)
-    """Additional header names to exclude from compliance profiling."""
-
-    additional_body_content_fields: list[str] = Field(default_factory=list)
-    """Additional top-level body field names to treat as content (not envelope)."""
-
-    stamper_class: str = "ccproxy.compliance.stamper.ComplianceStamper"
-    """Dotted import path to a ComplianceStamper subclass for profile application."""
 
 
 class FlowsConfig(BaseModel):
@@ -376,7 +363,26 @@ class CCProxyConfig(BaseSettings):
             "outbound": [
                 "ccproxy.hooks.inject_mcp_notifications",
                 "ccproxy.hooks.verbose_mode",
-                "ccproxy.hooks.stamp_compliance",
+                {
+                    "hook": "ccproxy.hooks.husk",
+                    "params": {
+                        "prepare": [
+                            "ccproxy.compliance.prepare.strip_request_content",
+                            "ccproxy.compliance.prepare.strip_auth_headers",
+                            "ccproxy.compliance.prepare.strip_transport_headers",
+                            "ccproxy.compliance.prepare.strip_system_blocks_except_first",
+                        ],
+                        "fill": [
+                            "ccproxy.compliance.fill.fill_model",
+                            "ccproxy.compliance.fill.fill_messages",
+                            "ccproxy.compliance.fill.fill_tools",
+                            "ccproxy.compliance.fill.fill_system_append",
+                            "ccproxy.compliance.fill.fill_stream_passthrough",
+                            "ccproxy.compliance.fill.regenerate_user_prompt_id",
+                            "ccproxy.compliance.fill.regenerate_session_id",
+                        ],
+                    },
+                },
             ],
         },
     )
