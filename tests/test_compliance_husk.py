@@ -179,8 +179,8 @@ class TestHuskHook:
             },
         )
 
-        assert flow.request.host == "api.anthropic.com"
-        assert flow.request.path == "/v1/messages"
+        # Transport routing is preserved (set by redirect handler, not husk)
+        assert flow.request.host == "incoming.example"
         assert flow.request.headers["x-seed-header"] == "yes"
 
         body = json.loads(flow.request.content or b"{}")
@@ -208,7 +208,8 @@ class TestHuskHook:
         flow = _make_flow(reverse=True, provider="gemini", body={"model": "gemini-2.5"})
         ctx = Context.from_flow(flow)
         husk(ctx, {})
-        assert flow.request.host == "generativelanguage.googleapis.com"
+        # Transport routing preserved; seed headers stamped
+        assert flow.request.host == "incoming.example"
 
 
 class TestResolveCallable:

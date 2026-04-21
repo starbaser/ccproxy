@@ -35,20 +35,14 @@ def _target_flow() -> http.HTTPFlow:
 
 
 class TestApplyHusk:
-    def test_replaces_method(self) -> None:
-        flow = _target_flow()
-        ctx = Context.from_flow(flow)
-        apply_husk(_husk(method="DELETE"), ctx)
-        assert flow.request.method == "DELETE"
-
-    def test_replaces_scheme_host_port_path(self) -> None:
+    def test_preserves_transport_routing(self) -> None:
         flow = _target_flow()
         ctx = Context.from_flow(flow)
         apply_husk(_husk(url="https://seed.example:4443/v1/endpoint?q=1"), ctx)
-        assert flow.request.scheme == "https"
-        assert flow.request.host == "seed.example"
-        assert flow.request.port == 4443
-        assert flow.request.path.startswith("/v1/endpoint")
+        assert flow.request.scheme == "http"
+        assert flow.request.host == "orig.example"
+        assert flow.request.port == 8080
+        assert flow.request.path == "/old"
 
     def test_replaces_headers(self) -> None:
         flow = _target_flow()
@@ -70,7 +64,7 @@ class TestApplyHusk:
         husk = _husk()
         apply_husk(husk, ctx)
         apply_husk(husk, ctx)
-        assert flow.request.host == "seed.example"
+        assert flow.request.host == "orig.example"
         assert flow.request.content == b'{"seed": true}'
 
     def test_syncs_ctx_body_from_husk_content(self) -> None:
@@ -91,3 +85,14 @@ class TestApplyHusk:
         ctx = Context.from_flow(flow)
         apply_husk(_husk(content=b"[1, 2, 3]"), ctx)
         assert ctx._body == {}
+
+    def test_preserves_auth_headers(self) -> None:
+        flow = _target_flow()
+        flow.request.headers["authorization"] = "Bearer tok-123"
+        flow.request.headers["x-api-key"] = "sk-abc"
+        ctx = Context.from_flow(flow)
+        apply_husk(_husk(headers={"x-seed": "a"}), ctx)
+        assert flow.request.headers["authorization"] == "Bearer tok-123"
+        assert flow.request.headers["x-api-key"] == "sk-abc"
+        assert flow.request.headers["x-seed"] == "a"
+        assert "x-old" not in flow.request.headers

@@ -20,23 +20,38 @@ if TYPE_CHECKING:
 Husk = http.Request
 
 
-def apply_husk(husk: Husk, ctx: Context) -> None:
-    """Field-copy the husk onto ``ctx.flow.request`` and sync ``ctx._body``.
+_PRESERVE_HEADERS: frozenset[str] = frozenset(
+    {
+        "authorization",
+        "x-api-key",
+        "x-goog-api-key",
+        "host",
+    }
+)
 
-    Rewrites method, URL parts, headers, and content. Also updates the
-    pipeline ``Context``'s parsed body so ``ctx.commit()`` (called by the
-    executor after the hook returns) re-serializes the husk shape rather
-    than reverting to the pre-husk body.
+
+def apply_husk(husk: Husk, ctx: Context) -> None:
+    """Stamp the husk's headers and body onto the outbound flow.
+
+    Preserves transport routing (host/port/scheme/path) already set by
+    the redirect/transform handler, and preserves auth headers already
+    injected by the inbound pipeline. Only stamps compliance-relevant
+    headers and body content from the husk.
     """
     target = ctx.flow.request
-    target.method = husk.method
-    target.scheme = husk.scheme
-    target.host = husk.host
-    target.port = husk.port
-    target.path = husk.path
+
+    preserved = {
+        name: target.headers[name]
+        for name in _PRESERVE_HEADERS
+        if name in target.headers
+    }
+
     target.headers.clear()
     for name, value in husk.headers.items():  # type: ignore[no-untyped-call]
         target.headers[name] = value
+    for name, value in preserved.items():
+        target.headers[name] = value
+
     target.content = husk.content
 
     try:

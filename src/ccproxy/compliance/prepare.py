@@ -25,6 +25,9 @@ _CONTENT_BODY_FIELDS: frozenset[str] = frozenset(
         "prompt",
         "input",
         "stream",
+        "thinking",
+        "output_config",
+        "context_management",
     }
 )
 

@@ -1,8 +1,9 @@
 """Compliance seeder addon.
 
 Registers ``ccproxy.seed``: a mitmproxy command that saves the specified
-flows verbatim to the provider's seed silo on disk. No extraction, no
-filtering, no redaction — the raw ``HTTPFlow`` is persisted as-is.
+flows verbatim to the provider's seed silo on disk. Runtime-only metadata
+(FlowRecord, OTel spans) is stripped before serialization; the persisted
+flow retains headers, body, and mitmproxy-native metadata.
 Invoked by ``ccproxy flows seed --provider X``.
 """
 
@@ -14,8 +15,11 @@ import logging
 from mitmproxy import command, ctx, http
 
 from ccproxy.compliance.store import get_store
+from ccproxy.inspector.flow_store import InspectorMeta
 
 logger = logging.getLogger(__name__)
+
+_CCPROXY_META_PREFIX = "ccproxy."
 
 
 class ComplianceSeeder:
@@ -43,7 +47,8 @@ class ComplianceSeeder:
                 logger.warning("ccproxy.seed: no flow with id %s, skipping", fid)
                 missing.append(fid)
                 continue
-            store.add(provider, flow)
+            clean = _strip_runtime_metadata(flow)
+            store.add(provider, clean)
             saved += 1
 
         summary: dict[str, object] = {
@@ -68,3 +73,14 @@ class ComplianceSeeder:
             return None
         found = view.get_by_id(flow_id)
         return found if isinstance(found, http.HTTPFlow) else None
+
+
+def _strip_runtime_metadata(flow: http.HTTPFlow) -> http.HTTPFlow:
+    """Deep-copy the flow and remove non-serializable ccproxy runtime metadata."""
+    clone = flow.copy()
+    keys_to_remove = [
+        k for k in clone.metadata if k.startswith(_CCPROXY_META_PREFIX)
+    ]
+    for k in keys_to_remove:
+        del clone.metadata[k]
+    return clone
