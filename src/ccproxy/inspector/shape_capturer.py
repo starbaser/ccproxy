@@ -76,7 +76,7 @@ def _strip_runtime_metadata(flow: http.HTTPFlow) -> http.HTTPFlow:
     """Deep-copy the flow and remove non-serializable ccproxy runtime metadata."""
     clone = flow.copy()
     keys_to_remove = [
-        k for k in clone.metadata if k.startswith(_CCPROXY_META_PREFIX)
+        k for k in clone.metadata if str(k).startswith(_CCPROXY_META_PREFIX)
     ]
     for k in keys_to_remove:
         del clone.metadata[k]
