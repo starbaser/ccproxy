@@ -73,10 +73,17 @@ class ShapeCapturer:
 
 
 def _strip_runtime_metadata(flow: http.HTTPFlow) -> http.HTTPFlow:
-    """Deep-copy the flow and remove non-serializable ccproxy runtime metadata."""
+    """Deep-copy the flow and strip non-serializable metadata.
+
+    Removes ccproxy runtime keys and any non-string metadata keys
+    (e.g. mitmproxy 12's FlowMeta enum members) that FlowWriter
+    cannot serialize.
+    """
     clone = flow.copy()
     keys_to_remove = [
-        k for k in clone.metadata if str(k).startswith(_CCPROXY_META_PREFIX)
+        k
+        for k in clone.metadata
+        if not isinstance(k, str) or k.startswith(_CCPROXY_META_PREFIX)
     ]
     for k in keys_to_remove:
         del clone.metadata[k]
