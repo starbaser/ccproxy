@@ -1,4 +1,4 @@
-# ccproxy Inspector & Compliance System
+# ccproxy Inspector & Shaping System
 
 ## Part 1: The Inspector MITM System
 
@@ -50,9 +50,9 @@ Every flow enters through one of two listeners and carries its origin in `flow.c
 
 Both are treated as `"inbound"` flows and go through the full addon chain. The distinction matters for:
 
-- **Compliance observation**: WireGuard flows are always observed as reference traffic; reverse proxy flows are not (they are the consumers of learned profiles).
+- **Shaping observation**: WireGuard flows are always observed as reference traffic; reverse proxy flows are not (they are the consumers of learned profiles).
 - **Transform matching**: Unmatched reverse proxy flows get a 501 error; unmatched WireGuard flows pass through unchanged.
-- **Compliance application**: The `apply_compliance` hook only fires on reverse proxy flows that have a `TransformMeta`.
+- **Shaping application**: The `apply_shaping` hook only fires on reverse proxy flows that have a `TransformMeta`.
 
 ### The Addon Chain
 
@@ -64,7 +64,7 @@ Addons are registered in a fixed order by `_build_addons()` in `inspector/proces
 └───────┬────────┘
         │
 ┌───────▼────────┐
-│ InspectorAddon │  Flow capture, OTel spans, compliance observation, SSE streaming, OAuth retry
+│ InspectorAddon │  Flow capture, OTel spans, shaping observation, SSE streaming, OAuth retry
 └───────┬────────┘
         │
 ┌───────▼────────────────┐
@@ -79,7 +79,7 @@ Addons are registered in a fixed order by `_build_addons()` in `inspector/proces
         │
 ┌───────▼────────────────┐
 │ ccproxy_outbound       │  DAG-driven outbound hooks (inject_mcp_notifications, verbose_mode,
-│ (InspectorRouter)      │  apply_compliance)
+│ (InspectorRouter)      │  apply_shaping)
 └────────────────────────┘
 ```
 
@@ -130,7 +130,7 @@ ClientRequest
 
 This is the ground truth of what the client actually sent, uncontaminated by pipeline mutations. It is used for:
 
-1. **Compliance observation** -- the extractor reads from `ClientRequest`, not the mutated flow.
+1. **Shaping observation** -- the extractor reads from `ClientRequest`, not the mutated flow.
 2. **Content view** -- the `ClientRequestContentview` shows this snapshot in the mitmweb UI under the "Client-Request" view tab.
 3. **mitmproxy command** -- `ccproxy.clientrequest` returns the snapshot as JSON for programmatic access.
 
@@ -142,7 +142,7 @@ This is the key architectural distinction:
 |---|---|---|
 | **What** | What the client actually sent | What gets sent to the upstream provider |
 | **When captured** | Before any hooks run | After all hooks + transform |
-| **Headers** | Client's original headers | May have OAuth tokens injected, beta headers added, compliance headers stamped |
+| **Headers** | Client's original headers | May have OAuth tokens injected, beta headers added, shaping headers stamped |
 | **Body** | Client's original body | May be transformed to a different API format, wrapped in an envelope, have system prompts injected |
 | **Host/URL** | Client's target (e.g. `localhost:4000/v1/messages`) | Provider's actual endpoint (e.g. `api.anthropic.com/v1/messages`) |
 | **Access** | `flow.metadata[InspectorMeta.RECORD].client_request` | `flow.request` (the live mitmproxy request object) |
@@ -163,7 +163,7 @@ Three paths:
 2. **No auth at all** -- iterates `oat_sources` for the first cached token, injects it.
 3. **Real key present** -- pass-through.
 
-Sets `x-ccproxy-oauth-injected: 1` header and `flow.metadata["ccproxy.oauth_provider"]` for downstream use (OAuth 401 retry, compliance profile selection).
+Sets `x-ccproxy-oauth-injected: 1` header and `flow.metadata["ccproxy.oauth_provider"]` for downstream use (OAuth 401 retry, shape profile selection).
 
 #### `extract_session_id`
 
@@ -191,11 +191,11 @@ Reads: `anthropic-beta`. Writes: nothing (header mutation is immediate).
 
 Strips any `redact-thinking-*` token from the `anthropic-beta` header to enable full thinking block output.
 
-#### `apply_compliance`
+#### `apply_shaping`
 
 Reads: `system`, `metadata`. Writes: `system`, `metadata`.
 
-Applies a learned compliance profile to the request. Covered in detail in Part 2.
+Applies a learned shaping profile to the request. Covered in detail in Part 2.
 
 ### Per-Request Hook Overrides
 
@@ -347,16 +347,16 @@ hooks:
   outbound:
     - ccproxy.hooks.inject_mcp_notifications
     - ccproxy.hooks.verbose_mode
-    - ccproxy.hooks.apply_compliance
+    - ccproxy.hooks.apply_shaping
 ```
 
 ---
 
-## Part 2: The Compliance System
+## Part 2: The Shaping System
 
 ### Overview
 
-The compliance system passively learns the "compliance contract" -- the exact headers, body envelope fields, system prompt, and body wrapping pattern that a legitimate CLI client sends -- and then stamps that contract onto non-compliant SDK requests. It bridges the gap between what a bare SDK sends (minimal headers, no system prompt, no envelope fields) and what a provider API actually requires for full functionality.
+The shaping system passively learns the "shaping contract" -- the exact headers, body envelope fields, system prompt, and body wrapping pattern that a legitimate CLI client sends -- and then stamps that contract onto non-compliant SDK requests. It bridges the gap between what a bare SDK sends (minimal headers, no system prompt, no envelope fields) and what a provider API actually requires for full functionality.
 
 The core insight: WireGuard-jailed CLI traffic is the reference source. It shows exactly what a compliant request looks like. Reverse proxy SDK traffic is the consumer. It gets the learned profile applied before hitting the provider.
 
@@ -369,7 +369,7 @@ WireGuard flow (CLI reference)                   Reverse proxy flow (SDK consume
  InspectorAddon.request()                         InspectorAddon.request()
         │                                                  │
         ▼                                                  │
- _observe_compliance()                                     │
+ _observe_shaping()                                        │
         │                                                  │
         ▼                                                  │
  observe_flow()                                            │
@@ -380,17 +380,17 @@ WireGuard flow (CLI reference)                   Reverse proxy flow (SDK consume
    │              ObservationBundle                        │
    │                         │                             │
    │                         ▼                             │
-   │              ProfileStore.submit_observation()        │
+   │              ShapeStore.submit_observation()          │
    │                ├─ accumulate values                   │
    │                └─ if count >= min_observations:       │
-   │                    finalize() → ComplianceProfile     │
+   │                    finalize() → ShapingProfile        │
    │                    flush to disk                      ▼
    │                         │                     [inbound pipeline]
    │                         │                     [transform phase]
    │                         │                             │
    │                         │                             ▼
    │                         │                     [outbound pipeline]
-   │                         │                     apply_compliance hook
+   │                         │                     apply_shaping hook
    │                         │                             │
    │                         │                             ▼
    │                         └──── get_profile() ────▶ merge_profile()
@@ -410,7 +410,7 @@ WireGuard flow (CLI reference)                   Reverse proxy flow (SDK consume
 Observation is triggered in `InspectorAddon.request()` after the `ClientRequest` snapshot is created. Two conditions trigger observation:
 
 1. **WireGuard flows** -- always observed (these are the authoritative reference).
-2. **Reference UA patterns** -- if the `user-agent` header matches any substring in `compliance.reference_user_agents` config.
+2. **Reference UA patterns** -- if the `user-agent` header matches any substring in `shaping.reference_user_agents` config.
 
 Reverse proxy flows from SDK clients are **never** observed -- they are the consumers, not the reference.
 
@@ -464,12 +464,12 @@ A feature is **stable** if `len(set(serialized_values)) == 1` -- identical acros
 - **System prompt**: if all observations have the same system prompt, it becomes a `ProfileFeatureSystem`. Strings are normalized to content-block format: `[{"type": "text", "text": "..."}]`.
 - **Body wrapper**: included only if all observations agree on the same non-None wrapper field name.
 
-The resulting `ComplianceProfile` is stored, flushed to disk, and immediately available for the `apply_compliance` hook.
+The resulting `ShapingProfile` is stored, flushed to disk, and immediately available for the `apply_shaping` hook.
 
-### The Compliance Profile
+### The Shaping Profile
 
 ```
-ComplianceProfile
+ShapingProfile
   ├── provider: str                    ("anthropic", "gemini", ...)
   ├── user_agent: str                  (full UA string of the observed client)
   ├── created_at / updated_at: str     (ISO timestamps)
@@ -481,14 +481,14 @@ ComplianceProfile
   └── body_wrapper: str | None         (field name for body wrapping)
 ```
 
-Persisted as JSON at `{config_dir}/compliance_profiles.json` with atomic write (temp + rename).
+Persisted as JSON at `{config_dir}/shaping_profiles.json` with atomic write (temp + rename).
 
-### Seeding: The Anthropic v0 Profile
+### Capturing: The Anthropic v0 Shape
 
-On first startup (when no Anthropic profile exists), the store creates a seed profile from hardcoded constants:
+On first startup (when no Anthropic profile exists), the store creates a shape from hardcoded constants:
 
 ```python
-ComplianceProfile(
+ShapingProfile(
     provider="anthropic",
     user_agent="v0-seed",
     headers=[
@@ -501,13 +501,13 @@ ComplianceProfile(
 )
 ```
 
-This seed provides baseline compliance before any reference traffic is observed. It is superseded as soon as real observations finalize a new profile (the store returns the most recently `updated_at` profile for a provider, and the seed's `updated_at` is epoch zero).
+This shape provides baseline shaping before any reference traffic is observed. It is superseded as soon as real observations finalize a new profile (the store returns the most recently `updated_at` profile for a provider, and the initial shape's `updated_at` is epoch zero).
 
-Controlled by `compliance.seed_anthropic: true` (default).
+Controlled by `shaping.seed_anthropic: true` (default).
 
-### Profile Application: The `apply_compliance` Hook
+### Profile Application: The `apply_shaping` Hook
 
-The `apply_compliance` hook runs in the outbound pipeline, after transform but before the request reaches the provider.
+The `apply_shaping` hook runs in the outbound pipeline, after transform but before the request reaches the provider.
 
 #### Guard
 
@@ -569,7 +569,7 @@ Idempotent: if the wrapper field already exists, no-op.
 
 Adds missing envelope fields from the profile. Three categories:
 
-- **Excluded** (`thinking`, `context_management`, `output_config`): never stamped. These are user feature choices, not compliance requirements.
+- **Excluded** (`thinking`, `context_management`, `output_config`): never stamped. These are user feature choices, not shaping requirements.
 - **Generated** (`user_prompt_id`): a fresh 13-character hex UUID is generated per-request if absent.
 - **All others**: added with the learned value if absent; never overwritten.
 
@@ -584,24 +584,24 @@ The most nuanced merge operation:
 | `list` (structured blocks) | Yes | **Skip entirely** -- client manages its own identity |
 | Any | No | No-op |
 
-The list-skip rule is critical: clients like Claude Code and the Agent SDK send structured content blocks with cache control hints. These clients already handle their own identity and compliance; stamping a profile's system prompt on top would interfere.
+The list-skip rule is critical: clients like Claude Code and the Agent SDK send structured content blocks with cache control hints. These clients already handle their own identity and shaping; stamping a profile's system prompt on top would interfere.
 
-### With and Without Compliance
+### With and Without Shaping
 
-#### Without compliance (`compliance.enabled: false`)
+#### Without shaping (`shaping.enabled: false`)
 
 - No observation occurs. WireGuard reference traffic passes through without being analyzed.
-- No seed profile is created.
-- The `apply_compliance` hook still runs (it's in the outbound pipeline) but `get_store()` returns an empty store, `get_profile()` returns `None`, and the hook returns immediately.
+- No initial shape is created.
+- The `apply_shaping` hook still runs (it's in the outbound pipeline) but `get_store()` returns an empty store, `get_profile()` returns `None`, and the hook returns immediately.
 - SDK requests must be self-sufficient: they need their own correct headers, body fields, and system prompts.
 
-#### With compliance, before profile finalization
+#### With shaping, before profile finalization
 
 - Observation accumulates but hasn't reached `min_observations` yet.
-- The seed Anthropic profile (if `seed_anthropic: true`) provides baseline coverage for Anthropic targets: `anthropic-beta`, `anthropic-version`, and the Claude Code system prompt prefix.
+- The initial Anthropic shape (if `seed_anthropic: true`) provides baseline coverage for Anthropic targets: `anthropic-beta`, `anthropic-version`, and the Claude Code system prompt prefix.
 - Other providers have no profile yet -- SDK requests go through without envelope stamping.
 
-#### With compliance, after profile finalization
+#### With shaping, after profile finalization
 
 - Full learned profile is applied to every matching reverse proxy flow.
 - Headers, body fields, system prompt, body wrapping, and session metadata are all stamped.
@@ -612,7 +612,7 @@ The list-skip rule is critical: clients like Claude Code and the Agent SDK send 
 
 ```
 1. First startup
-   └── seed Anthropic profile (if enabled)
+   └── initial Anthropic shape (if enabled)
        └── baseline headers + system prompt from constants
 
 2. First WireGuard flow observed
@@ -626,8 +626,8 @@ The list-skip rule is critical: clients like Claude Code and the Agent SDK send 
 4. min_observations reached (default: 3)
    └── accumulator.finalize()
        └── stable features extracted
-       └── ComplianceProfile created, flushed to disk
-       └── supersedes seed profile (newer updated_at)
+       └── ShapingProfile created, flushed to disk
+       └── supersedes initial shape (newer updated_at)
 
 5. Ongoing observations
    └── continue accumulating
@@ -638,11 +638,11 @@ The list-skip rule is critical: clients like Claude Code and the Agent SDK send 
 ### Configuration Reference
 
 ```yaml
-compliance:
+shaping:
   enabled: true                 # master switch
   min_observations: 3           # observations before first finalization
   reference_user_agents: []     # additional UA patterns for observation (substring match)
-  seed_anthropic: true          # bootstrap Anthropic profile from constants
+  seed_anthropic: true          # bootstrap Anthropic shape from constants
 
 # Related: oat_sources[provider].user_agent is used as ua_hint for profile selection
 oat_sources:
@@ -653,7 +653,7 @@ oat_sources:
 
 ### Persistence Format
 
-`compliance_profiles.json`:
+`shaping_profiles.json`:
 
 ```json
 {

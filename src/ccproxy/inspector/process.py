@@ -128,7 +128,7 @@ def _build_addons(
 
     from ccproxy.config import get_config
     from ccproxy.inspector.addon import InspectorAddon
-    from ccproxy.inspector.compliance_seeder import ComplianceSeeder
+    from ccproxy.inspector.shape_capturer import ShapeCapturer
     from ccproxy.inspector.contentview import ClientRequestContentview, ProviderResponseContentview
     from ccproxy.inspector.multi_har_saver import MultiHARSaver
 
@@ -159,21 +159,21 @@ def _build_addons(
     except Exception as e:
         logger.warning("Failed to initialize OTel tracer: %s", e)
 
-    # Initialize compliance profile store (fail-fast if path is unwritable)
-    if config.compliance.enabled:
+    # Initialize shape store (fail-fast if path is unwritable)
+    if config.shaping.enabled:
         try:
-            from ccproxy.compliance.store import get_store
+            from ccproxy.shaping.store import get_store
 
             get_store()
-            logger.info("Compliance profile store initialized")
+            logger.info("Shape store initialized")
         except Exception as e:
-            logger.warning("Failed to initialize compliance profile store: %s", e)
+            logger.warning("Failed to initialize shape store: %s", e)
 
     # Split hooks config into inbound/outbound stages
     inbound_hooks = hooks_cfg.get("inbound", []) if isinstance(hooks_cfg, dict) else hooks_cfg
     outbound_hooks = hooks_cfg.get("outbound", []) if isinstance(hooks_cfg, dict) else []
 
-    addons: list[Any] = [addon, MultiHARSaver(), ComplianceSeeder()]
+    addons: list[Any] = [addon, MultiHARSaver(), ShapeCapturer()]
 
     if inbound_hooks:
         addons.append(_make_pipeline_router("ccproxy_inbound", inbound_hooks))

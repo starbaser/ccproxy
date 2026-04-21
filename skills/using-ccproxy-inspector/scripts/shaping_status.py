@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Show compliance profile status and contents.
+"""Show shaping profile status and contents.
 
-Reads the compliance profiles JSON directly and displays profile
+Reads the shaping profiles JSON directly and displays profile
 summaries and detailed profile contents.
 
 Usage:
-    uv run python scripts/compliance_status.py
-    uv run python scripts/compliance_status.py --provider anthropic
-    uv run python scripts/compliance_status.py --seed-status
-    uv run python scripts/compliance_status.py --json
+    uv run python scripts/shaping_status.py
+    uv run python scripts/shaping_status.py --provider anthropic
+    uv run python scripts/shaping_status.py --shape-status
+    uv run python scripts/shaping_status.py --json
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from typing import Any
 def _resolve_store_path() -> Path:
     from ccproxy.config import get_config_dir
 
-    return get_config_dir() / "compliance_profiles.json"
+    return get_config_dir() / "shaping_profiles.json"
 
 
 def _load_store(path: Path) -> dict[str, Any]:
@@ -35,7 +35,7 @@ def _load_store(path: Path) -> dict[str, Any]:
             print(f"Warning: Unknown format version {data.get('format_version')}", file=sys.stderr)
         return data
     except (json.JSONDecodeError, KeyError) as e:
-        print(f"Error: Malformed compliance profiles: {e}", file=sys.stderr)
+        print(f"Error: Malformed shaping profiles: {e}", file=sys.stderr)
         sys.exit(1)
 
 
@@ -81,7 +81,7 @@ def _profile_detail(profile: dict[str, Any]) -> dict[str, Any]:
 def _print_rich(
     profiles: list[dict[str, Any]],
     detail: dict[str, Any] | None,
-    seed_status: dict[str, Any] | None,
+    shape_status: dict[str, Any] | None,
 ) -> None:
     from rich.console import Console
     from rich.panel import Panel
@@ -90,7 +90,7 @@ def _print_rich(
     console = Console()
 
     if profiles:
-        table = Table(title="Compliance Profiles", show_header=True, header_style="bold")
+        table = Table(title="Shaping Profiles", show_header=True, header_style="bold")
         table.add_column("Provider", style="cyan")
         table.add_column("User Agent", max_width=40)
         table.add_column("Obs", justify="right")
@@ -118,7 +118,7 @@ def _print_rich(
             )
         console.print(table)
     else:
-        console.print("[dim]No compliance profiles.[/dim]")
+        console.print("[dim]No shaping profiles.[/dim]")
 
     if detail:
         parts = [f"Provider: {detail['provider']}", f"User Agent: {detail['user_agent']}"]
@@ -148,23 +148,23 @@ def _print_rich(
 
         console.print(Panel("\n".join(parts), title="Profile Detail"))
 
-    if seed_status:
-        if seed_status["active"]:
+    if shape_status:
+        if shape_status["active"]:
             console.print(
-                "[yellow]Anthropic v0 seed is ACTIVE[/yellow] — no user-seeded profile has superseded it yet. "
-                "Run `ccproxy flows seed --provider anthropic` with captured flows."
+                "[yellow]Anthropic v0 shape is ACTIVE[/yellow] — no user-captured profile has superseded it yet. "
+                "Run `ccproxy flows shape --provider anthropic` with captured flows."
             )
         else:
             console.print(
-                f"[green]Anthropic v0 seed is SUPERSEDED[/green] by profile "
-                f"(ua={seed_status['learned_ua'][:40]}, {seed_status['learned_obs']} observations)"
+                f"[green]Anthropic v0 shape is SUPERSEDED[/green] by profile "
+                f"(ua={shape_status['learned_ua'][:40]}, {shape_status['learned_obs']} observations)"
             )
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Show ccproxy compliance profile status")
+    parser = argparse.ArgumentParser(description="Show ccproxy shaping profile status")
     parser.add_argument("--provider", help="Show detail for a specific provider")
-    parser.add_argument("--seed-status", action="store_true", help="Show Anthropic v0 seed status")
+    parser.add_argument("--shape-status", action="store_true", help="Show Anthropic v0 shape status")
     parser.add_argument("--json", action="store_true", help="Output as JSON")
     args = parser.parse_args()
 
@@ -180,8 +180,8 @@ def main() -> None:
                 detail = _profile_detail(p)
                 break
 
-    seed_status: dict[str, Any] | None = None
-    if args.seed_status:
+    shape_status: dict[str, Any] | None = None
+    if args.shape_status:
         seed_profile = None
         learned_profile = None
         for p in data.get("profiles", {}).values():
@@ -196,7 +196,7 @@ def main() -> None:
             ):
                 learned_profile = p
 
-        seed_status = {
+        shape_status = {
             "seed_exists": seed_profile is not None,
             "active": learned_profile is None,
             "learned_ua": learned_profile.get("user_agent", "") if learned_profile else "",
@@ -211,12 +211,12 @@ def main() -> None:
         }
         if detail:
             output["detail"] = detail
-        if seed_status:
-            output["seed_status"] = seed_status
+        if shape_status:
+            output["shape_status"] = shape_status
         json.dump(output, sys.stdout, indent=2, default=str)
         print()
     else:
-        _print_rich(profiles, detail, seed_status)
+        _print_rich(profiles, detail, shape_status)
 
 
 if __name__ == "__main__":

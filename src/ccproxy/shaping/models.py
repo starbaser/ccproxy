@@ -1,9 +1,8 @@
-"""Runtime husk type and application.
+"""Runtime shape type and application.
 
-A husk is a working copy of a seed's captured ``mitmproxy.http.Request``.
-Prepare functions mutate the husk to strip the seed's original request
-content; fill functions inhabit the husk with the incoming request's
-content; ``apply_husk`` field-copies the husk onto the outbound flow.
+A shape is a working copy of a captured request template.
+Prepare functions strip the shape; fill functions inhabit it;
+``apply_shape`` stamps it onto the outbound flow.
 """
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ if TYPE_CHECKING:
     from ccproxy.pipeline.context import Context
 
 
-Husk = http.Request
+Shape = http.Request
 
 
 _PRESERVE_HEADERS: frozenset[str] = frozenset(
@@ -30,13 +29,13 @@ _PRESERVE_HEADERS: frozenset[str] = frozenset(
 )
 
 
-def apply_husk(husk: Husk, ctx: Context) -> None:
-    """Stamp the husk's headers and body onto the outbound flow.
+def apply_shape(shape: Shape, ctx: Context) -> None:
+    """Stamp the shape's headers and body onto the outbound flow.
 
     Preserves transport routing (host/port/scheme/path) already set by
     the redirect/transform handler, and preserves auth headers already
-    injected by the inbound pipeline. Only stamps compliance-relevant
-    headers and body content from the husk.
+    injected by the inbound pipeline. Only stamps shaping-relevant
+    headers and body content from the shape.
     """
     target = ctx.flow.request
 
@@ -47,15 +46,15 @@ def apply_husk(husk: Husk, ctx: Context) -> None:
     }
 
     target.headers.clear()
-    for name, value in husk.headers.items():  # type: ignore[no-untyped-call]
+    for name, value in shape.headers.items():  # type: ignore[no-untyped-call]
         target.headers[name] = value
     for name, value in preserved.items():
         target.headers[name] = value
 
-    target.content = husk.content
+    target.content = shape.content
 
     try:
-        parsed = json.loads(husk.content or b"{}")
+        parsed = json.loads(shape.content or b"{}")
     except (json.JSONDecodeError, TypeError):
         parsed = {}
     ctx._body = parsed if isinstance(parsed, dict) else {}

@@ -134,7 +134,7 @@ def _handle_redirect(flow: HTTPFlow, target: TransformRoute, body: dict[str, obj
         if match:
             model = match.group(1)
 
-    # Persist transform context for compliance hook
+    # Persist transform context for shape hook
     record = flow.metadata.get(InspectorMeta.RECORD)
     if record is not None:
         record.transform = TransformMeta(

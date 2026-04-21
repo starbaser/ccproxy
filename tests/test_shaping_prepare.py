@@ -1,4 +1,4 @@
-"""Tests for default prepare functions in ccproxy.compliance.prepare."""
+"""Tests for default prepare functions in ccproxy.shaping.prepare."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any
 
 from mitmproxy import http
 
-from ccproxy.compliance.prepare import (
+from ccproxy.shaping.prepare import (
     strip_auth_headers,
     strip_request_content,
     strip_system_blocks,

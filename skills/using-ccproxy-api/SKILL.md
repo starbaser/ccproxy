@@ -5,7 +5,7 @@ description: >-
   with SDK integration, OAuth authentication, sentinel key substitution, model routing, and
   troubleshooting. Use when installing ccproxy, configuring SDK clients (Anthropic, OpenAI,
   LiteLLM, Agent SDK) against ccproxy, setting up per-project instances, debugging authentication
-  errors, setting up OAuth token forwarding, or understanding the hook pipeline and compliance system.
+  errors, setting up OAuth token forwarding, or understanding the hook pipeline and shaping system.
 ---
 
 # Using ccproxy as an LLM API Server
@@ -54,7 +54,7 @@ ccproxy start
 
 ### Per-project instance
 
-Each project can run its own ccproxy with isolated config, port, and transforms via the flake's `mkConfig`. Use `ccproxy.defaultSettings.settings` (top-level, no `${system}` selector needed) as the base to inherit all defaults (hooks, compliance, oat_sources, otel).
+Each project can run its own ccproxy with isolated config, port, and transforms via the flake's `mkConfig`. Use `ccproxy.defaultSettings.settings` (top-level, no `${system}` selector needed) as the base to inherit all defaults (hooks, shaping, oat_sources, otel).
 
 ```nix
 # project flake.nix
@@ -208,9 +208,9 @@ ccproxy:
     outbound:
       - ccproxy.hooks.inject_mcp_notifications
       - ccproxy.hooks.verbose_mode
-      - ccproxy.hooks.apply_compliance
+      - ccproxy.hooks.apply_shaping
 
-  compliance:
+  shaping:
     enabled: true
     min_observations: 3
     seed_anthropic: true
@@ -234,8 +234,8 @@ See [reference/routing-and-config.md](reference/routing-and-config.md) for trans
 **OAuth mode** (subscription accounts -- Claude Max, Team, Enterprise):
 1. Client sends sentinel key `sk-ant-oat-ccproxy-{provider}` as API key
 2. `forward_oauth` hook detects sentinel prefix, looks up real token from `oat_sources`
-3. `apply_compliance` hook stamps learned headers (`anthropic-beta`, `anthropic-version`), system prompt, and body envelope fields from a compliance profile
-4. Request reaches provider API with valid OAuth Bearer token and full compliance contract
+3. `apply_shaping` hook stamps learned headers (`anthropic-beta`, `anthropic-version`), system prompt, and body envelope fields from a shaping profile
+4. Request reaches provider API with valid OAuth Bearer token and full shaping contract
 
 **API key mode** (direct API keys):
 1. Client sends real API key via `x-api-key` or `Authorization` header
@@ -261,22 +261,22 @@ hooks:
   outbound:
     - ccproxy.hooks.inject_mcp_notifications
     - ccproxy.hooks.verbose_mode
-    - ccproxy.hooks.apply_compliance
+    - ccproxy.hooks.apply_shaping
 ```
 
 - `forward_oauth` -- substitutes sentinel key with real token, sets `Authorization: Bearer {token}`, clears `x-api-key`
 - `extract_session_id` -- parses `metadata.user_id` for MCP notification routing
 - `inject_mcp_notifications` -- injects buffered MCP terminal events as tool_use/tool_result pairs
 - `verbose_mode` -- strips `redact-thinking-*` from `anthropic-beta` to enable full thinking output
-- `apply_compliance` -- stamps learned compliance headers, body fields, and system prompt
+- `apply_shaping` -- stamps learned shaping headers, body fields, and system prompt
 
-### Compliance-based headers and identity
+### Shaping-based headers and identity
 
-Instead of explicit hooks for beta headers and identity injection, ccproxy uses a **compliance learning system**. It passively observes legitimate CLI traffic (via WireGuard) and learns the exact headers, body fields, and system prompt that constitute a compliant request. This learned profile is then stamped onto SDK requests by `apply_compliance`.
+Instead of explicit hooks for beta headers and identity injection, ccproxy uses a **shaping learning system**. It passively observes legitimate CLI traffic (via WireGuard) and learns the exact headers, body fields, and system prompt that constitute a compliant request. This learned profile is then stamped onto SDK requests by `apply_shaping`.
 
-The compliance system automatically handles `anthropic-beta`, `anthropic-version`, system prompt injection, and body envelope fields. An Anthropic v0 seed profile provides baseline coverage on first startup before any real traffic is observed.
+The shaping system automatically handles `anthropic-beta`, `anthropic-version`, system prompt injection, and body envelope fields. An Anthropic v0 shape provides baseline coverage on first startup before any real traffic is observed.
 
-See the `using-ccproxy-inspector` skill for details on seeding and inspecting compliance profiles.
+See the `using-ccproxy-inspector` skill for details on capturing and inspecting shaping profiles.
 
 ## Quick start
 
@@ -315,7 +315,7 @@ response = client.messages.create(
 )
 ```
 
-No extra headers needed -- the compliance system handles `anthropic-beta`, `anthropic-version`, and system prompt injection automatically.
+No extra headers needed -- the shaping system handles `anthropic-beta`, `anthropic-version`, and system prompt injection automatically.
 
 Streaming:
 ```python
@@ -424,10 +424,10 @@ Authentication failures are the most common issue. Follow this decision tree:
 Error message?
 │
 ├─ "This credential is only authorized for use with Claude Code"
-│  ▶ See: Missing compliance profile (system prompt not injected)
+│  ▶ See: Missing shaping profile (system prompt not injected)
 │
 ├─ "OAuth is not supported" / "invalid x-api-key"
-│  ▶ See: Missing compliance headers (anthropic-beta not stamped)
+│  ▶ See: Missing shaping headers (anthropic-beta not stamped)
 │
 ├─ 401 Unauthorized / token errors
 │  ▶ See: Token issues
@@ -453,7 +453,7 @@ ccproxy logs -n 50          # Last 50 lines
 ## Known limitations (upstream flake issues)
 
 1. **`nix/defaults.nix` uses `min_observations: 1`** — permissive for dev; production configs should set `min_observations: 3`+.
-2. **`compliance.seed_anthropic` not in `defaults.nix`** — must be set explicitly in consumer configs; not inherited from defaults.
+2. **`shaping.seed_anthropic` not in `defaults.nix`** — must be set explicitly in consumer configs; not inherited from defaults.
 3. **`devConfig` overwrites `inspector` atomically** — top-level `//` merge on `inspector` drops sub-keys not re-specified (e.g. `debug`). Deep merge each nested attrset explicitly: `defaults.inspector // { ... }`.
 4. **`supportedSystems` limited** — only `x86_64-linux` and `aarch64-linux`; `aarch64-darwin` not supported.
 5. ~~**`shellHook` doesn't quote `configDir`**~~ — fixed.

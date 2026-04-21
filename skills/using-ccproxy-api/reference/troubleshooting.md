@@ -30,8 +30,8 @@ cat $CCPROXY_CONFIG_DIR/ccproxy.yaml   # or: cat ~/.config/ccproxy/ccproxy.yaml
 jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json
 # Should output a token starting with "sk-ant-oat"
 
-# 5. Check compliance profile status
-uv run python scripts/compliance_status.py  # from ccproxy project root
+# 5. Check shaping profile status
+uv run python scripts/shaping_status.py  # from ccproxy project root
 ```
 
 ---
@@ -42,30 +42,30 @@ uv run python scripts/compliance_status.py  # from ccproxy project root
 
 **Resolution**:
 
-1. Check compliance profile status — the system prompt should be learned and stamped:
+1. Check shaping profile status — the system prompt should be learned and stamped:
    ```bash
-   uv run python scripts/compliance_status.py --provider anthropic
+   uv run python scripts/shaping_status.py --provider anthropic
    # Verify has_system: true
    ```
 
-2. If no learned profile exists yet, check if the v0 seed is active:
+2. If no learned profile exists yet, check if the v0 shape is active:
    ```bash
-   uv run python scripts/compliance_status.py --seed-status
+   uv run python scripts/shaping_status.py --shape-status
    ```
-   The seed provides the system prompt prefix. If it's missing, verify `compliance.seed_anthropic: true` in config.
+   The shape provides the system prompt prefix. If it's missing, verify `shaping.seed_anthropic: true` in config.
 
-3. If a profile exists but the system prompt isn't being stamped, check the `apply_compliance` hook:
+3. If a profile exists but the system prompt isn't being stamped, check the `apply_shaping` hook:
    - Is it in the `outbound` hooks list?
    - Does the flow have a `TransformMeta`? (requires a matching transform rule)
-   - Is the flow coming through reverse proxy? (compliance only fires on reverse proxy, not WireGuard)
+   - Is the flow coming through reverse proxy? (shaping only fires on reverse proxy, not WireGuard)
 
-4. If the client sends a `list`-type system prompt (structured content blocks), compliance **skips** system injection — it assumes the client manages its own identity. Send `system` as a string or omit it.
+4. If the client sends a `list`-type system prompt (structured content blocks), shaping **skips** system injection — it assumes the client manages its own identity. Send `system` as a string or omit it.
 
-5. To seed a fresh profile from real CLI traffic:
+5. To capture a fresh profile from real CLI traffic:
    ```bash
    ccproxy run --inspect -- claude
    # Make 3+ requests, then check:
-   uv run python scripts/compliance_status.py --seed-status
+   uv run python scripts/shaping_status.py --shape-status
    ```
 
 ---
@@ -76,16 +76,16 @@ uv run python scripts/compliance_status.py  # from ccproxy project root
 
 **Resolution**:
 
-1. Check compliance profile headers:
+1. Check shaping profile headers:
    ```bash
-   uv run python scripts/compliance_status.py --provider anthropic
+   uv run python scripts/shaping_status.py --provider anthropic
    # Verify anthropic-beta header is in the profile
    ```
 
-2. The v0 seed profile includes `anthropic-beta` with all required values. If it's not applying:
-   - Verify `apply_compliance` is in `hooks.outbound`
-   - Verify `compliance.enabled: true`
-   - Verify `compliance.seed_anthropic: true`
+2. The v0 shape includes `anthropic-beta` with all required values. If it's not applying:
+   - Verify `apply_shaping` is in `hooks.outbound`
+   - Verify `shaping.enabled: true`
+   - Verify `shaping.seed_anthropic: true`
 
 3. Inspect the forwarded request to see what headers are actually being sent:
    ```bash
@@ -93,7 +93,7 @@ uv run python scripts/compliance_status.py  # from ccproxy project root
    ccproxy flows dump <flow-id> | jq '.log.entries[0].request.headers'    # Check for anthropic-beta header
    ```
 
-4. Compare client vs forwarded to see if compliance stamped headers:
+4. Compare client vs forwarded to see if shaping stamped headers:
    ```bash
    uv run python scripts/inspect_flow.py <flow-id>
    ```
@@ -197,13 +197,13 @@ With `debug: true` in `ccproxy.yaml`, logs show each hook's execution:
 ```
 ccproxy.pipeline:DEBUG: Executing hook forward_oauth
 ccproxy.hooks:INFO: Forwarding request with OAuth for provider 'anthropic'
-ccproxy.pipeline:DEBUG: Executing hook apply_compliance
-ccproxy.compliance:INFO: Compliance: added header anthropic-beta
+ccproxy.pipeline:DEBUG: Executing hook apply_shaping
+ccproxy.shaping:INFO: Shaping: added header anthropic-beta
 ```
 
 If a hook is not firing:
 - Check that it's in the `hooks.inbound` or `hooks.outbound` list
-- Check the guard condition (e.g. `apply_compliance` requires `ReverseMode` + `TransformMeta`)
+- Check the guard condition (e.g. `apply_shaping` requires `ReverseMode` + `TransformMeta`)
 - Check per-request overrides via `x-ccproxy-hooks` header
 
 ### Verify transform routing
@@ -239,18 +239,18 @@ The inspector UI runs at `http://127.0.0.1:{inspector.port}/?token={web_token}`.
 
 - Requires `anthropic-beta` headers including `oauth-2025-04-20` for OAuth
 - Requires "You are Claude Code" system prompt prefix for OAuth tokens
-- Both are handled automatically by the compliance system (seed or learned profile)
+- Both are handled automatically by the shaping system (initial shape or learned profile)
 - OAuth tokens have `sk-ant-oat` prefix
 - On 401: ccproxy auto-refreshes and retries once
 
 ### Google (Gemini / cloudcode-pa)
 
-- cloudcode-pa flows use a body wrapper: `{model: X, request: {<body>}}` — handled by compliance `body_wrapper`
+- cloudcode-pa flows use a body wrapper: `{model: X, request: {<body>}}` — handled by shaping `body_wrapper`
 - Gemini auth uses `x-goog-api-key` header — set via `oat_sources.gemini.auth_header: "x-goog-api-key"` or let `forward_oauth` handle it
 - Configure `destinations` to include both `generativelanguage.googleapis.com` and `cloudcode-pa.googleapis.com`
 
 ### Other providers
 
-- Compliance profiles are per-provider — each provider's contract is learned independently
+- Shaping profiles are per-provider — each provider's contract is learned independently
 - Provider detection uses `oat_sources.*.destinations` (substring match) then `inspector.provider_map` (exact hostname)
 - Transform rules handle cross-provider format conversion via lightllm
