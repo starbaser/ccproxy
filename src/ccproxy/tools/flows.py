@@ -471,11 +471,9 @@ def _do_shape(
     flow_ids = [f["id"] for f in flow_set]
     result = client.save_shape(flow_ids, provider)
     console.print(
-        f"Saved shape [bold]{result['key']}[/bold]: "
-        f"{result['flows_used']} flows, "
-        f"{result['headers']} headers, "
-        f"{result['body_fields']} body fields, "
-        f"system={'yes' if result['system'] else 'no'}"
+        f"Saved shape for [bold]{result['provider']}[/bold]: "
+        f"{result['flows_saved']} flow(s) saved"
+        + (f", {len(result.get('missing', []))} missing" if result.get("missing") else "")
     )
 
 
