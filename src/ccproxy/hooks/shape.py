@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import functools
 import importlib
+import inspect
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -85,13 +86,27 @@ def shape(ctx: Context, params: dict[str, Any]) -> Context:
 
 
 def _resolve_entry(entry: str) -> Callable[..., Any]:
-    """Resolve ``"mod.fn"`` or ``"mod.fn(arg)"`` into a callable."""
+    """Resolve ``"mod.fn"`` or ``"mod.fn(arg)"`` into a callable.
+
+    The parenthesized arg binds to the function's first parameter that
+    has a default value, preserving the leading positional parameters
+    (``shape``, ``ctx``) for the caller.
+    """
     if "(" in entry:
         path, _, arg = entry.partition("(")
         arg = arg.rstrip(")")
         fn = _import_dotted(path)
-        return functools.partial(fn, arg)
+        kwarg = _first_defaulted_param(fn)
+        return functools.partial(fn, **{kwarg: arg})
     return _import_dotted(entry)
+
+
+def _first_defaulted_param(fn: Callable[..., Any]) -> str:
+    """Return the name of ``fn``'s first parameter that has a default value."""
+    for p in inspect.signature(fn).parameters.values():
+        if p.default is not inspect.Parameter.empty:
+            return p.name
+    raise ValueError(f"{fn.__qualname__} has no parameter with a default value")
 
 
 def _import_dotted(dotted: str) -> Callable[..., Any]:
