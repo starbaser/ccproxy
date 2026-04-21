@@ -1,4 +1,4 @@
-"""Tests for default fill functions in ccproxy.compliance.fill."""
+"""Tests for default fill functions in ccproxy.shaping.fill."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from typing import Any
 from mitmproxy import http
 from mitmproxy.test import tflow
 
-from ccproxy.compliance.fill import (
+from ccproxy.shaping.fill import (
     fill_messages,
     fill_model,
     fill_stream_passthrough,

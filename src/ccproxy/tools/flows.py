@@ -10,6 +10,7 @@ CLI subcommands:
     ccproxy flows dump              [--jq FILTER]...
     ccproxy flows diff              [--jq FILTER]...
     ccproxy flows compare           [--jq FILTER]...
+    ccproxy flows shape   [--all]  [--jq FILTER]...
     ccproxy flows clear    [--all]  [--jq FILTER]...
 
 HAR output from ``dump`` is built server-side by the ``ccproxy.dump`` mitmproxy
@@ -107,12 +108,12 @@ class MitmwebClient:
         resp.raise_for_status()
         return resp
 
-    def seed_profile(self, flow_ids: list[str], provider: str) -> dict[str, Any]:
-        """Invoke ``ccproxy.seed`` with flow ids and provider; returns summary dict."""
+    def save_shape(self, flow_ids: list[str], provider: str) -> dict[str, Any]:
+        """Invoke ``ccproxy.shape`` with flow ids and provider; returns summary dict."""
         if not flow_ids:
-            raise ValueError("seed_profile: flow_ids must be non-empty")
+            raise ValueError("save_shape: flow_ids must be non-empty")
         resp = self._post(
-            "/commands/ccproxy.seed",
+            "/commands/ccproxy.shape",
             json_body={"arguments": [",".join(flow_ids), provider]},
         )
         payload = resp.json()
@@ -187,15 +188,15 @@ class FlowsCompare(_FlowsBase):
     """
 
 
-class FlowsSeed(_FlowsBase):
-    """Seed a compliance profile from the resolved flow set.
+class FlowsShape(_FlowsBase):
+    """Save flows from the resolved set as a provider shape.
 
-    Extracts compliance features from the selected flows' pre-pipeline
+    Extracts shaping features from the selected flows' pre-pipeline
     client request snapshots. Stable features (identical across all
-    selected flows) become the profile. Persists to the profile store.
+    selected flows) become the shape. Persists to the shape store.
 
-        ccproxy flows seed --provider anthropic
-        ccproxy flows seed --provider anthropic --jq 'map(select(.request.pretty_host | endswith("anthropic.com")))'
+        ccproxy flows shape --provider anthropic
+        ccproxy flows shape --provider anthropic --jq 'map(select(.request.pretty_host | endswith("anthropic.com")))'
     """
 
     provider: str
@@ -214,7 +215,7 @@ Flows = Annotated[
     | Annotated[FlowsDump, tyro.conf.subcommand(name="dump")]
     | Annotated[FlowsDiff, tyro.conf.subcommand(name="diff")]
     | Annotated[FlowsCompare, tyro.conf.subcommand(name="compare")]
-    | Annotated[FlowsSeed, tyro.conf.subcommand(name="seed")]
+    | Annotated[FlowsShape, tyro.conf.subcommand(name="shape")]
     | Annotated[FlowsClear, tyro.conf.subcommand(name="clear")],
     tyro.conf.subcommand(
         name="flows",
@@ -456,21 +457,21 @@ def _do_compare(
         _git_diff(fwd_response, cli_response, f"provider:{flow_id[:8]}", f"client:{flow_id[:8]}")
 
 
-def _do_seed(
+def _do_shape(
     console: Console,
     client: MitmwebClient,
     flow_set: list[dict[str, Any]],
     *,
     provider: str,
 ) -> None:
-    """Seed a compliance profile from the flow set."""
+    """Save a shape from the flow set."""
     if not flow_set:
         console.print("[red]No flows in set.[/red]")
         sys.exit(1)
     flow_ids = [f["id"] for f in flow_set]
-    result = client.seed_profile(flow_ids, provider)
+    result = client.save_shape(flow_ids, provider)
     console.print(
-        f"Seeded profile [bold]{result['key']}[/bold]: "
+        f"Saved shape [bold]{result['key']}[/bold]: "
         f"{result['flows_used']} flows, "
         f"{result['headers']} headers, "
         f"{result['body_fields']} body fields, "
@@ -502,7 +503,7 @@ def _do_clear(
 
 
 def handle_flows(
-    cmd: FlowsList | FlowsDump | FlowsDiff | FlowsCompare | FlowsSeed | FlowsClear,
+    cmd: FlowsList | FlowsDump | FlowsDiff | FlowsCompare | FlowsShape | FlowsClear,
     _config_dir: Path,
 ) -> None:
     """Dispatch flows subcommand actions by isinstance."""
@@ -521,8 +522,8 @@ def handle_flows(
                 _do_diff(client, flow_set)
             elif isinstance(cmd, FlowsCompare):
                 _do_compare(client, flow_set)
-            elif isinstance(cmd, FlowsSeed):
-                _do_seed(err, client, flow_set, provider=cmd.provider)
+            elif isinstance(cmd, FlowsShape):
+                _do_shape(err, client, flow_set, provider=cmd.provider)
             elif isinstance(cmd, FlowsClear):
                 _do_clear(err, client, flow_set, clear_all=cmd.all)
     except httpx.ConnectError:

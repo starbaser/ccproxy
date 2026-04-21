@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **IMPERATIVE**: ALL failures through ccproxy are OUR bug until proven otherwise. ccproxy is the intermediary — every header, token, body field, and user-agent passes through our code. When a request fails with any error (401/403/429/5xx), triage ccproxy first: check what we're injecting, stripping, mangling, or failing to masquerade before blaming the upstream provider. For Gemini specifically: if all Gemini requests fail with 401, run `gemini -m gemini-2.5-flash -p "hi"` directly (no ccproxy) to force an OAuth token refresh, then retry through ccproxy.
 
-**IMPERATIVE**: All API keys in MCP server configs and client environments MUST be ccproxy sentinel keys (`sk-ant-oat-ccproxy-{provider}`). Using raw provider keys (OpenRouter, direct API keys, etc.) bypasses the `forward_oauth` hook and the compliance pipeline — traffic escapes ccproxy's control. If a provider isn't routable through a sentinel key, add an `oat_sources` entry for it.
+**IMPERATIVE**: All API keys in MCP server configs and client environments MUST be ccproxy sentinel keys (`sk-ant-oat-ccproxy-{provider}`). Using raw provider keys (OpenRouter, direct API keys, etc.) bypasses the `forward_oauth` hook and the shaping pipeline — traffic escapes ccproxy's control. If a provider isn't routable through a sentinel key, add an `oat_sources` entry for it.
 
 **CRITICAL**: The project name is `ccproxy` (lowercase). The PascalCase form is used exclusively for class names (e.g., `CCProxyConfig`).
 
@@ -53,6 +53,7 @@ ccproxy flows dump [--jq FILTER]...              # Multi-page HAR of flow set
 ccproxy flows diff [--jq FILTER]...              # Sliding-window diff across set
 ccproxy flows compare [--jq FILTER]...           # Per-flow client-vs-forwarded diff
 ccproxy flows clear [--all] [--jq FILTER]...     # Clear flow set (--all bypasses filters)
+ccproxy flows shape --provider X                 # Capture a shape for a provider
 ```
 
 ## Architecture
@@ -135,17 +136,16 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 | `extract_session_id` | inbound | Parses `metadata.user_id` → stores session_id on `flow.metadata` (NOT body metadata) |
 | `inject_mcp_notifications` | outbound | Injects buffered MCP terminal events as synthetic tool_use/tool_result |
 | `verbose_mode` | outbound | Strips `redact-thinking-*` from `anthropic-beta` header |
-| `husk` | outbound | Picks a per-provider seed flow, strips its original content via `prepare` fns, inhabits it with the incoming request via `fill` fns, applies to the outbound flow |
+| `shape` | outbound | Picks a per-provider captured shape, strips its original content via `prepare` fns, inhabits it with the incoming request via `fill` fns, applies to the outbound flow |
 
-**`compliance/`** — Seed/husk request-shaping framework:
-- **Seed**: a user-curated ``mitmproxy.http.HTTPFlow`` persisted verbatim on disk. One ``{provider}.mflow`` file per provider under ``seeds_dir``, appended to on each seed. Captured via ``ccproxy flows seed --provider X`` (invokes the ``ccproxy.seed`` mitmproxy command).
-- **Husk**: a runtime working copy of ``seed.request`` — alias ``Husk = mitmproxy.http.Request``. Created per outbound request via ``http.Request.from_state(seed.request.get_state())``. Prepare fns strip seed content; fill fns inhabit with incoming content; ``apply_husk()`` field-copies the working request onto ``ctx.flow.request`` and syncs ``ctx._body``.
-- `models.py` — ``Husk`` type alias + ``apply_husk(husk, ctx)`` free function.
+**`shaping/`** — Request shaping framework:
+- **Shape**: a user-curated ``mitmproxy.http.HTTPFlow`` persisted verbatim on disk. One ``{provider}.mflow`` file per provider under ``shapes_dir``, appended to on each capture. Captured via ``ccproxy flows shape --provider X`` (invokes the ``ccproxy.shape`` mitmproxy command). At runtime, a working copy of ``shape.request`` — alias ``Shape = mitmproxy.http.Request`` — is created per outbound request via ``http.Request.from_state(shape.request.get_state())``. Prepare fns strip shape content; fill fns inhabit with incoming content; ``apply_shape()`` field-copies the working request onto ``ctx.flow.request`` and syncs ``ctx._body``.
+- `models.py` — ``Shape`` type alias + ``apply_shape(shape, ctx)`` free function.
 - `body.py` — JSON body helpers (``get_body``, ``set_body``, ``mutate_body``) used by prepare/fill functions.
-- `store.py` — ``SeedStore`` singleton wrapping a directory of ``.mflow`` files. Uses ``mitmproxy.io.FlowWriter``/``FlowReader``. ``pick()`` returns the most recently appended flow for a provider.
+- `store.py` — ``ShapeStore`` singleton wrapping a directory of ``.mflow`` files. Uses ``mitmproxy.io.FlowWriter``/``FlowReader``. ``pick()`` returns the most recently appended flow for a provider.
 - `prepare.py` — default prepare fns (``strip_request_content``, ``strip_auth_headers``, ``strip_transport_headers``, ``strip_system_blocks_except_first``). Signature: ``Callable[[http.Request], None]``.
 - `fill.py` — default fill fns (``fill_model``, ``fill_messages``, ``fill_tools``, ``fill_system_append``, ``fill_stream_passthrough``, ``regenerate_user_prompt_id``, ``regenerate_session_id``). Signature: ``Callable[[http.Request, Context], None]``.
-- The ``husk`` hook composes prepare/fill via dotted-path lists (``HuskParams``), letting users override, extend, or replace the default pipeline without subclassing.
+- The ``shape`` hook composes prepare/fill via dotted-path lists (``ShapeParams``), letting users override, extend, or replace the default pipeline without subclassing.
 
 **`mcp/`** — Thread-safe notification buffer (`NotificationBuffer` singleton) + `POST /mcp/notify` FastAPI endpoint for MCP terminal event ingestion.
 
@@ -172,14 +172,14 @@ hooks:
   outbound:
     - ccproxy.hooks.inject_mcp_notifications
     - ccproxy.hooks.verbose_mode
-    - hook: ccproxy.hooks.husk
+    - hook: ccproxy.hooks.shape
       params:
         prepare:
-          - ccproxy.compliance.prepare.strip_request_content
-          - ccproxy.compliance.prepare.strip_auth_headers
+          - ccproxy.shaping.prepare.strip_request_content
+          - ccproxy.shaping.prepare.strip_auth_headers
         fill:
-          - ccproxy.compliance.fill.fill_model
-          - ccproxy.compliance.fill.fill_messages
+          - ccproxy.shaping.fill.fill_model
+          - ccproxy.shaping.fill.fill_messages
 ```
 
 **Transform config** — `inspector.transforms` list, first match wins:
@@ -197,13 +197,13 @@ inspector:
 
 Matching fields: `match_host` (optional, checked against pretty_host + Host header), `match_path` (prefix), `match_model` (substring in request body). Vertex AI fields: `dest_vertex_project` and `dest_vertex_location` (required for Gemini context caching with `vertex_ai`/`vertex_ai_beta` providers).
 
-**Compliance config** — seeds directory and the husk hook's prepare/fill lists:
+**Shaping config** — shapes directory and the shape hook's prepare/fill lists:
 ```yaml
-compliance:
+shaping:
   enabled: true
-  seeds_dir: ~/.config/ccproxy/compliance/seeds  # optional; defaults to {config_dir}/compliance/seeds
+  shapes_dir: ~/.config/ccproxy/shaping/shapes  # optional; defaults to {config_dir}/shaping/shapes
 ```
-Customization is done at the hook-params level (``ccproxy.hooks.husk.params.prepare``/``fill`` lists of dotted paths), not by subclassing. Any module with a ``Callable[[http.Request], None]`` or ``Callable[[http.Request, Context], None]`` can be referenced.
+Customization is done at the hook-params level (``ccproxy.hooks.shape.params.prepare``/``fill`` lists of dotted paths), not by subclassing. Any module with a ``Callable[[http.Request], None]`` or ``Callable[[http.Request, Context], None]`` can be referenced.
 
 **Flows config** — `flows.default_jq_filters` list of jq expressions applied before CLI `--jq` filters:
 ```yaml
@@ -215,7 +215,7 @@ Each filter must consume a JSON array and produce a JSON array. Filters chain in
 
 ### Singleton Patterns
 
-`CCProxyConfig`, `NotificationBuffer`, `FlowStore`, and `SeedStore` use thread-safe singletons. Tests reset them via the `cleanup` autouse fixture (`clear_config_instance()`, `clear_buffer()`, `clear_flow_store()`, `clear_store_instance()`).
+`CCProxyConfig`, `NotificationBuffer`, `FlowStore`, and `ShapeStore` use thread-safe singletons. Tests reset them via the `cleanup` autouse fixture (`clear_config_instance()`, `clear_buffer()`, `clear_flow_store()`, `clear_store_instance()`).
 
 ### OAuth
 

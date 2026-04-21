@@ -103,18 +103,18 @@ class OAuthSource(CredentialSource):
     """
 
 
-class ComplianceConfig(BaseModel):
-    """Configuration for the compliance seed/husk system."""
+class ShapingConfig(BaseModel):
+    """Configuration for the request shaping system."""
 
     model_config = ConfigDict(extra="ignore")
 
     enabled: bool = True
-    """Master switch for seed storage and husk application."""
+    """Master switch for shape storage and application."""
 
-    seeds_dir: str | None = None
-    """Directory holding per-provider ``{provider}.mflow`` seed files.
+    shapes_dir: str | None = None
+    """Directory holding per-provider ``{provider}.mflow`` shape files.
 
-    Defaults to ``{config_dir}/compliance/seeds`` when unset.
+    Defaults to ``{config_dir}/shaping/shapes`` when unset.
     """
 
 
@@ -215,7 +215,7 @@ class TransformRoute(BaseModel):
     dest_provider: str = ""
     """Destination provider name (e.g. ``anthropic``, ``gemini``).
     Used by ``transform`` for lightllm dispatch and ``redirect`` for
-    compliance profile lookup. Not used in ``passthrough`` mode."""
+    shaping profile lookup. Not used in ``passthrough`` mode."""
 
     dest_model: str = ""
     """Destination model name for lightllm dispatch.
@@ -342,7 +342,7 @@ class CCProxyConfig(BaseSettings):
 
     otel: OtelConfig = Field(default_factory=OtelConfig)
 
-    compliance: ComplianceConfig = Field(default_factory=ComplianceConfig)
+    shaping: ShapingConfig = Field(default_factory=ShapingConfig)
 
     flows: FlowsConfig = Field(default_factory=lambda: FlowsConfig())
 
@@ -364,22 +364,22 @@ class CCProxyConfig(BaseSettings):
                 "ccproxy.hooks.inject_mcp_notifications",
                 "ccproxy.hooks.verbose_mode",
                 {
-                    "hook": "ccproxy.hooks.husk",
+                    "hook": "ccproxy.hooks.shape",
                     "params": {
                         "prepare": [
-                            "ccproxy.compliance.prepare.strip_request_content",
-                            "ccproxy.compliance.prepare.strip_auth_headers",
-                            "ccproxy.compliance.prepare.strip_transport_headers",
-                            "ccproxy.compliance.prepare.strip_system_blocks(:1)",
+                            "ccproxy.shaping.prepare.strip_request_content",
+                            "ccproxy.shaping.prepare.strip_auth_headers",
+                            "ccproxy.shaping.prepare.strip_transport_headers",
+                            "ccproxy.shaping.prepare.strip_system_blocks(:1)",
                         ],
                         "fill": [
-                            "ccproxy.compliance.fill.fill_model",
-                            "ccproxy.compliance.fill.fill_messages",
-                            "ccproxy.compliance.fill.fill_tools",
-                            "ccproxy.compliance.fill.fill_system_append",
-                            "ccproxy.compliance.fill.fill_stream_passthrough",
-                            "ccproxy.compliance.fill.regenerate_user_prompt_id",
-                            "ccproxy.compliance.fill.regenerate_session_id",
+                            "ccproxy.shaping.fill.fill_model",
+                            "ccproxy.shaping.fill.fill_messages",
+                            "ccproxy.shaping.fill.fill_tools",
+                            "ccproxy.shaping.fill.fill_system_append",
+                            "ccproxy.shaping.fill.fill_stream_passthrough",
+                            "ccproxy.shaping.fill.regenerate_user_prompt_id",
+                            "ccproxy.shaping.fill.regenerate_session_id",
                         ],
                     },
                 },
@@ -560,9 +560,9 @@ class CCProxyConfig(BaseSettings):
                 if otel_data:
                     instance.otel = OtelConfig(**otel_data)
 
-                compliance_data = ccproxy_data.get("compliance")
-                if compliance_data:
-                    instance.compliance = ComplianceConfig(**compliance_data)
+                shaping_data = ccproxy_data.get("shaping")
+                if shaping_data:
+                    instance.shaping = ShapingConfig(**shaping_data)
 
                 flows_data = ccproxy_data.get("flows")
                 if flows_data:

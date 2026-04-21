@@ -1,4 +1,4 @@
-"""Tests for compliance/body.py JSON helpers."""
+"""Tests for shaping/body.py JSON helpers."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from typing import Any
 
 from mitmproxy import http
 
-from ccproxy.compliance.body import get_body, mutate_body, set_body
+from ccproxy.shaping.body import get_body, mutate_body, set_body
 
 
 def _req(content: bytes = b"") -> http.Request:

@@ -1,4 +1,4 @@
-"""Tests for the husk outbound hook."""
+"""Tests for the shape outbound hook."""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ import pytest
 from mitmproxy import http
 from mitmproxy.test import tflow
 
-from ccproxy.compliance.store import SeedStore, clear_store_instance
-from ccproxy.hooks.husk import HuskParams, husk, husk_guard
+from ccproxy.shaping.store import ShapeStore, clear_store_instance
+from ccproxy.hooks.shape import ShapeParams, shape, shape_guard
 from ccproxy.inspector.flow_store import InspectorMeta
 from ccproxy.pipeline.context import Context
 
@@ -34,17 +34,17 @@ class _MockRecord:
 
 @pytest.fixture()
 def store(tmp_path: Path) -> Any:
-    from ccproxy.compliance.store import _store_lock
+    from ccproxy.shaping.store import _store_lock
     from ccproxy.config import CCProxyConfig, set_config_instance
 
     set_config_instance(CCProxyConfig())
-    seed_store = SeedStore(tmp_path / "seeds")
+    shape_store = ShapeStore(tmp_path / "seeds")
 
-    import ccproxy.compliance.store as store_mod
+    import ccproxy.shaping.store as store_mod
 
     with _store_lock:
-        store_mod._store_instance = seed_store
-    yield seed_store
+        store_mod._store_instance = shape_store
+    yield shape_store
     clear_store_instance()
 
 
@@ -95,62 +95,62 @@ def _seed_flow(
     return f
 
 
-class TestHuskGuard:
+class TestShapeGuard:
     def test_reverse_with_transform_passes(self) -> None:
         ctx = Context.from_flow(_make_flow(reverse=True))
-        assert husk_guard(ctx) is True
+        assert shape_guard(ctx) is True
 
     def test_wireguard_without_oauth_rejected(self) -> None:
         ctx = Context.from_flow(_make_flow(reverse=False))
-        assert husk_guard(ctx) is False
+        assert shape_guard(ctx) is False
 
     def test_wireguard_with_oauth_passes(self) -> None:
         ctx = Context.from_flow(_make_flow(reverse=False, oauth_injected=True))
-        assert husk_guard(ctx) is True
+        assert shape_guard(ctx) is True
 
     def test_no_transform_rejected(self) -> None:
         ctx = Context.from_flow(_make_flow(reverse=True, has_transform=False))
-        assert husk_guard(ctx) is False
+        assert shape_guard(ctx) is False
 
     def test_no_record_rejected(self) -> None:
         flow = _make_flow(reverse=True)
         flow.metadata = {}
         ctx = Context.from_flow(flow)
-        assert husk_guard(ctx) is False
+        assert shape_guard(ctx) is False
 
 
-class TestHuskParams:
+class TestShapeParams:
     def test_defaults_empty_lists(self) -> None:
-        params = HuskParams()
+        params = ShapeParams()
         assert params.prepare == []
         assert params.fill == []
 
     def test_accepts_dotted_paths(self) -> None:
-        params = HuskParams(
-            prepare=["ccproxy.compliance.prepare.strip_auth_headers"],
-            fill=["ccproxy.compliance.fill.fill_model"],
+        params = ShapeParams(
+            prepare=["ccproxy.shaping.prepare.strip_auth_headers"],
+            fill=["ccproxy.shaping.fill.fill_model"],
         )
-        assert params.prepare == ["ccproxy.compliance.prepare.strip_auth_headers"]
-        assert params.fill == ["ccproxy.compliance.fill.fill_model"]
+        assert params.prepare == ["ccproxy.shaping.prepare.strip_auth_headers"]
+        assert params.fill == ["ccproxy.shaping.fill.fill_model"]
 
 
-class TestHuskHook:
-    def test_no_op_when_no_seed(self, store: SeedStore) -> None:
+class TestShapeHook:
+    def test_no_op_when_no_seed(self, store: ShapeStore) -> None:
         flow = _make_flow(reverse=True, body={"model": "x"})
         original_host = flow.request.host
         ctx = Context.from_flow(flow)
-        husk(ctx, {})
+        shape(ctx, {})
         assert flow.request.host == original_host
 
-    def test_no_op_when_no_transform(self, store: SeedStore) -> None:
+    def test_no_op_when_no_transform(self, store: ShapeStore) -> None:
         store.add("anthropic", _seed_flow())
         flow = _make_flow(reverse=True, has_transform=False, body={"model": "x"})
         original_host = flow.request.host
         ctx = Context.from_flow(flow)
-        husk(ctx, {})
+        shape(ctx, {})
         assert flow.request.host == original_host
 
-    def test_applies_seed_shape_and_fills_content(self, store: SeedStore) -> None:
+    def test_applies_seed_shape_and_fills_content(self, store: ShapeStore) -> None:
         store.add(
             "anthropic",
             _seed_flow(
@@ -168,18 +168,18 @@ class TestHuskHook:
         )
         ctx = Context.from_flow(flow)
 
-        husk(
+        shape(
             ctx,
             {
-                "prepare": ["ccproxy.compliance.prepare.strip_request_content"],
+                "prepare": ["ccproxy.shaping.prepare.strip_request_content"],
                 "fill": [
-                    "ccproxy.compliance.fill.fill_model",
-                    "ccproxy.compliance.fill.fill_messages",
+                    "ccproxy.shaping.fill.fill_model",
+                    "ccproxy.shaping.fill.fill_messages",
                 ],
             },
         )
 
-        # Transport routing is preserved (set by redirect handler, not husk)
+        # Transport routing is preserved (set by redirect handler, not shape)
         assert flow.request.host == "incoming.example"
         assert flow.request.headers["x-seed-header"] == "yes"
 
@@ -188,41 +188,41 @@ class TestHuskHook:
         assert body["messages"] == [{"role": "user", "content": "incoming"}]
         assert body["envelope_field"] == "v"
 
-    def test_default_params_means_pure_seed_shape(self, store: SeedStore) -> None:
+    def test_default_params_means_pure_seed_shape(self, store: ShapeStore) -> None:
         store.add(
             "anthropic",
             _seed_flow(body={"seed_only": True}, headers={"x-seed": "v"}),
         )
         flow = _make_flow(reverse=True, body={"unrelated": True})
         ctx = Context.from_flow(flow)
-        husk(ctx, {})
+        shape(ctx, {})
         assert flow.request.headers["x-seed"] == "v"
         body = json.loads(flow.request.content or b"{}")
         assert body == {"seed_only": True}
 
-    def test_works_with_different_provider(self, store: SeedStore) -> None:
+    def test_works_with_different_provider(self, store: ShapeStore) -> None:
         store.add(
             "gemini",
             _seed_flow(host="generativelanguage.googleapis.com", path="/v1beta/models/x:generateContent"),
         )
         flow = _make_flow(reverse=True, provider="gemini", body={"model": "gemini-2.5"})
         ctx = Context.from_flow(flow)
-        husk(ctx, {})
+        shape(ctx, {})
         # Transport routing preserved; seed headers stamped
         assert flow.request.host == "incoming.example"
 
 
-class TestResolveCallable:
+class TestResolveEntry:
     def test_resolves_real_dotted_path(self) -> None:
-        from ccproxy.hooks.husk import _resolve_callable
+        from ccproxy.hooks.shape import _resolve_entry
 
-        fn = _resolve_callable("ccproxy.compliance.prepare.strip_auth_headers")
-        from ccproxy.compliance.prepare import strip_auth_headers
+        fn = _resolve_entry("ccproxy.shaping.prepare.strip_auth_headers")
+        from ccproxy.shaping.prepare import strip_auth_headers
 
         assert fn is strip_auth_headers
 
     def test_empty_dotted_raises(self) -> None:
-        from ccproxy.hooks.husk import _resolve_callable
+        from ccproxy.hooks.shape import _resolve_entry
 
         with pytest.raises(ValueError, match="invalid dotted path"):
-            _resolve_callable("nodotshere")
+            _resolve_entry("nodotshere")

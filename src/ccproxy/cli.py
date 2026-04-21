@@ -29,7 +29,7 @@ from ccproxy.tools.flows import (
     FlowsDiff,
     FlowsDump,
     FlowsList,
-    FlowsSeed,
+    FlowsShape,
     handle_flows,
 )
 from ccproxy.utils import get_templates_dir
@@ -802,7 +802,7 @@ def main(
             check_inspect=cmd.inspect,
         )
 
-    elif isinstance(cmd, FlowsList | FlowsDump | FlowsDiff | FlowsCompare | FlowsSeed | FlowsClear):
+    elif isinstance(cmd, FlowsList | FlowsDump | FlowsDiff | FlowsCompare | FlowsShape | FlowsClear):
         handle_flows(cmd, config_dir)
 
 

@@ -751,7 +751,7 @@ ccproxy:
     outbound:
       - ccproxy.hooks.inject_mcp_notifications
       - ccproxy.hooks.verbose_mode
-      - ccproxy.hooks.husk
+      - ccproxy.hooks.shape
 """)
 
         monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
@@ -770,7 +770,7 @@ ccproxy:
             "extract_session_id",
             "inject_mcp_notifications",
             "verbose_mode",
-            "husk",
+            "shape",
         ):
             assert hook_name in out, f"Expected hook '{hook_name}' in status output"
         assert "lightllm transform" in out

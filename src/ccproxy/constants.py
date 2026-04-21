@@ -9,7 +9,7 @@ class OAuthConfigError(ValueError):
     """
 
 
-# Seed values for the initial Anthropic compliance profile before
+# Initial values for the Anthropic shaping profile before
 # dynamic observation takes over.
 ANTHROPIC_BETA_HEADERS = [
     "oauth-2025-04-20",
@@ -32,5 +32,5 @@ SENSITIVE_PATTERNS: dict[str, str | None] = {
     "cookie": None,
 }
 
-# Seed value for the initial Anthropic compliance profile system prompt prefix.
+# Initial value for the Anthropic shaping profile system prompt prefix.
 CLAUDE_CODE_SYSTEM_PREFIX = "You are Claude Code, Anthropic's official CLI for Claude."

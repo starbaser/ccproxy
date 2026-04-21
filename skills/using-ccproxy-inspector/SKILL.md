@@ -5,9 +5,9 @@ description: >-
   transforming LLM API traffic. Covers running CLI tools through the inspector
   (Claude Code, Aider, any LLM harness), inspecting flows with client-vs-forwarded
   request comparison, understanding the inbound/transform/outbound pipeline,
-  seeding and checking compliance profiles, and diagnosing flow issues. Use when
+  capturing and checking shaping profiles, and diagnosing flow issues. Use when
   running CLI applications through ccproxy, inspecting intercepted flows, comparing
-  client request vs forwarded request, checking compliance profile status, using
+  client request vs forwarded request, checking shaping profile status, using
   WireGuard namespace jail, or debugging the hook pipeline.
 ---
 
@@ -55,7 +55,7 @@ ccproxy run --inspect -- python my_agent.py
 
 Injects a combined CA bundle (mitmproxy CA + system CAs) via `SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`.
 
-**Use when**: the tool doesn't support `base_url`, you need full traffic capture, or you want to observe compliance reference traffic for profile learning.
+**Use when**: the tool doesn't support `base_url`, you need full traffic capture, or you want to observe reference traffic for shape learning.
 
 ### When to use which
 
@@ -63,7 +63,7 @@ Injects a combined CA bundle (mitmproxy CA + system CAs) via `SSL_CERT_FILE`, `N
 |----------|------|
 | SDK client with configurable base_url | `ccproxy run` |
 | Tool that hardcodes API endpoints | `ccproxy run --inspect` |
-| Seeding compliance profiles | `ccproxy run --inspect` (WireGuard flows are always observed) |
+| Capturing shaping profiles | `ccproxy run --inspect` (WireGuard flows are always observed) |
 | Quick debugging of SDK integration | `ccproxy run` |
 | Full traffic audit | `ccproxy run --inspect` |
 
@@ -75,7 +75,7 @@ Every flow has two views:
 
 **Client request** -- what the client actually sent, captured before any hooks run. This is the ground truth of client intent: original URL, original headers (with sentinel keys, without injected OAuth), original body format.
 
-**Forwarded request** -- what was sent to the upstream provider after the full pipeline ran. May have a different host, different headers (OAuth token injected, beta headers added, compliance headers stamped), different body format (OpenAI -> Anthropic), wrapped body envelope, and injected system prompt.
+**Forwarded request** -- what was sent to the upstream provider after the full pipeline ran. May have a different host, different headers (OAuth token injected, beta headers added, shaping headers stamped), different body format (OpenAI -> Anthropic), wrapped body envelope, and injected system prompt.
 
 ### The three-stage pipeline
 
@@ -97,7 +97,7 @@ Transform (first matching rule wins)
 Outbound hooks (DAG order)
   inject_mcp_notifications: buffer MCP events into messages
   verbose_mode:             strip redact-thinking from beta header
-  apply_compliance:         stamp learned headers/body/system
+  apply_shaping:            stamp learned headers/body/system
   │
   ▼
 Forwarded request -> Provider API
@@ -109,8 +109,8 @@ Forwarded request -> Provider API
 |-----------|---------|
 | `x-ccproxy-oauth-injected: 1` header | OAuth token was injected by forward_oauth |
 | Host changed (client vs forwarded) | Transform or redirect rewrote the destination |
-| Body has `system` field not in client request | Compliance injected system prompt |
-| Body wrapped in `request` field | Compliance applied body_wrapper (cloudcode-pa) |
+| Body has `system` field not in client request | Shaping injected system prompt |
+| Body wrapped in `request` field | Shaping applied body_wrapper (cloudcode-pa) |
 | Different body keys (messages vs contents) | Cross-provider format transformation |
 
 ## Inspecting flows
@@ -158,21 +158,21 @@ uv run python scripts/inspect_flow.py a1b2c3d4 --with-response  # Include respon
 
 The `inspect_flow.py` output includes a change summary: URL rewrites, headers added/removed, body format transforms, system prompt injection, OAuth injection, body wrapping.
 
-**Check compliance status:**
+**Check shaping status:**
 ```bash
-uv run python scripts/compliance_status.py                   # Profile + accumulator tables
-uv run python scripts/compliance_status.py --provider anthropic  # Detailed profile contents
-uv run python scripts/compliance_status.py --seed-status     # Is the v0 seed active?
-uv run python scripts/compliance_status.py --json            # Structured JSON
+uv run python scripts/shaping_status.py                   # Profile + accumulator tables
+uv run python scripts/shaping_status.py --provider anthropic  # Detailed profile contents
+uv run python scripts/shaping_status.py --shape-status    # Is the v0 shape active?
+uv run python scripts/shaping_status.py --json            # Structured JSON
 ```
 
 All scripts run from the ccproxy project root using `uv run python scripts/...` and resolve the mitmweb auth token from config automatically. They exit with actionable error messages when ccproxy is not running.
 
-## The compliance system
+## The shaping system
 
 ### What it does
 
-The compliance system passively learns the "compliance contract" from legitimate CLI traffic (WireGuard-observed) and stamps it onto non-compliant SDK requests (reverse proxy). It bridges the gap between a bare SDK call and what the provider API requires.
+The shaping system passively learns the "shaping contract" from legitimate CLI traffic (WireGuard-observed) and stamps it onto non-compliant SDK requests (reverse proxy). It bridges the gap between a bare SDK call and what the provider API requires.
 
 **What gets stamped:**
 - Missing headers (e.g. `anthropic-beta`, `anthropic-version`, `user-agent`)
@@ -181,42 +181,42 @@ The compliance system passively learns the "compliance contract" from legitimate
 - Body wrapping (e.g. cloudcode-pa's `{model: X, request: {<body>}}` pattern)
 - Session metadata (synthesized `device_id` + `account_uuid` + fresh `session_id`)
 
-### Seeding a compliance profile
+### Capturing a shaping profile
 
 1. Start ccproxy: `just up` (or `ccproxy start`)
 2. Run a CLI tool through WireGuard:
    ```bash
    ccproxy run --inspect -- claude
    ```
-3. Make at least 3 requests (configurable via `compliance.min_observations`)
+3. Make at least 3 requests (configurable via `shaping.min_observations`)
 4. Check progress:
    ```bash
-   uv run python scripts/compliance_status.py --seed-status
+   uv run python scripts/shaping_status.py --shape-status
    ```
-5. Once finalized, the profile is persisted to `{config_dir}/compliance_profiles.json` and immediately active for reverse proxy flows
+5. Once finalized, the profile is persisted to `{config_dir}/shaping_profiles.json` and immediately active for reverse proxy flows
 
 ### How it fires
 
-The `apply_compliance` outbound hook only fires when:
+The `apply_shaping` outbound hook only fires when:
 1. The flow came through the **reverse proxy** (not WireGuard)
 2. The flow has a `TransformMeta` (matched a transform/redirect rule)
 
 WireGuard flows are reference traffic (observed, not modified). Reverse proxy flows are consumers (modified, not observed).
 
-### Anthropic v0 seed
+### Anthropic v0 shape
 
-On first startup, a seed profile is created from hardcoded constants (`anthropic-beta` headers, system prompt prefix). It provides baseline compliance before any real observations. It is superseded once a learned profile finalizes (the store returns the most recently updated profile).
+On first startup, an initial shape is created from hardcoded constants (`anthropic-beta` headers, system prompt prefix). It provides baseline shaping before any real observations. It is superseded once a learned profile finalizes (the store returns the most recently updated profile).
 
-Check seed status: `uv run python scripts/compliance_status.py --seed-status`
+Check shape status: `uv run python scripts/shaping_status.py --shape-status`
 
 ### Configuration
 
 ```yaml
-compliance:
+shaping:
   enabled: true           # master switch
   min_observations: 3     # observations before finalization
   reference_user_agents: []  # extra UA patterns for observation
-  seed_anthropic: true    # bootstrap Anthropic v0 seed
+  seed_anthropic: true    # bootstrap Anthropic v0 shape
 ```
 
 ## Diagnosing flow issues
@@ -235,8 +235,8 @@ Problem?
 │  ▶ Check: transform rules — does match_host/match_path/match_model match?
 │  ▶ Check: ccproxy flows dump <id> | jq '.log.entries[1].request.url' — what did the client send (pre-pipeline)?
 │
-├─ Compliance not applying
-│  ▶ Check: compliance_status.py — is a profile finalized?
+├─ Shaping not applying
+│  ▶ Check: shaping_status.py — is a profile finalized?
 │  ▶ Check: flow mode — is it a reverse proxy flow? (not WireGuard)
 │  ▶ Check: TransformMeta — did the flow match a transform rule?
 │  ▶ Check: ua_hint — does oat_sources[provider].user_agent match the profile?
@@ -244,15 +244,15 @@ Problem?
 ├─ Body format wrong / API rejection
 │  ▶ Run: inspect_flow.py <id> --json — compare client vs forwarded body
 │  ▶ Check: transform mode — is it "transform" (full rewrite) or "redirect" (passthrough body)?
-│  ▶ Check: body_wrapper — is compliance wrapping when it shouldn't (or not wrapping when it should)?
+│  ▶ Check: body_wrapper — is shaping wrapping when it shouldn't (or not wrapping when it should)?
 │
 └─ System prompt issues
    ▶ Check: inspect_flow.py <id> — was system prompt injected?
    ▶ Check: client system format — list (skip) vs string (prepend) vs absent (set)
-   ▶ Check: compliance_status.py --provider X — what system prompt is in the profile?
+   ▶ Check: shaping_status.py --provider X — what system prompt is in the profile?
 ```
 
 ## Reference files
 
 - [reference/flow-api-reference.md](reference/flow-api-reference.md) — mitmweb REST API endpoints, flow data model, content views, authentication
-- [docs/inspector-and-compliance.md](../../docs/inspector-and-compliance.md) — Full architectural documentation of the inspector and compliance systems
+- [docs/inspector-and-shaping.md](../../docs/inspector-and-shaping.md) — Full architectural documentation of the inspector and shaping systems

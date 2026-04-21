@@ -1,10 +1,7 @@
-"""Compliance seeder addon.
+"""Shape capturer addon.
 
-Registers ``ccproxy.seed``: a mitmproxy command that saves the specified
-flows verbatim to the provider's seed silo on disk. Runtime-only metadata
-(FlowRecord, OTel spans) is stripped before serialization; the persisted
-flow retains headers, body, and mitmproxy-native metadata.
-Invoked by ``ccproxy flows seed --provider X``.
+Registers ``ccproxy.shape``: a mitmproxy command that saves the specified
+flows as shapes to the provider's shape store on disk.
 """
 
 from __future__ import annotations
@@ -14,7 +11,7 @@ import logging
 
 from mitmproxy import command, ctx, http
 
-from ccproxy.compliance.store import get_store
+from ccproxy.shaping.store import get_store
 from ccproxy.inspector.flow_store import InspectorMeta
 
 logger = logging.getLogger(__name__)
@@ -22,12 +19,12 @@ logger = logging.getLogger(__name__)
 _CCPROXY_META_PREFIX = "ccproxy."
 
 
-class ComplianceSeeder:
-    """Addon exposing ``ccproxy.seed`` — save raw flows as provider seeds."""
+class ShapeCapturer:
+    """Addon exposing ``ccproxy.shape`` — save raw flows as provider shapes."""
 
-    @command.command("ccproxy.seed")  # type: ignore[untyped-decorator]
-    def ccproxy_seed(self, flow_ids: str, provider: str) -> str:
-        """Save the listed flows verbatim into the provider's seed silo.
+    @command.command("ccproxy.shape")  # type: ignore[untyped-decorator]
+    def ccproxy_shape(self, flow_ids: str, provider: str) -> str:
+        """Save the listed flows as shapes into the provider's shape store.
 
         ``flow_ids`` is a comma-separated list of mitmproxy flow ids.
         ``provider`` is the target provider name (e.g. ``anthropic``).
@@ -44,7 +41,7 @@ class ComplianceSeeder:
         for fid in ids:
             flow = self._find_http_flow(fid)
             if flow is None:
-                logger.warning("ccproxy.seed: no flow with id %s, skipping", fid)
+                logger.warning("ccproxy.shape: no flow with id %s, skipping", fid)
                 missing.append(fid)
                 continue
             clean = _strip_runtime_metadata(flow)
@@ -59,7 +56,7 @@ class ComplianceSeeder:
         }
 
         logger.info(
-            "Seeded %d flow(s) under provider %s (%d missing)",
+            "Shaped %d flow(s) under provider %s (%d missing)",
             saved,
             provider,
             len(missing),

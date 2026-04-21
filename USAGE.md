@@ -116,8 +116,8 @@ The following tools must be in PATH: `slirp4netns`, `unshare`, `nsenter`, `ip`,
 | **How traffic arrives** | Client sets `base_url` to ccproxy | All traffic captured transparently |
 | **Client modification** | Requires `base_url` env var | None — process is unaware of ccproxy |
 | **Unmatched flows** | 501 error | Pass through unchanged |
-| **Compliance observation** | Not observed (consumer of profiles) | Always observed (reference traffic) |
-| **Compliance application** | Applied (when transform matched) | Not applied |
+| **Shaping observation** | Not observed (consumer of profiles) | Always observed (reference traffic) |
+| **Shaping application** | Applied (when transform matched) | Not applied |
 | **TLS** | Client connects via plain HTTP | mitmproxy intercepts and re-signs with its CA |
 
 * * *
@@ -144,7 +144,7 @@ Every request passes through a fixed five-stage addon chain:
 └───────┬────────┘
         │
 ┌───────▼────────┐
-│ Outbound Hooks │  MCP notification injection, verbose mode, compliance application
+│ Outbound Hooks │  MCP notification injection, verbose mode, shaping application
 └───────┘────────┘
         │
         ▼
@@ -158,12 +158,12 @@ Before any hook touches the request, it captures a complete snapshot of the
 original client request (method, URL, headers, body).
 This snapshot is the ground truth of what the client sent and is used for:
 
-- **Compliance observation** — learning what a reference client sends.
+- **Shaping observation** — learning what a reference client sends.
 - **Client Request content view** — visible in the mitmweb UI under the
-  “Client-Request” tab.
+  "Client-Request" tab.
 - **`ccproxy flows compare`** — diffing what the client sent vs what the
   pipeline forwarded.
-- **HAR export** — each flow’s HAR page includes both the forwarded and client
+- **HAR export** — each flow's HAR page includes both the forwarded and client
   request.
 
 InspectorAddon also manages OTel span lifecycle and enables SSE streaming on
@@ -196,7 +196,7 @@ Default hooks:
   pairs.
 - **`verbose_mode`** — Strips `redact-thinking-*` from the `anthropic-beta`
   header to enable full thinking block output from Anthropic models.
-- **`apply_compliance`** — Stamps the learned compliance profile onto reverse
+- **`apply_shaping`** — Stamps the learned shaping profile onto reverse
   proxy flows (headers, body envelope, system prompt).
   Only fires on flows that matched a transform rule.
 
@@ -204,8 +204,8 @@ Default hooks:
 
 Hooks declare data dependencies (`reads` and `writes`) and are sorted into a DAG
 via topological sort.
-Hooks that don’t depend on each other can run in parallel.
-Errors in one hook don’t block others — the sole exception is
+Hooks that don't depend on each other can run in parallel.
+Errors in one hook don't block others — the sole exception is
 `OAuthConfigError`, which is fatal and propagates through the pipeline.
 
 Hooks can be configured per-request via the `x-ccproxy-hooks` header:
@@ -228,7 +228,7 @@ Rules are evaluated in order; first match wins.
 
 All match fields are optional and combined with AND logic:
 
-- `match_host` — checked against the request’s host, `Host` header, and
+- `match_host` — checked against the request's host, `Host` header, and
   `X-Forwarded-Host`.
 - `match_path` — URL prefix match (default `/` matches everything).
 - `match_model` — substring match on the `model` field in the JSON request body.
@@ -263,7 +263,7 @@ inspector:
 **`transform`** — Full cross-provider rewrite via lightllm.
 Changes the destination URL and rewrites the entire request body from one API
 format to another (e.g. OpenAI format to Anthropic format).
-The response is also transformed back to the client’s expected format.
+The response is also transformed back to the client's expected format.
 
 ```yaml
 inspector:
@@ -349,9 +349,9 @@ genuinely stale.
 
 * * *
 
-## 6. Compliance Profiles
+## 6. Shaping Profiles
 
-The compliance system passively learns the exact request shape that a reference
+The shaping system passively learns the exact request shape that a reference
 client (observed via WireGuard) sends to each provider, then stamps that shape
 onto SDK requests arriving through the reverse proxy.
 
@@ -361,14 +361,14 @@ LLM providers increasingly enforce client identity.
 Requests from Claude Code, for example, carry specific beta headers, system
 prompt prefixes, body envelope fields, and session metadata.
 When routing SDK traffic through ccproxy, these details are missing.
-The compliance system observes what the real client sends, learns a stable
+The shaping system observes what the real client sends, learns a stable
 profile, and applies it to proxied requests so they are indistinguishable from
 direct client traffic.
 
 ### How it works
 
 1. **Observation** — WireGuard flows (and flows matching
-   `compliance.reference_user_agents`) are analyzed.
+   `shaping.reference_user_agents`) are analyzed.
    Headers, body fields, system prompts, and body wrapper structure are
    extracted.
 
@@ -379,7 +379,7 @@ direct client traffic.
 3. **Finalization** — Once enough observations are collected, only features with
    identical values across all observations become stable profile features.
 
-4. **Application** — The `apply_compliance` outbound hook applies the profile to
+4. **Application** — The `apply_shaping` outbound hook applies the profile to
    reverse proxy flows.
    Five operations run in order:
    - **Headers**: add missing headers, union list-valued headers (e.g.
@@ -390,28 +390,28 @@ direct client traffic.
      provider expects it.
    - **Body envelope fields**: add missing top-level fields (e.g.
      `user_prompt_id`).
-   - **System prompt**: inject the profile’s system prompt blocks.
+   - **System prompt**: inject the profile's system prompt blocks.
 
-### Seed profile
+### Initial shape
 
-On first startup (when `compliance.seed_anthropic` is true), a hardcoded
-Anthropic profile is seeded with the known beta headers and Claude Code system
-prompt prefix. Learned profiles supersede the seed when they have a newer
+On first startup (when `shaping.seed_anthropic` is true), a hardcoded
+Anthropic shape is created with the known beta headers and Claude Code system
+prompt prefix. Learned profiles supersede it when they have a newer
 timestamp.
 
 ### Profile storage
 
-Profiles persist to `{config_dir}/compliance_profiles.json`. This file is
+Profiles persist to `{config_dir}/shaping_profiles.json`. This file is
 managed automatically — profiles are versioned and written atomically.
 
 ### Customizing the merger
 
 The five application operations are implemented as methods on
-`ComplianceMerger`. To customize, subclass it and set `compliance.merger_class`
+`ShapingMerger`. To customize, subclass it and set `shaping.merger_class`
 in config:
 
 ```yaml
-compliance:
+shaping:
   merger_class: mypackage.custom_merger.MyMerger
 ```
 
@@ -496,7 +496,7 @@ Events are buffered per task (max 50, FIFO, 600s TTL). The
 `inject_mcp_notifications` outbound hook drains the buffer for the current
 session and injects events as synthetic tool_use/tool_result pairs before the
 final user message in the conversation.
-This allows external MCP servers to surface information into the LLM’s context
+This allows external MCP servers to surface information into the LLM's context
 window.
 
 * * *
@@ -599,7 +599,7 @@ mitmproxy. No root privileges are required.
 
 ### Port forwarding
 
-A background thread polls the namespace’s `/proc/{pid}/net/tcp` every 0.5
+A background thread polls the namespace's `/proc/{pid}/net/tcp` every 0.5
 seconds and dynamically forwards new listening ports via the slirp4netns API.
 This allows tools that start local servers (e.g. OAuth callback listeners) to
 receive connections from the host.
@@ -615,7 +615,7 @@ handles the translation.
 
 ### TLS trust
 
-`ccproxy run --inspect` builds a combined CA bundle (mitmproxy’s CA + system
+`ccproxy run --inspect` builds a combined CA bundle (mitmproxy's CA + system
 CAs) and injects it into the subprocess environment via:
 
 ```
@@ -720,7 +720,7 @@ hooks:
   outbound:
     - ccproxy.hooks.inject_mcp_notifications
     - ccproxy.hooks.verbose_mode
-    - ccproxy.hooks.apply_compliance
+    - ccproxy.hooks.apply_shaping
 ```
 
 Hooks can also be specified with parameters:
@@ -741,17 +741,17 @@ hooks:
 | `endpoint` | `http://localhost:4317` | OTLP gRPC endpoint |
 | `service_name` | `ccproxy` | OTel resource service name |
 
-### `compliance`
+### `shaping`
 
 | Field | Default | Description |
 | --- | --- | --- |
-| `enabled` | `true` | Enable compliance observation and application |
+| `enabled` | `true` | Enable shaping observation and application |
 | `min_observations` | `3` | Observations before profile finalization |
 | `reference_user_agents` | `[]` | Additional UA patterns that trigger observation |
-| `seed_anthropic` | `true` | Seed a hardcoded Anthropic profile on first run |
+| `seed_anthropic` | `true` | Seed a hardcoded Anthropic shape on first run |
 | `additional_header_exclusions` | `[]` | Extra headers to exclude from profiling |
 | `additional_body_content_fields` | `[]` | Extra body fields to treat as content |
-| `merger_class` | `ccproxy.compliance.merger.ComplianceMerger` | Merger class path |
+| `merger_class` | `ccproxy.shaping.merger.ShapingMerger` | Merger class path |
 
 ### `flows`
 

@@ -32,22 +32,22 @@
         "ccproxy.hooks.inject_mcp_notifications"
         "ccproxy.hooks.verbose_mode"
         {
-          hook = "ccproxy.hooks.husk";
+          hook = "ccproxy.hooks.shape";
           params = {
             prepare = [
-              "ccproxy.compliance.prepare.strip_request_content"
-              "ccproxy.compliance.prepare.strip_auth_headers"
-              "ccproxy.compliance.prepare.strip_transport_headers"
-              "ccproxy.compliance.prepare.strip_system_blocks(:1)"
+              "ccproxy.shaping.prepare.strip_request_content"
+              "ccproxy.shaping.prepare.strip_auth_headers"
+              "ccproxy.shaping.prepare.strip_transport_headers"
+              "ccproxy.shaping.prepare.strip_system_blocks(:1)"
             ];
             fill = [
-              "ccproxy.compliance.fill.fill_model"
-              "ccproxy.compliance.fill.fill_messages"
-              "ccproxy.compliance.fill.fill_tools"
-              "ccproxy.compliance.fill.fill_system_append"
-              "ccproxy.compliance.fill.fill_stream_passthrough"
-              "ccproxy.compliance.fill.regenerate_user_prompt_id"
-              "ccproxy.compliance.fill.regenerate_session_id"
+              "ccproxy.shaping.fill.fill_model"
+              "ccproxy.shaping.fill.fill_messages"
+              "ccproxy.shaping.fill.fill_tools"
+              "ccproxy.shaping.fill.fill_system_append"
+              "ccproxy.shaping.fill.fill_stream_passthrough"
+              "ccproxy.shaping.fill.regenerate_user_prompt_id"
+              "ccproxy.shaping.fill.regenerate_session_id"
             ];
           };
         }
@@ -58,9 +58,9 @@
       endpoint = "http://localhost:4317";
       service_name = "ccproxy";
     };
-    compliance = {
+    shaping = {
       enabled = true;
-      seeds_dir = "~/.config/ccproxy/compliance/seeds";
+      shapes_dir = "~/.config/ccproxy/shaping/shapes";
     };
     inspector = {
       port = 8083;
