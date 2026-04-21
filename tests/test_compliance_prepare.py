@@ -10,7 +10,7 @@ from mitmproxy import http
 from ccproxy.compliance.prepare import (
     strip_auth_headers,
     strip_request_content,
-    strip_system_blocks_except_first,
+    strip_system_blocks,
     strip_transport_headers,
 )
 
@@ -97,23 +97,40 @@ class TestStripTransportHeaders:
         assert req.headers["x-custom"] == "keep"
 
 
-class TestStripSystemBlocksExceptFirst:
-    def test_keeps_only_first_block(self) -> None:
+class TestStripSystemBlocks:
+    def test_removes_all_by_default(self) -> None:
+        req = _req(body={"system": [{"text": "a"}, {"text": "b"}], "other": 1})
+        strip_system_blocks(req)
+        body = _body(req)
+        assert "system" not in body
+        assert body["other"] == 1
+
+    def test_keep_first(self) -> None:
         req = _req(body={"system": [{"text": "a"}, {"text": "b"}, {"text": "c"}]})
-        strip_system_blocks_except_first(req)
+        strip_system_blocks(req, keep=":1")
         assert _body(req)["system"] == [{"text": "a"}]
+
+    def test_keep_last_two(self) -> None:
+        req = _req(body={"system": [{"text": "a"}, {"text": "b"}, {"text": "c"}]})
+        strip_system_blocks(req, keep="-2:")
+        assert _body(req)["system"] == [{"text": "b"}, {"text": "c"}]
+
+    def test_keep_single_index(self) -> None:
+        req = _req(body={"system": [{"text": "a"}, {"text": "b"}, {"text": "c"}]})
+        strip_system_blocks(req, keep="1")
+        assert _body(req)["system"] == [{"text": "b"}]
 
     def test_missing_system_is_safe(self) -> None:
         req = _req(body={"foo": "bar"})
-        strip_system_blocks_except_first(req)
+        strip_system_blocks(req)
         assert _body(req) == {"foo": "bar"}
 
     def test_string_system_is_unchanged(self) -> None:
         req = _req(body={"system": "just a string"})
-        strip_system_blocks_except_first(req)
+        strip_system_blocks(req, keep=":1")
         assert _body(req)["system"] == "just a string"
 
-    def test_empty_list_is_unchanged(self) -> None:
+    def test_empty_list_with_keep(self) -> None:
         req = _req(body={"system": []})
-        strip_system_blocks_except_first(req)
+        strip_system_blocks(req, keep=":1")
         assert _body(req)["system"] == []

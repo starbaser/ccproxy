@@ -84,15 +84,14 @@ def _render_stage(executor: PipelineExecutor) -> RenderableType:
 def _hook_panel(spec: HookSpec) -> Panel:
     reads = ", ".join(sorted(spec.reads)) or "—"
     writes = ", ".join(sorted(spec.writes)) or "—"
-    lines: list[tuple[str, str]] = []
+    parts: list[RenderableType] = []
     sig = _render_signature(spec)
     if sig is not None:
-        lines.append((sig, "yellow"))
-    lines.append((f"r: {reads}", "green"))
-    lines.append((f"w: {writes}", "red"))
-    content = Text("\n").join(Text(text, style=style) for text, style in lines)
+        parts.append(sig)
+    parts.append(Text(f"r: {reads}", style="green"))
+    parts.append(Text(f"w: {writes}", style="red"))
     return Panel(
-        content,
+        Group(*parts),
         title=f"[bold cyan]{spec.name}[/bold cyan]",
         border_style="blue",
         padding=(0, 1),
@@ -100,19 +99,58 @@ def _hook_panel(spec: HookSpec) -> Panel:
     )
 
 
-def _render_signature(spec: HookSpec) -> str | None:
-    """Render a hook's param signature, or None if the hook has no model."""
+def _render_signature(spec: HookSpec) -> RenderableType | None:
+    """Render a hook's param signature, or None if the hook has no model.
+
+    List-of-dotted-path params render as side-by-side numbered columns;
+    scalar params render inline.
+    """
     if spec.model is None:
         return None
     sig = spec.model.__signature__
-    parts: list[str] = []
+    list_params: dict[str, list[str]] = {}
+    scalar_parts: list[str] = []
     for param in sig.parameters.values():
-        ann = inspect.formatannotation(param.annotation)
         if param.name in spec.params:
-            parts.append(f"{param.name}={spec.params[param.name]!r}")
+            val = spec.params[param.name]
+            if isinstance(val, list) and all(isinstance(v, str) and "." in v for v in val):
+                list_params[param.name] = val
+            else:
+                scalar_parts.append(f"{param.name}={val!r}")
         else:
-            parts.append(f"{param.name}: {ann}")
-    return f"({', '.join(parts)})"
+            ann = inspect.formatannotation(param.annotation)
+            scalar_parts.append(f"{param.name}: {ann}")
+    if not list_params and not scalar_parts:
+        return None
+    result: list[RenderableType] = []
+    if scalar_parts:
+        result.append(Text(f"({', '.join(scalar_parts)})", style="yellow"))
+    if list_params:
+        cols: list[RenderableType] = []
+        for name, paths in list_params.items():
+            bare = [p.split("(")[0] for p in paths]
+            prefix = _common_prefix(bare)
+            lines: list[Text] = [Text(name, style="bold yellow")]
+            for i, p in enumerate(paths, 1):
+                short = p[len(prefix) :] if p.startswith(prefix) else p
+                lines.append(Text(f" {i}. {short}", style="yellow"))
+            cols.append(Text("\n").join(lines))
+        result.append(Columns(cols, padding=(0, 3), expand=False))
+    return Group(*result) if len(result) > 1 else result[0]
+
+
+def _common_prefix(paths: list[str]) -> str:
+    """Return the longest shared dotted prefix including the trailing dot."""
+    if not paths:
+        return ""
+    parts = [p.split(".") for p in paths]
+    prefix: list[str] = []
+    for segments in zip(*parts):
+        if len(set(segments)) == 1:
+            prefix.append(segments[0])
+        else:
+            break
+    return ".".join(prefix) + "." if prefix else ""
 
 
 def _arrow() -> RenderableType:

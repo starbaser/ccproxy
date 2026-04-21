@@ -9,6 +9,7 @@ with incoming request data, and applies the husk to the outbound flow.
 
 from __future__ import annotations
 
+import functools
 import importlib
 import logging
 from collections.abc import Callable
@@ -30,13 +31,14 @@ logger = logging.getLogger(__name__)
 
 
 class HuskParams(BaseModel):
-    """Dotted-path lists of prepare and fill callables."""
+    """Dotted-path lists of prepare and fill callables.
+
+    Entries are dotted paths, optionally with a parenthesized argument:
+    ``"mod.fn"`` or ``"mod.fn(arg)"``.
+    """
 
     prepare: list[str] = Field(default_factory=list)
-    """Dotted paths to prepare fns — ``Callable[[http.Request], None]``."""
-
     fill: list[str] = Field(default_factory=list)
-    """Dotted paths to fill fns — ``Callable[[http.Request, Context], None]``."""
 
 
 def husk_guard(ctx: Context) -> bool:
@@ -71,18 +73,28 @@ def husk(ctx: Context, params: dict[str, Any]) -> Context:
 
     working: Husk = http.Request.from_state(seed.request.get_state())  # type: ignore[no-untyped-call]
 
-    for dotted in params.get("prepare", []):
-        _resolve_callable(dotted)(working)
+    for entry in params.get("prepare", []):
+        _resolve_entry(entry)(working)
 
-    for dotted in params.get("fill", []):
-        _resolve_callable(dotted)(working, ctx)
+    for entry in params.get("fill", []):
+        _resolve_entry(entry)(working, ctx)
 
     apply_husk(working, ctx)
     logger.info("Applied husk from seed %s for provider %s", seed.id, provider)
     return ctx
 
 
-def _resolve_callable(dotted: str) -> Callable[..., Any]:
+def _resolve_entry(entry: str) -> Callable[..., Any]:
+    """Resolve ``"mod.fn"`` or ``"mod.fn(arg)"`` into a callable."""
+    if "(" in entry:
+        path, _, arg = entry.partition("(")
+        arg = arg.rstrip(")")
+        fn = _import_dotted(path)
+        return functools.partial(fn, arg)
+    return _import_dotted(entry)
+
+
+def _import_dotted(dotted: str) -> Callable[..., Any]:
     module_path, _, name = dotted.rpartition(".")
     if not module_path:
         raise ValueError(f"invalid dotted path: {dotted!r}")

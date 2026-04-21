@@ -67,12 +67,29 @@ def strip_transport_headers(husk: http.Request) -> None:
         husk.headers.pop(name, None)
 
 
-def strip_system_blocks_except_first(husk: http.Request) -> None:
-    """Keep only the first system block; drops seed-specific follow-ons."""
+def strip_system_blocks(husk: http.Request, keep: str = "") -> None:
+    """Slice the system block list using Python range syntax.
+
+    ``keep`` is a Python slice string applied to ``body["system"]``.
+    Examples: ``":1"`` (keep first), ``"1:"`` (drop first), ``""`` (remove all).
+    """
 
     def _strip(body: dict[str, Any]) -> None:
         system = body.get("system")
-        if isinstance(system, list) and system:
-            body["system"] = [system[0]]
+        if not isinstance(system, list):
+            return
+        if not keep:
+            del body["system"]
+        else:
+            body["system"] = system[_parse_slice(keep)]
 
     mutate_body(husk, _strip)
+
+
+def _parse_slice(s: str) -> slice:
+    parts = s.split(":")
+    if len(parts) == 1:
+        i = int(parts[0])
+        return slice(i, i + 1)
+    args = [int(p) if p else None for p in parts]
+    return slice(*args)

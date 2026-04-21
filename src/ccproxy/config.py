@@ -370,7 +370,7 @@ class CCProxyConfig(BaseSettings):
                             "ccproxy.compliance.prepare.strip_request_content",
                             "ccproxy.compliance.prepare.strip_auth_headers",
                             "ccproxy.compliance.prepare.strip_transport_headers",
-                            "ccproxy.compliance.prepare.strip_system_blocks_except_first",
+                            "ccproxy.compliance.prepare.strip_system_blocks(:1)",
                         ],
                         "fill": [
                             "ccproxy.compliance.fill.fill_model",
