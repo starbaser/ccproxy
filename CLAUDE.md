@@ -106,7 +106,9 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 - `NoopLogging` duck-types LiteLLM's `Logging` class to bypass cost/callback machinery (includes `optional_params` for Gemini iterator)
 
 **`pipeline/`** — DAG-based hook execution engine:
-- `context.py` — `Context` wraps `HTTPFlow`. Header mutations are immediate; body mutations deferred until `commit()`. `commit()` strips empty `metadata` dicts injected by property access (upstream APIs reject unknown fields).
+- `context.py` — `Context` wraps an `HTTPFlow` or bare `http.Request` (for shapes). Content fields (`messages`, `system`, `tools`) are lazy-parsed into Pydantic AI typed objects (`ModelMessage`, `SystemPromptPart`, `ToolDefinition`) and flushed back via `commit()`. `flow` is `HTTPFlow | None` — shape contexts use `from_request()` factory with `_request` stash. `_resolve_request()` returns the underlying `http.Request` from either source. Header mutations are immediate; body mutations deferred until `commit()`. `commit()` strips empty `metadata` dicts injected by property access (upstream APIs reject unknown fields).
+- `wire.py` — Bidirectional wire format ↔ Pydantic AI type conversion. Pure functions: `parse_messages`/`serialize_messages`, `parse_system`/`serialize_system`, `parse_tools`/`serialize_tools`. Handles `CachePoint` round-trip (wire `cache_control` → inline `CachePoint` in `UserPromptPart.content` → `cache_control` on preceding block). Both Anthropic (`{type, text}` blocks, `input_schema`) and OpenAI (`{function: {name, parameters}}`) tool formats supported. Format-neutral: parses whatever arrives, serializes back in the same structure.
+- `types.py` — Extension types for cache_control on request-side Pydantic AI types that lack it: `CachedSystemPromptPart(SystemPromptPart)` with `cache_control: dict[str, str] | None`, `CachedToolDefinition(ToolDefinition)` with `cache_control: dict[str, Any] | None`. User content uses `CachePoint` directly (already in Pydantic AI).
 - `hook.py` — `@hook(reads=..., writes=...)` decorator declares data dependencies. Global `HookSpec` registry.
 - `dag.py` — `HookDAG` topologically sorts hooks via Kahn's algorithm.
 - `executor.py` — `PipelineExecutor.execute(flow)` runs hooks in DAG order, calls `ctx.commit()` at the end.
@@ -134,17 +136,17 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 | `forward_oauth` | inbound | Sentinel key (`sk-ant-oat-ccproxy-{provider}`) substitution from `oat_sources` |
 | `gemini_cli_compat` | inbound | Masquerades google-genai SDK user-agent as Gemini CLI for capacity allocation |
 | `extract_session_id` | inbound | Parses `metadata.user_id` → stores session_id on `flow.metadata` (NOT body metadata) |
-| `inject_mcp_notifications` | outbound | Injects buffered MCP terminal events as synthetic tool_use/tool_result |
+| `inject_mcp_notifications` | outbound | Injects buffered MCP terminal events as synthetic ToolCallPart/ToolReturnPart pairs |
 | `verbose_mode` | outbound | Strips `redact-thinking-*` from `anthropic-beta` header |
 | `shape` | outbound | Picks a per-provider captured shape, strips its original content via `prepare` fns, inhabits it with the incoming request via `fill` fns, applies to the outbound flow |
 
 **`shaping/`** — Request shaping framework:
-- **Shape**: a user-curated ``mitmproxy.http.HTTPFlow`` persisted verbatim on disk. One ``{provider}.mflow`` file per provider under ``shapes_dir``, appended to on each capture. Captured via ``ccproxy flows shape --provider X`` (invokes the ``ccproxy.shape`` mitmproxy command). At runtime, a working copy of ``shape.request`` — alias ``Shape = mitmproxy.http.Request`` — is created per outbound request via ``http.Request.from_state(shape.request.get_state())``. Prepare fns strip shape content; fill fns inhabit with incoming content; ``apply_shape()`` field-copies the working request onto ``ctx.flow.request`` and syncs ``ctx._body``.
+- **Shape**: a user-curated ``mitmproxy.http.HTTPFlow`` persisted verbatim on disk. One ``{provider}.mflow`` file per provider under ``shapes_dir``, appended to on each capture. Captured via ``ccproxy flows shape --provider X`` (invokes the ``ccproxy.shape`` mitmproxy command). At runtime, a working copy of ``shape.request`` — alias ``Shape = mitmproxy.http.Request`` — is created per outbound request via ``http.Request.from_state(shape.request.get_state())``, wrapped in ``Context.from_request(working)`` for typed access. Prepare fns strip shape content; fill fns inhabit with incoming content; ``shape_ctx.commit()`` flushes typed changes back; ``apply_shape()`` field-copies the working request onto ``ctx.flow.request`` and syncs ``ctx._body``.
 - `models.py` — ``Shape`` type alias + ``apply_shape(shape, ctx)`` free function.
-- `body.py` — JSON body helpers (``get_body``, ``set_body``, ``mutate_body``) used by prepare/fill functions.
+- `body.py` — JSON body helpers (``get_body``, ``set_body``, ``mutate_body``) for low-level access outside the typed layer.
 - `store.py` — ``ShapeStore`` singleton wrapping a directory of ``.mflow`` files. Uses ``mitmproxy.io.FlowWriter``/``FlowReader``. ``pick()`` returns the most recently appended flow for a provider.
-- `prepare.py` — default prepare fns (``strip_request_content``, ``strip_auth_headers``, ``strip_transport_headers``, ``strip_system_blocks_except_first``). Signature: ``Callable[[http.Request], None]``.
-- `fill.py` — default fill fns (``fill_model``, ``fill_messages``, ``fill_tools``, ``fill_system_append``, ``fill_stream_passthrough``, ``regenerate_user_prompt_id``, ``regenerate_session_id``). Signature: ``Callable[[http.Request, Context], None]``.
+- `prepare.py` — default prepare fns (``strip_request_content``, ``strip_auth_headers``, ``strip_transport_headers``, ``strip_system_blocks``). Signature: ``Callable[[Context], None]``.
+- `fill.py` — default fill fns (``fill_model``, ``fill_messages``, ``fill_tools``, ``fill_system_append``, ``fill_stream_passthrough``, ``regenerate_user_prompt_id``, ``regenerate_session_id``). Signature: ``Callable[[Context, Context], None]`` (shape_ctx, incoming_ctx).
 - The ``shape`` hook composes prepare/fill via dotted-path lists (``ShapeParams``), letting users override, extend, or replace the default pipeline without subclassing.
 
 **`mcp/`** — Thread-safe notification buffer (`NotificationBuffer` singleton) + `POST /mcp/notify` FastAPI endpoint for MCP terminal event ingestion.
@@ -203,7 +205,7 @@ shaping:
   enabled: true
   shapes_dir: ~/.config/ccproxy/shaping/shapes  # optional; defaults to {config_dir}/shaping/shapes
 ```
-Customization is done at the hook-params level (``ccproxy.hooks.shape.params.prepare``/``fill`` lists of dotted paths), not by subclassing. Any module with a ``Callable[[http.Request], None]`` or ``Callable[[http.Request, Context], None]`` can be referenced.
+Customization is done at the hook-params level (``ccproxy.hooks.shape.params.prepare``/``fill`` lists of dotted paths), not by subclassing. Prepare fns have signature ``Callable[[Context], None]``; fill fns have signature ``Callable[[Context, Context], None]`` (shape_ctx, incoming_ctx).
 
 **Flows config** — `flows.default_jq_filters` list of jq expressions applied before CLI `--jq` filters:
 ```yaml
@@ -276,6 +278,7 @@ Hand-written stubs for dependencies lacking `py.typed` or with incomplete types:
 - **xepor** — Flask-style route decorators for mitmproxy (vendored subclass in `inspector/router.py`)
 - **parse** — URL path template matching (NOT regex — `{param}` not `{param:.*}`)
 - **pydantic/pydantic-settings** — Configuration and validation
+- **pydantic-ai-slim** — Typed message/tool objects (`ModelMessage`, `SystemPromptPart`, `ToolDefinition`, `CachePoint`) for the pipeline's typed content layer
 - **tyro** + **attrs** — CLI subcommand generation
 - **anthropic** — Anthropic API client (OAuth token refresh)
 - **fastapi** — MCP notification endpoint (`POST /mcp/notify`)
