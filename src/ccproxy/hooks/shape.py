@@ -14,19 +14,17 @@ import importlib
 import inspect
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from mitmproxy import http
 from mitmproxy.proxy.mode_specs import ReverseMode
 from pydantic import BaseModel, Field
 
 from ccproxy.inspector.flow_store import InspectorMeta
+from ccproxy.pipeline.context import Context
 from ccproxy.pipeline.hook import hook
 from ccproxy.shaping.models import Shape, apply_shape
 from ccproxy.shaping.store import get_store
-
-if TYPE_CHECKING:
-    from ccproxy.pipeline.context import Context
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +42,7 @@ class ShapeParams(BaseModel):
 
 def shape_guard(ctx: Context) -> bool:
     """Run on reverse proxy or OAuth-injected flows with a completed transform."""
+    assert ctx.flow is not None
     is_reverse = isinstance(ctx.flow.client_conn.proxy_mode, ReverseMode)
     is_oauth = ctx.flow.metadata.get("ccproxy.oauth_injected", False)
     if not (is_reverse or is_oauth):
@@ -60,6 +59,7 @@ def shape_guard(ctx: Context) -> bool:
 )
 def shape(ctx: Context, params: dict[str, Any]) -> Context:
     """Pick a shape, prepare it via prepare functions, fill it via fill functions, apply to the outbound request."""
+    assert ctx.flow is not None
     record = ctx.flow.metadata.get(InspectorMeta.RECORD)
     transform = getattr(record, "transform", None)
     if transform is None:
@@ -73,13 +73,15 @@ def shape(ctx: Context, params: dict[str, Any]) -> Context:
         return ctx
 
     working: Shape = http.Request.from_state(captured.request.get_state())  # type: ignore[no-untyped-call]
+    shape_ctx = Context.from_request(working)
 
     for entry in params.get("prepare", []):
-        _resolve_entry(entry)(working)
+        _resolve_entry(entry)(shape_ctx)
 
     for entry in params.get("fill", []):
-        _resolve_entry(entry)(working, ctx)
+        _resolve_entry(entry)(shape_ctx, ctx)
 
+    shape_ctx.commit()
     apply_shape(working, ctx)
     logger.info("Applied shape from %s for provider %s", captured.id, provider)
     return ctx

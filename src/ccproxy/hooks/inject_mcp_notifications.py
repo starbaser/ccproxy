@@ -18,13 +18,8 @@ Integration flow::
     2. On the next outbound ``/v1/messages`` request matching that session,
        this hook drains all buffered events and synthesizes message pairs::
 
-           {"role": "assistant", "content": [
-               {"type": "tool_use", "id": "toolu_notify_<uuid>",
-                "name": "tasks_get", "input": {"taskId": "task-abc123"}}]}
-
-           {"role": "user", "content": [
-               {"type": "tool_result", "tool_use_id": "toolu_notify_<uuid>",
-                "content": "[{\"type\": \"status\", ...}]"}]}
+           ModelResponse with ToolCallPart (tasks_get)
+           ModelRequest with ToolReturnPart (events JSON)
 
        Pairs are inserted immediately before the final user message.
 
@@ -40,13 +35,13 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import Any
+
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
 
 from ccproxy.mcp.buffer import get_buffer
+from ccproxy.pipeline.context import Context
 from ccproxy.pipeline.hook import hook
-
-if TYPE_CHECKING:
-    from ccproxy.pipeline.context import Context
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +50,7 @@ def inject_mcp_notifications_guard(ctx: Context) -> bool:
     """Guard: skip if no messages or no events for this session."""
     if not ctx.messages:
         return False
+    assert ctx.flow is not None
     session_id = ctx.flow.metadata.get("ccproxy.session_id", "")
     if not session_id:
         return False
@@ -66,12 +62,8 @@ def inject_mcp_notifications_guard(ctx: Context) -> bool:
     writes=["messages"],
 )
 def inject_mcp_notifications(ctx: Context, params: dict[str, Any]) -> Context:
-    """Inject buffered MCP notification events as tool_use/tool_result pairs.
-
-    For each task with buffered events, generates a synthetic assistant
-    tool_use message (tasks_get) paired with a user tool_result containing
-    the events. Inserted before the final user message.
-    """
+    """Inject buffered MCP notification events as tool_use/tool_result pairs."""
+    assert ctx.flow is not None
     session_id = ctx.flow.metadata.get("ccproxy.session_id", "")
     if not session_id:
         return ctx
@@ -80,38 +72,30 @@ def inject_mcp_notifications(ctx: Context, params: dict[str, Any]) -> Context:
     if not drained:
         return ctx
 
-    injected: list[dict[str, Any]] = []
+    injected: list[ModelMessage] = []
     for task_id, events in drained.items():
-        tool_use_id = f"toolu_notify_{uuid.uuid4().hex[:8]}"
+        tool_call_id = f"toolu_notify_{uuid.uuid4().hex[:8]}"
 
-        assistant_msg: dict[str, Any] = {
-            "role": "assistant",
-            "content": [
-                {
-                    "type": "tool_use",
-                    "id": tool_use_id,
-                    "name": "tasks_get",
-                    "input": {"taskId": task_id},
-                }
-            ],
-        }
+        assistant_msg = ModelResponse(parts=[
+            ToolCallPart(
+                tool_name="tasks_get",
+                args={"taskId": task_id},
+                tool_call_id=tool_call_id,
+            ),
+        ])
 
-        user_msg: dict[str, Any] = {
-            "role": "user",
-            "content": [
-                {
-                    "type": "tool_result",
-                    "tool_use_id": tool_use_id,
-                    "content": json.dumps(events),
-                }
-            ],
-        }
+        user_msg = ModelRequest(parts=[
+            ToolReturnPart(
+                tool_name="tasks_get",
+                content=json.dumps(events),
+                tool_call_id=tool_call_id,
+            ),
+        ])
 
         injected.append(assistant_msg)
         injected.append(user_msg)
 
     if injected:
-        # Insert before the final user message
         messages = ctx.messages
         insert_idx = len(messages) - 1 if messages else 0
         ctx.messages = messages[:insert_idx] + injected + messages[insert_idx:]

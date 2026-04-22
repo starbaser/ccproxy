@@ -28,8 +28,10 @@ def extract_available_keys(ctx: Context) -> set[str]:
     """
     keys: set[str] = set()
     _walk_dict(ctx._body, prefix="", out=keys)
-    for name in ctx.flow.request.headers:
-        keys.add(name.lower())
+    req = ctx._resolve_request()
+    if req is not None:
+        for name in req.headers:
+            keys.add(name.lower())
     return keys
 
 

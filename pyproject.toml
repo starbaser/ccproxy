@@ -25,6 +25,7 @@ dependencies = [
   "mitmproxy>=10.0.0",
   "xepor>=0.6.0",
   "humanize>=4.0.0",
+  "pydantic-ai-slim>=1.85.1",
 ]
 
 [project.scripts]

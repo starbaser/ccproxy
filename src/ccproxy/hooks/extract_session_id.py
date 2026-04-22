@@ -44,6 +44,7 @@ def extract_session_id(ctx: Context, params: dict[str, Any]) -> Context:
 
     session_id = parse_session_id(user_id)
     if session_id:
+        assert ctx.flow is not None
         ctx.flow.metadata["ccproxy.session_id"] = session_id
         logger.debug("Extracted session_id: %s", session_id)
 

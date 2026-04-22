@@ -69,32 +69,36 @@ class TestInjectClaudeCodeIdentity:
     def test_none_system_set_to_prefix(self) -> None:
         ctx = _make_ctx(system=None)
         result = inject_claude_code_identity(ctx, {})
-        assert result.system == CLAUDE_CODE_SYSTEM_PREFIX
+        assert len(result.system) == 1
+        assert result.system[0].content == CLAUDE_CODE_SYSTEM_PREFIX
 
     def test_string_system_without_prefix_gets_prepended(self) -> None:
         ctx = _make_ctx(system="You are a helpful assistant.")
         result = inject_claude_code_identity(ctx, {})
-        assert result.system == f"{CLAUDE_CODE_SYSTEM_PREFIX}\n\nYou are a helpful assistant."
+        assert len(result.system) == 2
+        assert result.system[0].content == CLAUDE_CODE_SYSTEM_PREFIX
+        assert result.system[1].content == "You are a helpful assistant."
 
     def test_string_system_with_prefix_unchanged(self) -> None:
         original = f"{CLAUDE_CODE_SYSTEM_PREFIX} Additional instructions."
         ctx = _make_ctx(system=original)
         result = inject_claude_code_identity(ctx, {})
-        assert result.system == original
+        assert len(result.system) == 1
+        assert result.system[0].content == original
 
     def test_empty_string_system_prepends_prefix(self) -> None:
         ctx = _make_ctx(system="")
         result = inject_claude_code_identity(ctx, {})
-        assert result.system == f"{CLAUDE_CODE_SYSTEM_PREFIX}\n\n"
+        assert len(result.system) == 1
+        assert result.system[0].content == CLAUDE_CODE_SYSTEM_PREFIX
 
     def test_list_system_without_prefix_block_gets_prepended(self) -> None:
         blocks = [{"type": "text", "text": "Hello world"}]
         ctx = _make_ctx(system=list(blocks))
         result = inject_claude_code_identity(ctx, {})
-        assert isinstance(result.system, list)
         assert len(result.system) == 2
-        assert result.system[0] == {"type": "text", "text": CLAUDE_CODE_SYSTEM_PREFIX}
-        assert result.system[1] == blocks[0]
+        assert result.system[0].content == CLAUDE_CODE_SYSTEM_PREFIX
+        assert result.system[1].content == "Hello world"
 
     def test_list_system_with_prefix_block_unchanged(self) -> None:
         blocks = [
@@ -103,22 +107,14 @@ class TestInjectClaudeCodeIdentity:
         ]
         ctx = _make_ctx(system=list(blocks))
         result = inject_claude_code_identity(ctx, {})
-        assert result.system == blocks
-
-    def test_list_system_prefix_in_non_text_block_triggers_prepend(self) -> None:
-        # block has prefix in text field but type is not "text" → has_prefix = False → prepend
-        blocks = [{"type": "image", "text": CLAUDE_CODE_SYSTEM_PREFIX}]
-        ctx = _make_ctx(system=list(blocks))
-        result = inject_claude_code_identity(ctx, {})
-        assert isinstance(result.system, list)
         assert len(result.system) == 2
-        assert result.system[0] == {"type": "text", "text": CLAUDE_CODE_SYSTEM_PREFIX}
+        assert result.system[0].content.startswith(CLAUDE_CODE_SYSTEM_PREFIX)
 
     def test_list_system_empty_list_gets_prefix_block(self) -> None:
         ctx = _make_ctx(system=[])
         result = inject_claude_code_identity(ctx, {})
-        assert isinstance(result.system, list)
-        assert result.system == [{"type": "text", "text": CLAUDE_CODE_SYSTEM_PREFIX}]
+        assert len(result.system) == 1
+        assert result.system[0].content == CLAUDE_CODE_SYSTEM_PREFIX
 
     def test_returns_ctx(self) -> None:
         ctx = _make_ctx(system=None)
