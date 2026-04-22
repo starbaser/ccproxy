@@ -38,11 +38,22 @@ class Context:
     """
 
     flow: HTTPFlow | None
+    """Mitmproxy flow (None for shape-only contexts)."""
+
     _body: dict[str, Any] = field(default_factory=dict, repr=False)
+    """Parsed JSON request body, flushed back via commit()."""
+
     _request: http.Request | None = field(default=None, repr=False)
+    """Bare request for shape contexts (no flow)."""
+
     _cached_messages: list[ModelMessage] | None = field(default=None, repr=False)
+    """Lazy-parsed typed messages, populated on first access."""
+
     _cached_system: list[SystemPromptPart] | None = field(default=None, repr=False)
+    """Lazy-parsed typed system prompts, populated on first access."""
+
     _cached_tools: list[ToolDefinition] | None = field(default=None, repr=False)
+    """Lazy-parsed typed tool definitions, populated on first access."""
 
     @classmethod
     def from_flow(cls, flow: HTTPFlow) -> Context:
@@ -104,6 +115,24 @@ class Context:
     @model.setter
     def model(self, value: str) -> None:
         self._body["model"] = value
+
+    @property
+    def stream(self) -> bool:
+        """Whether the request uses SSE streaming."""
+        return bool(self._body.get("stream", False))
+
+    @stream.setter
+    def stream(self, value: bool) -> None:
+        self._body["stream"] = value
+
+    @property
+    def tool_choice(self) -> Any:
+        """Tool choice configuration from the request body."""
+        return self._body.get("tool_choice")
+
+    @tool_choice.setter
+    def tool_choice(self, value: Any) -> None:
+        self._body["tool_choice"] = value
 
     # --- Body metadata ---
 

@@ -22,6 +22,8 @@ import tempfile
 import threading
 from pathlib import Path
 
+from ccproxy.config import get_config
+
 logger = logging.getLogger(__name__)
 
 
@@ -467,8 +469,6 @@ def _warmup_ignore_hosts(ns_pid: int, env: dict[str, str]) -> None:
     throwaway connection attempt primes the path so the real client succeeds.
     """
     try:
-        from ccproxy.config import get_config
-
         hosts = get_config().inspector.mitmproxy.ignore_hosts
     except Exception:
         return

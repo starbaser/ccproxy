@@ -38,6 +38,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from ccproxy.config import get_config, get_config_dir
 from ccproxy.pipeline.hook import hook
 
 if TYPE_CHECKING:
@@ -65,8 +66,6 @@ _refresh_token_stash: str | None = None
 
 
 def _backup_path() -> Path:
-    from ccproxy.config import get_config_dir
-
     return get_config_dir() / "gemini_refresh_token.bak"
 
 
@@ -120,8 +119,6 @@ def gemini_oauth_refresh(ctx: Context, _: dict[str, Any]) -> Context:
         logger.warning("Gemini CLI refresh exited %d: %s", rc, stderr or "(no stderr)")
 
     try:
-        from ccproxy.config import get_config
-
         _token, changed = get_config().refresh_oauth_token("gemini")
         if changed:
             logger.info("Gemini OAuth token refreshed in ccproxy cache")

@@ -16,9 +16,16 @@ class TaskBuffer:
     """Buffer for a single task's events."""
 
     task_id: str
+    """MCP task identifier."""
+
     session_id: str
+    """Claude Code session this task belongs to."""
+
     events: list[dict[str, Any]] = field(default_factory=list)  # pyright: ignore[reportUnknownVariableType]
+    """Buffered notification events for this task."""
+
     last_seen: float = field(default_factory=time.time)
+    """Timestamp of the most recent event (for TTL expiry)."""
 
 
 class NotificationBuffer:

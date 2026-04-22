@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
@@ -24,6 +25,7 @@ from urllib.parse import urlparse
 from mitmproxy.connection import Server
 from mitmproxy.proxy.mode_specs import ReverseMode
 
+from ccproxy.config import get_config
 from ccproxy.flows.store import InspectorMeta, TransformMeta
 
 if TYPE_CHECKING:
@@ -48,8 +50,6 @@ def _get_flow_hosts(flow: HTTPFlow) -> set[str]:
 
 
 def _resolve_transform_target(flow: HTTPFlow, body: dict[str, object] | None = None) -> TransformRoute | None:
-    from ccproxy.config import get_config
-
     config = get_config()
     transforms = config.inspector.transforms
     if not transforms:
@@ -74,14 +74,10 @@ def _resolve_api_key(target: TransformRoute) -> str | None:
     if target.dest_api_key_ref is None:
         return None
 
-    from ccproxy.config import get_config
-
     config = get_config()
     token = config.get_oauth_token(target.dest_api_key_ref)
     if token:
         return token
-
-    import os
 
     return os.environ.get(target.dest_api_key_ref)
 
@@ -128,8 +124,6 @@ def _handle_redirect(flow: HTTPFlow, target: TransformRoute, body: dict[str, obj
     # Resolve model from config, body, or path
     model = target.dest_model or str(body.get("model", ""))
     if not model:
-        import re
-
         match = re.search(r"/models/([^/:]+)", flow.request.path)
         if match:
             model = match.group(1)
@@ -171,6 +165,7 @@ _GEMINI_PROVIDERS = {"gemini", "vertex_ai", "vertex_ai_beta"}
 
 
 def _handle_transform(flow: HTTPFlow, target: TransformRoute, body: dict[str, object]) -> None:
+    # deferred: heavy LiteLLM transform chain
     from ccproxy.lightllm import transform_to_provider
 
     is_streaming = bool(body.get("stream", False))
@@ -255,6 +250,7 @@ def register_transform_routes(router: InspectorRouter) -> None:
 
         if target is None:
             if isinstance(flow.client_conn.proxy_mode, ReverseMode):
+                # deferred: heavy mitmproxy Response import
                 from mitmproxy.http import Response
 
                 flow.response = Response.make(
@@ -292,6 +288,7 @@ def register_transform_routes(router: InspectorRouter) -> None:
             return
 
         try:
+            # deferred: heavy LiteLLM transform chain
             from ccproxy.lightllm import MitmResponseShim, transform_to_openai
 
             shim = MitmResponseShim(flow.response)

@@ -20,9 +20,11 @@ import re
 import uuid
 from typing import TYPE_CHECKING, Any
 
+import httpx
 from mitmproxy.connection import Server
 from mitmproxy.proxy.mode_specs import ReverseMode
 
+from ccproxy.config import get_config
 from ccproxy.flows.store import InspectorMeta, TransformMeta
 from ccproxy.pipeline.hook import hook
 
@@ -66,10 +68,6 @@ def _resolve_project(auth_header: str, ctx: Context | None = None) -> str | None
     global _cached_project
     if _cached_project is not None:
         return _cached_project
-
-    import httpx
-
-    from ccproxy.config import get_config
 
     def _call(token: str) -> httpx.Response:
         return httpx.post(

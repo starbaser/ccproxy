@@ -14,9 +14,11 @@ import logging
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+import httpx
 from mitmproxy import command, flow, http
 from mitmproxy.proxy.mode_specs import ReverseMode, WireGuardMode
 
+from ccproxy.config import get_config
 from ccproxy.flows.store import (
     FLOW_ID_HEADER,
     HttpSnapshot,
@@ -141,6 +143,7 @@ class InspectorAddon:
         transform = getattr(record, "transform", None) if record else None
 
         if transform is not None and transform.is_streaming and transform.mode == "transform":
+            # deferred: heavy LiteLLM provider chain
             from ccproxy.lightllm.dispatch import make_sse_transformer
 
             optional_params = {k: v for k, v in transform.request_data.items() if k != "messages"}
@@ -214,25 +217,19 @@ class InspectorAddon:
     @staticmethod
     def _unwrap_gemini_response(flow: http.HTTPFlow, response: http.Response) -> None:
         """Strip cloudcode-pa's {response: {...}} envelope so the genai SDK sees standard format."""
-        import json as _json
-
         record = flow.metadata.get(InspectorMeta.RECORD)
         transform = getattr(record, "transform", None) if record else None
         if not transform or transform.provider != "gemini" or transform.is_streaming:
             return
         try:
-            body = _json.loads(response.content or b"{}")
+            body = json.loads(response.content or b"{}")
             inner = body.get("response")
             if isinstance(inner, dict):
-                response.content = _json.dumps(inner).encode()
+                response.content = json.dumps(inner).encode()
         except (ValueError, TypeError):
             pass
 
     async def _retry_with_refreshed_token(self, flow: http.HTTPFlow) -> bool:
-        import httpx
-
-        from ccproxy.config import get_config
-
         provider = flow.metadata.get("ccproxy.oauth_provider", "")
         if not provider:
             return False

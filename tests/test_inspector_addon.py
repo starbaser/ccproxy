@@ -868,7 +868,7 @@ class TestRetryWithRefreshedToken:
         mock_config = MagicMock()
         mock_config.refresh_oauth_token.return_value = ("same-token", False)
 
-        with patch("ccproxy.config.get_config", return_value=mock_config):
+        with patch("ccproxy.inspector.addon.get_config", return_value=mock_config):
             addon = InspectorAddon()
             result = await addon._retry_with_refreshed_token(flow)
 
@@ -881,7 +881,7 @@ class TestRetryWithRefreshedToken:
         mock_config = MagicMock()
         mock_config.refresh_oauth_token.return_value = (None, False)
 
-        with patch("ccproxy.config.get_config", return_value=mock_config):
+        with patch("ccproxy.inspector.addon.get_config", return_value=mock_config):
             addon = InspectorAddon()
             result = await addon._retry_with_refreshed_token(flow)
 
@@ -906,8 +906,8 @@ class TestRetryWithRefreshedToken:
         mock_async_client.request = AsyncMock(return_value=mock_response)
 
         with (
-            patch("ccproxy.config.get_config", return_value=mock_config),
-            patch("httpx.AsyncClient", return_value=mock_async_client),
+            patch("ccproxy.inspector.addon.get_config", return_value=mock_config),
+            patch("ccproxy.inspector.addon.httpx.AsyncClient", return_value=mock_async_client),
         ):
             addon = InspectorAddon()
             result = await addon._retry_with_refreshed_token(flow)
@@ -937,8 +937,8 @@ class TestRetryWithRefreshedToken:
         mock_async_client.request = AsyncMock(return_value=mock_response)
 
         with (
-            patch("ccproxy.config.get_config", return_value=mock_config),
-            patch("httpx.AsyncClient", return_value=mock_async_client),
+            patch("ccproxy.inspector.addon.get_config", return_value=mock_config),
+            patch("ccproxy.inspector.addon.httpx.AsyncClient", return_value=mock_async_client),
         ):
             addon = InspectorAddon()
             result = await addon._retry_with_refreshed_token(flow)
@@ -966,8 +966,8 @@ class TestRetryWithRefreshedToken:
         mock_async_client.request = AsyncMock(return_value=mock_response)
 
         with (
-            patch("ccproxy.config.get_config", return_value=mock_config),
-            patch("httpx.AsyncClient", return_value=mock_async_client),
+            patch("ccproxy.inspector.addon.get_config", return_value=mock_config),
+            patch("ccproxy.inspector.addon.httpx.AsyncClient", return_value=mock_async_client),
         ):
             addon = InspectorAddon()
             await addon._retry_with_refreshed_token(flow)
@@ -994,8 +994,8 @@ class TestRetryWithRefreshedToken:
         mock_async_client.request = AsyncMock(return_value=mock_response)
 
         with (
-            patch("ccproxy.config.get_config", return_value=mock_config),
-            patch("httpx.AsyncClient", return_value=mock_async_client),
+            patch("ccproxy.inspector.addon.get_config", return_value=mock_config),
+            patch("ccproxy.inspector.addon.httpx.AsyncClient", return_value=mock_async_client),
         ):
             addon = InspectorAddon()
             await addon._retry_with_refreshed_token(flow)
@@ -1026,8 +1026,8 @@ class TestRetryWithRefreshedToken:
         mock_async_client.request = AsyncMock(return_value=mock_response)
 
         with (
-            patch("ccproxy.config.get_config", return_value=mock_config),
-            patch("httpx.AsyncClient", return_value=mock_async_client) as client_cls,
+            patch("ccproxy.inspector.addon.get_config", return_value=mock_config),
+            patch("ccproxy.inspector.addon.httpx.AsyncClient", return_value=mock_async_client) as client_cls,
         ):
             addon = InspectorAddon()
             await addon._retry_with_refreshed_token(flow)
@@ -1058,8 +1058,8 @@ class TestRetryWithRefreshedToken:
         mock_async_client.request = AsyncMock(return_value=mock_response)
 
         with (
-            patch("ccproxy.config.get_config", return_value=mock_config),
-            patch("httpx.AsyncClient", return_value=mock_async_client) as client_cls,
+            patch("ccproxy.inspector.addon.get_config", return_value=mock_config),
+            patch("ccproxy.inspector.addon.httpx.AsyncClient", return_value=mock_async_client) as client_cls,
         ):
             addon = InspectorAddon()
             await addon._retry_with_refreshed_token(flow)

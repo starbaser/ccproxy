@@ -31,13 +31,28 @@ class HookSpec:
     """Specification for a pipeline hook."""
 
     name: str
+    """Unique hook identifier (function name)."""
+
     handler: HandlerFn
+    """Callable that executes the hook logic."""
+
     guard: GuardFn = always_true
+    """Predicate that decides whether to run this hook."""
+
     reads: frozenset[str] = field(default_factory=frozenset)  # pyright: ignore[reportUnknownVariableType]
+    """Keys this hook reads from the request context."""
+
     writes: frozenset[str] = field(default_factory=frozenset)  # pyright: ignore[reportUnknownVariableType]
+    """Keys this hook writes to the request context."""
+
     params: dict[str, Any] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
+    """YAML-supplied parameters validated against the model."""
+
     priority: int = 0
+    """Execution order index from the config hook list."""
+
     model: type[BaseModel] | None = None
+    """Pydantic model for param validation, if declared."""
 
     def __hash__(self) -> int:
         return hash(self.name)

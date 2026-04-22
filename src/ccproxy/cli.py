@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import json
 import logging
 import os
@@ -12,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 from builtins import print as builtin_print
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -104,6 +106,46 @@ Command = (
     | Annotated[Status, tyro.conf.subcommand(name="status")]
     | Flows
 )
+
+
+@dataclass(frozen=True)
+class InspectorStatus:
+    """Inspector subsystem status."""
+
+    running: bool
+    """Whether the mitmweb inspector is listening."""
+
+    entry_port: int
+    """Reverse proxy entry port."""
+
+    inspect_port: int
+    """mitmweb UI port."""
+
+    inspect_url: str | None
+    """Full inspector UI URL with auth token."""
+
+
+@dataclass(frozen=True)
+class StatusResult:
+    """Structured output from show_status."""
+
+    proxy: bool
+    """Whether the reverse proxy listener is alive."""
+
+    url: str
+    """Proxy base URL."""
+
+    config: dict[str, str]
+    """Discovered config file paths."""
+
+    hooks: dict[str, list[str | dict[str, Any]]]
+    """Hook pipeline configuration."""
+
+    log: str | None
+    """Resolved log file path, if exists."""
+
+    inspector: InspectorStatus
+    """Inspector subsystem status."""
 
 
 def setup_logging(
@@ -275,6 +317,7 @@ def run_with_proxy(
     With --inspect: confines the subprocess in a WireGuard namespace jail
     for transparent traffic capture (all traffic routes through mitmweb).
     """
+    # deferred: heavy inspector chain
     from ccproxy.config import get_config
 
     ccproxy_config_path = config_dir / "ccproxy.yaml"
@@ -291,6 +334,7 @@ def run_with_proxy(
     # Inspect mode: route subprocess traffic through a WireGuard namespace for transparent capture.
     # No base URL env vars — traffic routes through the mitmweb addon pipeline.
     if inspect:
+        # deferred: heavy namespace/slirp4netns chain
         from ccproxy.inspector.namespace import (
             check_namespace_capabilities,
             cleanup_namespace,
@@ -371,6 +415,7 @@ async def _run_inspect(
 
     Returns 0 on clean shutdown.
     """
+    # deferred: heavy inspector startup chain
     import asyncio
 
     from ccproxy.config import get_config
@@ -416,6 +461,7 @@ async def _run_inspect(
     loop.add_signal_handler(signal.SIGTERM, master.shutdown)
 
     if get_config().verify_readiness_on_startup:
+        # deferred: conditional readiness check path
         import contextlib as _contextlib
 
         from ccproxy.inspector.readiness import verify_or_shutdown
@@ -463,8 +509,6 @@ async def _run_inspect(
         await master_task
 
     finally:
-        import contextlib
-
         master.shutdown()  # type: ignore[no-untyped-call]
         with contextlib.suppress(Exception):
             await master_task
@@ -485,6 +529,7 @@ def start_server(
 
     Runs in the foreground. Use process-compose or systemd for supervision.
     """
+    # deferred: heavy inspector startup chain
     import asyncio
 
     from ccproxy.config import get_config
@@ -549,6 +594,7 @@ def view_logs(follow: bool = False, lines: int = 100, config_dir: Path | None = 
             sys.exit(0)
 
     if config_dir:
+        # deferred: only needed for log file path
         from ccproxy.config import get_config
 
         log_path = get_config().resolved_log_file
@@ -579,6 +625,7 @@ def show_status(
     check_inspect: bool = False,
 ) -> None:
     """Show ccproxy status."""
+    # deferred: only needed for TCP probe
     import socket
 
     def _check_alive(check_host: str, check_port: int, timeout: float = 0.5) -> bool:
@@ -628,32 +675,33 @@ def show_status(
             inspect_url = base
 
     log_path = cfg.resolved_log_file
-    status_data: dict[str, Any] = {
-        "proxy": proxy_running,
-        "url": proxy_url,
-        "config": config_paths,
-        "hooks": hooks,
-        "log": str(log_path) if log_path is not None and log_path.exists() else None,
-        "inspector": {
-            "running": combined_running,
-            "entry_port": main_port,
-            "inspect_port": inspect_port,
-            "inspect_url": inspect_url,
-        },
-    }
+    inspector_status = InspectorStatus(
+        running=combined_running,
+        entry_port=main_port,
+        inspect_port=inspect_port,
+        inspect_url=inspect_url,
+    )
+    status = StatusResult(
+        proxy=proxy_running,
+        url=proxy_url,
+        config=config_paths,
+        hooks=hooks,
+        log=str(log_path) if log_path is not None and log_path.exists() else None,
+        inspector=inspector_status,
+    )
 
     # Health check mode: exit with bitmask code indicating failed services
     # Bit 0 (1): proxy, Bit 1 (2): inspect stack
     if check_proxy or check_inspect:
         exit_code = 0
-        if check_proxy and not proxy_running:
+        if check_proxy and not status.proxy:
             exit_code |= 1
-        if check_inspect and not combined_running:
+        if check_inspect and not status.inspector.running:
             exit_code |= 2
         sys.exit(exit_code)
 
     if json_output:
-        builtin_print(json.dumps(status_data, indent=2))
+        builtin_print(json.dumps(dataclasses.asdict(status), indent=2))
     else:
         console = Console()
 
@@ -661,44 +709,41 @@ def show_status(
         table.add_column("Key", style="white", width=15)
         table.add_column("Value", style="yellow")
 
-        url = status_data.get("url") or "http://127.0.0.1:4000"
-        if status_data["proxy"]:
+        url = status.url or "http://127.0.0.1:4000"
+        if status.proxy:
             proxy_status = f"[cyan]{url}[/cyan] [green]true[/green]"
         else:
             proxy_status = f"[dim]{url}[/dim] [red]false[/red]"
         table.add_row("proxy", proxy_status)
 
-        inspector_info = status_data["inspector"]
-
-        if inspector_info["running"]:
-            entry_port = inspector_info["entry_port"]
-            inspect_status = f"[green]listening[/green]@[cyan]{entry_port}[/cyan]"
-            if inspector_info.get("inspect_url"):
-                inspect_status += f"\n[green]ui[/green] → [cyan]{inspector_info['inspect_url']}[/cyan]"
+        if status.inspector.running:
+            inspect_status = f"[green]listening[/green]@[cyan]{status.inspector.entry_port}[/cyan]"
+            if status.inspector.inspect_url:
+                inspect_status += f"\n[green]ui[/green] → [cyan]{status.inspector.inspect_url}[/cyan]"
         else:
             inspect_status = "[dim]stopped[/dim]"
 
         table.add_row("inspector", inspect_status)
 
-        if status_data["config"]:
-            config_display = "\n".join(f"[cyan]{key}[/cyan]: {value}" for key, value in status_data["config"].items())
+        if status.config:
+            config_display = "\n".join(f"[cyan]{key}[/cyan]: {value}" for key, value in status.config.items())
         else:
             config_display = "[red]No config files found[/red]"
         table.add_row("config", config_display)
 
-        log_display = status_data["log"] if status_data["log"] else "[yellow]No log file[/yellow]"
+        log_display = status.log if status.log else "[yellow]No log file[/yellow]"
         table.add_row("log", log_display)
 
         console.print(Panel(table, title="[bold]ccproxy Status[/bold]", border_style="blue"))
 
-        if status_data["hooks"]:
+        if status.hooks:
+            # deferred: heavy pipeline rendering chain
             from ccproxy.pipeline.executor import PipelineExecutor
             from ccproxy.pipeline.loader import load_hooks
             from ccproxy.pipeline.render import render_pipeline
 
-            hooks_cfg = status_data["hooks"]
-            inbound_specs = load_hooks(hooks_cfg.get("inbound", []))
-            outbound_specs = load_hooks(hooks_cfg.get("outbound", []))
+            inbound_specs = load_hooks(status.hooks.get("inbound", []))
+            outbound_specs = load_hooks(status.hooks.get("outbound", []))
             inbound_exec = PipelineExecutor(hooks=inbound_specs)
             outbound_exec = PipelineExecutor(hooks=outbound_specs)
             pipeline = render_pipeline(inbound_exec, outbound_exec)
@@ -722,6 +767,7 @@ def main(
     Transparent mitmproxy-based pipeline with DAG-driven hooks for OAuth
     injection, model transformation, and identity management.
     """
+    # deferred: CLI entry point, avoid eager config loading
     from ccproxy.config import get_config_dir
 
     config_dir = config if config is not None else get_config_dir()

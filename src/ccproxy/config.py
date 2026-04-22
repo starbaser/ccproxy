@@ -481,7 +481,10 @@ class CCProxyConfig(BaseSettings):
             # Check if api_base matches any destination pattern
             for dest in oauth_source.destinations:
                 if dest.lower() in api_base_lower:
-                    logger.debug(f"Matched api_base '{api_base}' to provider '{provider}' via destination '{dest}'")
+                    logger.debug(
+                        "Matched api_base '%s' to provider '%s' via destination '%s'",
+                        api_base, provider, dest,
+                    )
                     return provider
 
         return None
@@ -505,19 +508,19 @@ class CCProxyConfig(BaseSettings):
 
             token, user_agent = result
             loaded_tokens[provider] = token
-            logger.debug(f"Successfully loaded OAuth token for provider '{provider}'")
+            logger.debug("Successfully loaded OAuth token for provider '%s'", provider)
 
             if user_agent:
                 loaded_user_agents[provider] = user_agent
-                logger.debug(f"Loaded custom User-Agent for provider '{provider}': {user_agent}")
+                logger.debug("Loaded custom User-Agent for provider '%s': %s", provider, user_agent)
 
         self._oat_values = loaded_tokens
         self._oat_user_agents = loaded_user_agents
 
         if errors and loaded_tokens:
             logger.warning(
-                f"Loaded OAuth tokens for {len(loaded_tokens)} provider(s), "
-                f"but {len(errors)} provider(s) failed to load"
+                "Loaded OAuth tokens for %d provider(s), but %d provider(s) failed to load",
+                len(loaded_tokens), len(errors),
             )
 
         if errors and not loaded_tokens:
@@ -534,8 +537,6 @@ class CCProxyConfig(BaseSettings):
         instance = cls(ccproxy_config_path=yaml_path, **kwargs)
 
         if yaml_path.exists():
-            import os
-
             with yaml_path.open() as f:
                 data: dict[str, Any] = yaml.safe_load(f) or {}
 
@@ -604,11 +605,11 @@ def get_config() -> CCProxyConfig:
         with _config_lock:
             if _config_instance is None:
                 config_path = get_config_dir()
-                logger.info(f"Using config directory: {config_path}")
+                logger.info("Using config directory: %s", config_path)
 
                 ccproxy_yaml = config_path / "ccproxy.yaml"
                 if ccproxy_yaml.exists():
-                    logger.info(f"Loading config from: {ccproxy_yaml}")
+                    logger.info("Loading config from: %s", ccproxy_yaml)
                     _config_instance = CCProxyConfig.from_yaml(ccproxy_yaml)
                 else:
                     logger.info("No ccproxy.yaml found, using defaults")

@@ -6,6 +6,7 @@ from reads/writes declarations, with priority tie-breaking.
 
 from __future__ import annotations
 
+import heapq
 from collections import defaultdict
 from graphlib import CycleError
 from typing import TYPE_CHECKING
@@ -65,8 +66,6 @@ class HookDAG:
         Raises:
             CycleError: If dependencies form a cycle
         """
-        import heapq
-
         deps = self._build_dependencies()
 
         in_degree = {name: len(dep_set) for name, dep_set in deps.items()}

@@ -15,15 +15,24 @@ from typing import Any, Literal
 FLOW_ID_HEADER = "x-ccproxy-flow-id"
 
 
-@dataclass
+@dataclass(frozen=True)
 class AuthMeta:
     """Auth decision record."""
 
     provider: str
+    """Provider name (e.g. 'anthropic', 'gemini')."""
+
     credential: str
+    """Resolved credential value (token or API key)."""
+
     auth_header: str
+    """HTTP header name used for authentication."""
+
     injected: bool = False
+    """Whether the credential was injected by the OAuth hook."""
+
     original_key: str = ""
+    """Original API key before sentinel substitution."""
 
 
 @dataclass
@@ -31,32 +40,53 @@ class OtelMeta:
     """OTel span lifecycle."""
 
     span: Any = None
+    """Active OpenTelemetry span for this flow."""
+
     ended: bool = False
+    """Whether the span has been finished."""
 
 
-@dataclass
+@dataclass(frozen=True)
 class HttpSnapshot:
     """Frozen copy of an HTTP message (request or response)."""
 
     headers: dict[str, str]
+    """HTTP headers as a flat key-value mapping."""
+
     body: bytes
+    """Raw HTTP body content."""
+
     method: str | None = None
+    """HTTP method (request snapshots only)."""
+
     url: str | None = None
+    """Full URL (request snapshots only)."""
+
     status_code: int | None = None
+    """HTTP status code (response snapshots only)."""
 
 
 ClientRequest = HttpSnapshot
 
 
-@dataclass
+@dataclass(frozen=True)
 class TransformMeta:
     """Transform context for the response phase."""
 
     provider: str
+    """Destination provider name for lightllm dispatch."""
+
     model: str
+    """Destination model name."""
+
     request_data: dict[str, Any]
+    """Stashed request body for response-phase transform."""
+
     is_streaming: bool
+    """Whether the request uses SSE streaming."""
+
     mode: Literal["redirect", "transform"] = "redirect"
+    """Transform mode: redirect preserves body, transform rewrites it."""
 
 
 @dataclass
@@ -64,11 +94,22 @@ class FlowRecord:
     """Cross-pass state for a single logical request through the inspector."""
 
     direction: Literal["inbound"]
+    """Traffic direction (always inbound)."""
+
     auth: AuthMeta | None = None
+    """Auth decision from the OAuth hook, if any."""
+
     otel: OtelMeta | None = None
+    """OTel span lifecycle state."""
+
     client_request: HttpSnapshot | None = None
+    """Pre-pipeline client request snapshot."""
+
     provider_response: HttpSnapshot | None = None
+    """Raw provider response before transforms."""
+
     transform: TransformMeta | None = None
+    """Transform context bridging request to response phase."""
 
 
 class InspectorMeta:
