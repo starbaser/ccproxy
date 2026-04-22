@@ -37,6 +37,7 @@ def apply_shape(shape: Shape, ctx: Context) -> None:
     injected by the inbound pipeline. Only stamps shaping-relevant
     headers and body content from the shape.
     """
+    assert ctx.flow is not None
     target = ctx.flow.request
 
     preserved = {

@@ -3,6 +3,15 @@
 import json
 from unittest.mock import MagicMock
 
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
+
 from ccproxy.hooks.inject_mcp_notifications import (
     inject_mcp_notifications,
     inject_mcp_notifications_guard,
@@ -69,7 +78,8 @@ def test_noop_empty_buffer():
     messages = [user_msg("hello")]
     ctx = make_ctx(messages=messages, session_id="sess-1")
     result = inject_mcp_notifications(ctx, {})
-    assert result.messages == messages
+    assert len(result.messages) == 1
+    assert isinstance(result.messages[0], ModelRequest)
 
 
 def test_noop_no_session_id():
@@ -77,7 +87,7 @@ def test_noop_no_session_id():
     ctx = make_ctx(messages=messages, session_id=None)
     get_buffer().append("task-1", "sess-1", {"type": "output"})
     result = inject_mcp_notifications(ctx, {})
-    assert result.messages == messages
+    assert len(result.messages) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -105,21 +115,22 @@ def test_injects_pair_for_single_task():
     user = result.messages[1]
     final = result.messages[2]
 
-    assert assistant["role"] == "assistant"
-    assert len(assistant["content"]) == 1
-    block = assistant["content"][0]
-    assert block["type"] == "tool_use"
-    assert block["name"] == "tasks_get"
-    assert block["input"] == {"taskId": "task-1"}
+    assert isinstance(assistant, ModelResponse)
+    assert len(assistant.parts) == 1
+    tc = assistant.parts[0]
+    assert isinstance(tc, ToolCallPart)
+    assert tc.tool_name == "tasks_get"
+    assert tc.args == {"taskId": "task-1"}
 
-    assert user["role"] == "user"
-    assert len(user["content"]) == 1
-    tr = user["content"][0]
-    assert tr["type"] == "tool_result"
-    assert tr["tool_use_id"] == block["id"]
-    assert json.loads(tr["content"]) == events
+    assert isinstance(user, ModelRequest)
+    assert len(user.parts) == 1
+    tr = user.parts[0]
+    assert isinstance(tr, ToolReturnPart)
+    assert tr.tool_call_id == tc.tool_call_id
+    assert json.loads(tr.content) == events
 
-    assert final == user_msg("run it")
+    assert isinstance(final, ModelRequest)
+    assert isinstance(final.parts[0], UserPromptPart)
 
 
 def test_buffer_drained_after_inject():
@@ -140,10 +151,12 @@ def test_session_isolation():
     ctx = make_ctx(messages=[user_msg("from A")], session_id="sess-A")
     result = inject_mcp_notifications(ctx, {})
 
-    # sess-A's events injected, sess-B's preserved
     assert len(result.messages) == 3
-    block = result.messages[0]["content"][0]
-    assert block["input"] == {"taskId": "task-a"}
+    assistant = result.messages[0]
+    assert isinstance(assistant, ModelResponse)
+    tc = assistant.parts[0]
+    assert isinstance(tc, ToolCallPart)
+    assert tc.args == {"taskId": "task-a"}
 
     assert buf.has_events_for_session("sess-B")
     assert not buf.has_events_for_session("sess-A")
@@ -159,12 +172,19 @@ def test_multiple_task_ids_same_session():
 
     # 2 tasks x 2 messages each + 1 original = 5
     assert len(result.messages) == 5
-    assert result.messages[-1] == user_msg("go")
+    assert isinstance(result.messages[-1], ModelRequest)
 
-    roles = [m["role"] for m in result.messages[:-1]]
-    assert roles == ["assistant", "user", "assistant", "user"]
+    # Alternating ModelResponse / ModelRequest for injected pairs
+    assert isinstance(result.messages[0], ModelResponse)
+    assert isinstance(result.messages[1], ModelRequest)
+    assert isinstance(result.messages[2], ModelResponse)
+    assert isinstance(result.messages[3], ModelRequest)
 
-    task_ids = {result.messages[i]["content"][0]["input"]["taskId"] for i in [0, 2]}
+    task_ids = set()
+    for i in [0, 2]:
+        tc = result.messages[i].parts[0]
+        assert isinstance(tc, ToolCallPart)
+        task_ids.add(tc.args["taskId"])
     assert task_ids == {"task-1", "task-2"}
 
 
@@ -179,10 +199,13 @@ def test_insertion_before_final_user_message():
     ctx = make_ctx(messages=messages, session_id="sess-1")
     result = inject_mcp_notifications(ctx, {})
 
-    assert result.messages[:3] == prior
-    assert result.messages[-1] == final
-    assert result.messages[3]["role"] == "assistant"
-    assert result.messages[4]["role"] == "user"
+    # First 3 are original prior messages, then 2 injected, then final
+    assert len(result.messages) == 6
+    assert isinstance(result.messages[3], ModelResponse)  # injected assistant
+    assert isinstance(result.messages[4], ModelRequest)    # injected user
+    final_msg = result.messages[-1]
+    assert isinstance(final_msg, ModelRequest)
+    assert isinstance(final_msg.parts[0], UserPromptPart)
 
 
 def test_tool_use_id_format():
@@ -192,8 +215,14 @@ def test_tool_use_id_format():
     ctx = make_ctx(messages=[user_msg()], session_id="sess-1")
     result = inject_mcp_notifications(ctx, {})
 
-    tool_use_id = result.messages[0]["content"][0]["id"]
-    assert tool_use_id.startswith("toolu_")
+    assistant = result.messages[0]
+    assert isinstance(assistant, ModelResponse)
+    tc = assistant.parts[0]
+    assert isinstance(tc, ToolCallPart)
+    assert tc.tool_call_id.startswith("toolu_")
 
-    tr_id = result.messages[1]["content"][0]["tool_use_id"]
-    assert tr_id == tool_use_id
+    user = result.messages[1]
+    assert isinstance(user, ModelRequest)
+    tr = user.parts[0]
+    assert isinstance(tr, ToolReturnPart)
+    assert tr.tool_call_id == tc.tool_call_id

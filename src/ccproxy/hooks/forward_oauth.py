@@ -46,6 +46,7 @@ def forward_oauth(ctx: Context, _: dict[str, Any]) -> Context:
             )
 
         _inject_token(ctx, provider, token)
+        assert ctx.flow is not None
         ctx.flow.metadata["ccproxy.oauth_provider"] = provider
         logger.info("OAuth token injected for provider '%s' (sentinel)", provider)
         return ctx
@@ -54,6 +55,7 @@ def forward_oauth(ctx: Context, _: dict[str, Any]) -> Context:
         cached_provider, cached_token = _try_cached_token()
         if cached_provider and cached_token:
             _inject_token(ctx, cached_provider, cached_token)
+            assert ctx.flow is not None
             ctx.flow.metadata["ccproxy.oauth_provider"] = cached_provider
             logger.info("OAuth token injected for provider '%s' (cached)", cached_provider)
 
@@ -98,4 +100,5 @@ def _inject_token(ctx: Context, provider: str, token: str) -> None:
         if sentinel != target_header:
             ctx.set_header(sentinel, "")
 
+    assert ctx.flow is not None
     ctx.flow.metadata["ccproxy.oauth_injected"] = True

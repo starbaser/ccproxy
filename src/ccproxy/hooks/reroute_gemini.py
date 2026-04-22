@@ -41,6 +41,7 @@ _cached_project: str | None = None
 
 def _get_flow_host(ctx: Context) -> str:
     """Resolve the target hostname from the flow."""
+    assert ctx.flow is not None
     host = ctx.flow.request.headers.get("host", "")
     if host:
         return str(host).split(":")[0]
@@ -49,6 +50,7 @@ def _get_flow_host(ctx: Context) -> str:
 
 def reroute_gemini_guard(ctx: Context) -> bool:
     """Guard: only run for WireGuard flows targeting generativelanguage.googleapis.com."""
+    assert ctx.flow is not None
     if isinstance(ctx.flow.client_conn.proxy_mode, ReverseMode):
         return False
     return _get_flow_host(ctx) == _GEMINI_API_HOST
@@ -109,6 +111,7 @@ def _resolve_project(auth_header: str, ctx: Context | None = None) -> str | None
 )
 def reroute_gemini(ctx: Context, _: dict[str, Any]) -> Context:
     """Reroute Gemini SDK traffic to cloudcode-pa v1internal endpoint."""
+    assert ctx.flow is not None
     flow = ctx.flow
     path = flow.request.path.split("?")[0]
 

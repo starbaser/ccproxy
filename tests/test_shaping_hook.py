@@ -185,7 +185,9 @@ class TestShapeHook:
 
         body = json.loads(flow.request.content or b"{}")
         assert body["model"] == "m"
-        assert body["messages"] == [{"role": "user", "content": "incoming"}]
+        # Messages round-trip through typed parse/serialize: string content
+        # becomes Anthropic block format
+        assert body["messages"] == [{"role": "user", "content": [{"type": "text", "text": "incoming"}]}]
         assert body["envelope_field"] == "v"
 
     def test_default_params_means_pure_seed_shape(self, store: ShapeStore) -> None:

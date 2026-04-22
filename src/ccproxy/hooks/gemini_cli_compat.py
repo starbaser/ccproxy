@@ -39,6 +39,7 @@ def gemini_cli_compat_guard(ctx: Context) -> bool:
 )
 def gemini_cli_compat(ctx: Context, _: dict[str, Any]) -> Context:
     """Rewrite SDK headers to match the Gemini CLI fingerprint."""
+    assert ctx.flow is not None
     path = ctx.flow.request.path.split("?")[0]
     model_match = _MODEL_RE.search(path)
     model = model_match.group(1) if model_match else "unknown"

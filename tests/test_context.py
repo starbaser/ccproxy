@@ -5,7 +5,17 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock
 
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    SystemPromptPart,
+    TextPart,
+    UserPromptPart,
+)
+from pydantic_ai.tools import ToolDefinition
+
 from ccproxy.pipeline.context import Context
+from ccproxy.pipeline.types import CachedSystemPromptPart
 
 _DEFAULT_BODY = {"model": "test", "messages": [], "metadata": {}}
 
@@ -28,7 +38,11 @@ class TestContextFromFlow:
         msgs = [{"role": "user", "content": "hi"}]
         flow = _make_flow(body={"model": "m", "messages": msgs})
         ctx = Context.from_flow(flow)
-        assert ctx.messages == msgs
+        assert len(ctx.messages) == 1
+        assert isinstance(ctx.messages[0], ModelRequest)
+        part = ctx.messages[0].parts[0]
+        assert isinstance(part, UserPromptPart)
+        assert part.content == "hi"
 
     def test_parses_metadata_from_body(self):
         flow = _make_flow(body={"model": "m", "messages": [], "metadata": {"key": "val"}})
@@ -38,7 +52,8 @@ class TestContextFromFlow:
     def test_parses_system_from_body(self):
         flow = _make_flow(body={"model": "m", "messages": [], "system": "Be helpful."})
         ctx = Context.from_flow(flow)
-        assert ctx.system == "Be helpful."
+        assert len(ctx.system) == 1
+        assert ctx.system[0].content == "Be helpful."
 
     def test_missing_body_fields_use_defaults(self):
         flow = _make_flow(body={"model": "", "messages": [], "metadata": {}})
@@ -46,7 +61,7 @@ class TestContextFromFlow:
         assert ctx.model == ""
         assert ctx.messages == []
         assert ctx.metadata == {}
-        assert ctx.system is None
+        assert ctx.system == []
 
     def test_invalid_json_body_uses_empty_body(self):
         flow = MagicMock()
@@ -80,27 +95,51 @@ class TestBodyProperties:
 
     def test_messages_getter_and_setter(self):
         ctx = Context.from_flow(_make_flow())
-        msgs = [{"role": "user", "content": "hello"}]
+        msgs = [ModelRequest(parts=[UserPromptPart(content="hello")])]
         ctx.messages = msgs
-        assert ctx.messages == msgs
+        assert len(ctx.messages) == 1
+        assert isinstance(ctx.messages[0], ModelRequest)
 
-    def test_system_string_setter(self):
+    def test_messages_setter_writes_to_body(self):
         ctx = Context.from_flow(_make_flow())
-        ctx.system = "You are helpful."
-        assert ctx.system == "You are helpful."
+        ctx.messages = [ModelRequest(parts=[UserPromptPart(content="test")])]
+        assert isinstance(ctx._body["messages"], list)
+        assert ctx._body["messages"][0]["role"] == "user"
 
-    def test_system_list_setter(self):
+    def test_system_setter(self):
         ctx = Context.from_flow(_make_flow())
-        blocks = [{"type": "text", "text": "Be helpful."}]
-        ctx.system = blocks
-        assert ctx.system == blocks
+        ctx.system = [SystemPromptPart(content="You are helpful.")]
+        assert len(ctx.system) == 1
+        assert ctx.system[0].content == "You are helpful."
 
-    def test_system_none_removes_key(self):
-        flow = _make_flow(body={"model": "m", "messages": [], "system": "existing"})
+    def test_system_setter_writes_to_body(self):
+        ctx = Context.from_flow(_make_flow())
+        ctx.system = [SystemPromptPart(content="Be helpful.")]
+        assert ctx._body["system"] == "Be helpful."
+
+    def test_system_cached_writes_cache_control(self):
+        ctx = Context.from_flow(_make_flow())
+        ctx.system = [CachedSystemPromptPart(content="cached", cache_control={"type": "ephemeral"})]
+        system_body = ctx._body["system"]
+        assert isinstance(system_body, list)
+        assert system_body[0]["cache_control"] == {"type": "ephemeral"}
+
+    def test_system_empty_list(self):
+        flow = _make_flow(body={"model": "m", "messages": []})
         ctx = Context.from_flow(flow)
-        ctx.system = None
-        assert ctx.system is None
-        assert "system" not in ctx._body
+        assert ctx.system == []
+
+    def test_tools_getter_and_setter(self):
+        ctx = Context.from_flow(_make_flow(body={"model": "m", "messages": [], "tools": [
+            {"name": "read_file", "description": "Read", "input_schema": {"type": "object"}},
+        ]}))
+        assert len(ctx.tools) == 1
+        assert ctx.tools[0].name == "read_file"
+
+    def test_tools_setter_writes_to_body(self):
+        ctx = Context.from_flow(_make_flow())
+        ctx.tools = [ToolDefinition(name="test", description="Test tool")]
+        assert ctx._body["tools"][0]["name"] == "test"
 
     def test_metadata_getter_and_setter(self):
         ctx = Context.from_flow(_make_flow())
@@ -184,21 +223,58 @@ class TestCommit:
     def test_commit_includes_system_when_set(self):
         flow = _make_flow()
         ctx = Context.from_flow(flow)
-        ctx.system = "Be helpful."
+        ctx.system = [SystemPromptPart(content="Be helpful.")]
         ctx.commit()
         written = json.loads(flow.request.content)
         assert written["system"] == "Be helpful."
 
-    def test_commit_excludes_system_when_none(self):
-        flow = _make_flow(body={"model": "m", "messages": [], "system": "original"})
+    def test_commit_round_trips_messages(self):
+        flow = _make_flow(body={"model": "m", "messages": [
+            {"role": "user", "content": [{"type": "text", "text": "hello"}]},
+            {"role": "assistant", "content": [{"type": "text", "text": "hi"}]},
+        ]})
         ctx = Context.from_flow(flow)
-        ctx.system = None
+        # Access typed messages (triggers parse)
+        msgs = ctx.messages
+        assert len(msgs) == 2
+        # Commit (triggers serialize back)
+        ctx.messages = msgs
         ctx.commit()
         written = json.loads(flow.request.content)
-        assert "system" not in written
+        assert len(written["messages"]) == 2
+        assert written["messages"][0]["role"] == "user"
+        assert written["messages"][1]["role"] == "assistant"
 
     def test_header_mutations_do_not_require_commit(self):
         flow = _make_flow(headers={"x-orig": "a"})
         ctx = Context.from_flow(flow)
         ctx.set_header("x-new", "b")
         assert flow.request.headers["x-new"] == "b"
+
+
+class TestFromRequest:
+    def test_from_request_wraps_bare_request(self):
+        req = MagicMock()
+        req.content = json.dumps({"model": "test", "messages": [{"role": "user", "content": "hi"}]}).encode()
+        req.headers = {}
+        ctx = Context.from_request(req)
+        assert ctx.flow is None
+        assert ctx.model == "test"
+        assert len(ctx.messages) == 1
+
+    def test_from_request_commit_writes_to_request(self):
+        req = MagicMock()
+        req.content = json.dumps({"model": "old", "messages": []}).encode()
+        req.headers = {}
+        ctx = Context.from_request(req)
+        ctx.model = "new"
+        ctx.commit()
+        written = json.loads(req.content)
+        assert written["model"] == "new"
+
+    def test_flow_id_empty_for_request_context(self):
+        req = MagicMock()
+        req.content = b"{}"
+        req.headers = {}
+        ctx = Context.from_request(req)
+        assert ctx.flow_id == ""
