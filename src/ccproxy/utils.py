@@ -90,6 +90,7 @@ def find_available_port(start: int = 49152, end: int = 65535) -> int:
     raise RuntimeError(f"Could not find available port in range {start}-{end}")
 
 
+# TODO: this fucking sucks
 def calculate_duration_ms(start_time: Any, end_time: Any) -> float:
     """Calculate duration in milliseconds between two timestamps.
 
@@ -111,6 +112,7 @@ def calculate_duration_ms(start_time: Any, end_time: Any) -> float:
 console = Console()
 
 
+# TODO: this is only used in tests
 def debug_table(
     obj: Any,
     title: str | None = None,
