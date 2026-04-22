@@ -9,7 +9,7 @@ import pytest
 from mitmproxy import http
 from mitmproxy.test import tflow
 
-from ccproxy.inspector.flow_store import FlowRecord, HttpSnapshot, InspectorMeta
+from ccproxy.flows.store import FlowRecord, HttpSnapshot, InspectorMeta
 from ccproxy.inspector.multi_har_saver import MultiHARSaver
 
 

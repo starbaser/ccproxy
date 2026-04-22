@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from ccproxy.inspector.flow_store import InspectorMeta
+from ccproxy.flows.store import InspectorMeta
 from ccproxy.pipeline.executor import PipelineExecutor
 from ccproxy.pipeline.loader import load_hooks
 

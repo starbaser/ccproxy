@@ -6,7 +6,7 @@ import json
 from unittest.mock import MagicMock
 
 from ccproxy.inspector.contentview import ClientRequestContentview, ProviderResponseContentview
-from ccproxy.inspector.flow_store import FlowRecord, HttpSnapshot, InspectorMeta
+from ccproxy.flows.store import FlowRecord, HttpSnapshot, InspectorMeta
 
 
 def _make_cr(

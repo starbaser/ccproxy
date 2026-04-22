@@ -5,8 +5,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-import ccproxy.inspector.flow_store as fs
-from ccproxy.inspector.flow_store import (
+import ccproxy.flows.store as fs
+from ccproxy.flows.store import (
     _STORE_TTL,
     FLOW_ID_HEADER,
     AuthMeta,

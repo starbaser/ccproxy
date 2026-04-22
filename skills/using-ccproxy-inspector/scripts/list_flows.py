@@ -44,7 +44,7 @@ def _make_client():
     else:
         token = ""
 
-    from ccproxy.tools.flows import MitmwebClient
+    from ccproxy.flows import MitmwebClient
 
     return MitmwebClient(host=host, port=port, token=token)
 

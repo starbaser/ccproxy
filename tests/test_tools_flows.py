@@ -1,4 +1,4 @@
-"""Tests for MitmwebClient and the flows CLI subcommands in ccproxy.tools.flows."""
+"""Tests for MitmwebClient and the flows CLI subcommands in ccproxy.flows."""
 
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from ccproxy.tools.flows import (
+from ccproxy.flows import (
     FlowsClear,
     FlowsCompare,
     FlowsDiff,
@@ -502,7 +502,7 @@ class TestDoDump:
 class TestDoDiff:
     """Tests for _do_diff — sliding window over the flow set."""
 
-    @patch("ccproxy.tools.flows._git_diff")
+    @patch("ccproxy.flows._git_diff")
     def test_two_flows_one_diff(self, mock_gd: MagicMock) -> None:
         client = MagicMock()
         client.get_request_body.side_effect = [
@@ -516,7 +516,7 @@ class TestDoDiff:
         assert client.get_request_body.call_count == 2
         mock_gd.assert_called_once()
 
-    @patch("ccproxy.tools.flows._git_diff")
+    @patch("ccproxy.flows._git_diff")
     def test_three_flows_two_diffs(self, mock_gd: MagicMock) -> None:
         client = MagicMock()
         client.get_request_body.side_effect = [
@@ -532,7 +532,7 @@ class TestDoDiff:
         assert client.get_request_body.call_count == 4
         assert mock_gd.call_count == 2
 
-    @patch("ccproxy.tools.flows._git_diff")
+    @patch("ccproxy.flows._git_diff")
     def test_identical_bodies_delegates_to_git(self, mock_gd: MagicMock) -> None:
         client = MagicMock()
         body = b'{"model": "claude"}'
@@ -573,7 +573,7 @@ class TestDoCompare:
             entries.append({"request": cli, "response": {}})
         return json.dumps({"log": {"pages": pages, "entries": entries}})
 
-    @patch("ccproxy.tools.flows._git_diff")
+    @patch("ccproxy.flows._git_diff")
     def test_single_flow_shows_diff(self, mock_gd: MagicMock) -> None:
         client = MagicMock()
         client.dump_har.return_value = self._make_har_json(
@@ -593,7 +593,7 @@ class TestDoCompare:
         client.dump_har.assert_called_once_with(["abc"])
         mock_gd.assert_called()
 
-    @patch("ccproxy.tools.flows._git_diff")
+    @patch("ccproxy.flows._git_diff")
     def test_url_change_shown(self, mock_gd: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
         client = MagicMock()
         client.dump_har.return_value = self._make_har_json(
@@ -613,7 +613,7 @@ class TestDoCompare:
         captured = capsys.readouterr()
         assert "URL change" in captured.out
 
-    @patch("ccproxy.tools.flows._git_diff")
+    @patch("ccproxy.flows._git_diff")
     def test_multiple_flows_shows_one_diff_per_flow(self, mock_gd: MagicMock) -> None:
         client = MagicMock()
         client.dump_har.return_value = self._make_har_json(
@@ -653,7 +653,7 @@ class TestDoClear:
         console = MagicMock()
         client = MagicMock()
 
-        from ccproxy.tools.flows import _do_clear
+        from ccproxy.flows import _do_clear
 
         _do_clear(console, client, [{"id": "a"}], clear_all=True)
 
@@ -664,7 +664,7 @@ class TestDoClear:
         console = MagicMock()
         client = MagicMock()
 
-        from ccproxy.tools.flows import _do_clear
+        from ccproxy.flows import _do_clear
 
         _do_clear(console, client, [{"id": "a"}, {"id": "b"}], clear_all=False)
 
@@ -677,7 +677,7 @@ class TestDoClear:
         console = MagicMock()
         client = MagicMock()
 
-        from ccproxy.tools.flows import _do_clear
+        from ccproxy.flows import _do_clear
 
         _do_clear(console, client, [], clear_all=False)
 
@@ -689,9 +689,9 @@ class TestHandleFlows:
     """Tests for the handle_flows dispatcher — one test per subcommand class."""
 
     @patch("ccproxy.config.get_config")
-    @patch("ccproxy.tools.flows._make_client")
-    @patch("ccproxy.tools.flows._resolve_flow_set")
-    @patch("ccproxy.tools.flows._do_list")
+    @patch("ccproxy.flows._make_client")
+    @patch("ccproxy.flows._resolve_flow_set")
+    @patch("ccproxy.flows._do_list")
     def test_list_subcommand(
         self,
         mock_list: MagicMock,
@@ -710,9 +710,9 @@ class TestHandleFlows:
         assert mock_list.call_args.kwargs.get("json_output") is False
 
     @patch("ccproxy.config.get_config")
-    @patch("ccproxy.tools.flows._make_client")
-    @patch("ccproxy.tools.flows._resolve_flow_set")
-    @patch("ccproxy.tools.flows._do_dump")
+    @patch("ccproxy.flows._make_client")
+    @patch("ccproxy.flows._resolve_flow_set")
+    @patch("ccproxy.flows._do_dump")
     def test_dump_subcommand(
         self,
         mock_dump: MagicMock,
@@ -732,9 +732,9 @@ class TestHandleFlows:
         assert mock_dump.call_args.args[1] == flow_set
 
     @patch("ccproxy.config.get_config")
-    @patch("ccproxy.tools.flows._make_client")
-    @patch("ccproxy.tools.flows._resolve_flow_set")
-    @patch("ccproxy.tools.flows._do_diff")
+    @patch("ccproxy.flows._make_client")
+    @patch("ccproxy.flows._resolve_flow_set")
+    @patch("ccproxy.flows._do_diff")
     def test_diff_subcommand(
         self,
         mock_diff: MagicMock,
@@ -754,9 +754,9 @@ class TestHandleFlows:
         assert mock_diff.call_args.args[1] == flow_set
 
     @patch("ccproxy.config.get_config")
-    @patch("ccproxy.tools.flows._make_client")
-    @patch("ccproxy.tools.flows._resolve_flow_set")
-    @patch("ccproxy.tools.flows._do_compare")
+    @patch("ccproxy.flows._make_client")
+    @patch("ccproxy.flows._resolve_flow_set")
+    @patch("ccproxy.flows._do_compare")
     def test_compare_subcommand(
         self,
         mock_compare: MagicMock,
@@ -776,9 +776,9 @@ class TestHandleFlows:
         assert mock_compare.call_args.args[1] == flow_set
 
     @patch("ccproxy.config.get_config")
-    @patch("ccproxy.tools.flows._make_client")
-    @patch("ccproxy.tools.flows._resolve_flow_set")
-    @patch("ccproxy.tools.flows._do_clear")
+    @patch("ccproxy.flows._make_client")
+    @patch("ccproxy.flows._resolve_flow_set")
+    @patch("ccproxy.flows._do_clear")
     def test_clear_subcommand(
         self,
         mock_clear: MagicMock,
@@ -797,9 +797,9 @@ class TestHandleFlows:
         assert mock_clear.call_args.kwargs["clear_all"] is False
 
     @patch("ccproxy.config.get_config")
-    @patch("ccproxy.tools.flows._make_client")
-    @patch("ccproxy.tools.flows._resolve_flow_set")
-    @patch("ccproxy.tools.flows._do_clear")
+    @patch("ccproxy.flows._make_client")
+    @patch("ccproxy.flows._resolve_flow_set")
+    @patch("ccproxy.flows._do_clear")
     def test_clear_all_flag(
         self,
         mock_clear: MagicMock,
@@ -818,7 +818,7 @@ class TestHandleFlows:
         assert mock_clear.call_args.kwargs["clear_all"] is True
 
     @patch("ccproxy.config.get_config")
-    @patch("ccproxy.tools.flows._make_client")
+    @patch("ccproxy.flows._make_client")
     def test_connect_error_exits(self, mock_client: MagicMock, mock_config: MagicMock) -> None:
         mock_client.return_value.__enter__ = MagicMock(side_effect=httpx.ConnectError("refused"))
         mock_client.return_value.__exit__ = MagicMock(return_value=False)
@@ -827,8 +827,8 @@ class TestHandleFlows:
             handle_flows(FlowsList(), Path("/tmp"))  # noqa: S108
 
     @patch("ccproxy.config.get_config")
-    @patch("ccproxy.tools.flows._make_client")
-    @patch("ccproxy.tools.flows._resolve_flow_set")
+    @patch("ccproxy.flows._make_client")
+    @patch("ccproxy.flows._resolve_flow_set")
     def test_value_error_exits(
         self,
         mock_resolve: MagicMock,

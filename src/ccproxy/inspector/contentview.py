@@ -13,7 +13,7 @@ import json
 
 from mitmproxy.contentviews._api import Contentview, Metadata, SyntaxHighlight
 
-from ccproxy.inspector.flow_store import InspectorMeta
+from ccproxy.flows.store import InspectorMeta
 
 
 class ClientRequestContentview(Contentview):

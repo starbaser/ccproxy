@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from ccproxy.inspector.flow_store import FlowRecord, InspectorMeta, OtelMeta
+from ccproxy.flows.store import FlowRecord, InspectorMeta, OtelMeta
 
 if TYPE_CHECKING:
     from mitmproxy import http

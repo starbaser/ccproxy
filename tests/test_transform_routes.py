@@ -10,7 +10,7 @@ import pytest
 from mitmproxy.proxy.mode_specs import ProxyMode
 
 from ccproxy.config import InspectorConfig, TransformRoute, set_config_instance
-from ccproxy.inspector.flow_store import FlowRecord, InspectorMeta
+from ccproxy.flows.store import FlowRecord, InspectorMeta
 from ccproxy.inspector.router import InspectorRouter
 from ccproxy.inspector.routes.transform import (
     _resolve_api_key,
@@ -716,7 +716,7 @@ class TestResponseTransformExceptionHandling:
         config = CCProxyConfig()
         set_config_instance(config)
 
-        from ccproxy.inspector.flow_store import TransformMeta
+        from ccproxy.flows.store import TransformMeta
 
         router = InspectorRouter(name="test_resp", request_passthrough=True, response_passthrough=True)
         register_transform_routes(router)

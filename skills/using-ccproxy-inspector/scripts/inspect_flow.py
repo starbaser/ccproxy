@@ -24,7 +24,7 @@ import httpx
 
 def _make_client():
     from ccproxy.config import CredentialSource, get_config
-    from ccproxy.tools.flows import MitmwebClient
+    from ccproxy.flows import MitmwebClient
 
     cfg = get_config()
     inspector = cfg.inspector

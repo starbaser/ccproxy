@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from mitmproxy import command, flow, http
 from mitmproxy.proxy.mode_specs import ReverseMode, WireGuardMode
 
-from ccproxy.inspector.flow_store import (
+from ccproxy.flows.store import (
     FLOW_ID_HEADER,
     HttpSnapshot,
     InspectorMeta,

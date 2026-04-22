@@ -14,7 +14,7 @@ from mitmproxy.test import tflow
 
 from ccproxy.shaping.store import ShapeStore, clear_store_instance
 from ccproxy.hooks.shape import ShapeParams, shape, shape_guard
-from ccproxy.inspector.flow_store import InspectorMeta
+from ccproxy.flows.store import InspectorMeta
 from ccproxy.pipeline.context import Context
 
 

@@ -12,7 +12,7 @@ import logging
 from mitmproxy import command, ctx, http
 
 from ccproxy.shaping.store import get_store
-from ccproxy.inspector.flow_store import InspectorMeta
+from ccproxy.flows.store import InspectorMeta
 
 logger = logging.getLogger(__name__)
 
