@@ -20,7 +20,7 @@ from mitmproxy import http
 from mitmproxy.proxy.mode_specs import ReverseMode
 from pydantic import BaseModel, Field
 
-from ccproxy.inspector.flow_store import InspectorMeta
+from ccproxy.flows.store import InspectorMeta
 from ccproxy.pipeline.context import Context
 from ccproxy.pipeline.hook import hook
 from ccproxy.shaping.models import Shape, apply_shape

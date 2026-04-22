@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 from mitmproxy.connection import Server
 from mitmproxy.proxy.mode_specs import ReverseMode
 
-from ccproxy.inspector.flow_store import InspectorMeta, TransformMeta
+from ccproxy.flows.store import InspectorMeta, TransformMeta
 from ccproxy.pipeline.hook import hook
 
 if TYPE_CHECKING:

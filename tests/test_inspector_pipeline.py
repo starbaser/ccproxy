@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ccproxy.inspector.flow_store import InspectorMeta
+from ccproxy.flows.store import InspectorMeta
 from ccproxy.inspector.pipeline import build_executor, register_pipeline_routes
 from ccproxy.pipeline.executor import PipelineExecutor
 

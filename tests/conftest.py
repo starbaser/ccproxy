@@ -4,7 +4,7 @@ import pytest
 
 from ccproxy.shaping.store import clear_store_instance
 from ccproxy.config import clear_config_instance
-from ccproxy.inspector.flow_store import clear_flow_store
+from ccproxy.flows.store import clear_flow_store
 from ccproxy.mcp.buffer import clear_buffer
 
 

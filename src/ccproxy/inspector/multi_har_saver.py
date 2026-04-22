@@ -22,7 +22,7 @@ from typing import cast
 from mitmproxy import command, ctx, http
 from mitmproxy.addons.savehar import SaveHar
 
-from ccproxy.inspector.flow_store import InspectorMeta
+from ccproxy.flows.store import InspectorMeta
 
 logger = logging.getLogger(__name__)
 

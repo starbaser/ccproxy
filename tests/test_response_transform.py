@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from mitmproxy.proxy.mode_specs import ProxyMode
 
-from ccproxy.inspector.flow_store import FlowRecord, InspectorMeta, TransformMeta
+from ccproxy.flows.store import FlowRecord, InspectorMeta, TransformMeta
 from ccproxy.lightllm.dispatch import (
     MitmResponseShim,
     SseTransformer,

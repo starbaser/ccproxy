@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from ccproxy.inspector.addon import InspectorAddon
-from ccproxy.inspector.flow_store import (
+from ccproxy.flows.store import (
     FLOW_ID_HEADER,
     FlowRecord,
     HttpSnapshot,
