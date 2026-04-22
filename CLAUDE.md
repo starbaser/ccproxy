@@ -228,7 +228,6 @@ Each filter must consume a JSON array and produce a JSON array. Filters chain in
 
 ### Key Constants (`constants.py`)
 
-- `ANTHROPIC_BETA_HEADERS` — required beta headers for Claude Code OAuth
 - `OAUTH_SENTINEL_PREFIX` — `sk-ant-oat-ccproxy-`
 - `SENSITIVE_PATTERNS` — regex patterns for header redaction
 - `CLAUDE_CODE_SYSTEM_PREFIX` — required system prompt prefix for OAuth
