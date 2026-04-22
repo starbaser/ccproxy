@@ -37,7 +37,10 @@ class ShapeParams(BaseModel):
     """
 
     prepare: list[str] = Field(default_factory=list)
+    """Dotted paths to prepare functions that strip shape content."""
+
     fill: list[str] = Field(default_factory=list)
+    """Dotted paths to fill functions that inhabit shape with incoming data."""
 
 
 def shape_guard(ctx: Context) -> bool:

@@ -23,12 +23,15 @@ class HookOverride(Enum):
     FORCE_SKIP = "force_skip"  # Skip this hook entirely
 
 
-@dataclass
+@dataclass(frozen=True)
 class OverrideSet:
     """Parsed override configuration."""
 
     overrides: dict[str, HookOverride]
+    """Hook name to override mode mapping."""
+
     raw_header: str
+    """Original x-ccproxy-hooks header value."""
 
     def get_override(self, hook_name: str) -> HookOverride:
         return self.overrides.get(hook_name, HookOverride.NORMAL)

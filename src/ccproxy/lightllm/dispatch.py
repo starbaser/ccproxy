@@ -68,6 +68,7 @@ def _transform_gemini(
     cached_content: str | None = None,
 ) -> tuple[str, dict[str, str], bytes]:
     """Gemini-specific transform (bypasses BaseConfig.transform_request)."""
+    # deferred: heavy Vertex AI provider module
     from litellm.llms.vertex_ai.common_utils import _get_gemini_url
     from litellm.llms.vertex_ai.gemini.transformation import _transform_request_body
 
@@ -249,6 +250,7 @@ def _make_response_iterator(provider: str, model: str, optional_params: dict[str
     chunk_parser() directly rather than driving __next__().
     """
     if provider in _GEMINI_PROVIDERS:
+        # deferred: heavy provider-specific iterator
         from litellm.llms.vertex_ai.gemini.vertex_and_google_ai_studio_gemini import (
             ModelResponseIterator as GeminiIterator,
         )
@@ -260,6 +262,7 @@ def _make_response_iterator(provider: str, model: str, optional_params: dict[str
         )
 
     if provider == "anthropic":
+        # deferred: heavy provider-specific iterator
         from litellm.llms.anthropic.chat.handler import (
             ModelResponseIterator as AnthropicIterator,
         )

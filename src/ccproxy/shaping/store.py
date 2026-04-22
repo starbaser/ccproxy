@@ -14,6 +14,8 @@ from pathlib import Path
 from mitmproxy import http
 from mitmproxy.io import FlowReader, FlowWriter
 
+from ccproxy.config import get_config, get_config_dir
+
 logger = logging.getLogger(__name__)
 
 
@@ -74,8 +76,6 @@ def get_store() -> ShapeStore:
 
 
 def _create_store() -> ShapeStore:
-    from ccproxy.config import get_config, get_config_dir
-
     config = get_config()
     config_dir = get_config_dir()
 

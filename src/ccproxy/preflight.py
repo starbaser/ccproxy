@@ -179,7 +179,7 @@ def find_ccproxy_processes(exclude_pid: int | None = None) -> list[tuple[int, st
             if cmdline and _is_ccproxy_process(cmdline):
                 results.append((pid, cmdline))
     except OSError as e:
-        logger.warning(f"Error scanning /proc: {e}")
+        logger.warning("Error scanning /proc: %s", e)
 
     return results
 
@@ -190,7 +190,7 @@ def kill_stale_processes(processes: list[tuple[int, str]]) -> int:
     for pid, cmdline in processes:
         snippet = (cmdline[:80] + "...") if len(cmdline) > 80 else cmdline
         try:
-            logger.warning(f"Killing stale process PID {pid}: {snippet}")
+            logger.warning("Killing stale process PID %d: %s", pid, snippet)
             os.kill(pid, signal.SIGTERM)
             time.sleep(0.3)
             try:
@@ -202,9 +202,9 @@ def kill_stale_processes(processes: list[tuple[int, str]]) -> int:
         except ProcessLookupError:
             killed += 1  # Already dead
         except PermissionError:
-            logger.error(f"No permission to kill PID {pid}")
+            logger.error("No permission to kill PID %d", pid)
         except OSError as e:
-            logger.error(f"Failed to kill PID {pid}: {e}")
+            logger.error("Failed to kill PID %d: %s", pid, e)
 
     return killed
 
@@ -244,7 +244,7 @@ def run_preflight_checks(
     for port in ports or []:
         pid, snippet = get_port_pid(port)
         if pid is None:
-            logger.debug(f"Port {port} is available")
+            logger.debug("Port %d is available", port)
             continue
 
         if pid == -1:
@@ -276,7 +276,7 @@ def run_preflight_checks(
     for port in udp_ports or []:
         pid = _is_udp_port_in_use(port)
         if pid is None:
-            logger.debug(f"UDP port {port} is available")
+            logger.debug("UDP port %d is available", port)
             continue
 
         if pid == -1:

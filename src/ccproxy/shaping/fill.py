@@ -30,8 +30,8 @@ def fill_tools(shape_ctx: Context, incoming_ctx: Context) -> None:
     """Copy ``tools`` and ``tool_choice`` from the incoming body."""
     if incoming_ctx.tools:
         shape_ctx.tools = incoming_ctx.tools
-    if "tool_choice" in incoming_ctx._body:
-        shape_ctx._body["tool_choice"] = incoming_ctx._body["tool_choice"]
+    if incoming_ctx.tool_choice is not None:
+        shape_ctx.tool_choice = incoming_ctx.tool_choice
 
 
 def fill_system_append(shape_ctx: Context, incoming_ctx: Context) -> None:
@@ -44,7 +44,7 @@ def fill_system_append(shape_ctx: Context, incoming_ctx: Context) -> None:
 def fill_stream_passthrough(shape_ctx: Context, incoming_ctx: Context) -> None:
     """Copy the incoming body's ``stream`` flag onto the shape."""
     if "stream" in incoming_ctx._body:
-        shape_ctx._body["stream"] = incoming_ctx._body["stream"]
+        shape_ctx.stream = incoming_ctx.stream
 
 
 def regenerate_user_prompt_id(shape_ctx: Context, incoming_ctx: Context) -> None:

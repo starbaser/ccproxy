@@ -563,7 +563,7 @@ class TestRunInNamespace:
 class TestWarmupIgnoreHosts:
     def test_runs_curl_for_each_ignore_host(self) -> None:
         with (
-            patch("ccproxy.config.get_config") as mock_cfg,
+            patch("ccproxy.inspector.namespace.get_config") as mock_cfg,
             patch("ccproxy.inspector.namespace.subprocess.run") as mock_run,
         ):
             mock_cfg.return_value.inspector.mitmproxy.ignore_hosts = [
@@ -582,7 +582,7 @@ class TestWarmupIgnoreHosts:
 
     def test_skips_when_no_ignore_hosts(self) -> None:
         with (
-            patch("ccproxy.config.get_config") as mock_cfg,
+            patch("ccproxy.inspector.namespace.get_config") as mock_cfg,
             patch("ccproxy.inspector.namespace.subprocess.run") as mock_run,
         ):
             mock_cfg.return_value.inspector.mitmproxy.ignore_hosts = []
@@ -592,7 +592,7 @@ class TestWarmupIgnoreHosts:
 
     def test_skips_on_config_error(self) -> None:
         with (
-            patch("ccproxy.config.get_config", side_effect=RuntimeError),
+            patch("ccproxy.inspector.namespace.get_config", side_effect=RuntimeError),
             patch("ccproxy.inspector.namespace.subprocess.run") as mock_run,
         ):
             _warmup_ignore_hosts(42, {})

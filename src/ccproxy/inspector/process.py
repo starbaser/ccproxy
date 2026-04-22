@@ -14,6 +14,8 @@ import socket
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ccproxy.config import CredentialSource, MitmproxyOptions, get_config
+
 if TYPE_CHECKING:
     from mitmproxy.proxy.mode_servers import ServerInstance
     from mitmproxy.tools.web.master import WebMaster
@@ -56,9 +58,8 @@ def _build_opts(
     reverse_port: int,
     wg_cli_port: int,
 ) -> Any:
+    # deferred: heavy mitmproxy Options import
     from mitmproxy.options import Options
-
-    from ccproxy.config import MitmproxyOptions, get_config
 
     config = get_config()
     inspector = config.inspector
@@ -91,6 +92,7 @@ def _build_opts(
 
 def _make_pipeline_router(name: str, hook_entries: list[Any]) -> Any:
     """Build a DAG-driven pipeline router from config hook entries."""
+    # deferred: heavy pipeline + hook registry chain
     from ccproxy.inspector.pipeline import build_executor, register_pipeline_routes
     from ccproxy.inspector.router import InspectorRouter
 
@@ -105,6 +107,7 @@ def _make_pipeline_router(name: str, hook_entries: list[Any]) -> Any:
 
 
 def _make_transform_router() -> Any:
+    # deferred: heavy mitmproxy router chain
     from ccproxy.inspector.router import InspectorRouter
     from ccproxy.inspector.routes.transform import register_transform_routes
 
@@ -124,13 +127,13 @@ def _build_addons(
     session extraction) → transform (lightllm) → outbound pipeline
     (beta headers, identity injection).
     """
+    # deferred: heavy mitmproxy addon chain
     from mitmproxy import contentviews
 
-    from ccproxy.config import get_config
     from ccproxy.inspector.addon import InspectorAddon
-    from ccproxy.inspector.shape_capturer import ShapeCapturer
     from ccproxy.inspector.contentview import ClientRequestContentview, ProviderResponseContentview
     from ccproxy.inspector.multi_har_saver import MultiHARSaver
+    from ccproxy.inspector.shape_capturer import ShapeCapturer
 
     contentviews.add(ClientRequestContentview())
     contentviews.add(ProviderResponseContentview())
@@ -145,6 +148,7 @@ def _build_addons(
     )
 
     try:
+        # deferred: optional OTel dependency
         from ccproxy.inspector.telemetry import InspectorTracer
 
         tracer = InspectorTracer(
@@ -162,6 +166,7 @@ def _build_addons(
     # Initialize shape store (fail-fast if path is unwritable)
     if config.shaping.enabled:
         try:
+            # deferred: optional shaping subsystem
             from ccproxy.shaping.store import get_store
 
             get_store()
@@ -193,6 +198,7 @@ def get_wg_client_conf(master: WebMaster, keypair_path: Path) -> str | None:
     the given keypair_path. Returns the WireGuard INI client config string
     or None if not found.
     """
+    # deferred: heavy mitmproxy server import
     from mitmproxy.proxy.mode_servers import WireGuardServerInstance
 
     proxyserver = master.addons.get("proxyserver")  # type: ignore[no-untyped-call]
@@ -225,9 +231,8 @@ async def run_inspector(
     all addons, and waits for servers to bind. Returns after the running()
     hook fires — all ports are bound and WG configs are readable.
     """
+    # deferred: heavy mitmproxy WebMaster import
     from mitmproxy.tools.web.master import WebMaster
-
-    from ccproxy.config import get_config
 
     config = get_config()
     inspector = config.inspector
@@ -237,8 +242,6 @@ async def run_inspector(
     if isinstance(web_password_cfg, str):
         web_token = web_password_cfg
     elif web_password_cfg is not None:
-        from ccproxy.config import CredentialSource
-
         if isinstance(web_password_cfg, CredentialSource):
             source = web_password_cfg
         else:
@@ -286,8 +289,6 @@ async def run_inspector(
 
 def get_inspector_status() -> dict[str, dict[str, bool | str | None]]:
     """Get the status of the inspector process via TCP port probe."""
-    from ccproxy.config import get_config
-
     config = get_config()
     inspector_cfg = getattr(config, "inspector", None)
     port: int = getattr(inspector_cfg, "port", 8083)
