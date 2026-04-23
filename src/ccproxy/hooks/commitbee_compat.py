@@ -19,8 +19,9 @@ logger = logging.getLogger(__name__)
 
 _COMMITBEE_SIGNATURE = "You generate Conventional Commit messages from git diffs"
 _RAW_JSON_INSTRUCTION = (
-    "\n\nIMPORTANT: Output the raw JSON object directly. "
-    "Do NOT wrap it in markdown code fences or any other formatting."
+    "\n\nCRITICAL FORMATTING RULE: You MUST output ONLY the raw JSON object. "
+    "Do NOT use ```json code fences. Do NOT use any markdown formatting. "
+    "Your entire response must be parseable by JSON.parse() with zero preprocessing."
 )
 
 
