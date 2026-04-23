@@ -267,8 +267,7 @@ ccproxy:
         merge_strategies:
           system: "prepend_shape:2"
         shape_hooks:
-          - ccproxy.shaping.callbacks.regenerate_user_prompt_id
-          - ccproxy.shaping.callbacks.regenerate_session_id
+          - ccproxy.shaping.callbacks
         preserve_headers:
           - authorization
           - x-api-key

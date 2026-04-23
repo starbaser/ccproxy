@@ -211,8 +211,7 @@ shaping:
       merge_strategies:
         system: "prepend_shape:2"
       shape_hooks:
-        - ccproxy.shaping.callbacks.regenerate_user_prompt_id
-        - ccproxy.shaping.callbacks.regenerate_session_id
+        - ccproxy.shaping.callbacks
       preserve_headers:
         - authorization
         - x-api-key
@@ -236,7 +235,7 @@ shaping:
 |---|---|---|---|
 | `content_fields` | `list[str]` | `[]` | Body keys injected from incoming request |
 | `merge_strategies` | `dict[str, str]` | `{}` | Per-field override: replace, prepend_shape[:N], append_shape[:N], drop |
-| `shape_hooks` | `list[str]` | `[]` | Dotted paths to `@hook`-decorated functions (e.g. `ccproxy.shaping.callbacks.regenerate_user_prompt_id`), DAG-ordered |
+| `shape_hooks` | `list[str]` | `[]` | Dotted module paths containing `@hook`-decorated functions (e.g. `ccproxy.shaping.callbacks`), DAG-ordered |
 | `preserve_headers` | `list[str]` | auth + host | Target headers apply_shape must NOT overwrite |
 | `strip_headers` | `list[str]` | auth + transport | Shape headers to remove before stamping |
 | `capture.path_pattern` | `str` | `""` | Regex for flow validation during `ccproxy flows shape` |
