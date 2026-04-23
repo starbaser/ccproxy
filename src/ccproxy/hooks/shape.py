@@ -67,6 +67,10 @@ def shape(ctx: Context, params: dict[str, Any]) -> Context:
         logger.debug("No shape available for provider %s", provider)
         return ctx
 
+    if _ua_matches(ctx, captured.request):
+        logger.debug("Incoming UA matches shape UA, skipping shaping")
+        return ctx
+
     working: Shape = http.Request.from_state(captured.request.get_state())  # type: ignore[no-untyped-call]
     shape_ctx = Context.from_request(working)
 
@@ -81,6 +85,20 @@ def shape(ctx: Context, params: dict[str, Any]) -> Context:
     apply_shape(working, ctx, profile.preserve_headers)
     logger.info("Applied shape from %s for provider %s", captured.id, provider)
     return ctx
+
+
+def _ua_family(ua: str) -> str:
+    """Extract the user-agent family prefix before the first ``/``."""
+    return ua.split("/", 1)[0].strip().lower()
+
+
+def _ua_matches(ctx: Context, shape_request: http.Request) -> bool:
+    """True if the incoming UA shares the same family as the shape's UA."""
+    incoming_ua = ctx.get_header("user-agent")
+    shape_ua = shape_request.headers.get("user-agent", "")
+    if not incoming_ua or not shape_ua:
+        return False
+    return _ua_family(incoming_ua) == _ua_family(shape_ua)
 
 
 def _inject_content(

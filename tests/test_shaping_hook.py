@@ -216,6 +216,57 @@ class TestShapeHook:
         assert body["context_management"] == {"edits": []}
 
 
+class TestUaFamilySkip:
+    def test_matching_ua_skips_shaping(self, store: ShapeStore) -> None:
+        store.add(
+            "anthropic",
+            _seed_flow(
+                body={"messages": [], "envelope": True},
+                headers={"user-agent": "claude-cli/2.1.87 (external, cli)", "x-seed": "yes"},
+            ),
+        )
+        flow = _make_flow(
+            reverse=True,
+            body={"model": "m", "messages": [{"role": "user", "content": "hi"}]},
+        )
+        flow.request.headers["user-agent"] = "claude-cli/2.2.0 (external, cli)"
+        original_content = flow.request.content
+        ctx = Context.from_flow(flow)
+        shape(ctx, {})
+        assert flow.request.content == original_content
+        assert "x-seed" not in flow.request.headers
+
+    def test_different_ua_applies_shaping(self, store: ShapeStore) -> None:
+        store.add(
+            "anthropic",
+            _seed_flow(
+                body={"messages": [], "envelope": True},
+                headers={"user-agent": "claude-cli/2.1.87", "x-seed": "yes"},
+            ),
+        )
+        flow = _make_flow(
+            reverse=True,
+            body={"model": "m", "messages": [{"role": "user", "content": "hi"}]},
+        )
+        flow.request.headers["user-agent"] = "Anthropic/Python 0.86.0"
+        ctx = Context.from_flow(flow)
+        shape(ctx, {})
+        assert flow.request.headers["x-seed"] == "yes"
+
+    def test_missing_ua_applies_shaping(self, store: ShapeStore) -> None:
+        store.add(
+            "anthropic",
+            _seed_flow(
+                body={"messages": [], "envelope": True},
+                headers={"user-agent": "claude-cli/2.1.87", "x-seed": "yes"},
+            ),
+        )
+        flow = _make_flow(reverse=True, body={"model": "m", "messages": []})
+        ctx = Context.from_flow(flow)
+        shape(ctx, {})
+        assert flow.request.headers["x-seed"] == "yes"
+
+
 class TestResolveEntry:
     def test_resolves_real_dotted_path(self) -> None:
         from ccproxy.hooks.shape import _resolve_entry
