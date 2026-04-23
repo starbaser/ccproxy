@@ -57,6 +57,7 @@
           strip_headers = [
             "authorization" "x-api-key" "x-goog-api-key"
             "content-length" "host" "transfer-encoding" "connection"
+            "accept-encoding"
           ];
           capture = { path_pattern = "^/v1/messages"; };
         };
