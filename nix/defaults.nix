@@ -32,6 +32,7 @@
         "ccproxy.hooks.inject_mcp_notifications"
         "ccproxy.hooks.verbose_mode"
         "ccproxy.hooks.shape"
+        "ccproxy.hooks.commitbee_compat"
       ];
     };
     otel = {
