@@ -1,10 +1,10 @@
-"""Shape hook — pick a saved shape, prepare it, fill it, apply it.
+"""Shape hook — pick a saved shape, inject content, apply it.
 
 Runs last in the outbound pipeline. For reverse proxy or OAuth-injected
 flows with a completed transform, loads the most recent shape for the
-destination provider, runs the configured prepare functions to strip
-shape content, then the configured fill functions to inhabit the shape
-with incoming request data, and applies the shape to the outbound flow.
+destination provider, strips auth/transport headers, injects content
+fields from the incoming request per the provider's shaping profile,
+runs callbacks, and applies the shape to the outbound flow.
 """
 
 from __future__ import annotations
@@ -18,29 +18,16 @@ from typing import Any
 
 from mitmproxy import http
 from mitmproxy.proxy.mode_specs import ReverseMode
-from pydantic import BaseModel, Field
 
+from ccproxy.config import ProviderShapingConfig, get_config
 from ccproxy.flows.store import InspectorMeta
 from ccproxy.pipeline.context import Context
 from ccproxy.pipeline.hook import hook
 from ccproxy.shaping.models import Shape, apply_shape
+from ccproxy.shaping.prepare import strip_headers
 from ccproxy.shaping.store import get_store
 
 logger = logging.getLogger(__name__)
-
-
-class ShapeParams(BaseModel):
-    """Dotted-path lists of prepare and fill callables.
-
-    Entries are dotted paths, optionally with a parenthesized argument:
-    ``"mod.fn"`` or ``"mod.fn(arg)"``.
-    """
-
-    prepare: list[str] = Field(default_factory=list)
-    """Dotted paths to prepare functions that strip shape content."""
-
-    fill: list[str] = Field(default_factory=list)
-    """Dotted paths to fill functions that inhabit shape with incoming data."""
 
 
 def shape_guard(ctx: Context) -> bool:
@@ -58,10 +45,9 @@ def shape_guard(ctx: Context) -> bool:
 @hook(
     reads=["messages", "system", "metadata"],
     writes=["messages", "system", "metadata"],
-    model=ShapeParams,
 )
 def shape(ctx: Context, params: dict[str, Any]) -> Context:
-    """Pick a shape, prepare it via prepare functions, fill it via fill functions, apply to the outbound request."""
+    """Pick a shape, inject content from the incoming request, apply to the outbound flow."""
     assert ctx.flow is not None
     record = ctx.flow.metadata.get(InspectorMeta.RECORD)
     transform = getattr(record, "transform", None)
@@ -69,6 +55,12 @@ def shape(ctx: Context, params: dict[str, Any]) -> Context:
         return ctx
 
     provider = transform.provider
+    config = get_config()
+    profile = config.shaping.providers.get(provider)
+    if profile is None:
+        logger.debug("No shaping profile for provider %s", provider)
+        return ctx
+
     store = get_store()
     captured = store.pick(provider)
     if captured is None or captured.request is None:
@@ -78,16 +70,57 @@ def shape(ctx: Context, params: dict[str, Any]) -> Context:
     working: Shape = http.Request.from_state(captured.request.get_state())  # type: ignore[no-untyped-call]
     shape_ctx = Context.from_request(working)
 
-    for entry in params.get("prepare", []):
-        _resolve_entry(entry)(shape_ctx)
+    strip_headers(shape_ctx, profile.strip_headers)
 
-    for entry in params.get("fill", []):
+    _inject_content(shape_ctx, ctx, profile)
+
+    for entry in profile.callbacks:
         _resolve_entry(entry)(shape_ctx, ctx)
 
     shape_ctx.commit()
-    apply_shape(working, ctx)
+    apply_shape(working, ctx, profile.preserve_headers)
     logger.info("Applied shape from %s for provider %s", captured.id, provider)
     return ctx
+
+
+def _inject_content(
+    shape_ctx: Context,
+    incoming_ctx: Context,
+    profile: ProviderShapingConfig,
+) -> None:
+    """Strip content fields from shape, then fill from incoming per merge strategy."""
+    # Snapshot shape values needed for non-replace strategies before stripping
+    shape_originals: dict[str, Any] = {}
+    for key in profile.content_fields:
+        strategy = profile.merge_strategies.get(key, "replace")
+        if strategy in ("prepend_shape", "append_shape") and key in shape_ctx._body:
+            shape_originals[key] = shape_ctx._body[key]
+        shape_ctx._body.pop(key, None)
+
+    # Fill from incoming with merge strategy
+    for key in profile.content_fields:
+        strategy = profile.merge_strategies.get(key, "replace")
+        if strategy == "replace":
+            if key in incoming_ctx._body:
+                shape_ctx._body[key] = incoming_ctx._body[key]
+        elif strategy == "prepend_shape":
+            incoming_val = incoming_ctx._body.get(key) or []
+            shape_val = shape_originals.get(key) or []
+            if isinstance(shape_val, str):
+                shape_val = [{"type": "text", "text": shape_val}]
+            if isinstance(incoming_val, str):
+                incoming_val = [{"type": "text", "text": incoming_val}]
+            shape_ctx._body[key] = [*shape_val, *incoming_val]
+        elif strategy == "append_shape":
+            incoming_val = incoming_ctx._body.get(key) or []
+            shape_val = shape_originals.get(key) or []
+            if isinstance(shape_val, str):
+                shape_val = [{"type": "text", "text": shape_val}]
+            if isinstance(incoming_val, str):
+                incoming_val = [{"type": "text", "text": incoming_val}]
+            shape_ctx._body[key] = [*incoming_val, *shape_val]
+        elif strategy == "drop":
+            pass  # already popped
 
 
 def _resolve_entry(entry: str) -> Callable[..., Any]:

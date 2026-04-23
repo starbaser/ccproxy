@@ -12,10 +12,11 @@ import pytest
 from mitmproxy import http
 from mitmproxy.test import tflow
 
-from ccproxy.shaping.store import ShapeStore, clear_store_instance
-from ccproxy.hooks.shape import ShapeParams, shape, shape_guard
+from ccproxy.config import ProviderShapingConfig
 from ccproxy.flows.store import InspectorMeta
+from ccproxy.hooks.shape import shape, shape_guard
 from ccproxy.pipeline.context import Context
+from ccproxy.shaping.store import ShapeStore, clear_store_instance
 
 
 @dataclass
@@ -34,10 +35,23 @@ class _MockRecord:
 
 @pytest.fixture()
 def store(tmp_path: Path) -> Any:
-    from ccproxy.shaping.store import _store_lock
     from ccproxy.config import CCProxyConfig, set_config_instance
 
-    set_config_instance(CCProxyConfig())
+    from ccproxy.shaping.store import _store_lock
+
+    set_config_instance(CCProxyConfig(
+        shaping={"providers": {
+            "anthropic": {
+                "content_fields": ["model", "messages", "tools", "system", "stream", "max_tokens"],
+                "merge_strategies": {"system": "prepend_shape"},
+                "callbacks": [
+                    "ccproxy.shaping.callbacks.regenerate_user_prompt_id",
+                    "ccproxy.shaping.callbacks.regenerate_session_id",
+                ],
+                "capture": {"path_pattern": "^/v1/messages"},
+            },
+        }},
+    ))
     shape_store = ShapeStore(tmp_path / "seeds")
 
     import ccproxy.shaping.store as store_mod
@@ -119,21 +133,6 @@ class TestShapeGuard:
         assert shape_guard(ctx) is False
 
 
-class TestShapeParams:
-    def test_defaults_empty_lists(self) -> None:
-        params = ShapeParams()
-        assert params.prepare == []
-        assert params.fill == []
-
-    def test_accepts_dotted_paths(self) -> None:
-        params = ShapeParams(
-            prepare=["ccproxy.shaping.prepare.strip_auth_headers"],
-            fill=["ccproxy.shaping.fill.fill_model"],
-        )
-        assert params.prepare == ["ccproxy.shaping.prepare.strip_auth_headers"]
-        assert params.fill == ["ccproxy.shaping.fill.fill_model"]
-
-
 class TestShapeHook:
     def test_no_op_when_no_seed(self, store: ShapeStore) -> None:
         flow = _make_flow(reverse=True, body={"model": "x"})
@@ -150,13 +149,17 @@ class TestShapeHook:
         shape(ctx, {})
         assert flow.request.host == original_host
 
-    def test_applies_seed_shape_and_fills_content(self, store: ShapeStore) -> None:
+    def test_applies_shape_and_injects_content(self, store: ShapeStore) -> None:
         store.add(
             "anthropic",
             _seed_flow(
                 host="api.anthropic.com",
                 path="/v1/messages",
-                body={"messages": [{"role": "user", "content": "seed"}], "envelope_field": "v"},
+                body={
+                    "messages": [{"role": "user", "content": "seed"}],
+                    "envelope_field": "v",
+                    "system": [{"type": "text", "text": "shape-system"}],
+                },
                 headers={"x-seed-header": "yes", "user-agent": "seed-cli/1.0"},
             ),
         )
@@ -164,64 +167,63 @@ class TestShapeHook:
         flow = _make_flow(
             reverse=True,
             provider="anthropic",
-            body={"model": "m", "messages": [{"role": "user", "content": "incoming"}]},
-        )
-        ctx = Context.from_flow(flow)
-
-        shape(
-            ctx,
-            {
-                "prepare": ["ccproxy.shaping.prepare.strip_request_content"],
-                "fill": [
-                    "ccproxy.shaping.fill.fill_model",
-                    "ccproxy.shaping.fill.fill_messages",
-                ],
+            body={
+                "model": "m",
+                "messages": [{"role": "user", "content": "incoming"}],
+                "system": "user-system",
             },
         )
+        ctx = Context.from_flow(flow)
+        shape(ctx, {})
 
-        # Transport routing is preserved (set by redirect handler, not shape)
         assert flow.request.host == "incoming.example"
         assert flow.request.headers["x-seed-header"] == "yes"
 
         body = json.loads(flow.request.content or b"{}")
         assert body["model"] == "m"
-        # Messages round-trip through typed parse/serialize: string content
-        # becomes Anthropic block format
-        assert body["messages"] == [{"role": "user", "content": [{"type": "text", "text": "incoming"}]}]
+        assert body["messages"] == [{"role": "user", "content": "incoming"}]
         assert body["envelope_field"] == "v"
+        # system: prepend_shape — shape system first, then incoming
+        assert len(body["system"]) == 2
+        assert body["system"][0]["text"] == "shape-system"
+        assert body["system"][1]["text"] == "user-system"
 
-    def test_default_params_means_pure_seed_shape(self, store: ShapeStore) -> None:
+    def test_no_op_when_no_provider_profile(self, store: ShapeStore) -> None:
+        store.add("unknown_provider", _seed_flow())
+        flow = _make_flow(reverse=True, provider="unknown_provider", body={"model": "x"})
+        original_content = flow.request.content
+        ctx = Context.from_flow(flow)
+        shape(ctx, {})
+        assert flow.request.content == original_content
+
+    def test_identity_fields_persist(self, store: ShapeStore) -> None:
         store.add(
             "anthropic",
-            _seed_flow(body={"seed_only": True}, headers={"x-seed": "v"}),
+            _seed_flow(
+                body={
+                    "thinking": {"budget_tokens": 31999, "type": "enabled"},
+                    "context_management": {"edits": []},
+                    "messages": [],
+                },
+            ),
         )
-        flow = _make_flow(reverse=True, body={"unrelated": True})
+        flow = _make_flow(reverse=True, body={"model": "m", "messages": [{"role": "user", "content": "hi"}]})
         ctx = Context.from_flow(flow)
         shape(ctx, {})
-        assert flow.request.headers["x-seed"] == "v"
-        body = json.loads(flow.request.content or b"{}")
-        assert body == {"seed_only": True}
 
-    def test_works_with_different_provider(self, store: ShapeStore) -> None:
-        store.add(
-            "gemini",
-            _seed_flow(host="generativelanguage.googleapis.com", path="/v1beta/models/x:generateContent"),
-        )
-        flow = _make_flow(reverse=True, provider="gemini", body={"model": "gemini-2.5"})
-        ctx = Context.from_flow(flow)
-        shape(ctx, {})
-        # Transport routing preserved; seed headers stamped
-        assert flow.request.host == "incoming.example"
+        body = json.loads(flow.request.content or b"{}")
+        assert body["thinking"] == {"budget_tokens": 31999, "type": "enabled"}
+        assert body["context_management"] == {"edits": []}
 
 
 class TestResolveEntry:
     def test_resolves_real_dotted_path(self) -> None:
         from ccproxy.hooks.shape import _resolve_entry
 
-        fn = _resolve_entry("ccproxy.shaping.prepare.strip_auth_headers")
-        from ccproxy.shaping.prepare import strip_auth_headers
+        fn = _resolve_entry("ccproxy.shaping.prepare.strip_headers")
+        from ccproxy.shaping.prepare import strip_headers
 
-        assert fn is strip_auth_headers
+        assert fn is strip_headers
 
     def test_empty_dotted_raises(self) -> None:
         from ccproxy.hooks.shape import _resolve_entry

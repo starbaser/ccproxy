@@ -138,16 +138,16 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 | `extract_session_id` | inbound | Parses `metadata.user_id` → stores session_id on `flow.metadata` (NOT body metadata) |
 | `inject_mcp_notifications` | outbound | Injects buffered MCP terminal events as synthetic ToolCallPart/ToolReturnPart pairs |
 | `verbose_mode` | outbound | Strips `redact-thinking-*` from `anthropic-beta` header |
-| `shape` | outbound | Picks a per-provider captured shape, strips its original content via `prepare` fns, inhabits it with the incoming request via `fill` fns, applies to the outbound flow |
+| `shape` | outbound | Picks a per-provider captured shape, injects content fields from the incoming request per the provider's shaping profile, applies to the outbound flow |
 
-**`shaping/`** — Request shaping framework:
-- **Shape**: a user-curated ``mitmproxy.http.HTTPFlow`` persisted verbatim on disk. One ``{provider}.mflow`` file per provider under ``shapes_dir``, appended to on each capture. Captured via ``ccproxy flows shape --provider X`` (invokes the ``ccproxy.shape`` mitmproxy command). At runtime, a working copy of ``shape.request`` — alias ``Shape = mitmproxy.http.Request`` — is created per outbound request via ``http.Request.from_state(shape.request.get_state())``, wrapped in ``Context.from_request(working)`` for typed access. Prepare fns strip shape content; fill fns inhabit with incoming content; ``shape_ctx.commit()`` flushes typed changes back; ``apply_shape()`` field-copies the working request onto ``ctx.flow.request`` and syncs ``ctx._body``.
-- `models.py` — ``Shape`` type alias + ``apply_shape(shape, ctx)`` free function.
+**`shaping/`** — Request shaping framework (see `docs/shaping.md` for full reference):
+- **Shape**: a captured ``mitmproxy.http.HTTPFlow`` (e.g. a real Claude CLI request) persisted as a ``{provider}.mflow`` file. Captured via ``ccproxy flows shape --provider X`` with capture validation (POST + JSON + path pattern). At runtime, a working copy is created via ``http.Request.from_state()``, configured headers are stripped, ``content_fields`` from the provider's shaping profile are injected from the incoming request (with configurable merge strategies), callbacks run for dynamic operations, then ``apply_shape()`` stamps headers + query params + body onto the outbound flow. The shape is the proven foundation — everything not listed in ``content_fields`` persists from the shape.
+- `models.py` — ``Shape`` type alias + ``apply_shape(shape, ctx, preserve_headers)`` free function. Snapshots ``preserve_headers`` from target, clears target headers, stamps shape headers, restores preserved, merges query params, replaces body.
 - `body.py` — JSON body helpers (``get_body``, ``set_body``, ``mutate_body``) for low-level access outside the typed layer.
 - `store.py` — ``ShapeStore`` singleton wrapping a directory of ``.mflow`` files. Uses ``mitmproxy.io.FlowWriter``/``FlowReader``. ``pick()`` returns the most recently appended flow for a provider.
-- `prepare.py` — default prepare fns (``strip_request_content``, ``strip_auth_headers``, ``strip_transport_headers``, ``strip_system_blocks``). Signature: ``Callable[[Context], None]``.
-- `fill.py` — default fill fns (``fill_model``, ``fill_messages``, ``fill_tools``, ``fill_system_append``, ``fill_stream_passthrough``, ``regenerate_user_prompt_id``, ``regenerate_session_id``). Signature: ``Callable[[Context, Context], None]`` (shape_ctx, incoming_ctx).
-- The ``shape`` hook composes prepare/fill via dotted-path lists (``ShapeParams``), letting users override, extend, or replace the default pipeline without subclassing.
+- `prepare.py` — ``strip_headers(shape_ctx, headers)``. Single function taking the provider's configured ``strip_headers`` list. Called by the shape hook before content injection.
+- `callbacks.py` — Dynamic shaping callbacks (``regenerate_user_prompt_id``, ``regenerate_session_id``). Signature: ``Callable[[Context, Context], None]`` (shape_ctx, incoming_ctx). Registered via ``shaping.providers.{name}.callbacks`` dotted paths.
+- The ``shape`` hook reads the provider profile from ``config.shaping.providers[provider]`` at runtime. Per-provider ``content_fields`` declare which body keys are injected from the incoming request. ``merge_strategies`` override the default ``replace`` behavior per field (``prepend_shape``, ``append_shape``, ``drop``). ``preserve_headers`` lists target flow headers that ``apply_shape`` must not overwrite (auth + routing). ``strip_headers`` lists shape headers to remove before stamping (auth + transport).
 
 **`mcp/`** — Thread-safe notification buffer (`NotificationBuffer` singleton) + `POST /mcp/notify` FastAPI endpoint for MCP terminal event ingestion.
 
@@ -165,7 +165,7 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 1. `$CCPROXY_CONFIG_DIR/ccproxy.yaml`
 2. `~/.config/ccproxy/ccproxy.yaml`
 
-**Hook config format** — two-stage dict. Each entry is either a dotted module path (bare hook with empty params) or a ``{hook, params}`` dict for hooks with a ``model=`` Pydantic schema:
+**Hook config format** — each entry is either a dotted module path (bare hook) or a ``{hook, params}`` dict for hooks with a ``model=`` Pydantic schema:
 ```yaml
 hooks:
   inbound:
@@ -174,14 +174,7 @@ hooks:
   outbound:
     - ccproxy.hooks.inject_mcp_notifications
     - ccproxy.hooks.verbose_mode
-    - hook: ccproxy.hooks.shape
-      params:
-        prepare:
-          - ccproxy.shaping.prepare.strip_request_content
-          - ccproxy.shaping.prepare.strip_auth_headers
-        fill:
-          - ccproxy.shaping.fill.fill_model
-          - ccproxy.shaping.fill.fill_messages
+    - ccproxy.hooks.shape
 ```
 
 **Transform config** — `inspector.transforms` list, first match wins:
@@ -199,13 +192,47 @@ inspector:
 
 Matching fields: `match_host` (optional, checked against pretty_host + Host header), `match_path` (prefix), `match_model` (substring in request body). Vertex AI fields: `dest_vertex_project` and `dest_vertex_location` (required for Gemini context caching with `vertex_ai`/`vertex_ai_beta` providers).
 
-**Shaping config** — shapes directory and the shape hook's prepare/fill lists:
+**Shaping config** — per-provider profiles declaring the identity/content boundary:
 ```yaml
 shaping:
   enabled: true
-  shapes_dir: ~/.config/ccproxy/shaping/shapes  # optional; defaults to {config_dir}/shaping/shapes
+  shapes_dir: ~/.config/ccproxy/shaping/shapes
+  providers:
+    anthropic:
+      content_fields:
+        - model
+        - messages
+        - tools
+        - tool_choice
+        - system
+        - stream
+        - max_tokens
+        - temperature
+        - top_p
+        - top_k
+        - stop_sequences
+      merge_strategies:
+        system: prepend_shape
+      callbacks:
+        - ccproxy.shaping.callbacks.regenerate_user_prompt_id
+        - ccproxy.shaping.callbacks.regenerate_session_id
+      preserve_headers:
+        - authorization
+        - x-api-key
+        - x-goog-api-key
+        - host
+      strip_headers:
+        - authorization
+        - x-api-key
+        - x-goog-api-key
+        - content-length
+        - host
+        - transfer-encoding
+        - connection
+      capture:
+        path_pattern: "^/v1/messages"
 ```
-Customization is done at the hook-params level (``ccproxy.hooks.shape.params.prepare``/``fill`` lists of dotted paths), not by subclassing. Prepare fns have signature ``Callable[[Context], None]``; fill fns have signature ``Callable[[Context, Context], None]`` (shape_ctx, incoming_ctx).
+``content_fields`` lists body keys injected from the incoming request — everything else persists from the shape. ``merge_strategies`` override the default ``replace`` per field: ``prepend_shape`` (shape value + incoming), ``append_shape`` (incoming + shape value), ``drop`` (remove entirely). ``callbacks`` are dotted paths to ``(shape_ctx, incoming_ctx) -> None`` callables for dynamic operations. ``preserve_headers`` lists target flow headers that ``apply_shape`` must not overwrite (auth injected by ``forward_oauth``, host set by redirect handler). ``strip_headers`` lists shape headers to remove before stamping (stale auth tokens, transport headers that desync). ``capture.path_pattern`` validates flows during ``ccproxy flows shape`` (must also be POST + JSON).
 
 **Flows config** — `flows.default_jq_filters` list of jq expressions applied before CLI `--jq` filters:
 ```yaml
@@ -258,13 +285,18 @@ Each filter must consume a JSON array and produce a JSON array. Filters chain in
 - Each test file defines its own flow factory helpers
 - e2e tests excluded by default (`-m "not e2e"`)
 
+## Configuration Provenance
+
+**`nix/defaults.nix`** — Project-level default settings shipped with ccproxy: `oat_sources`, `hooks`, `shaping.providers`, `inspector.transforms`, `otel`. All consumers (dev instance, Home Manager module, external flake users) start from these defaults and override as needed.
+
+**`flake.nix`** — Exports three things:
+- `defaultSettings` — re-exports `nix/defaults.nix` for consumers to merge with
+- `lib.mkConfig` — generates a YAML config file from settings, returns a `shellHook` that symlinks it and sets `CCPROXY_CONFIG_DIR`
+- `homeModules.ccproxy` — Home Manager module with `programs.ccproxy` options and systemd user service
+
 ## Dev Instance
 
-The Nix devShell configures a local dev instance via `mkConfig` at port 4001 (production default: 4000). Inspector UI at 8084. Entering the devShell auto-symlinks Nix-generated config files to `.ccproxy/` and sets `CCPROXY_CONFIG_DIR=$PWD/.ccproxy`. Port is configured exclusively via the YAML config generated by `devConfig`. Inspector cert store at `./.ccproxy` (project-local, not `~/.mitmproxy`).
-
-Production instance runs at port 4000 via systemd. Both instances can run simultaneously — dev on 4001, production on 4000.
-
-The `flake.nix` exports `lib.mkConfig` for other projects to generate ccproxy config with custom port/settings overrides, `defaultSettings` (system-agnostic, top-level) for consumers to merge with, and `homeModules.ccproxy` (Home Manager module with `programs.ccproxy` options and systemd user service).
+The Nix devShell creates a dev instance by overriding `defaultSettings` with dev-specific values: port 4001, inspector UI at 8084, cert store at `./.ccproxy` (project-local). Entering the devShell auto-symlinks the Nix-generated YAML to `.ccproxy/ccproxy.yaml` and sets `CCPROXY_CONFIG_DIR=$PWD/.ccproxy`. The dev instance runs at port 4001; the production instance (managed externally via Home Manager) runs at port 4000. Both can run simultaneously.
 
 ## Type Stubs (`stubs/`)
 

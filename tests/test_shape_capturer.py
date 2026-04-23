@@ -38,7 +38,7 @@ def _flow(flow_id: str = "abc123") -> http.HTTPFlow:
         "POST",
         "https://api.anthropic.com/v1/messages",
         b'{"model": "claude", "messages": [{"role": "user", "content": "hi"}]}',
-        {"x-app": "cli", "user-agent": "test-cli/1.0"},
+        {"x-app": "cli", "user-agent": "test-cli/1.0", "content-type": "application/json"},
     )
     return f
 
