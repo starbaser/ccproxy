@@ -48,7 +48,7 @@
             "model" "messages" "tools" "tool_choice" "system" "thinking" "context_management"
             "stream" "max_tokens" "temperature" "top_p" "top_k" "stop_sequences"
           ];
-          merge_strategies = { system = "prepend_shape:2"; };
+          merge_strategies = {};
           shape_hooks = [
             "ccproxy.shaping.callbacks"
           ];
