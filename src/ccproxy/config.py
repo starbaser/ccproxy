@@ -103,6 +103,61 @@ class OAuthSource(CredentialSource):
     """
 
 
+class CaptureConfig(BaseModel):
+    """Validation heuristics for shape capture."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    path_pattern: str = ""
+    """Regex matched against the flow's request path. Empty means no filter."""
+
+
+class ProviderShapingConfig(BaseModel):
+    """Per-provider shaping profile declaring the identity/content boundary."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    content_fields: list[str] = Field(default_factory=list)
+    """Body keys injected from the incoming request. Everything else persists from the shape."""
+
+    merge_strategies: dict[str, str] = Field(default_factory=dict)
+    """Per-field merge strategy overrides. Default is ``replace``.
+
+    Supported: ``replace``, ``prepend_shape``, ``append_shape``, ``drop``.
+    """
+
+    callbacks: list[str] = Field(default_factory=list)
+    """Dotted paths to callables run after content injection.
+
+    Signature: ``(shape_ctx: Context, incoming_ctx: Context) -> None``.
+    """
+
+    capture: CaptureConfig = Field(default_factory=CaptureConfig)
+    """Validation heuristics applied when capturing shapes for this provider."""
+
+    preserve_headers: list[str] = Field(
+        default_factory=lambda: ["authorization", "x-api-key", "x-goog-api-key", "host"]
+    )
+    """Headers on the target flow that apply_shape must NOT overwrite.
+
+    These are owned by the pipeline (auth injected by forward_oauth,
+    host set by redirect handler). The shape's values for these headers
+    are discarded; the target's values are restored after stamping.
+    """
+
+    strip_headers: list[str] = Field(
+        default_factory=lambda: [
+            "authorization", "x-api-key", "x-goog-api-key",
+            "content-length", "host", "transfer-encoding", "connection",
+        ]
+    )
+    """Headers stripped from the shape working copy before stamping.
+
+    Auth headers are stripped so stale captured tokens don't leak.
+    Transport headers are stripped so content-length/host don't desync.
+    """
+
+
 class ShapingConfig(BaseModel):
     """Configuration for the request shaping system."""
 
@@ -116,6 +171,9 @@ class ShapingConfig(BaseModel):
 
     Defaults to ``{config_dir}/shaping/shapes`` when unset.
     """
+
+    providers: dict[str, ProviderShapingConfig] = Field(default_factory=dict)
+    """Per-provider shaping profiles keyed by provider name (e.g. ``anthropic``)."""
 
 
 class FlowsConfig(BaseModel):
@@ -363,26 +421,7 @@ class CCProxyConfig(BaseSettings):
             "outbound": [
                 "ccproxy.hooks.inject_mcp_notifications",
                 "ccproxy.hooks.verbose_mode",
-                {
-                    "hook": "ccproxy.hooks.shape",
-                    "params": {
-                        "prepare": [
-                            "ccproxy.shaping.prepare.strip_request_content",
-                            "ccproxy.shaping.prepare.strip_auth_headers",
-                            "ccproxy.shaping.prepare.strip_transport_headers",
-                            "ccproxy.shaping.prepare.strip_system_blocks(:1)",
-                        ],
-                        "fill": [
-                            "ccproxy.shaping.fill.fill_model",
-                            "ccproxy.shaping.fill.fill_messages",
-                            "ccproxy.shaping.fill.fill_tools",
-                            "ccproxy.shaping.fill.fill_system_append",
-                            "ccproxy.shaping.fill.fill_stream_passthrough",
-                            "ccproxy.shaping.fill.regenerate_user_prompt_id",
-                            "ccproxy.shaping.fill.regenerate_session_id",
-                        ],
-                    },
-                },
+                "ccproxy.hooks.shape",
             ],
         },
     )

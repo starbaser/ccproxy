@@ -8,6 +8,7 @@ Prepare functions strip the shape; fill functions inhabit it;
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from mitmproxy import http
@@ -19,17 +20,7 @@ if TYPE_CHECKING:
 Shape = http.Request
 
 
-_PRESERVE_HEADERS: frozenset[str] = frozenset(
-    {
-        "authorization",
-        "x-api-key",
-        "x-goog-api-key",
-        "host",
-    }
-)
-
-
-def apply_shape(shape: Shape, ctx: Context) -> None:
+def apply_shape(shape: Shape, ctx: Context, preserve_headers: Sequence[str]) -> None:
     """Stamp the shape's headers and body onto the outbound flow.
 
     Preserves transport routing (host/port/scheme/path) already set by
@@ -42,7 +33,7 @@ def apply_shape(shape: Shape, ctx: Context) -> None:
 
     preserved = {
         name: target.headers[name]
-        for name in _PRESERVE_HEADERS
+        for name in preserve_headers
         if name in target.headers
     }
 
@@ -51,6 +42,10 @@ def apply_shape(shape: Shape, ctx: Context) -> None:
         target.headers[name] = value
     for name, value in preserved.items():
         target.headers[name] = value
+
+    # Merge query parameters from the shape (e.g. ?beta=true)
+    for key, value in shape.query.items():  # type: ignore[no-untyped-call]
+        target.query[key] = value
 
     target.content = shape.content
 

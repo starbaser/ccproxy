@@ -5,8 +5,10 @@ from __future__ import annotations
 from mitmproxy import http
 from mitmproxy.test import tflow
 
-from ccproxy.shaping.models import apply_shape
 from ccproxy.pipeline.context import Context
+from ccproxy.shaping.models import apply_shape
+
+_PRESERVE = ["authorization", "x-api-key", "x-goog-api-key", "host"]
 
 
 def _husk(
@@ -38,16 +40,17 @@ class TestApplyHusk:
     def test_preserves_transport_routing(self) -> None:
         flow = _target_flow()
         ctx = Context.from_flow(flow)
-        apply_shape(_husk(url="https://seed.example:4443/v1/endpoint?q=1"), ctx)
+        apply_shape(_husk(url="https://seed.example:4443/v1/endpoint?q=1"), ctx, _PRESERVE)
         assert flow.request.scheme == "http"
         assert flow.request.host == "orig.example"
         assert flow.request.port == 8080
-        assert flow.request.path == "/old"
+        assert flow.request.path_components == ("old",)
+        assert flow.request.query.get("q") == "1"
 
     def test_replaces_headers(self) -> None:
         flow = _target_flow()
         ctx = Context.from_flow(flow)
-        apply_shape(_husk(headers={"x-seed": "a", "x-trace": "b"}), ctx)
+        apply_shape(_husk(headers={"x-seed": "a", "x-trace": "b"}), ctx, _PRESERVE)
         assert "x-old" not in flow.request.headers
         assert flow.request.headers["x-seed"] == "a"
         assert flow.request.headers["x-trace"] == "b"
@@ -55,35 +58,35 @@ class TestApplyHusk:
     def test_replaces_content(self) -> None:
         flow = _target_flow()
         ctx = Context.from_flow(flow)
-        apply_shape(_husk(content=b'{"new": 2}'), ctx)
+        apply_shape(_husk(content=b'{"new": 2}'), ctx, _PRESERVE)
         assert flow.request.content == b'{"new": 2}'
 
     def test_idempotent_applied_twice(self) -> None:
         flow = _target_flow()
         ctx = Context.from_flow(flow)
         husk = _husk()
-        apply_shape(husk, ctx)
-        apply_shape(husk, ctx)
+        apply_shape(husk, ctx, _PRESERVE)
+        apply_shape(husk, ctx, _PRESERVE)
         assert flow.request.host == "orig.example"
         assert flow.request.content == b'{"seed": true}'
 
     def test_syncs_ctx_body_from_husk_content(self) -> None:
         flow = _target_flow()
         ctx = Context.from_flow(flow)
-        apply_shape(_husk(content=b'{"model": "seed-model"}'), ctx)
+        apply_shape(_husk(content=b'{"model": "seed-model"}'), ctx, _PRESERVE)
         assert ctx._body == {"model": "seed-model"}
 
     def test_non_json_husk_content_leaves_empty_body(self) -> None:
         flow = _target_flow()
         ctx = Context.from_flow(flow)
-        apply_shape(_husk(content=b"not json {"), ctx)
+        apply_shape(_husk(content=b"not json {"), ctx, _PRESERVE)
         assert ctx._body == {}
         assert flow.request.content == b"not json {"
 
     def test_non_dict_json_husk_content_leaves_empty_body(self) -> None:
         flow = _target_flow()
         ctx = Context.from_flow(flow)
-        apply_shape(_husk(content=b"[1, 2, 3]"), ctx)
+        apply_shape(_husk(content=b"[1, 2, 3]"), ctx, _PRESERVE)
         assert ctx._body == {}
 
     def test_preserves_auth_headers(self) -> None:
@@ -91,7 +94,7 @@ class TestApplyHusk:
         flow.request.headers["authorization"] = "Bearer tok-123"
         flow.request.headers["x-api-key"] = "sk-abc"
         ctx = Context.from_flow(flow)
-        apply_shape(_husk(headers={"x-seed": "a"}), ctx)
+        apply_shape(_husk(headers={"x-seed": "a"}), ctx, _PRESERVE)
         assert flow.request.headers["authorization"] == "Bearer tok-123"
         assert flow.request.headers["x-api-key"] == "sk-abc"
         assert flow.request.headers["x-seed"] == "a"

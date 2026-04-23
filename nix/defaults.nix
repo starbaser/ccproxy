@@ -4,7 +4,7 @@
     port = 4000;
     oat_sources = {
       anthropic = {
-        command = "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json";
+        command = "printenv CLAUDE_CODE_OAUTH_TOKEN";
         destinations = [ "api.anthropic.com" ];
       };
       gemini = {
@@ -31,26 +31,7 @@
       outbound = [
         "ccproxy.hooks.inject_mcp_notifications"
         "ccproxy.hooks.verbose_mode"
-        {
-          hook = "ccproxy.hooks.shape";
-          params = {
-            prepare = [
-              "ccproxy.shaping.prepare.strip_request_content"
-              "ccproxy.shaping.prepare.strip_auth_headers"
-              "ccproxy.shaping.prepare.strip_transport_headers"
-              "ccproxy.shaping.prepare.strip_system_blocks(:1)"
-            ];
-            fill = [
-              "ccproxy.shaping.fill.fill_model"
-              "ccproxy.shaping.fill.fill_messages"
-              "ccproxy.shaping.fill.fill_tools"
-              "ccproxy.shaping.fill.fill_system_append"
-              "ccproxy.shaping.fill.fill_stream_passthrough"
-              "ccproxy.shaping.fill.regenerate_user_prompt_id"
-              "ccproxy.shaping.fill.regenerate_session_id"
-            ];
-          };
-        }
+        "ccproxy.hooks.shape"
       ];
     };
     otel = {
@@ -61,6 +42,25 @@
     shaping = {
       enabled = true;
       shapes_dir = "~/.config/ccproxy/shaping/shapes";
+      providers = {
+        anthropic = {
+          content_fields = [
+            "model" "messages" "tools" "tool_choice" "system"
+            "stream" "max_tokens" "temperature" "top_p" "top_k" "stop_sequences"
+          ];
+          merge_strategies = { system = "prepend_shape"; };
+          callbacks = [
+            "ccproxy.shaping.callbacks.regenerate_user_prompt_id"
+            "ccproxy.shaping.callbacks.regenerate_session_id"
+          ];
+          preserve_headers = [ "authorization" "x-api-key" "x-goog-api-key" "host" ];
+          strip_headers = [
+            "authorization" "x-api-key" "x-goog-api-key"
+            "content-length" "host" "transfer-encoding" "connection"
+          ];
+          capture = { path_pattern = "^/v1/messages"; };
+        };
+      };
     };
     inspector = {
       port = 8083;
