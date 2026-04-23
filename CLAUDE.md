@@ -141,12 +141,13 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 | `shape` | outbound | Picks a per-provider captured shape, injects content fields from the incoming request per the provider's shaping profile, applies to the outbound flow |
 
 **`shaping/`** — Request shaping framework (see `docs/shaping.md` for full reference):
-- **Shape**: a captured ``mitmproxy.http.HTTPFlow`` (e.g. a real Claude CLI request) persisted as a ``{provider}.mflow`` file. Captured via ``ccproxy flows shape --provider X`` with capture validation (POST + JSON + path pattern). At runtime, a working copy is created via ``http.Request.from_state()``, configured headers are stripped, ``content_fields`` from the provider's shaping profile are injected from the incoming request (with configurable merge strategies), callbacks run for dynamic operations, then ``apply_shape()`` stamps headers + query params + body onto the outbound flow. The shape is the proven foundation — everything not listed in ``content_fields`` persists from the shape.
+- **Shape**: a captured ``mitmproxy.http.HTTPFlow`` (e.g. a real Claude CLI request) persisted as a ``{provider}.mflow`` file. Captured via ``ccproxy flows shape --provider X`` with capture validation (POST + JSON + path pattern). At runtime, a working copy is created via ``http.Request.from_state()``, configured headers are stripped, ``content_fields`` from the provider's shaping profile are injected from the incoming request (with configurable merge strategies), shape hooks run via an inner DAG for dynamic operations, then ``apply_shape()`` stamps headers + query params + body onto the outbound flow. The shape is the proven foundation — everything not listed in ``content_fields`` persists from the shape.
 - `models.py` — ``Shape`` type alias + ``apply_shape(shape, ctx, preserve_headers)`` free function. Snapshots ``preserve_headers`` from target, clears target headers, stamps shape headers, restores preserved, merges query params, replaces body.
 - `body.py` — JSON body helpers (``get_body``, ``set_body``, ``mutate_body``) for low-level access outside the typed layer.
 - `store.py` — ``ShapeStore`` singleton wrapping a directory of ``.mflow`` files. Uses ``mitmproxy.io.FlowWriter``/``FlowReader``. ``pick()`` returns the most recently appended flow for a provider.
 - `prepare.py` — ``strip_headers(shape_ctx, headers)``. Single function taking the provider's configured ``strip_headers`` list. Called by the shape hook before content injection.
-- `callbacks.py` — Dynamic shaping callbacks (``regenerate_user_prompt_id``, ``regenerate_session_id``). Signature: ``Callable[[Context, Context], None]`` (shape_ctx, incoming_ctx). Registered via ``shaping.providers.{name}.callbacks`` dotted paths.
+- `callbacks.py` — Shape hooks (``regenerate_user_prompt_id``, ``regenerate_session_id``). Standard ``@hook(reads=..., writes=...)`` decorated functions, DAG-ordered via ``HookDAG``. Registered via ``shaping.providers.{name}.shape_hooks`` dotted module paths.
+- `executor.py` — ``execute_shape_hooks(shape_ctx, incoming_ctx, hook_entries)`` builds a ``HookDAG`` from shape hook entries, executes in topological order. Caches resolved specs per hook-list.
 - The ``shape`` hook reads the provider profile from ``config.shaping.providers[provider]`` at runtime. Per-provider ``content_fields`` declare which body keys are injected from the incoming request. ``merge_strategies`` override the default ``replace`` behavior per field (``prepend_shape``, ``append_shape``, ``drop``). ``preserve_headers`` lists target flow headers that ``apply_shape`` must not overwrite (auth + routing). ``strip_headers`` lists shape headers to remove before stamping (auth + transport).
 
 **`mcp/`** — Thread-safe notification buffer (`NotificationBuffer` singleton) + `POST /mcp/notify` FastAPI endpoint for MCP terminal event ingestion.
@@ -205,6 +206,7 @@ shaping:
         - tools
         - tool_choice
         - system
+        - thinking
         - stream
         - max_tokens
         - temperature
@@ -212,10 +214,9 @@ shaping:
         - top_k
         - stop_sequences
       merge_strategies:
-        system: prepend_shape
-      callbacks:
-        - ccproxy.shaping.callbacks.regenerate_user_prompt_id
-        - ccproxy.shaping.callbacks.regenerate_session_id
+        system: "prepend_shape:2"
+      shape_hooks:
+        - ccproxy.shaping.callbacks
       preserve_headers:
         - authorization
         - x-api-key
@@ -232,7 +233,7 @@ shaping:
       capture:
         path_pattern: "^/v1/messages"
 ```
-``content_fields`` lists body keys injected from the incoming request — everything else persists from the shape. ``merge_strategies`` override the default ``replace`` per field: ``prepend_shape`` (shape value + incoming), ``append_shape`` (incoming + shape value), ``drop`` (remove entirely). ``callbacks`` are dotted paths to ``(shape_ctx, incoming_ctx) -> None`` callables for dynamic operations. ``preserve_headers`` lists target flow headers that ``apply_shape`` must not overwrite (auth injected by ``forward_oauth``, host set by redirect handler). ``strip_headers`` lists shape headers to remove before stamping (stale auth tokens, transport headers that desync). ``capture.path_pattern`` validates flows during ``ccproxy flows shape`` (must also be POST + JSON).
+``content_fields`` lists body keys injected from the incoming request — everything else persists from the shape. ``merge_strategies`` override the default ``replace`` per field: ``prepend_shape`` (shape value + incoming), ``append_shape`` (incoming + shape value), ``drop`` (remove entirely). Append ``:N`` to ``prepend_shape`` or ``append_shape`` to slice the shape's array to the first *N* elements before merging (e.g. ``prepend_shape:2`` keeps only the first two shape system blocks). ``shape_hooks`` are dotted module paths to ``@hook``-decorated functions executed via an inner ``HookDAG`` after content injection. ``preserve_headers`` lists target flow headers that ``apply_shape`` must not overwrite (auth injected by ``forward_oauth``, host set by redirect handler). ``strip_headers`` lists shape headers to remove before stamping (stale auth tokens, transport headers that desync). ``capture.path_pattern`` validates flows during ``ccproxy flows shape`` (must also be POST + JSON).
 
 **Flows config** — `flows.default_jq_filters` list of jq expressions applied before CLI `--jq` filters:
 ```yaml
