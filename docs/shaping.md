@@ -73,7 +73,7 @@ shaping:
 
 ### Conceptual Model
 
-The shape IS the proven request — a captured, known-good flow carrying the full compliance envelope. At runtime, ccproxy creates a working copy, strips configured headers, injects the incoming request's content into declared fields, runs callbacks for dynamic operations, and stamps the result onto the outbound flow.
+The shape IS the proven request — a captured, known-good flow carrying the full compliance envelope. At runtime, ccproxy creates a working copy, strips configured headers, injects the incoming request's content into declared fields, runs shape hooks (inner DAG) for dynamic operations, and stamps the result onto the outbound flow.
 
 The identity/content boundary is declared per-provider in YAML config. `content_fields` lists the body keys that come from the incoming request. Everything NOT listed persists from the shape — compliance headers, beta flags, system prompt preamble, metadata skeleton, client identity markers. This inversion means the system doesn't need to enumerate what the envelope contains; it declares what it intends to inject.
 
@@ -98,8 +98,8 @@ Deep copy shape.request → working Shape
            │
            ▼
 ┌──────────────────────────┐
-│    CALLBACK phase        │  Run profile.callbacks for
-│                          │  dynamic mutations (e.g., UUIDs)
+│  SHAPE HOOKS phase       │  Run profile.shape_hooks via
+│                          │  inner DAG (e.g., UUID re-roll)
 └──────────┬───────────────┘
            │
            ▼
@@ -132,7 +132,7 @@ When it fires:
 4. `http.Request.from_state(captured.request.get_state())` — deep-copies as a working `Shape`
 5. `strip_headers(shape_ctx, profile.strip_headers)` — removes configured headers
 6. `_inject_content(shape_ctx, incoming_ctx, profile)` — content injection per merge strategy
-7. Runs callbacks from `profile.callbacks`
+7. Runs shape hooks from `profile.shape_hooks` via inner `HookDAG`
 8. `shape_ctx.commit()` — flushes body mutations to working request bytes
 9. `apply_shape(working, ctx, profile.preserve_headers)` — stamps onto the outbound flow
 
@@ -147,19 +147,19 @@ When it fires:
 | Strategy | Behavior | Use case |
 |---|---|---|
 | `replace` (default) | Incoming value replaces shape value. If incoming doesn't have the field, it stays absent. | model, messages, tools, stream, max_tokens |
-| `prepend_shape` | Shape's original value prepended before incoming: `[*shape, *incoming]`. Strings auto-wrapped to `[{type: text, text: ...}]`. | system (shape preamble + incoming prompt) |
-| `append_shape` | Incoming first, shape appended: `[*incoming, *shape]`. Same string normalization. | Alternative system ordering |
+| `prepend_shape` | Shape's original value prepended before incoming: `[*shape, *incoming]`. Strings auto-wrapped to `[{type: text, text: ...}]`. Append `:N` to keep only the first *N* shape elements (e.g. `prepend_shape:2`). | system (shape preamble + incoming prompt) |
+| `append_shape` | Incoming first, shape appended: `[*incoming, *shape]`. Same string normalization. Append `:N` to keep only the first *N* shape elements. | Alternative system ordering |
 | `drop` | Field removed entirely (already stripped in pass 1). | Suppress a field |
 
 Null values from either side are coerced to empty lists for safe spreading.
 
-### Callbacks
+### Shape Hooks (Inner DAG)
 
-Callbacks handle dynamic operations that can't be expressed as field injection — things that require cross-field logic or ID generation.
+Shape hooks handle dynamic operations that can't be expressed as field injection — things that require cross-field logic or ID generation. They are standard `@hook(reads=..., writes=...)` decorated functions, DAG-ordered by their declarations and executed via `HookDAG` against the shape context.
 
-Each callback is a `(shape_ctx, incoming_ctx) -> None` callable registered via dotted path in `profile.callbacks`. Two built-in callbacks:
+Each hook has signature `(ctx: Context, params: dict) -> Context` where `ctx` is the shape context. The incoming pipeline context is available via `params["incoming_ctx"]`.
 
-| Callback | Purpose |
+| Hook | Purpose |
 |---|---|
 | `regenerate_user_prompt_id` | Re-rolls `user_prompt_id` into a new 13-character hex string if the shape carries one. |
 | `regenerate_session_id` | Parses the nested JSON in `metadata.user_id` and re-rolls `session_id` into a fresh UUID4. `device_id` and `account_uuid` persist (identity markers); only the session changes. |
@@ -200,6 +200,7 @@ shaping:
         - tools
         - tool_choice
         - system
+        - thinking
         - stream
         - max_tokens
         - temperature
@@ -207,10 +208,9 @@ shaping:
         - top_k
         - stop_sequences
       merge_strategies:
-        system: prepend_shape
-      callbacks:
-        - ccproxy.shaping.callbacks.regenerate_user_prompt_id
-        - ccproxy.shaping.callbacks.regenerate_session_id
+        system: "prepend_shape:2"
+      shape_hooks:
+        - ccproxy.shaping.callbacks
       preserve_headers:
         - authorization
         - x-api-key
@@ -233,28 +233,34 @@ shaping:
 | Field | Type | Default | Purpose |
 |---|---|---|---|
 | `content_fields` | `list[str]` | `[]` | Body keys injected from incoming request |
-| `merge_strategies` | `dict[str, str]` | `{}` | Per-field override: replace, prepend_shape, append_shape, drop |
-| `callbacks` | `list[str]` | `[]` | Dotted paths to `(shape_ctx, incoming_ctx) -> None` callables |
+| `merge_strategies` | `dict[str, str]` | `{}` | Per-field override: replace, prepend_shape[:N], append_shape[:N], drop |
+| `shape_hooks` | `list[str]` | `[]` | Dotted module paths to `@hook`-decorated functions, DAG-ordered |
 | `preserve_headers` | `list[str]` | auth + host | Target headers apply_shape must NOT overwrite |
 | `strip_headers` | `list[str]` | auth + transport | Shape headers to remove before stamping |
 | `capture.path_pattern` | `str` | `""` | Regex for flow validation during `ccproxy flows shape` |
 
-### Writing Custom Callbacks
+### Writing Custom Shape Hooks
 
-Callbacks have the signature `Callable[[Context, Context], None]`. They modify `shape_ctx` in place.
+Shape hooks use the standard `@hook` decorator with `reads`/`writes` for DAG ordering.
 
 ```python
 # myproject/shaping/custom.py
+from typing import Any
 from ccproxy.pipeline.context import Context
+from ccproxy.pipeline.hook import hook
 
-def inject_custom_metadata(shape_ctx: Context, incoming_ctx: Context) -> None:
+@hook(reads=["metadata"], writes=["metadata"])
+def inject_custom_metadata(ctx: Context, params: dict[str, Any]) -> Context:
     """Add a custom tracking field from the incoming request into the shape."""
-    value = incoming_ctx._body.get("custom_tracking_id")
-    if value is not None:
-        shape_ctx._body["custom_tracking_id"] = value
+    incoming_ctx = params.get("incoming_ctx")
+    if incoming_ctx is not None:
+        value = incoming_ctx._body.get("custom_tracking_id")
+        if value is not None:
+            ctx._body["custom_tracking_id"] = value
+    return ctx
 ```
 
-Register in config: add `myproject.shaping.custom.inject_custom_metadata` to `callbacks`.
+Register in config: add `myproject.shaping.custom` to `shape_hooks`.
 
 To add a new provider, add an entry under `shaping.providers` with the appropriate `content_fields` for that provider's API schema. No Python code changes required.
 

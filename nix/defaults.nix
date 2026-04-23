@@ -45,11 +45,11 @@
       providers = {
         anthropic = {
           content_fields = [
-            "model" "messages" "tools" "tool_choice" "system"
+            "model" "messages" "tools" "tool_choice" "system" "thinking"
             "stream" "max_tokens" "temperature" "top_p" "top_k" "stop_sequences"
           ];
-          merge_strategies = { system = "prepend_shape"; };
-          callbacks = [
+          merge_strategies = { system = "prepend_shape:2"; };
+          shape_hooks = [
             "ccproxy.shaping.callbacks.regenerate_user_prompt_id"
             "ccproxy.shaping.callbacks.regenerate_session_id"
           ];

@@ -124,12 +124,17 @@ class ProviderShapingConfig(BaseModel):
     """Per-field merge strategy overrides. Default is ``replace``.
 
     Supported: ``replace``, ``prepend_shape``, ``append_shape``, ``drop``.
+    Append an optional ``:N`` slice to ``prepend_shape`` or ``append_shape``
+    to keep only the first *N* elements of the shape's value before merging
+    (e.g. ``prepend_shape:2`` keeps the first two shape blocks).
     """
 
-    callbacks: list[str] = Field(default_factory=list)
-    """Dotted paths to callables run after content injection.
+    shape_hooks: list[str] = Field(default_factory=list)
+    """Dotted paths to ``@hook``-decorated functions run after content injection.
 
-    Signature: ``(shape_ctx: Context, incoming_ctx: Context) -> None``.
+    Each hook is DAG-ordered by its ``reads``/``writes`` declarations and
+    executed against the shape context. The incoming pipeline context is
+    available via ``params["incoming_ctx"]``.
     """
 
     capture: CaptureConfig = Field(default_factory=CaptureConfig)

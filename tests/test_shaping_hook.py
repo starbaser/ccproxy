@@ -14,7 +14,8 @@ from mitmproxy.test import tflow
 
 from ccproxy.config import ProviderShapingConfig
 from ccproxy.flows.store import InspectorMeta
-from ccproxy.hooks.shape import shape, shape_guard
+from ccproxy.hooks.shape import _parse_strategy, shape, shape_guard
+from ccproxy.shaping.executor import clear_shape_hook_cache
 from ccproxy.pipeline.context import Context
 from ccproxy.shaping.store import ShapeStore, clear_store_instance
 
@@ -42,11 +43,10 @@ def store(tmp_path: Path) -> Any:
     set_config_instance(CCProxyConfig(
         shaping={"providers": {
             "anthropic": {
-                "content_fields": ["model", "messages", "tools", "system", "stream", "max_tokens"],
+                "content_fields": ["model", "messages", "tools", "system", "thinking", "stream", "max_tokens"],
                 "merge_strategies": {"system": "prepend_shape"},
-                "callbacks": [
-                    "ccproxy.shaping.callbacks.regenerate_user_prompt_id",
-                    "ccproxy.shaping.callbacks.regenerate_session_id",
+                "shape_hooks": [
+                    "ccproxy.shaping.callbacks",
                 ],
                 "capture": {"path_pattern": "^/v1/messages"},
             },
@@ -60,6 +60,7 @@ def store(tmp_path: Path) -> Any:
         store_mod._store_instance = shape_store
     yield shape_store
     clear_store_instance()
+    clear_shape_hook_cache()
 
 
 def _make_flow(
@@ -207,13 +208,160 @@ class TestShapeHook:
                 },
             ),
         )
-        flow = _make_flow(reverse=True, body={"model": "m", "messages": [{"role": "user", "content": "hi"}]})
+        flow = _make_flow(
+            reverse=True,
+            body={
+                "model": "m",
+                "messages": [{"role": "user", "content": "hi"}],
+                "thinking": {"budget_tokens": 10000, "type": "enabled"},
+            },
+        )
         ctx = Context.from_flow(flow)
         shape(ctx, {})
 
         body = json.loads(flow.request.content or b"{}")
-        assert body["thinking"] == {"budget_tokens": 31999, "type": "enabled"}
+        # thinking is a content_field — incoming replaces shape
+        assert body["thinking"] == {"budget_tokens": 10000, "type": "enabled"}
+        # context_management is NOT a content_field — persists from shape
         assert body["context_management"] == {"edits": []}
+
+
+class TestMergeStrategySlice:
+    """Tests for the :N slice parameter on prepend_shape / append_shape."""
+
+    def _store_with_strategy(
+        self, store: ShapeStore, strategy: str,
+    ) -> ShapeStore:
+        """Re-seat the config singleton with the given system merge strategy."""
+        from ccproxy.config import CCProxyConfig, set_config_instance
+
+        set_config_instance(CCProxyConfig(
+            shaping={"providers": {
+                "anthropic": {
+                    "content_fields": ["model", "messages", "system"],
+                    "merge_strategies": {"system": strategy},
+                    "shape_hooks": [],
+                    "capture": {"path_pattern": "^/v1/messages"},
+                },
+            }},
+        ))
+        return store
+
+    def test_prepend_shape_slice_keeps_first_n(self, store: ShapeStore) -> None:
+        self._store_with_strategy(store, "prepend_shape:2")
+        store.add(
+            "anthropic",
+            _seed_flow(body={
+                "messages": [],
+                "system": [
+                    {"type": "text", "text": "block-0"},
+                    {"type": "text", "text": "block-1"},
+                    {"type": "text", "text": "block-2-large"},
+                ],
+            }),
+        )
+        flow = _make_flow(
+            reverse=True,
+            body={"model": "m", "messages": [], "system": "incoming-system"},
+        )
+        ctx = Context.from_flow(flow)
+        shape(ctx, {})
+
+        body = json.loads(flow.request.content or b"{}")
+        assert len(body["system"]) == 3
+        assert body["system"][0]["text"] == "block-0"
+        assert body["system"][1]["text"] == "block-1"
+        assert body["system"][2]["text"] == "incoming-system"
+
+    def test_append_shape_slice_keeps_first_n(self, store: ShapeStore) -> None:
+        self._store_with_strategy(store, "append_shape:1")
+        store.add(
+            "anthropic",
+            _seed_flow(body={
+                "messages": [],
+                "system": [
+                    {"type": "text", "text": "keep"},
+                    {"type": "text", "text": "drop"},
+                ],
+            }),
+        )
+        flow = _make_flow(
+            reverse=True,
+            body={"model": "m", "messages": [], "system": "incoming"},
+        )
+        ctx = Context.from_flow(flow)
+        shape(ctx, {})
+
+        body = json.loads(flow.request.content or b"{}")
+        assert len(body["system"]) == 2
+        assert body["system"][0]["text"] == "incoming"
+        assert body["system"][1]["text"] == "keep"
+
+    def test_slice_beyond_length_keeps_all(self, store: ShapeStore) -> None:
+        self._store_with_strategy(store, "prepend_shape:100")
+        store.add(
+            "anthropic",
+            _seed_flow(body={
+                "messages": [],
+                "system": [{"type": "text", "text": "only"}],
+            }),
+        )
+        flow = _make_flow(
+            reverse=True,
+            body={"model": "m", "messages": [], "system": "inc"},
+        )
+        ctx = Context.from_flow(flow)
+        shape(ctx, {})
+
+        body = json.loads(flow.request.content or b"{}")
+        assert len(body["system"]) == 2
+        assert body["system"][0]["text"] == "only"
+        assert body["system"][1]["text"] == "inc"
+
+    def test_slice_zero_drops_shape_contribution(self, store: ShapeStore) -> None:
+        self._store_with_strategy(store, "prepend_shape:0")
+        store.add(
+            "anthropic",
+            _seed_flow(body={
+                "messages": [],
+                "system": [{"type": "text", "text": "dropped"}],
+            }),
+        )
+        flow = _make_flow(
+            reverse=True,
+            body={"model": "m", "messages": [], "system": "only-incoming"},
+        )
+        ctx = Context.from_flow(flow)
+        shape(ctx, {})
+
+        body = json.loads(flow.request.content or b"{}")
+        assert len(body["system"]) == 1
+        assert body["system"][0]["text"] == "only-incoming"
+
+    def test_no_slice_preserves_existing_behavior(self, store: ShapeStore) -> None:
+        self._store_with_strategy(store, "prepend_shape")
+        store.add(
+            "anthropic",
+            _seed_flow(body={
+                "messages": [],
+                "system": [
+                    {"type": "text", "text": "a"},
+                    {"type": "text", "text": "b"},
+                    {"type": "text", "text": "c"},
+                ],
+            }),
+        )
+        flow = _make_flow(
+            reverse=True,
+            body={"model": "m", "messages": [], "system": "inc"},
+        )
+        ctx = Context.from_flow(flow)
+        shape(ctx, {})
+
+        body = json.loads(flow.request.content or b"{}")
+        assert len(body["system"]) == 4
+        assert body["system"][0]["text"] == "a"
+        assert body["system"][3]["text"] == "inc"
 
 
 class TestUaFamilySkip:
@@ -267,17 +415,15 @@ class TestUaFamilySkip:
         assert flow.request.headers["x-seed"] == "yes"
 
 
-class TestResolveEntry:
-    def test_resolves_real_dotted_path(self) -> None:
-        from ccproxy.hooks.shape import _resolve_entry
+class TestParseStrategy:
+    def test_plain_strategy(self) -> None:
+        assert _parse_strategy("replace") == ("replace", None)
 
-        fn = _resolve_entry("ccproxy.shaping.prepare.strip_headers")
-        from ccproxy.shaping.prepare import strip_headers
+    def test_strategy_with_slice(self) -> None:
+        assert _parse_strategy("prepend_shape:2") == ("prepend_shape", 2)
 
-        assert fn is strip_headers
+    def test_strategy_with_zero_slice(self) -> None:
+        assert _parse_strategy("append_shape:0") == ("append_shape", 0)
 
-    def test_empty_dotted_raises(self) -> None:
-        from ccproxy.hooks.shape import _resolve_entry
-
-        with pytest.raises(ValueError, match="invalid dotted path"):
-            _resolve_entry("nodotshere")
+    def test_drop_strategy(self) -> None:
+        assert _parse_strategy("drop") == ("drop", None)
