@@ -127,13 +127,14 @@ class TaskBuffer:
 
 ```
 ccproxy hook pipeline:
-  1. rule_evaluator
-  2. model_router
-  3. extract_session_id
-  4. inject_mcp_notifications   <── HERE (after routing, before forwarding)
-  5. forward_oauth
-  6. add_beta_headers
-  7. inject_claude_code_identity
+  1. forward_oauth
+  2. gemini_cli_compat
+  3. reroute_gemini
+  4. extract_session_id
+  ── transform (lightllm) ──
+  5. inject_mcp_notifications   <── HERE (outbound, before forwarding)
+  6. verbose_mode
+  7. shape
 ```
 
 ### Signature

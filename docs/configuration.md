@@ -42,11 +42,13 @@ ccproxy:
   hooks:
     inbound:
       - ccproxy.hooks.forward_oauth
+      - ccproxy.hooks.gemini_cli_compat
+      - ccproxy.hooks.reroute_gemini
       - ccproxy.hooks.extract_session_id
     outbound:
-      - ccproxy.hooks.add_beta_headers
-      - ccproxy.hooks.inject_claude_code_identity
       - ccproxy.hooks.inject_mcp_notifications
+      - ccproxy.hooks.verbose_mode
+      - ccproxy.hooks.shape
 
   inspector:
     port: 8083               # mitmweb UI port
@@ -140,7 +142,7 @@ ccproxy:
       - ccproxy.hooks.forward_oauth
       - ccproxy.hooks.extract_session_id
     outbound:
-      - ccproxy.hooks.add_beta_headers
+      - ccproxy.hooks.inject_mcp_notifications
 ```
 
 **Parameterized form** — dict with `hook` and `params` keys:
@@ -158,12 +160,15 @@ ccproxy:
 
 | Hook | Stage | Purpose |
 |---|---|---|
-| `ccproxy.hooks.forward_oauth` | inbound | Substitutes sentinel keys with OAuth tokens from `oat_sources`; injects Bearer auth |
+| `ccproxy.hooks.forward_oauth` | inbound | Substitutes sentinel keys (`sk-ant-oat-ccproxy-{provider}`) with OAuth tokens from `oat_sources`; injects Bearer auth |
+| `ccproxy.hooks.gemini_cli_compat` | inbound | Masquerades google-genai SDK user-agent as Gemini CLI for capacity allocation on `cloudcode-pa.googleapis.com` |
+| `ccproxy.hooks.reroute_gemini` | inbound | Reroutes WireGuard flows targeting `generativelanguage.googleapis.com` to `cloudcode-pa.googleapis.com` with `v1internal` envelope wrapping |
 | `ccproxy.hooks.extract_session_id` | inbound | Reads `metadata.user_id` from the request body and stores it on `flow.metadata` for downstream use |
-| `ccproxy.hooks.add_beta_headers` | outbound | Merges `ANTHROPIC_BETA_HEADERS` into the `anthropic-beta` header |
-| `ccproxy.hooks.inject_claude_code_identity` | outbound | Prepends the required system prompt prefix for Anthropic OAuth requests |
+| `ccproxy.hooks.gemini_oauth_refresh` | inbound | Preemptive Gemini OAuth token refresh with `refresh_token` backup (workaround for gemini-cli#21691). Optional — not enabled by default. |
 | `ccproxy.hooks.inject_mcp_notifications` | outbound | Injects buffered MCP terminal events as synthetic tool_use/tool_result blocks |
 | `ccproxy.hooks.verbose_mode` | outbound | Strips `redact-thinking-*` flags from the `anthropic-beta` header |
+| `ccproxy.hooks.inject_claude_code_identity` | outbound | Prepends the required system prompt prefix for Anthropic OAuth requests. Optional — not enabled by default. |
+| `ccproxy.hooks.shape` | outbound | Picks a per-provider captured shape, injects content fields from the incoming request, applies the compliance envelope to the outbound flow |
 
 ## Transform Rules
 
@@ -177,12 +182,21 @@ ccproxy:
         match_host: cloudcode-pa.googleapis.com
 
       - match_path: /v1/messages
+        mode: redirect
         dest_provider: anthropic
-        dest_model: claude-sonnet-4-5-20250929
+        dest_host: api.anthropic.com
+        dest_path: /v1/messages
         dest_api_key_ref: anthropic
+
+      - match_path: /v1internal
+        mode: redirect
+        dest_provider: gemini
+        dest_host: cloudcode-pa.googleapis.com
+        dest_api_key_ref: gemini
 
       - match_path: /v1/chat/completions
         match_model: gpt-4o
+        mode: transform
         dest_provider: anthropic
         dest_model: claude-haiku-4-5-20251001
         dest_api_key_ref: anthropic
@@ -190,15 +204,19 @@ ccproxy:
 
 ### TransformRoute fields
 
-| Field | Type | Description |
-|---|---|---|
-| `mode` | string | `transform` (default) or `passthrough`. Passthrough forwards the request unchanged. |
-| `match_host` | string | Optional. Checked against the request's `Host` header and `pretty_host`. |
-| `match_path` | string | URL path prefix to match. |
-| `match_model` | string | Substring match against the `model` field in the request body. |
-| `dest_provider` | string | LiteLLM provider name (e.g. `anthropic`, `openai`, `gemini`). |
-| `dest_model` | string | Model identifier sent to the provider. |
-| `dest_api_key_ref` | string | Key name in `oat_sources` (or environment) used to authenticate with the provider. |
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `mode` | string | `redirect` | `redirect`: rewrite destination host, preserve request body (same-format). `transform`: rewrite both destination and body via lightllm (cross-format). `passthrough`: forward to original destination unchanged. |
+| `match_host` | string | — | Optional. Checked against the request's `Host` header, `pretty_host`, and `X-Forwarded-Host`. |
+| `match_path` | string | `/` | URL path prefix to match. |
+| `match_model` | string | — | Substring match against the `model` field in the request body. |
+| `dest_provider` | string | — | Provider name (e.g. `anthropic`, `gemini`). Used by `transform` for lightllm dispatch and `redirect` for shaping profile lookup. |
+| `dest_model` | string | — | Model identifier sent to the provider. Only used in `transform` mode. |
+| `dest_host` | string | — | Explicit destination host for `redirect` mode (e.g. `api.anthropic.com`). Required for `redirect` mode. |
+| `dest_path` | string | — | Override the request path in `redirect` mode. If not set, the original path is preserved. |
+| `dest_api_key_ref` | string | — | Provider name in `oat_sources` for credential lookup, or an environment variable name. |
+| `dest_vertex_project` | string | — | GCP project ID for Vertex AI transforms. Required for context caching with `vertex_ai`/`vertex_ai_beta` providers. |
+| `dest_vertex_location` | string | — | GCP region for Vertex AI transforms (e.g. `us-central1`). |
 
 All match fields are optional and ANDed together. A rule with no match fields matches every request — use as a catch-all at the end of the list.
 
@@ -220,6 +238,72 @@ ccproxy:
 | `port` | int | mitmweb UI listen port (default `8083`) |
 | `transforms` | list | Transform rules (see above) |
 | `provider_map` | map | Hostname → `gen_ai.system` value for OTel span attributes |
+
+## Shaping Configuration
+
+Request shaping stamps captured compliance envelopes onto proxied requests. See [shaping.md](shaping.md) for the full reference.
+
+```yaml
+ccproxy:
+  shaping:
+    enabled: true
+    shapes_dir: ~/.config/ccproxy/shaping/shapes
+    providers:
+      anthropic:
+        content_fields:
+          - model
+          - messages
+          - tools
+          - tool_choice
+          - system
+          - thinking
+          - context_management
+          - stream
+          - max_tokens
+          - temperature
+          - top_p
+          - top_k
+          - stop_sequences
+        merge_strategies:
+          system: "prepend_shape:2"
+        shape_hooks:
+          - ccproxy.shaping.callbacks.regenerate_user_prompt_id
+          - ccproxy.shaping.callbacks.regenerate_session_id
+        preserve_headers:
+          - authorization
+          - x-api-key
+          - x-goog-api-key
+          - host
+        strip_headers:
+          - authorization
+          - x-api-key
+          - x-goog-api-key
+          - content-length
+          - host
+          - transfer-encoding
+          - connection
+        capture:
+          path_pattern: "^/v1/messages"
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `enabled` | bool | Enable/disable shaping globally (default `true`) |
+| `shapes_dir` | string | Directory for `.mflow` shape files |
+| `providers` | map | Per-provider shaping profiles (see [shaping.md](shaping.md)) |
+
+## Flows Configuration
+
+```yaml
+ccproxy:
+  flows:
+    default_jq_filters:
+      - 'map(select(.request.path | startswith("/v1/messages")))'
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `default_jq_filters` | list | jq expressions applied before CLI `--jq` filters. Each must consume and produce a JSON array. |
 
 ## Environment Variables
 
