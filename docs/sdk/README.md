@@ -30,7 +30,7 @@ When ccproxy sees this sentinel key, it:
 
 **Requirements:**
 - OAuth credentials configured in `~/.config/ccproxy/ccproxy.yaml` under `oat_sources`
-- Pipeline hooks enabled: `inject_claude_code_identity`, `add_beta_headers`, `forward_oauth`
+- Pipeline hooks enabled: `forward_oauth`, `shape` (and optionally `inject_claude_code_identity`)
 - (Optional) MITM mode provides redundant safety net for header injection at HTTP layer
 
 ```bash
@@ -214,12 +214,12 @@ If examples fail:
 1. **Verify ccproxy is running**: `ccproxy status`
 2. **Check OAuth credentials**: Verify `oat_sources` in `~/.config/ccproxy/ccproxy.yaml`
 3. **Review logs**: `ccproxy logs -f` for detailed error messages
-4. **Check pipeline hooks**: Ensure `inject_claude_code_identity`, `add_beta_headers`, and `forward_oauth` are enabled in hooks configuration
+4. **Check pipeline hooks**: Ensure `forward_oauth` and `shape` are enabled in hooks configuration
 5. **Verify port**: Default is 4000, ensure it's not blocked or in use
 
 ### Common Errors
 
-- **"This credential is only authorized for use with Claude Code"**: OAuth pipeline hooks not configured. Verify `inject_claude_code_identity` and `add_beta_headers` hooks are enabled in `ccproxy.yaml`.
+- **"This credential is only authorized for use with Claude Code"**: OAuth pipeline hooks not configured. Verify `forward_oauth` and `shape` hooks are enabled, and that you have a captured shape for the provider.
 - **"invalid x-api-key"**: OAuth headers not being set correctly. Check `forward_oauth` hook configuration and logs.
 - **Connection refused**: ccproxy not running. Check `ccproxy status`.
 

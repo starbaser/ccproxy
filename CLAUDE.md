@@ -124,7 +124,10 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 - `routes/transform.py` — REQUEST handler: three modes, `transform` (rewrite body + destination via lightllm dispatch), `redirect` (rewrite destination host, preserve body), and `passthrough` (forward unchanged). For Gemini transform flows, calls `resolve_cached_content()` before `transform_to_provider()` to resolve context caching. Unmatched reverse proxy flows get 501; unmatched WireGuard flows pass through. RESPONSE handler: transforms non-streaming provider responses back to OpenAI format via `transform_to_openai()`. `TransformMeta` persisted on `FlowRecord` during request phase for response handler access.
 - `namespace.py` — Rootless user+net namespace via `unshare` + `slirp4netns` + WireGuard. Network topology: namespace TAP IP `10.0.2.100/24`, gateway (host) `10.0.2.2`, DNS `10.0.2.3`. Default route replaced with `wg0` so all internet traffic goes through WireGuard tunnel → mitmproxy. `route_localnet` sysctl enabled for iptables OUTPUT DNAT on loopback. Three DNAT rules: PREROUTING inbound (tap0→localhost), OUTPUT outbound (localhost→gateway), OUTPUT port remap (default port→running port). `PortForwarder` polls `/proc/{pid}/net/tcp` for dynamic `add_hostfwd` port forwarding. Requires `slirp4netns`, `wg`, `unshare`, `nsenter`, `ip`, `iptables`, `sysctl`.
 - `contentview.py` — Custom mitmproxy content views. `ClientRequestContentview` shows the pre-pipeline request (method, URL, headers, body). `ProviderResponseContentview` shows the raw provider response before transforms. Both registered via `contentviews.add()`.
-- `flow_store.py` — TTL store keyed by `x-ccproxy-flow-id` header for cross-addon state. `HttpSnapshot` dataclass is the unified HTTP message snapshot (headers, body, optional method/url for requests, optional status_code for responses). `FlowRecord` carries `client_request: HttpSnapshot` (pre-pipeline request), `provider_response: HttpSnapshot` (raw provider response before mutations), and `TransformMeta` (provider/model/request_data/is_streaming from request phase to response phase). `ClientRequest` is an alias for `HttpSnapshot`.
+- `shape_capturer.py` — `ShapeCapturer` addon registering the `ccproxy.shape` mitmproxy command for shape capture with flow validation.
+
+**`flows/`** — Cross-addon flow state:
+- `store.py` — TTL store keyed by `x-ccproxy-flow-id` header for cross-addon state. `HttpSnapshot` dataclass is the unified HTTP message snapshot (headers, body, optional method/url for requests, optional status_code for responses). `FlowRecord` carries `client_request: HttpSnapshot` (pre-pipeline request), `provider_response: HttpSnapshot` (raw provider response before mutations), and `TransformMeta` (provider/model/request_data/is_streaming/mode from request phase to response phase). `ClientRequest` is an alias for `HttpSnapshot`.
 - `multi_har_saver.py` — `MultiHARSaver` addon registering the `ccproxy.dump` mitmproxy command. Accepts comma-separated flow IDs, builds a multi-page HAR 1.2 via `SaveHar.make_har()`. Layout: `entries[2i] = [fwdreq, provider_response]` (forwarded request + raw provider response), `entries[2i+1] = [clireq, client_response]` (client request + post-transform response). `_build_provider_clone()` replaces response with raw snapshot; `_build_client_clone()` replaces request with client snapshot. Falls back when snapshots are absent. One page per flow, `pageref == flow.id`. Registered in `process.py` addon chain.
 - `telemetry.py` — Three-mode OTel: real OTLP export, no-op, or stub.
 - `wg_keylog.py` — Writes Wireshark-compatible keylog for WireGuard tunnel decryption.
@@ -135,7 +138,9 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 |------|-------|---------|
 | `forward_oauth` | inbound | Sentinel key (`sk-ant-oat-ccproxy-{provider}`) substitution from `oat_sources` |
 | `gemini_cli_compat` | inbound | Masquerades google-genai SDK user-agent as Gemini CLI for capacity allocation |
+| `reroute_gemini` | inbound | Reroutes WireGuard flows targeting `generativelanguage.googleapis.com` to `cloudcode-pa.googleapis.com` with `v1internal` envelope wrapping and project ID resolution |
 | `extract_session_id` | inbound | Parses `metadata.user_id` → stores session_id on `flow.metadata` (NOT body metadata) |
+| `gemini_oauth_refresh` | inbound | Preemptive Gemini OAuth token refresh with `refresh_token` backup (workaround for gemini-cli#21691). Optional — commented out in defaults. |
 | `inject_mcp_notifications` | outbound | Injects buffered MCP terminal events as synthetic ToolCallPart/ToolReturnPart pairs |
 | `verbose_mode` | outbound | Strips `redact-thinking-*` from `anthropic-beta` header |
 | `shape` | outbound | Picks a per-provider captured shape, injects content fields from the incoming request per the provider's shaping profile, applies to the outbound flow |
@@ -171,6 +176,8 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 hooks:
   inbound:
     - ccproxy.hooks.forward_oauth
+    - ccproxy.hooks.gemini_cli_compat
+    - ccproxy.hooks.reroute_gemini
     - ccproxy.hooks.extract_session_id
   outbound:
     - ccproxy.hooks.inject_mcp_notifications
@@ -178,20 +185,27 @@ hooks:
     - ccproxy.hooks.shape
 ```
 
-**Transform config** — `inspector.transforms` list, first match wins:
+**Transform config** — `inspector.transforms` list, first match wins. Three modes: `redirect` (default — rewrite destination, preserve body), `transform` (cross-format via lightllm), `passthrough` (forward unchanged):
 ```yaml
 inspector:
   transforms:
     - mode: passthrough
       match_host: cloudcode-pa.googleapis.com
+    - match_path: /v1/messages
+      mode: redirect
+      dest_provider: anthropic
+      dest_host: api.anthropic.com
+      dest_path: /v1/messages
+      dest_api_key_ref: anthropic
     - match_path: /v1/chat/completions
       match_model: gpt-4o
+      mode: transform
       dest_provider: anthropic
       dest_model: claude-haiku-4-5-20251001
       dest_api_key_ref: anthropic
 ```
 
-Matching fields: `match_host` (optional, checked against pretty_host + Host header), `match_path` (prefix), `match_model` (substring in request body). Vertex AI fields: `dest_vertex_project` and `dest_vertex_location` (required for Gemini context caching with `vertex_ai`/`vertex_ai_beta` providers).
+Matching fields: `match_host` (optional, checked against pretty_host + Host header + X-Forwarded-Host), `match_path` (prefix), `match_model` (substring in request body). Redirect fields: `dest_host` (required), `dest_path` (optional). Vertex AI fields: `dest_vertex_project` and `dest_vertex_location` (required for Gemini context caching with `vertex_ai`/`vertex_ai_beta` providers).
 
 **Shaping config** — per-provider profiles declaring the identity/content boundary:
 ```yaml
@@ -217,7 +231,8 @@ shaping:
       merge_strategies:
         system: "prepend_shape:2"
       shape_hooks:
-        - ccproxy.shaping.callbacks
+        - ccproxy.shaping.callbacks.regenerate_user_prompt_id
+        - ccproxy.shaping.callbacks.regenerate_session_id
       preserve_headers:
         - authorization
         - x-api-key

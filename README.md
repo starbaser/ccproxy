@@ -114,28 +114,39 @@ ccproxy:
   hooks:
     inbound:
       - ccproxy.hooks.forward_oauth
+      - ccproxy.hooks.gemini_cli_compat
+      - ccproxy.hooks.reroute_gemini
       - ccproxy.hooks.extract_session_id
     outbound:
-      - ccproxy.hooks.add_beta_headers
-      - ccproxy.hooks.inject_claude_code_identity
+      - ccproxy.hooks.inject_mcp_notifications
+      - ccproxy.hooks.verbose_mode
+      - ccproxy.hooks.shape
 
   inspector:
     transforms:
-      # Passthrough rules are checked first: matched hosts bypass transformation.
       - mode: passthrough
         match_host: cloudcode-pa.googleapis.com
 
-      # Transform rules rewrite request/response to the destination provider.
+      - match_path: /v1/messages
+        mode: redirect
+        dest_provider: anthropic
+        dest_host: api.anthropic.com
+        dest_path: /v1/messages
+        dest_api_key_ref: anthropic
+
       - match_path: /v1/chat/completions
         match_model: gpt-4o
+        mode: transform
         dest_provider: anthropic
         dest_model: claude-haiku-4-5-20251001
         dest_api_key_ref: anthropic
 ```
 
 **Transform matching**: `match_host` (optional, checked against `pretty_host` +
-Host header), `match_path` (prefix), `match_model` (substring in request body).
-First match wins.
+Host header + X-Forwarded-Host), `match_path` (prefix), `match_model` (substring
+in request body). First match wins. Three modes: `redirect` (default — rewrite
+destination, preserve body), `transform` (cross-format via lightllm), `passthrough`
+(forward unchanged).
 
 **Hook config**: hooks in each stage list are topologically sorted by
 `@hook(reads=..., writes=...)` dependency declarations and executed in parallel DAG
@@ -156,11 +167,12 @@ Per-request overrides via header: `x-ccproxy-hooks: +hook_name,-other_hook`.
 | Hook | Stage | Purpose |
 | --- | --- | --- |
 | `forward_oauth` | inbound | Sentinel key (`sk-ant-oat-ccproxy-{provider}`) substitution from `oat_sources` |
+| `gemini_cli_compat` | inbound | Masquerades google-genai SDK user-agent as Gemini CLI for capacity allocation |
+| `reroute_gemini` | inbound | Reroutes WireGuard flows targeting `generativelanguage.googleapis.com` to `cloudcode-pa.googleapis.com` with `v1internal` envelope |
 | `extract_session_id` | inbound | Parses `metadata.user_id` → stores session_id on `flow.metadata` |
-| `add_beta_headers` | outbound | Merges required `anthropic-beta` headers |
-| `inject_claude_code_identity` | outbound | Prepends system prompt prefix for OAuth requests to Anthropic |
 | `inject_mcp_notifications` | outbound | Injects buffered MCP terminal events as synthetic tool_use/tool_result |
 | `verbose_mode` | outbound | Strips `redact-thinking-*` from `anthropic-beta` header |
+| `shape` | outbound | Stamps captured compliance envelopes onto proxied requests |
 
 ## CLI Reference
 

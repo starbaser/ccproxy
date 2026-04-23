@@ -150,7 +150,7 @@ fails in practice since all accepted flows are inbound.
 ### FlowStore
 
 The flow store is a module-level `dict[str, tuple[FlowRecord, float]]` protected by
-`threading.Lock`. TTL is 120 seconds. Expired entries are eagerly cleaned up on each
+`threading.Lock`. TTL is 3600 seconds (1 hour). Expired entries are eagerly cleaned up on each
 `create_flow_record()` call — no background thread.
 
 Flow IDs propagate via the `x-ccproxy-flow-id` request header (`FLOW_ID_HEADER`). `InspectorAddon`
@@ -160,7 +160,7 @@ internally) retrieve the existing record via `get_flow_record()`.
 ### FlowRecord
 
 `FlowRecord` is the per-flow cross-phase state container (defined in
-`src/ccproxy/inspector/flow_store.py`):
+`src/ccproxy/flows/store.py`):
 
 ```python
 @dataclass
@@ -168,7 +168,8 @@ class FlowRecord:
     direction: Literal["inbound"]
     auth: AuthMeta | None = None
     otel: OtelMeta | None = None
-    client_request: ClientRequest | None = None
+    client_request: HttpSnapshot | None = None
+    provider_response: HttpSnapshot | None = None
     transform: TransformMeta | None = None
 ```
 
@@ -178,6 +179,7 @@ class FlowRecord:
 | `auth` | `forward_oauth` hook | (logging context) |
 | `otel` | `InspectorAddon.request()` via tracer | `InspectorAddon.response()` / `.error()` |
 | `client_request` | `InspectorAddon.request()` | "Client Request" content view, `ccproxy.clientrequest` command |
+| `provider_response` | `InspectorAddon.response()` | "Provider Response" content view, `ccproxy.dump` command |
 | `transform` | `ccproxy_transform` REQUEST handler | `ccproxy_transform` RESPONSE handler, `responseheaders` |
 
 ### InspectorMeta keys
@@ -221,31 +223,29 @@ Persisted on `FlowRecord` during the request phase by `ccproxy_transform`, consu
 response phase:
 
 ```python
-@dataclass
+@dataclass(frozen=True)
 class TransformMeta:
     provider: str               # destination provider (e.g. "anthropic", "gemini")
     model: str                  # destination model name
     request_data: dict[str, Any] # full request body at transform time
     is_streaming: bool          # True if stream=True in the original request
+    mode: Literal["redirect", "transform"] = "redirect"
 ```
 
 ### ClientRequest
 
-Full snapshot of the client request before the addon pipeline mutates it. Captured by
-`InspectorAddon.request()` as the first addon in the chain, before inbound hooks,
-transform, or outbound hooks touch the flow:
+Full snapshot of the client request before the addon pipeline mutates it. `HttpSnapshot` is a unified frozen dataclass for both request and response snapshots. `ClientRequest` is a type alias for `HttpSnapshot`. Captured by `InspectorAddon.request()` as the first addon in the chain.
 
 ```python
-@dataclass
-class ClientRequest:
-    method: str
-    scheme: str
-    host: str
-    port: int
-    path: str
+@dataclass(frozen=True)
+class HttpSnapshot:
     headers: dict[str, str]
     body: bytes
-    content_type: str
+    method: str | None = None
+    url: str | None = None
+    status_code: int | None = None
+
+ClientRequest = HttpSnapshot  # type alias
 ```
 
 Accessible via:
@@ -567,10 +567,11 @@ on port 16686.
 |------|------|
 | `src/ccproxy/inspector/process.py` | `run_inspector()`, `_build_opts()`, `_build_addons()`, `ReadySignal`, `get_wg_client_conf()` |
 | `src/ccproxy/inspector/addon.py` | `InspectorAddon` — direction detection, flow record lifecycle, SSE streaming setup, OTel delegation |
-| `src/ccproxy/inspector/flow_store.py` | `FlowRecord`, `AuthMeta`, `OtelMeta`, `TransformMeta`, `ClientRequest`, `InspectorMeta`, TTL store |
+| `src/ccproxy/flows/store.py` | `FlowRecord`, `AuthMeta`, `OtelMeta`, `TransformMeta`, `HttpSnapshot`, `ClientRequest`, `InspectorMeta`, TTL store |
 | `src/ccproxy/inspector/router.py` | `InspectorRouter` — xepor subclass with mitmproxy 12.x fixes and wildcard host support |
 | `src/ccproxy/inspector/pipeline.py` | `build_executor()`, `register_pipeline_routes()` — DAG executor wiring |
 | `src/ccproxy/inspector/routes/transform.py` | `register_transform_routes()` — REQUEST transform dispatch, RESPONSE format conversion |
 | `src/ccproxy/inspector/namespace.py` | `create_namespace()`, `run_in_namespace()`, `cleanup_namespace()`, `PortForwarder`, `check_namespace_capabilities()` |
 | `src/ccproxy/inspector/telemetry.py` | `InspectorTracer` — three-mode OTel span emission |
 | `src/ccproxy/inspector/wg_keylog.py` | WireGuard keylog export for Wireshark |
+| `src/ccproxy/inspector/shape_capturer.py` | `ShapeCapturer` — `ccproxy.shape` command for shape capture |
