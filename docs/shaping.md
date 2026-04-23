@@ -201,6 +201,7 @@ shaping:
         - tool_choice
         - system
         - thinking
+        - context_management
         - stream
         - max_tokens
         - temperature
