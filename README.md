@@ -1,4 +1,4 @@
-# `ccproxy` — CLI Proxy [![Version](https://img.shields.io/badge/version-2.0-red.svg)](https://github.com/starbaser/ccproxy)
+# `ccproxy` — CLI Proxy [![Version](https://img.shields.io/badge/version-2.0.0-orange.svg)](https://github.com/starbaser/ccproxy)
 
 > [Discord](https://starbased.net/discord)
 
@@ -13,14 +13,17 @@ Cross-provider request and response transformation is handled by `lightllm`, a
 surgical connector into LiteLLM’s `BaseConfig` completion layer — no LiteLLM
 proxy subprocess, no gateway server.
 
+**New in 2.0 beta**: DeepSeek V4 routing support — redirect Anthropic-format
+requests to DeepSeek’s `/anthropic/v1/messages` endpoint with a single transform
+rule. See [Configuration](#configuration) for the routing setup.
+
 The hook pipeline is your extension point for building mods and taking control of
 your LLM usage while respecting terms of service:
-- **Privacy**: route traffic through a configurable VPN layer to block
-  telemetry and other undesired connections.
-- **Compliance**: built-in hooks learn legitimate request shapes from your own
-  reference traffic (via WireGuard observation) and stamp those compliance
-  profiles onto proxied requests, keeping you within provider terms of service.
-  *(beta)*
+- **Cross-provider routing**: redirect or transform requests between Anthropic,
+  Gemini, OpenAI, DeepSeek, and any LiteLLM-supported provider.
+- **Compliance shaping**: capture real SDK requests via WireGuard observation and
+  stamp those compliance envelopes onto proxied requests, keeping you within
+  provider terms of service.
 - **MCP bridging**: add unsupported MCP features to any client:
   [sampling](https://modelcontextprotocol.io/specification/2025-11-25/client/sampling)
   via sentinel key detection,

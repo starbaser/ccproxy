@@ -170,6 +170,36 @@ ccproxy:
 | `ccproxy.hooks.inject_claude_code_identity` | outbound | Prepends the required system prompt prefix for Anthropic OAuth requests. Optional — not enabled by default. |
 | `ccproxy.hooks.shape` | outbound | Picks a per-provider captured shape, injects content fields from the incoming request, applies the compliance envelope to the outbound flow |
 
+### Writing custom hooks
+
+Use the `@hook` decorator with `reads`/`writes` for DAG ordering:
+
+```python
+from ccproxy.pipeline.context import Context
+from ccproxy.pipeline.hook import hook
+
+@hook(reads=["messages"], writes=["messages"])
+def my_hook(ctx: Context, params: dict) -> Context:
+    # Modify ctx.messages, ctx.system, ctx.headers, etc.
+    return ctx
+```
+
+Register in config:
+
+```yaml
+hooks:
+  outbound:
+    - mypackage.my_hook
+```
+
+### Per-request overrides
+
+Force-run or force-skip hooks via header:
+
+```
+x-ccproxy-hooks: +inject_mcp_notifications,-verbose_mode
+```
+
 ## Transform Rules
 
 `inspector.transforms` is an ordered list of `TransformRoute` entries. The first match wins.

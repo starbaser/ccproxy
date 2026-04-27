@@ -255,4 +255,5 @@ Problem?
 ## Reference files
 
 - [reference/flow-api-reference.md](reference/flow-api-reference.md) — mitmweb REST API endpoints, flow data model, content views, authentication
-- [docs/inspector-and-shaping.md](../../docs/inspector-and-shaping.md) — Full architectural documentation of the inspector and shaping systems
+- [docs/inspect.md](../../docs/inspect.md) — Inspector stack architecture
+- [docs/shaping.md](../../docs/shaping.md) — Request shaping system
