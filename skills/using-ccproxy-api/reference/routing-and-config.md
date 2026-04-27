@@ -31,7 +31,7 @@ ccproxy_transform (lightllm dispatch)
 ccproxy_outbound (DAG hooks)
   inject_mcp_notifications: Injects buffered MCP events.
   verbose_mode: Strips redact-thinking from beta header.
-  apply_compliance: Stamps learned headers, body fields, system prompt.
+  shape: Stamps captured compliance envelopes onto proxied requests.
   │
   ▼
 Provider API directly
@@ -64,12 +64,11 @@ ccproxy:
     outbound:
       - ccproxy.hooks.inject_mcp_notifications
       - ccproxy.hooks.verbose_mode
-      - ccproxy.hooks.apply_compliance
+      - ccproxy.hooks.shape
 
-  compliance:
+  shaping:
     enabled: true
-    min_observations: 3
-    seed_anthropic: true
+    shapes_dir: ~/.config/ccproxy/shaping/shapes
 
   inspector:
     port: 8083

@@ -116,33 +116,33 @@ The helper scripts (`list_flows.py`, `inspect_flow.py`) resolve the token automa
 
 ## ccproxy flows CLI
 
-Built-in CLI that wraps the REST API:
+Built-in CLI that wraps the REST API. All subcommands operate on a filtered **set** of flows. The `--jq` flag is repeatable; each filter consumes and produces a JSON array.
 
 ```bash
-ccproxy flows list [--filter REGEX] [--json]    # List flows
-ccproxy flows dump <id-prefix>                   # 1-page / 2-entry HAR 1.2 file
-ccproxy flows diff <id1> <id2>                   # Unified diff of two request bodies
-ccproxy flows clear                              # Clear all flows
+ccproxy flows list [--json] [--jq FILTER]...     # List flow set
+ccproxy flows dump [--jq FILTER]...              # Multi-page HAR of flow set
+ccproxy flows diff [--jq FILTER]...              # Sliding-window diff across set
+ccproxy flows compare [--jq FILTER]...           # Per-flow client-vs-forwarded diff
+ccproxy flows clear [--all] [--jq FILTER]...     # Clear flow set (--all bypasses filters)
 ```
 
-`dump` emits HAR 1.2 JSON built server-side by the `ccproxy.dump` mitmproxy
-command. One page per flow (`pages[0].id == flow.id`), two complete entries
-by documented index:
+`dump` emits multi-page HAR 1.2 JSON built server-side by the `ccproxy.dump` mitmproxy command. One page per flow, two entries per page:
 
-- `entries[0] = [fwdreq, fwdres]` — the real flow, authoritative (forwarded
-  request + upstream response).
-- `entries[1] = [clireq, fwdres]` — clone with `.request` rebuilt from the
-  pre-pipeline `ClientRequest` snapshot. Response is duplicated so the HAR
-  pair stays schema-complete.
+- `entries[2i]` — forwarded request + raw provider response (authoritative).
+- `entries[2i+1]` — pre-pipeline client request + post-transform client response.
 
-Query by index with jq:
+Query with jq:
 
 ```bash
-ccproxy flows dump abc | jq '.log.pages[0].id'              # flow id
-ccproxy flows dump abc | jq '.log.entries[0].request.url'   # forwarded URL
-ccproxy flows dump abc | jq '.log.entries[1].request.url'   # pre-pipeline URL
-ccproxy flows dump abc | jq '.log.entries[0].response.status'
-ccproxy flows dump abc > /tmp/flow.har  # Open in Chrome DevTools / Charles / Fiddler
+ccproxy flows dump | jq '.log.pages | length'              # page count
+ccproxy flows dump | jq '.log.entries[0].request.url'      # first forwarded URL
+ccproxy flows dump | jq '.log.entries[1].request.url'      # first pre-pipeline URL
+ccproxy flows dump > all.har   # Open in Chrome DevTools / Charles / Fiddler
 ```
 
-Flow ID prefixes: the list shows 8-character IDs; any unique prefix works for lookup.
+Filter examples:
+
+```bash
+ccproxy flows list --jq 'map(select(.request.path | startswith("/v1/messages")))'
+ccproxy flows compare --jq 'map(select(.request.pretty_host == "api.anthropic.com"))'
+```

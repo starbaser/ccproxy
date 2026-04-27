@@ -25,17 +25,15 @@ client = anthropic.Anthropic(
 When ccproxy sees this sentinel key, it:
 1. Looks up the OAuth token for the specified provider from `oat_sources` config
 2. Substitutes the sentinel with the real OAuth token
-3. Adds required headers (`anthropic-beta`, etc.)
-4. Injects the "You are Claude Code" system message prefix (for OAuth compliance)
+3. If shaping is enabled, stamps captured compliance headers (beta flags, user-agent, etc.) onto the request
 
 **Requirements:**
 - OAuth credentials configured in `~/.config/ccproxy/ccproxy.yaml` under `oat_sources`
-- Pipeline hooks enabled: `forward_oauth`, `shape` (and optionally `inject_claude_code_identity`)
-- (Optional) MITM mode provides redundant safety net for header injection at HTTP layer
+- Pipeline hooks enabled: `forward_oauth`, `shape`
 
 ```bash
-# Start ccproxy
-ccproxy start --detach
+# Start ccproxy (foreground — use process-compose or systemd for background)
+ccproxy start
 ```
 
 ## Examples
@@ -55,7 +53,7 @@ Demonstrates Claude Agent SDK integration with ccproxy for prompt caching monito
 uv add claude-agent-sdk
 
 # Start ccproxy
-ccproxy start --detach
+ccproxy start
 ccproxy logs -f
 ```
 
@@ -96,7 +94,7 @@ uv add anthropic
 
 # Configure OAuth credentials in ~/.config/ccproxy/ccproxy.yaml
 # Start ccproxy
-ccproxy start --detach
+ccproxy start
 ```
 
 **Usage:**
@@ -129,7 +127,7 @@ uv add litellm
 
 # Configure credentials in ~/.config/ccproxy/ccproxy.yaml
 # Start ccproxy
-ccproxy start --detach
+ccproxy start
 ```
 
 **Usage:**
@@ -162,7 +160,7 @@ Using Anthropic SDK to access Z.AI GLM models via ccproxy.
 export ZAI_API_KEY="your-api-key"
 
 # Start ccproxy
-ccproxy start --detach
+ccproxy start
 ```
 
 **Usage:**

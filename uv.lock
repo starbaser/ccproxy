@@ -468,7 +468,7 @@ wheels = [
 
 [[package]]
 name = "claude-ccproxy"
-version = "1.2.0"
+version = "2.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
