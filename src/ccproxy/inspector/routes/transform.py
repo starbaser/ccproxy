@@ -236,7 +236,7 @@ def _handle_transform(flow: HTTPFlow, target: TransformRoute, body: dict[str, ob
 def register_transform_routes(router: InspectorRouter) -> None:
     from ccproxy.inspector.router import RouteType
 
-    @router.route("/{path}", rtype=RouteType.REQUEST)
+    @router.route("/{path}", rtype=RouteType.REQUEST, catch_error=False)
     def handle_transform(flow: HTTPFlow, **kwargs: object) -> None:  # pyright: ignore[reportUnusedFunction]
         if flow.metadata.get(InspectorMeta.DIRECTION) != "inbound":
             return
@@ -272,7 +272,28 @@ def register_transform_routes(router: InspectorRouter) -> None:
         else:
             _handle_passthrough(flow)
 
-    @router.route("/{path}", rtype=RouteType.RESPONSE)
+        if (
+            isinstance(flow.client_conn.proxy_mode, ReverseMode)
+            and flow.response is None
+            and flow.request.host == "localhost"
+            and flow.request.port == 1
+        ):
+            from mitmproxy.http import Response
+
+            flow.response = Response.make(
+                502,
+                json.dumps({
+                    "error": "transform failed to rewrite destination",
+                    "path": flow.request.path,
+                }).encode(),
+                {"Content-Type": "application/json"},
+            )
+            logger.error(
+                "Safety net: flow still targeting localhost:1 after transform (path=%s)",
+                flow.request.path,
+            )
+
+    @router.route("/{path}", rtype=RouteType.RESPONSE, catch_error=False)
     def handle_transform_response(flow: HTTPFlow, **kwargs: object) -> None:  # pyright: ignore[reportUnusedFunction]
         record = flow.metadata.get(InspectorMeta.RECORD)
         if record is None or getattr(record, "transform", None) is None:

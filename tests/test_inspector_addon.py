@@ -67,6 +67,40 @@ def _make_wg_flow(host: str = "api.anthropic.com", path: str = "/v1/messages") -
     return flow
 
 
+class TestRequestHeaders:
+    """Tests for the requestheaders() defense-in-depth hook."""
+
+    @pytest.mark.asyncio
+    async def test_disables_streaming_for_reverse_proxy_flows(self) -> None:
+        addon = InspectorAddon()
+        flow = _make_mock_flow(reverse=True)
+        flow.request.stream = True
+
+        await addon.requestheaders(flow)
+
+        assert flow.request.stream is False
+
+    @pytest.mark.asyncio
+    async def test_preserves_streaming_for_wireguard_flows(self) -> None:
+        addon = InspectorAddon()
+        flow = _make_wg_flow()
+        flow.request.stream = True
+
+        await addon.requestheaders(flow)
+
+        assert flow.request.stream is True
+
+    @pytest.mark.asyncio
+    async def test_noop_when_not_streaming(self) -> None:
+        addon = InspectorAddon()
+        flow = _make_mock_flow(reverse=True)
+        flow.request.stream = False
+
+        await addon.requestheaders(flow)
+
+        assert flow.request.stream is False
+
+
 class TestRequestMethod:
     @pytest.mark.asyncio
     async def test_request_runs_without_error(self, mock_flow: MagicMock) -> None:

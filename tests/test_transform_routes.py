@@ -433,6 +433,45 @@ class TestHandleTransform:
         assert flow.response is None
 
 
+class TestSafetyNet:
+    """Tests for the localhost:1 safety net in handle_transform."""
+
+    def test_catches_unrewritten_reverse_proxy_destination(self, cleanup: None) -> None:
+        """Reverse proxy flow still targeting localhost:1 after transform gets 502."""
+        _make_config_with_transforms(
+            [
+                {
+                    "mode": "redirect",
+                    "match_host": "proxy.local",
+                    "match_path": "/v1/",
+                    "dest_provider": "anthropic",
+                    # dest_host intentionally missing — _handle_redirect falls back
+                }
+            ]
+        )
+        router = InspectorRouter(
+            name="test_safety",
+            request_passthrough=True,
+            response_passthrough=True,
+        )
+        register_transform_routes(router)
+
+        flow = _make_flow(
+            host="proxy.local",
+            path="/v1/messages",
+            proxy_mode=ProxyMode.parse("reverse:http://localhost:1@4001"),
+        )
+        flow.request.host = "localhost"
+        flow.request.port = 1
+        flow.response = None
+        router.request(flow)
+
+        assert flow.response is not None
+        assert flow.response.status_code == 502
+        body = json.loads(flow.response.content)
+        assert "transform failed" in body["error"]
+
+
 class TestRewritePath:
     """Tests for _rewrite_path — Gemini action extraction and path rewriting."""
 
