@@ -303,7 +303,9 @@ Each filter must consume a JSON array and produce a JSON array. Filters chain in
 
 ## Configuration Provenance
 
-**`nix/defaults.nix`** — Project-level default settings shipped with ccproxy: `oat_sources`, `hooks`, `shaping.providers`, `inspector.transforms`, `otel`. All consumers (dev instance, Home Manager module, external flake users) start from these defaults and override as needed.
+**`nix/defaults.nix`** — Single source of truth for all default config values: `oat_sources`, `hooks`, `shaping.providers`, `inspector.transforms`, `otel`. All consumers (dev instance, Home Manager module, external flake users, and the standalone YAML template) derive from these defaults.
+
+**`src/ccproxy/templates/ccproxy.yaml`** — Generated from `nix/defaults.nix` by `scripts/render_template.py`. This is what `ccproxy init` installs for standalone (uv/pip) users. **Do not edit directly** — run `just sync-template` after changing `nix/defaults.nix`. A pre-commit hook auto-regenerates when `nix/defaults.nix` is staged.
 
 **`flake.nix`** — Exports three things:
 - `defaultSettings` — re-exports `nix/defaults.nix` for consumers to merge with
