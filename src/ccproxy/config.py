@@ -221,9 +221,11 @@ class MitmproxyOptions(BaseModel):
     ssl_insecure: bool = True
     """Skip upstream TLS certificate verification."""
 
-    stream_large_bodies: str = "1m"
-    """Stream bodies larger than this threshold instead of buffering.
-    Accepts mitmproxy size notation: '512k', '1m', '10m'."""
+    stream_large_bodies: str | None = None
+    """Stream request/response bodies larger than this threshold instead of
+    buffering. None (default) disables streaming — all bodies are buffered
+    so the transform handler can inspect and rewrite them. Only set this if
+    you need to proxy non-API traffic with very large bodies."""
 
     body_size_limit: str | None = None
     """Hard limit on buffered body size. Bodies exceeding this are dropped.
@@ -312,9 +314,6 @@ class InspectorConfig(BaseModel):
     port: int = 8083
     """mitmweb UI port. Also serves as process-alive sentinel and
     WireGuard config API endpoint."""
-
-    max_body_size: int = 0
-    """Maximum request/response body size to capture (bytes). 0 = unlimited."""
 
     cert_dir: Path | None = None
     """mitmproxy CA certificate store directory. Populates mitmproxy.confdir

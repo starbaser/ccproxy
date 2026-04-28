@@ -84,6 +84,17 @@ class InspectorAddon:
 
         return parse_session_id(user_id)
 
+    async def requestheaders(self, flow: http.HTTPFlow) -> None:
+        """Disable request streaming for reverse proxy flows.
+
+        stream_large_bodies is disabled by default, but if re-enabled via
+        YAML override, reverse proxy flows still need the full body buffered
+        for the transform handler. WireGuard flows already have correct
+        destinations and can stream safely.
+        """
+        if isinstance(flow.client_conn.proxy_mode, ReverseMode) and flow.request.stream:
+            flow.request.stream = False
+
     async def request(self, flow: http.HTTPFlow) -> None:
         direction = self._get_direction(flow)
         if direction is None:
