@@ -6,51 +6,67 @@ ccproxy:
   # httpcore, mitmproxy); INFO is recommended for normal use.
   # log_level: INFO
 
-  # Daemon log file path. Relative to this config file, or absolute.
+  # Daemon log file path. Relative to config dir, or absolute.
   # Set to null to disable file logging. Only `ccproxy start` writes here.
   # log_file: ccproxy.log
 
-  # Route daemon logging directly to the systemd journal via JournalHandler.
-  # Applies only to `ccproxy start`. Requires the `journal` optional extra:
+  # Route daemon logging to the systemd journal via JournalHandler.
+  # Applies only to `ccproxy start`. Requires the `journal` extra:
   #   pip install claude-ccproxy[journal]
   # Falls back to stderr with a warning when systemd-python is unavailable.
   # use_journal: false
 
-  # OAuth token sources - shell commands that output tokens.
+  # OAuth token sources — shell commands that output tokens.
   # Sentinel key sk-ant-oat-ccproxy-{name} triggers lookup.
   oat_sources:
     anthropic:
-      command: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+      command: "printenv CLAUDE_CODE_OAUTH_TOKEN"
       destinations:
-        - "api.anthropic.com"
+        - api.anthropic.com
 
     gemini:
       command: "jq -r '.access_token' ~/.gemini/oauth_creds.json"
       destinations:
-        - "generativelanguage.googleapis.com"
-        - "cloudcode-pa.googleapis.com"
-      user_agent: "GeminiCLI"
+        - cloudcode-pa.googleapis.com
+      user_agent: GeminiCLI
+
+    deepseek:
+      command: "printenv DEEPSEEK_API_KEY"
+      destinations:
+        - api.deepseek.com
+      auth_header: x-api-key
 
   # Two-stage hook pipeline. Hooks are DAG-ordered within each stage.
   # Each entry is a module path or {hook: <path>, params: <dict>}.
   hooks:
     inbound:
       - ccproxy.hooks.forward_oauth
+      - ccproxy.hooks.gemini_cli_compat
+      - ccproxy.hooks.reroute_gemini
       - ccproxy.hooks.extract_session_id
-      # Example: uncomment to work around google-gemini/gemini-cli#21691 —
-      # the Gemini CLI wipes its own refresh_token during access_token refresh,
-      # causing "No refresh token is set" errors after ~1hr. The hook stashes
-      # the refresh_token, runs the Gemini CLI to trigger a refresh, and
-      # restores the refresh_token if the CLI wipes it.
+      # Uncomment to work around google-gemini/gemini-cli#21691 —
+      # the Gemini CLI wipes its own refresh_token during access_token
+      # refresh, causing 'No refresh token is set' errors after ~1hr.
       # - ccproxy.hooks.gemini_oauth_refresh
     outbound:
       - ccproxy.hooks.inject_mcp_notifications
       - ccproxy.hooks.verbose_mode
       - ccproxy.hooks.shape
+      - ccproxy.hooks.commitbee_compat
 
+  # OpenTelemetry tracing. Requires a running collector (e.g. Jaeger).
+  otel:
+    enabled: false
+    endpoint: "http://localhost:4317"
+    service_name: ccproxy
+
+  # Request shaping — stamps a captured 'shape' flow onto outbound requests.
+  # Capture a shape: ccproxy flows shape --provider anthropic
   shaping:
     enabled: true
-    # shapes_dir: ~/.config/ccproxy/shaping/shapes
+    shapes_dir: ~/.config/ccproxy/shaping/shapes
+
+    # Per-provider shaping profiles.
     providers:
       anthropic:
         content_fields:
@@ -70,8 +86,7 @@ ccproxy:
         merge_strategies:
           system: "prepend_shape:2"
         shape_hooks:
-          - ccproxy.shaping.callbacks.regenerate_user_prompt_id
-          - ccproxy.shaping.callbacks.regenerate_session_id
+          - ccproxy.shaping.callbacks
         preserve_headers:
           - authorization
           - x-api-key
@@ -85,10 +100,42 @@ ccproxy:
           - host
           - transfer-encoding
           - connection
+          - accept-encoding
         capture:
           path_pattern: "^/v1/messages"
 
-  # Inspector settings
+  # Inspector settings (mitmweb UI and transform rules).
   inspector:
     port: 8083
     cert_dir: ~/.config/ccproxy
+
+    # Transform rules — first match wins.
+    # Modes: passthrough (forward unchanged), redirect (rewrite host),
+    #   transform (cross-format via lightllm).
+    # Matching: match_host, match_path (prefix), match_model (substring).
+    transforms:
+      - match_host: cloudcode-pa.googleapis.com
+        mode: passthrough
+      - match_path: /v1/messages
+        match_model: deepseek-v4
+        mode: redirect
+        dest_provider: anthropic
+        dest_host: api.deepseek.com
+        dest_path: /anthropic/v1/messages
+        dest_api_key_ref: deepseek
+      - match_path: /v1/messages
+        mode: redirect
+        dest_provider: anthropic
+        dest_host: api.anthropic.com
+        dest_path: /v1/messages
+        dest_api_key_ref: anthropic
+      - match_path: /v1internal
+        mode: redirect
+        dest_provider: gemini
+        dest_host: cloudcode-pa.googleapis.com
+        dest_api_key_ref: gemini
+      - match_path: /gemini/
+        mode: redirect
+        dest_provider: gemini
+        dest_host: cloudcode-pa.googleapis.com
+        dest_api_key_ref: gemini

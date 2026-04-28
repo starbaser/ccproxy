@@ -3,11 +3,11 @@
 > [Discord](https://starbased.net/discord)
 
 ccproxy is a transparent network interceptor for LLM tooling and AI harnesses,
-built on mitmproxy and WireGuard with full TLS inspection and Wireshark keylog export.
-Originally purpose-built for Claude Code, ccproxy now works with any LLM client:
-Aider, Cursor, OpenAI SDK, or anything else that speaks HTTP. It jails a process
-inside a rootless WireGuard namespace, intercepts at the network layer, and
-feeds it through a DAG-driven pipeline that can decompose, transform, and
+built on mitmproxy and WireGuard with full TLS inspection and Wireshark keylog
+export. Originally purpose-built for Claude Code, ccproxy now works with any LLM
+client: Aider, Cursor, OpenAI SDK, or anything else that speaks HTTP. It jails a
+process inside a rootless WireGuard namespace, intercepts at the network layer,
+and feeds it through a DAG-driven pipeline that can decompose, transform, and
 re-route traffic between providers.
 Cross-provider request and response transformation is handled by `lightllm`, a
 surgical connector into LiteLLM’s `BaseConfig` completion layer — no LiteLLM
@@ -17,12 +17,12 @@ proxy subprocess, no gateway server.
 requests to DeepSeek’s `/anthropic/v1/messages` endpoint with a single transform
 rule. See [Configuration](#configuration) for the routing setup.
 
-The hook pipeline is your extension point for building mods and taking control of
-your LLM usage while respecting terms of service:
+The hook pipeline is your extension point for building mods and taking control
+of your LLM usage while respecting terms of service:
 - **Cross-provider routing**: redirect or transform requests between Anthropic,
   Gemini, OpenAI, DeepSeek, and any LiteLLM-supported provider.
-- **Compliance shaping**: capture real SDK requests via WireGuard observation and
-  stamp those compliance envelopes onto proxied requests, keeping you within
+- **Compliance shaping**: capture real SDK requests via WireGuard observation
+  and stamp those compliance envelopes onto proxied requests, keeping you within
   provider terms of service.
 - **MCP bridging**: add unsupported MCP features to any client:
   [sampling](https://modelcontextprotocol.io/specification/2025-11-25/client/sampling)
@@ -101,8 +101,8 @@ SSE events, transforming each chunk via LiteLLM’s per-provider
 
 ## Configuration
 
-`ccproxy init` writes a template to `~/.config/ccproxy/ccproxy.yaml`. Config is also
-read from `$CCPROXY_CONFIG_DIR/ccproxy.yaml`.
+`ccproxy init` writes a template to `~/.config/ccproxy/ccproxy.yaml`. Config is
+also read from `$CCPROXY_CONFIG_DIR/ccproxy.yaml`.
 
 ```yaml
 ccproxy:
@@ -147,13 +147,13 @@ ccproxy:
 
 **Transform matching**: `match_host` (optional, checked against `pretty_host` +
 Host header + X-Forwarded-Host), `match_path` (prefix), `match_model` (substring
-in request body). First match wins. Three modes: `redirect` (default — rewrite
-destination, preserve body), `transform` (cross-format via lightllm), `passthrough`
-(forward unchanged).
+in request body). First match wins.
+Three modes: `redirect` (default — rewrite destination, preserve body),
+`transform` (cross-format via lightllm), `passthrough` (forward unchanged).
 
 **Hook config**: hooks in each stage list are topologically sorted by
-`@hook(reads=..., writes=...)` dependency declarations and executed in parallel DAG
-order. Hooks can be parameterized:
+`@hook(reads=..., writes=...)` dependency declarations and executed in parallel
+DAG order. Hooks can be parameterized:
 
 ```yaml
 hooks:

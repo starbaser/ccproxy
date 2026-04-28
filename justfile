@@ -21,3 +21,7 @@ down:
 
 logs *ARGS:
     process-compose process logs ccproxy {{ARGS}}
+
+# Regenerate src/ccproxy/templates/ccproxy.yaml from nix/defaults.nix
+sync-template:
+    nix eval --json .#defaultSettings.settings | python3 scripts/render_template.py > src/ccproxy/templates/ccproxy.yaml
