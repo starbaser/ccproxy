@@ -66,6 +66,19 @@
           ];
           capture = { path_pattern = "^/v1/messages"; };
         };
+        gemini = {
+          content_fields = [ "model" "project" ];
+          shape_hooks = [
+            "ccproxy.shaping.callbacks.regenerate_user_prompt_id"
+            "ccproxy.shaping.gemini.inject_gemini_content"
+          ];
+          preserve_headers = [ "authorization" "host" ];
+          strip_headers = [
+            "authorization" "content-length" "host"
+            "transfer-encoding" "connection" "accept-encoding"
+          ];
+          capture = { path_pattern = "^/v1internal:"; };
+        };
       };
     };
     inspector = {
