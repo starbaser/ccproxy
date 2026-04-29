@@ -53,20 +53,8 @@ def inject_gemini_content(ctx: Context, params: dict[str, Any]) -> Context:
     if incoming_gen:
         shape_request["generationConfig"] = {**shape_gen, **incoming_gen}
 
-    # systemInstruction: use incoming if present, otherwise strip shape's
-    # (the shape carries the Gemini CLI's own system prompt which is not
-    # part of the compliance envelope)
     if "systemInstruction" in incoming_request:
         shape_request["systemInstruction"] = incoming_request["systemInstruction"]
-    else:
-        shape_request.pop("systemInstruction", None)
-
-    # tools: use incoming if present, otherwise strip shape's
-    # (the shape carries the Gemini CLI's functionDeclarations)
-    if "tools" in incoming_request:
-        shape_request["tools"] = incoming_request["tools"]
-    else:
-        shape_request.pop("tools", None)
 
     ctx._body["request"] = shape_request
 
