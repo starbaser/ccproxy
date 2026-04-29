@@ -12,10 +12,13 @@ the v1internal envelope; this hook merges content INTO a v1internal shape.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from ccproxy.pipeline.context import Context
 from ccproxy.pipeline.hook import hook
+
+logger = logging.getLogger(__name__)
 
 
 @hook(reads=["request"], writes=["request"])
@@ -26,6 +29,9 @@ def inject_gemini_content(ctx: Context, params: dict[str, Any]) -> Context:
     - request.generationConfig: incoming values override, shape fills gaps
       (preserves topP, topK, thinkingConfig from shape if incoming omits them)
     - All other request fields (session_id, etc.): persist from shape
+    - Strips ``alt=sse`` query param when the incoming request is non-streaming
+      (shape was captured from streaming Gemini CLI; non-streaming clients
+      must not receive SSE responses)
     """
     incoming_ctx = params.get("incoming_ctx")
     if incoming_ctx is None:
@@ -51,4 +57,30 @@ def inject_gemini_content(ctx: Context, params: dict[str, Any]) -> Context:
         shape_request["systemInstruction"] = incoming_request["systemInstruction"]
 
     ctx._body["request"] = shape_request
+
+    _sync_streaming(ctx, incoming_ctx)
     return ctx
+
+
+def _sync_streaming(shape_ctx: Context, incoming_ctx: Context) -> None:
+    """Align the shape's streaming mode with the incoming request.
+
+    The Gemini CLI always streams (``?alt=sse``), so captured shapes carry
+    that query param. Non-streaming clients (Glass) must not receive SSE.
+    Also rewrites the path action (streamGenerateContent ↔ generateContent).
+    """
+    shape_req = shape_ctx._resolve_request()
+    if shape_req is None:
+        return
+
+    incoming_req = incoming_ctx._resolve_request()
+    incoming_path = incoming_req.path if incoming_req else ""
+    incoming_is_streaming = "alt=sse" in incoming_path
+
+    if not incoming_is_streaming:
+        if "alt" in shape_req.query:
+            del shape_req.query["alt"]
+        path_no_qs = shape_req.path.split("?")[0]
+        path_no_qs = path_no_qs.replace("streamGenerateContent", "generateContent")
+        shape_req.path = path_no_qs
+        logger.info("_sync_streaming: stripped SSE, path=%s query=%s", shape_req.path, dict(shape_req.query))
