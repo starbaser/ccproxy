@@ -69,8 +69,8 @@
         gemini = {
           content_fields = [ "model" "project" ];
           shape_hooks = [
-            "ccproxy.shaping.callbacks.regenerate_user_prompt_id"
-            "ccproxy.shaping.gemini.inject_gemini_content"
+            "ccproxy.shaping.callbacks"
+            "ccproxy.shaping.gemini"
           ];
           preserve_headers = [ "authorization" "host" ];
           strip_headers = [
