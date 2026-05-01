@@ -298,6 +298,13 @@ ccproxy:
           system: "prepend_shape:2"
         shape_hooks:
           - ccproxy.shaping.callbacks
+          - hook: ccproxy.shaping.caching.strip
+            params:
+              paths: ["system.*.cache_control"]
+          - hook: ccproxy.shaping.caching.insert
+            params:
+              path: "system.-1.cache_control"
+              value: {type: ephemeral}
         preserve_headers:
           - authorization
           - x-api-key
@@ -314,6 +321,8 @@ ccproxy:
         capture:
           path_pattern: "^/v1/messages"
 ```
+
+`shape_hooks` entries are either bare module path strings or `{hook, params}` dicts for parameterized hooks. See [shaping.md](shaping.md) for the full shape hooks reference including the cache breakpoint hooks.
 
 | Field | Type | Description |
 |---|---|---|

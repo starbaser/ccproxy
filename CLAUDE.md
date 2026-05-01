@@ -330,7 +330,7 @@ The Nix devShell creates a dev instance by overriding `defaultSettings` with dev
 
 ## Type Stubs (`stubs/`)
 
-Hand-written stubs for dependencies lacking `py.typed` or with incomplete types: `litellm`, `opentelemetry` (optional, package not installed in dev), `xepor`. On `mypy_path = "stubs"`.
+Hand-written stubs for dependencies lacking `py.typed` or with incomplete types: `glom`, `litellm`, `opentelemetry` (optional, package not installed in dev), `xepor`. On `mypy_path = "stubs"`.
 
 ## Dependencies
 
@@ -343,6 +343,7 @@ Hand-written stubs for dependencies lacking `py.typed` or with incomplete types:
 - **tyro** + **attrs** — CLI subcommand generation
 - **anthropic** — Anthropic API client (OAuth token refresh)
 - **fastapi** — MCP notification endpoint (`POST /mcp/notify`)
+- **glom** — Dot-path access/mutation for JSON bodies (`glom.delete`, `glom.assign`) in caching shaping hooks
 
 ## Marketplace Plugin Sync
 

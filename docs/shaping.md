@@ -155,14 +155,119 @@ Null values from either side are coerced to empty lists for safe spreading.
 
 ### Shape Hooks (Inner DAG)
 
-Shape hooks handle dynamic operations that can't be expressed as field injection — things that require cross-field logic or ID generation. They are standard `@hook(reads=..., writes=...)` decorated functions, DAG-ordered by their declarations and executed via `HookDAG` against the shape context.
+Shape hooks handle operations that can't be expressed as field injection — things that require cross-field logic, ID generation, or structural body mutations. They are standard `@hook(reads=..., writes=...)` decorated functions, DAG-ordered by their declarations and executed via `HookDAG` against the shape context.
 
 Each hook has signature `(ctx: Context, params: dict) -> Context` where `ctx` is the shape context. The incoming pipeline context is available via `params["incoming_ctx"]`.
 
-| Hook | Purpose |
-|---|---|
-| `regenerate_user_prompt_id` | Re-rolls `user_prompt_id` into a new 13-character hex string if the shape carries one. |
-| `regenerate_session_id` | Parses the nested JSON in `metadata.user_id` and re-rolls `session_id` into a fresh UUID4. `device_id` and `account_uuid` persist (identity markers); only the session changes. |
+Shape hooks can be either bare module paths (all `@hook`-decorated functions in the module are loaded) or `{hook, params}` dicts for parameterized hooks with a `model=` Pydantic schema:
+
+```yaml
+shape_hooks:
+  # Bare module path — loads all @hook functions from the module
+  - ccproxy.shaping.callbacks
+  # Parameterized hook — dict with hook path and params
+  - hook: ccproxy.shaping.caching.strip
+    params:
+      paths: ["system.*.cache_control"]
+```
+
+#### Built-in Shape Hooks
+
+| Hook | Module | Purpose |
+|---|---|---|
+| `regenerate_user_prompt_id` | `ccproxy.shaping.callbacks` | Re-rolls `user_prompt_id` into a new 13-character hex string if the shape carries one. |
+| `regenerate_session_id` | `ccproxy.shaping.callbacks` | Parses the nested JSON in `metadata.user_id` and re-rolls `session_id` into a fresh UUID4. `device_id` and `account_uuid` persist (identity markers); only the session changes. |
+| `strip` | `ccproxy.shaping.caching.strip` | Deletes values at glom dot-paths from the request body. Parameterized via `StripParams(paths: list[str])`. |
+| `insert` | `ccproxy.shaping.caching.insert` | Sets a value at a glom dot-path. Parameterized via `InsertParams(path: str, value: Any)`. Default value: `{"type": "ephemeral"}`. |
+
+### Cache Breakpoint Hooks
+
+Anthropic limits explicit `cache_control` breakpoints to 4 per request. When `prepend_shape:2` merges the shape's system preamble (which carries its own `cache_control` annotations) with the incoming system prompt, the total breakpoint count can exceed this limit, causing API rejections.
+
+The caching hooks in `ccproxy.shaping.caching` solve this by normalizing breakpoints after content injection: strip all existing breakpoints, then insert exactly one at the optimal position for prefix caching.
+
+#### strip
+
+Deletes values at one or more glom dot-paths using `glom.delete()` with `ignore_missing=True`. Non-existent paths are silently skipped.
+
+```yaml
+- hook: ccproxy.shaping.caching.strip
+  params:
+    paths: ["system.*.cache_control"]
+```
+
+**`StripParams` fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `paths` | `list[str]` | Glom dot-paths to delete. Supports wildcards. |
+
+#### insert
+
+Sets a value at a single glom dot-path using `glom.assign()`. If the target path doesn't exist (e.g., empty list), the operation is silently skipped.
+
+```yaml
+- hook: ccproxy.shaping.caching.insert
+  params:
+    path: "system.-1.cache_control"
+    value: {type: ephemeral}
+```
+
+**`InsertParams` fields:**
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `path` | `str` | — | Glom dot-path target. |
+| `value` | `Any` | `{"type": "ephemeral"}` | Value to set at the path. |
+
+#### Default Anthropic Configuration
+
+The default config strips all `cache_control` from system blocks, then inserts one on the last block (optimal for prefix caching — the longest shared prefix gets cached):
+
+```yaml
+shape_hooks:
+  - ccproxy.shaping.callbacks
+  - hook: ccproxy.shaping.caching.strip
+    params:
+      paths: ["system.*.cache_control"]
+  - hook: ccproxy.shaping.caching.insert
+    params:
+      path: "system.-1.cache_control"
+      value: {type: ephemeral}
+```
+
+**Before** (after `prepend_shape:2` merges system blocks):
+```
+system[0]: shape preamble    → cache_control: {type: ephemeral}  ← from shape
+system[1]: shape preamble    → cache_control: {type: ephemeral}  ← from shape
+system[2]: app system block  → (none)
+system[3]: app system block  → cache_control: {type: ephemeral}  ← from client
+system[4]: app system block  → cache_control: {type: ephemeral}  ← from client
+```
+Total: 4 breakpoints. Any additional client breakpoint exceeds the limit.
+
+**After** (strip + insert):
+```
+system[0]: shape preamble    → (stripped)
+system[1]: shape preamble    → (stripped)
+system[2]: app system block  → (stripped)
+system[3]: app system block  → (stripped)
+system[4]: app system block  → cache_control: {type: ephemeral}  ← inserted
+```
+Total: 1 breakpoint. The last block is the optimal position because prefix caching benefits from caching the longest shared prefix.
+
+#### Glom Dot-Path Syntax
+
+The caching hooks use [glom](https://glom.readthedocs.io/) for path-based access into nested data structures. Paths are dot-separated, with special syntax for list access:
+
+| Pattern | Meaning | Example |
+|---|---|---|
+| `field.*.key` | Wildcard — iterates all items in the list | `system.*.cache_control` strips `cache_control` from every system block |
+| `field.0.key` | Specific index | `system.0.cache_control` targets the first system block |
+| `field.-1.key` | Negative index (last item) | `system.-1.cache_control` targets the last system block |
+| `a.b.c` | Nested dict traversal | `metadata.user_id` reaches into nested dicts |
+
+Numeric path segments auto-coerce to list indices. Non-numeric segments are dict key lookups.
 
 ### apply_shape()
 
@@ -212,6 +317,13 @@ shaping:
         system: "prepend_shape:2"
       shape_hooks:
         - ccproxy.shaping.callbacks
+        - hook: ccproxy.shaping.caching.strip
+          params:
+            paths: ["system.*.cache_control"]
+        - hook: ccproxy.shaping.caching.insert
+          params:
+            path: "system.-1.cache_control"
+            value: {type: ephemeral}
       preserve_headers:
         - authorization
         - x-api-key
@@ -235,7 +347,7 @@ shaping:
 |---|---|---|---|
 | `content_fields` | `list[str]` | `[]` | Body keys injected from incoming request |
 | `merge_strategies` | `dict[str, str]` | `{}` | Per-field override: replace, prepend_shape[:N], append_shape[:N], drop |
-| `shape_hooks` | `list[str]` | `[]` | Dotted module paths containing `@hook`-decorated functions (e.g. `ccproxy.shaping.callbacks`), DAG-ordered |
+| `shape_hooks` | `list[str \| dict]` | `[]` | Dotted module paths or `{hook, params}` dicts containing `@hook`-decorated functions, DAG-ordered |
 | `preserve_headers` | `list[str]` | auth + host | Target headers apply_shape must NOT overwrite |
 | `strip_headers` | `list[str]` | auth + transport | Shape headers to remove before stamping |
 | `capture.path_pattern` | `str` | `""` | Regex for flow validation during `ccproxy flows shape` |
@@ -243,6 +355,8 @@ shaping:
 ### Writing Custom Shape Hooks
 
 Shape hooks use the standard `@hook` decorator with `reads`/`writes` for DAG ordering.
+
+**Simple hook** (no parameters — registered as a bare module path):
 
 ```python
 # myproject/shaping/custom.py
@@ -261,7 +375,40 @@ def inject_custom_metadata(ctx: Context, params: dict[str, Any]) -> Context:
     return ctx
 ```
 
-Register in config: add `myproject.shaping.custom` to `shape_hooks`.
+```yaml
+shape_hooks:
+  - myproject.shaping.custom
+```
+
+**Parameterized hook** (accepts config-driven parameters via a Pydantic model):
+
+```python
+# myproject/shaping/tag.py
+from typing import Any
+from pydantic import BaseModel
+from ccproxy.pipeline.context import Context
+from ccproxy.pipeline.hook import hook
+
+class TagParams(BaseModel):
+    key: str
+    value: str
+
+@hook(reads=["metadata"], writes=["metadata"], model=TagParams)
+def add_tag(ctx: Context, params: dict[str, Any]) -> Context:
+    """Set a metadata tag from config params."""
+    ctx._body.setdefault("metadata", {})[params["key"]] = params["value"]
+    return ctx
+```
+
+```yaml
+shape_hooks:
+  - hook: myproject.shaping.tag
+    params:
+      key: "environment"
+      value: "production"
+```
+
+The `model=` kwarg on `@hook` declares a Pydantic model for parameter validation. When `load_hooks()` processes a `{hook, params}` entry, it validates `params` against the model and rejects invalid configurations at load time.
 
 To add a new provider, add an entry under `shaping.providers` with the appropriate `content_fields` for that provider's API schema. No Python code changes required.
 
@@ -299,5 +446,6 @@ ccproxy flows shape --provider anthropic
 | "No shaping profile for provider X" in logs | Missing provider config | Add `shaping.providers.X` to ccproxy.yaml |
 | Shape hook not firing (no "Applied shape" log) | Guard condition not met: flow lacks transform, or entered via WireGuard passthrough | Verify transform/redirect rule exists; check flow entered via reverse proxy or OAuth |
 | System prompt missing shape's preamble | `merge_strategies` misconfigured | Ensure `system: prepend_shape` is set in the provider's `merge_strategies` config |
+| 400 "too many cache_control breakpoints" | Shape system blocks carry `cache_control` that survives `prepend_shape` merge | Add the `strip` and `insert` caching hooks to `shape_hooks` (see Cache Breakpoint Hooks) |
 | 400/403 from provider after shaping | Stale shape (SDK updated headers) | Re-capture: `ccproxy run --inspect -- claude -p "refresh"` then `ccproxy flows shape --provider X` |
 | Auth headers leaking from shape | `strip_headers` misconfigured | Ensure `authorization` and `x-api-key` are in the provider's `strip_headers` list |
