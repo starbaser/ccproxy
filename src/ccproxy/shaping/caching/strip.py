@@ -20,8 +20,8 @@ class StripParams(BaseModel):
 
 
 @hook(
-    reads=["system", "tools", "messages"],
-    writes=["system", "tools", "messages"],
+    reads=["system.*.cache_control", "tools.*.cache_control", "messages.*.content.*.cache_control"],
+    writes=["system.*.cache_control", "tools.*.cache_control", "messages.*.content.*.cache_control"],
     model=StripParams,
 )
 def strip(ctx: Context, params: dict[str, Any]) -> Context:

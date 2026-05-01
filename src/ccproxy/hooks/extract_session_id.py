@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from glom import glom
+
 from ccproxy.pipeline.hook import hook
 from ccproxy.utils import parse_session_id
 
@@ -21,12 +23,11 @@ logger = logging.getLogger(__name__)
 
 def extract_session_id_guard(ctx: Context) -> bool:
     """Guard: run if the body has metadata with a user_id field."""
-    metadata = ctx.metadata
-    return bool(metadata.get("user_id"))
+    return bool(glom(ctx._body, "metadata.user_id", default=""))
 
 
 @hook(
-    reads=["metadata"],
+    reads=["metadata.user_id"],
     writes=[],
 )
 def extract_session_id(ctx: Context, params: dict[str, Any]) -> Context:
@@ -36,9 +37,7 @@ def extract_session_id(ctx: Context, params: dict[str, Any]) -> Context:
     on the body's metadata dict — writing into the body would inject fields
     that upstream APIs reject.
     """
-    metadata = ctx.metadata
-
-    user_id = str(metadata.get("user_id", ""))
+    user_id = str(glom(ctx._body, "metadata.user_id", default=""))
     if not user_id:
         return ctx
 

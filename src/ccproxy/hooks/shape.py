@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from glom import assign, delete
 from mitmproxy import http
 from mitmproxy.proxy.mode_specs import ReverseMode
 
@@ -117,14 +118,14 @@ def _inject_content(
         strategy, _ = _parse_strategy(profile.merge_strategies.get(key, "replace"))
         if strategy in ("prepend_shape", "append_shape") and key in shape_ctx._body:
             shape_originals[key] = shape_ctx._body[key]
-        shape_ctx._body.pop(key, None)
+        delete(shape_ctx._body, key, ignore_missing=True)
 
     # Fill from incoming with merge strategy
     for key in profile.content_fields:
         strategy, slice_n = _parse_strategy(profile.merge_strategies.get(key, "replace"))
         if strategy == "replace":
             if key in incoming_ctx._body:
-                shape_ctx._body[key] = incoming_ctx._body[key]
+                assign(shape_ctx._body, key, incoming_ctx._body[key])
         elif strategy == "prepend_shape":
             incoming_val = incoming_ctx._body.get(key) or []
             shape_val = shape_originals.get(key) or []
@@ -134,7 +135,7 @@ def _inject_content(
                 incoming_val = [{"type": "text", "text": incoming_val}]
             if slice_n is not None:
                 shape_val = shape_val[:slice_n]
-            shape_ctx._body[key] = [*shape_val, *incoming_val]
+            assign(shape_ctx._body, key, [*shape_val, *incoming_val])
         elif strategy == "append_shape":
             incoming_val = incoming_ctx._body.get(key) or []
             shape_val = shape_originals.get(key) or []
@@ -144,6 +145,6 @@ def _inject_content(
                 incoming_val = [{"type": "text", "text": incoming_val}]
             if slice_n is not None:
                 shape_val = shape_val[:slice_n]
-            shape_ctx._body[key] = [*incoming_val, *shape_val]
+            assign(shape_ctx._body, key, [*incoming_val, *shape_val])
         elif strategy == "drop":
             pass  # already popped

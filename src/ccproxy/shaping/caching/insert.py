@@ -23,8 +23,8 @@ class InsertParams(BaseModel):
 
 
 @hook(
-    reads=["system", "tools", "messages"],
-    writes=["system", "tools", "messages"],
+    reads=["system.*.cache_control", "tools.*.cache_control"],
+    writes=["system.*.cache_control", "tools.*.cache_control"],
     model=InsertParams,
 )
 def insert(ctx: Context, params: dict[str, Any]) -> Context:

@@ -21,6 +21,7 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 import httpx
+from glom import delete as glom_delete
 from mitmproxy.connection import Server
 from mitmproxy.proxy.mode_specs import ReverseMode
 
@@ -134,7 +135,7 @@ def reroute_gemini(ctx: Context, _: dict[str, Any]) -> Context:
     # Must replace ctx._body (not flow.request.content) because
     # ctx.commit() at pipeline end serializes _body back to the flow.
     request_body = dict(ctx._body)
-    request_body.pop("metadata", None)
+    glom_delete(request_body, "metadata", ignore_missing=True)
     envelope: dict[str, Any] = {
         "model": model,
         "request": request_body,

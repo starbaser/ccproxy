@@ -15,6 +15,16 @@ if TYPE_CHECKING:
     from ccproxy.pipeline.hook import HookSpec
 
 
+def _root_key(path: str) -> str:
+    """Extract root field from a glom dot-path.
+
+    ``'system.*.cache_control'`` → ``'system'``
+    ``'metadata.user_id'`` → ``'metadata'``
+    ``'system'`` → ``'system'``
+    """
+    return path.split(".", 1)[0]
+
+
 class HookDAG:
     """Directed Acyclic Graph for hook dependencies.
 
@@ -33,10 +43,10 @@ class HookDAG:
         self._compute_order()
 
     def _build_key_index(self) -> None:
-        """Build index of which hooks write which keys."""
+        """Build index of which hooks write which keys (by root field)."""
         for name, spec in self._hooks.items():
             for key in spec.writes:
-                self._key_writers[key].add(name)
+                self._key_writers[_root_key(key)].add(name)
 
     def _build_dependencies(self) -> dict[str, set[str]]:
         """Build dependency graph from reads/writes, gated by priority.
@@ -51,7 +61,7 @@ class HookDAG:
 
         for hook_name, spec in self._hooks.items():
             for read_key in spec.reads:
-                writers = self._key_writers.get(read_key, set())
+                writers = self._key_writers.get(_root_key(read_key), set())
                 for writer in writers:
                     if writer == hook_name:
                         continue
