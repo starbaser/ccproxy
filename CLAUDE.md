@@ -109,8 +109,8 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 - `context.py` — `Context` wraps an `HTTPFlow` or bare `http.Request` (for shapes). Content fields (`messages`, `system`, `tools`) are lazy-parsed into Pydantic AI typed objects (`ModelMessage`, `SystemPromptPart`, `ToolDefinition`) and flushed back via `commit()`. `flow` is `HTTPFlow | None` — shape contexts use `from_request()` factory with `_request` stash. `_resolve_request()` returns the underlying `http.Request` from either source. Header mutations are immediate; body mutations deferred until `commit()`. `commit()` strips empty `metadata` dicts injected by property access (upstream APIs reject unknown fields).
 - `wire.py` — Bidirectional wire format ↔ Pydantic AI type conversion. Pure functions: `parse_messages`/`serialize_messages`, `parse_system`/`serialize_system`, `parse_tools`/`serialize_tools`. Handles `CachePoint` round-trip (wire `cache_control` → inline `CachePoint` in `UserPromptPart.content` → `cache_control` on preceding block). Both Anthropic (`{type, text}` blocks, `input_schema`) and OpenAI (`{function: {name, parameters}}`) tool formats supported. Format-neutral: parses whatever arrives, serializes back in the same structure.
 - `types.py` — Extension types for cache_control on request-side Pydantic AI types that lack it: `CachedSystemPromptPart(SystemPromptPart)` with `cache_control: dict[str, str] | None`, `CachedToolDefinition(ToolDefinition)` with `cache_control: dict[str, Any] | None`. User content uses `CachePoint` directly (already in Pydantic AI).
-- `hook.py` — `@hook(reads=..., writes=...)` decorator declares data dependencies. Global `HookSpec` registry.
-- `dag.py` — `HookDAG` topologically sorts hooks via Kahn's algorithm.
+- `hook.py` — `@hook(reads=..., writes=...)` decorator declares data dependencies as glom dot-paths (e.g. `"metadata.user_id"`, `"system.*.cache_control"`). Global `HookSpec` registry.
+- `dag.py` — `HookDAG` topologically sorts hooks via Kahn's algorithm. `_root_key()` extracts the root field from glom dot-paths for dependency resolution (`"system.*.cache_control"` → `"system"`). Backwards-compatible: plain field names have root = themselves.
 - `executor.py` — `PipelineExecutor.execute(flow)` runs hooks in DAG order, calls `ctx.commit()` at the end.
 - `loader.py` — `load_hooks()` resolves config hook-list entries (dotted module paths or `{hook, params}` dicts) into `HookSpec` objects. Validates YAML-supplied params against each hook's declared Pydantic model.
 - `render.py` — `render_pipeline()` builds a `rich.console.Group` representing the full DAG: inbound stage → lightllm transform bridge → outbound stage → provider sink. Each hook is a `rich.panel.Panel` with reads/writes. Parallel groups use `rich.columns.Columns`.
@@ -136,16 +136,16 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 
 | Hook | Stage | Purpose |
 |------|-------|---------|
-| `forward_oauth` | inbound | Sentinel key (`sk-ant-oat-ccproxy-{provider}`) substitution from `oat_sources` |
-| `gemini_cli_compat` | inbound | Masquerades google-genai SDK user-agent as Gemini CLI for capacity allocation |
-| `reroute_gemini` | inbound | Reroutes WireGuard flows targeting `generativelanguage.googleapis.com` to `cloudcode-pa.googleapis.com` with `v1internal` envelope wrapping and project ID resolution |
-| `extract_session_id` | inbound | Parses `metadata.user_id` → stores session_id on `flow.metadata` (NOT body metadata) |
+| `forward_oauth` | inbound | Sentinel key (`sk-ant-oat-ccproxy-{provider}`) substitution from `oat_sources`. Header-only. |
+| `gemini_cli_compat` | inbound | Masquerades google-genai SDK user-agent as Gemini CLI for capacity allocation. Header-only. |
+| `reroute_gemini` | inbound | Reroutes WireGuard flows targeting `generativelanguage.googleapis.com` to `cloudcode-pa.googleapis.com` with `v1internal` envelope wrapping and project ID resolution. Uses `glom.delete()` for metadata stripping. reads=`["authorization", "x-goog-api-key"]` |
+| `extract_session_id` | inbound | Reads `metadata.user_id` via `glom(ctx._body, 'metadata.user_id')` → stores session_id on `flow.metadata` (NOT body metadata). reads=`["metadata.user_id"]` |
 | `gemini_oauth_refresh` | inbound | Preemptive Gemini OAuth token refresh with `refresh_token` backup (workaround for gemini-cli#21691). Optional — commented out in defaults. |
-| `inject_mcp_notifications` | outbound | Injects buffered MCP terminal events as synthetic ToolCallPart/ToolReturnPart pairs |
-| `verbose_mode` | outbound | Strips `redact-thinking-*` from `anthropic-beta` header |
-| `shape` | outbound | Picks a per-provider captured shape, injects content fields from the incoming request per the provider's shaping profile, applies to the outbound flow |
-| `caching.strip` | shape (inner DAG) | Deletes values at glom dot-paths via `glom.delete()`. Accepts `StripParams(paths: list[str])`. Wildcards (`system.*.cache_control`), indices (`system.0.cache_control`), negative indices (`system.-1.cache_control`) |
-| `caching.insert` | shape (inner DAG) | Sets a value at a glom dot-path via `glom.assign()`. Accepts `InsertParams(path: str, value: Any)`. Default value: `{"type": "ephemeral"}` |
+| `inject_mcp_notifications` | outbound | Injects buffered MCP terminal events as synthetic ToolCallPart/ToolReturnPart pairs. Typed layer. |
+| `verbose_mode` | outbound | Strips `redact-thinking-*` from `anthropic-beta` header. Header-only. |
+| `shape` | outbound | Picks a per-provider captured shape, injects content fields from the incoming request per the provider's shaping profile, applies to the outbound flow. Uses `glom.delete()`/`glom.assign()` for content injection. |
+| `caching.strip` | shape (inner DAG) | Deletes values at glom dot-paths via `glom.delete()`. Accepts `StripParams(paths: list[str])`. reads/writes=`["system.*.cache_control", "tools.*.cache_control", "messages.*.content.*.cache_control"]` |
+| `caching.insert` | shape (inner DAG) | Sets a value at a glom dot-path via `glom.assign()`. Accepts `InsertParams(path: str, value: Any)`. Default value: `{"type": "ephemeral"}`. reads/writes=`["system.*.cache_control", "tools.*.cache_control"]` |
 
 **`shaping/`** — Request shaping framework (see `docs/shaping.md` for full reference):
 - **Shape**: a captured ``mitmproxy.http.HTTPFlow`` (e.g. a real Claude CLI request) persisted as a ``{provider}.mflow`` file. Captured via ``ccproxy flows shape --provider X`` with capture validation (POST + JSON + path pattern). At runtime, a working copy is created via ``http.Request.from_state()``, configured headers are stripped, ``content_fields`` from the provider's shaping profile are injected from the incoming request (with configurable merge strategies), shape hooks run via an inner DAG for dynamic operations, then ``apply_shape()`` stamps headers + query params + body onto the outbound flow. The shape is the proven foundation — everything not listed in ``content_fields`` persists from the shape.
@@ -153,7 +153,7 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 - `body.py` — JSON body helpers (``get_body``, ``set_body``, ``mutate_body``) for low-level access outside the typed layer.
 - `store.py` — ``ShapeStore`` singleton wrapping a directory of ``.mflow`` files. Uses ``mitmproxy.io.FlowWriter``/``FlowReader``. ``pick()`` returns the most recently appended flow for a provider.
 - `prepare.py` — ``strip_headers(shape_ctx, headers)``. Single function taking the provider's configured ``strip_headers`` list. Called by the shape hook before content injection.
-- `callbacks.py` — Shape hooks (``regenerate_user_prompt_id``, ``regenerate_session_id``). Standard ``@hook(reads=..., writes=...)`` decorated functions, DAG-ordered via ``HookDAG``. Registered via ``shaping.providers.{name}.shape_hooks`` dotted module paths.
+- `callbacks.py` — Shape hooks (``regenerate_user_prompt_id``, ``regenerate_session_id``). Uses ``glom()``/``assign()`` for all body access. ``regenerate_user_prompt_id``: reads/writes=``["user_prompt_id"]``. ``regenerate_session_id``: reads/writes=``["metadata.user_id"]``. DAG-ordered via ``HookDAG``. Registered via ``shaping.providers.{name}.shape_hooks`` dotted module paths.
 - `caching/` — Composable glom-based cache control hooks for the shape inner DAG:
   - `strip.py` — ``strip`` hook. Deletes values at glom dot-paths via ``glom.delete(ctx._body, path, ignore_missing=True)``. Accepts ``StripParams(paths: list[str])`` Pydantic model via the hook system's ``model=`` parameter. Glom dot-path syntax: ``system.*.cache_control`` (wildcard over all items), ``system.0.cache_control`` (specific index), ``system.-1.cache_control`` (negative index).
   - `insert.py` — ``insert`` hook. Sets a value at a glom dot-path via ``glom.assign(ctx._body, path, value)``. Accepts ``InsertParams(path: str, value: Any)`` Pydantic model. Default value is ``{"type": "ephemeral"}``. Separate modules ensure DAG priority ordering (strip runs before insert when both are configured).
@@ -296,6 +296,7 @@ Each filter must consume a JSON array and produce a JSON array. Filters chain in
 - **Logging**: `setup_logging()` in cli.py. Two modes: journal-only under systemd (`INVOCATION_ID` detected), stderr + file (`{config_dir}/ccproxy.log`, truncated on restart) otherwise. Subprocess output routed through `ccproxy.subprocess.{slirp4netns,nsenter}` loggers. mitmproxy TermLog disabled (`with_termlog=False`); mitmproxy loggers route through ccproxy's handlers.
 - **Hook error isolation**: Errors in one hook don't block others. `OAuthConfigError` is the exception — it propagates through the pipeline (fatal).
 - **Body metadata footgun**: `ctx.metadata` uses `setdefault` — reading it creates an empty `metadata` key in the body. `commit()` strips empty metadata dicts to prevent upstream API rejections (Google: "Unknown name metadata"). Hooks that need flow-level state should use `ctx.flow.metadata["ccproxy.key"]`, NOT `ctx.metadata["key"]` which writes into the request body.
+- **Three-layer access model**: Hooks access request data through one of three layers. (1) **Header ops** — `ctx.get_header()` / `ctx.set_header()` for HTTP headers. (2) **Typed ops** — `ctx.system`, `ctx.messages`, `ctx.tools` for Pydantic AI objects. (3) **Raw body ops** — `from glom import glom, assign, delete` over `ctx._body` for direct JSON body mutation. Glom is the standard primitive for all raw body access; `reads`/`writes` declarations on `@hook` use glom dot-paths (e.g. `"metadata.user_id"`, `"system.*.cache_control"`).
 - **SSE streaming**: `flow.response.stream` must be set in `responseheaders` (before body arrives). xepor does not implement `responseheaders` — it lives on `InspectorAddon`. Setting `stream` in `response` is too late, mitmproxy has already buffered.
 - **Provider model**: Providers are generic — URL + auth method + API format. LiteLLM's `ProviderConfigManager` resolves actual hosts/paths. The lightllm dispatch module has a small set of provider name strings as dispatch keys (`_GEMINI_PROVIDERS`, `_PATH_SUFFIXES`) but URL targets themselves are resolved by LiteLLM.
 - **Docker services** (`docker-compose.yaml`): `ccproxy-jaeger` (Jaeger, ports 4317/4318/16686) for OTel trace collection.
@@ -343,7 +344,7 @@ Hand-written stubs for dependencies lacking `py.typed` or with incomplete types:
 - **tyro** + **attrs** — CLI subcommand generation
 - **anthropic** — Anthropic API client (OAuth token refresh)
 - **fastapi** — MCP notification endpoint (`POST /mcp/notify`)
-- **glom** — Dot-path access/mutation for JSON bodies (`glom.delete`, `glom.assign`) in caching shaping hooks
+- **glom** — Standard primitive for all raw body mutations across the hook system (`glom`, `assign`, `delete`). Used by pipeline hooks (`extract_session_id`, `reroute_gemini`, `shape`), shaping callbacks, and caching hooks. Hook `reads`/`writes` declarations use glom dot-paths for DAG dependency resolution.
 
 ## Marketplace Plugin Sync
 

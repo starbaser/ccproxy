@@ -162,8 +162,8 @@ ccproxy:
 |---|---|---|
 | `ccproxy.hooks.forward_oauth` | inbound | Substitutes sentinel keys (`sk-ant-oat-ccproxy-{provider}`) with OAuth tokens from `oat_sources`; injects Bearer auth |
 | `ccproxy.hooks.gemini_cli_compat` | inbound | Masquerades google-genai SDK user-agent as Gemini CLI for capacity allocation on `cloudcode-pa.googleapis.com` |
-| `ccproxy.hooks.reroute_gemini` | inbound | Reroutes WireGuard flows targeting `generativelanguage.googleapis.com` to `cloudcode-pa.googleapis.com` with `v1internal` envelope wrapping |
-| `ccproxy.hooks.extract_session_id` | inbound | Reads `metadata.user_id` from the request body and stores it on `flow.metadata` for downstream use |
+| `ccproxy.hooks.reroute_gemini` | inbound | Reroutes WireGuard flows targeting `generativelanguage.googleapis.com` to `cloudcode-pa.googleapis.com` with `v1internal` envelope wrapping. Uses `glom.delete()` for metadata stripping. |
+| `ccproxy.hooks.extract_session_id` | inbound | Reads `metadata.user_id` via `glom(ctx._body, 'metadata.user_id')` and stores session_id on `flow.metadata` for downstream use |
 | `ccproxy.hooks.gemini_oauth_refresh` | inbound | Preemptive Gemini OAuth token refresh with `refresh_token` backup (workaround for gemini-cli#21691). Optional — not enabled by default. |
 | `ccproxy.hooks.inject_mcp_notifications` | outbound | Injects buffered MCP terminal events as synthetic tool_use/tool_result blocks |
 | `ccproxy.hooks.verbose_mode` | outbound | Strips `redact-thinking-*` flags from the `anthropic-beta` header |
@@ -172,15 +172,20 @@ ccproxy:
 
 ### Writing custom hooks
 
-Use the `@hook` decorator with `reads`/`writes` for DAG ordering:
+Use the `@hook` decorator with `reads`/`writes` for DAG ordering. Declarations support glom dot-paths (e.g. `"metadata.user_id"`) — the DAG extracts root fields for dependency resolution:
 
 ```python
+from glom import assign, glom
 from ccproxy.pipeline.context import Context
 from ccproxy.pipeline.hook import hook
 
-@hook(reads=["messages"], writes=["messages"])
+@hook(reads=["metadata.user_id"], writes=["metadata.tracking_id"])
 def my_hook(ctx: Context, params: dict) -> Context:
-    # Modify ctx.messages, ctx.system, ctx.headers, etc.
+    # Typed layer: ctx.messages, ctx.system, ctx.tools (Pydantic AI objects)
+    # Raw body layer: glom/assign/delete over ctx._body (standard primitive)
+    user_id = glom(ctx._body, "metadata.user_id", default="")
+    if user_id:
+        assign(ctx._body, "metadata.tracking_id", f"track-{user_id}")
     return ctx
 ```
 

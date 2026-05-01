@@ -155,7 +155,7 @@ Null values from either side are coerced to empty lists for safe spreading.
 
 ### Shape Hooks (Inner DAG)
 
-Shape hooks handle operations that can't be expressed as field injection — things that require cross-field logic, ID generation, or structural body mutations. They are standard `@hook(reads=..., writes=...)` decorated functions, DAG-ordered by their declarations and executed via `HookDAG` against the shape context.
+Shape hooks handle operations that can't be expressed as field injection — things that require cross-field logic, ID generation, or structural body mutations. They are standard `@hook(reads=..., writes=...)` decorated functions, DAG-ordered by their declarations and executed via `HookDAG` against the shape context. All raw body access uses glom (`glom()`, `assign()`, `delete()` from the `glom` package) — the standard primitive for `ctx._body` mutations across the entire hook system. The `reads`/`writes` declarations use glom dot-paths (e.g. `"metadata.user_id"`, `"system.*.cache_control"`) which the DAG resolves to root fields for dependency ordering.
 
 Each hook has signature `(ctx: Context, params: dict) -> Context` where `ctx` is the shape context. The incoming pipeline context is available via `params["incoming_ctx"]`.
 
@@ -175,10 +175,10 @@ shape_hooks:
 
 | Hook | Module | Purpose |
 |---|---|---|
-| `regenerate_user_prompt_id` | `ccproxy.shaping.callbacks` | Re-rolls `user_prompt_id` into a new 13-character hex string if the shape carries one. |
-| `regenerate_session_id` | `ccproxy.shaping.callbacks` | Parses the nested JSON in `metadata.user_id` and re-rolls `session_id` into a fresh UUID4. `device_id` and `account_uuid` persist (identity markers); only the session changes. |
-| `strip` | `ccproxy.shaping.caching.strip` | Deletes values at glom dot-paths from the request body. Parameterized via `StripParams(paths: list[str])`. |
-| `insert` | `ccproxy.shaping.caching.insert` | Sets a value at a glom dot-path. Parameterized via `InsertParams(path: str, value: Any)`. Default value: `{"type": "ephemeral"}`. |
+| `regenerate_user_prompt_id` | `ccproxy.shaping.callbacks` | Re-rolls `user_prompt_id` via `glom()`/`assign()`. reads/writes=`["user_prompt_id"]`. |
+| `regenerate_session_id` | `ccproxy.shaping.callbacks` | Parses nested JSON in `metadata.user_id` via `glom()`, re-rolls `session_id` into a fresh UUID4. reads/writes=`["metadata.user_id"]`. |
+| `strip` | `ccproxy.shaping.caching.strip` | Deletes values at glom dot-paths via `delete()`. Parameterized via `StripParams(paths: list[str])`. reads/writes=`["system.*.cache_control", "tools.*.cache_control", "messages.*.content.*.cache_control"]`. |
+| `insert` | `ccproxy.shaping.caching.insert` | Sets a value at a glom dot-path via `assign()`. Parameterized via `InsertParams(path: str, value: Any)`. Default value: `{"type": "ephemeral"}`. reads/writes=`["system.*.cache_control", "tools.*.cache_control"]`. |
 
 ### Cache Breakpoint Hooks
 
@@ -258,7 +258,7 @@ Total: 1 breakpoint. The last block is the optimal position because prefix cachi
 
 #### Glom Dot-Path Syntax
 
-The caching hooks use [glom](https://glom.readthedocs.io/) for path-based access into nested data structures. Paths are dot-separated, with special syntax for list access:
+All hooks that perform raw body mutations use [glom](https://glom.readthedocs.io/) as the standard primitive — both for runtime access (`glom()`, `assign()`, `delete()` over `ctx._body`) and for `reads`/`writes` declarations that drive DAG dependency ordering. The DAG extracts the root field from each dot-path (e.g. `"system.*.cache_control"` → `"system"`) for dependency resolution. Paths are dot-separated, with special syntax for list access:
 
 | Pattern | Meaning | Example |
 |---|---|---|
@@ -361,17 +361,18 @@ Shape hooks use the standard `@hook` decorator with `reads`/`writes` for DAG ord
 ```python
 # myproject/shaping/custom.py
 from typing import Any
+from glom import assign, glom
 from ccproxy.pipeline.context import Context
 from ccproxy.pipeline.hook import hook
 
-@hook(reads=["metadata"], writes=["metadata"])
+@hook(reads=["custom_tracking_id"], writes=["custom_tracking_id"])
 def inject_custom_metadata(ctx: Context, params: dict[str, Any]) -> Context:
     """Add a custom tracking field from the incoming request into the shape."""
     incoming_ctx = params.get("incoming_ctx")
     if incoming_ctx is not None:
-        value = incoming_ctx._body.get("custom_tracking_id")
+        value = glom(incoming_ctx._body, "custom_tracking_id", default=None)
         if value is not None:
-            ctx._body["custom_tracking_id"] = value
+            assign(ctx._body, "custom_tracking_id", value)
     return ctx
 ```
 
@@ -385,6 +386,7 @@ shape_hooks:
 ```python
 # myproject/shaping/tag.py
 from typing import Any
+from glom import assign
 from pydantic import BaseModel
 from ccproxy.pipeline.context import Context
 from ccproxy.pipeline.hook import hook
@@ -396,7 +398,8 @@ class TagParams(BaseModel):
 @hook(reads=["metadata"], writes=["metadata"], model=TagParams)
 def add_tag(ctx: Context, params: dict[str, Any]) -> Context:
     """Set a metadata tag from config params."""
-    ctx._body.setdefault("metadata", {})[params["key"]] = params["value"]
+    path = f"metadata.{params['key']}"
+    assign(ctx._body, path, params["value"])
     return ctx
 ```
 
