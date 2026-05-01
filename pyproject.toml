@@ -26,6 +26,7 @@ dependencies = [
   "xepor>=0.6.0",
   "humanize>=4.0.0",
   "pydantic-ai-slim>=1.85.1",
+  "glom>=24.1.0",
 ]
 
 [project.scripts]

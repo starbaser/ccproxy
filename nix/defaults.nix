@@ -57,6 +57,17 @@
           merge_strategies = { system = "prepend_shape:2"; };
           shape_hooks = [
             "ccproxy.shaping.callbacks"
+            {
+              hook = "ccproxy.shaping.caching.strip";
+              params = { paths = [ "system.*.cache_control" ]; };
+            }
+            {
+              hook = "ccproxy.shaping.caching.insert";
+              params = {
+                path = "system.-1.cache_control";
+                value = { type = "ephemeral"; };
+              };
+            }
           ];
           preserve_headers = [ "authorization" "x-api-key" "x-goog-api-key" "host" ];
           strip_headers = [

@@ -135,6 +135,21 @@
         src = { include = [ "rich/**/*.py" ]; chunk_by = "symbols"; };
       };
     };
+    "lib/glom" = {
+      url = "https://github.com/mahmoud/glom";
+      kits = {
+        docs = {
+          include = [
+            "docs/**/*.rst"
+            "docs/**/*.md"
+            "README.md"
+            "CHANGELOG.md"
+          ];
+          chunk_by = "lines";
+        };
+        src = { include = [ "glom/**/*.py" ]; chunk_by = "symbols"; };
+      };
+    };
     "sdk/anthropic-python" = {
       url = "https://github.com/anthropics/anthropic-sdk-python";
     };
