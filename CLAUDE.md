@@ -144,6 +144,8 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 | `inject_mcp_notifications` | outbound | Injects buffered MCP terminal events as synthetic ToolCallPart/ToolReturnPart pairs |
 | `verbose_mode` | outbound | Strips `redact-thinking-*` from `anthropic-beta` header |
 | `shape` | outbound | Picks a per-provider captured shape, injects content fields from the incoming request per the provider's shaping profile, applies to the outbound flow |
+| `caching.strip` | shape (inner DAG) | Deletes values at glom dot-paths via `glom.delete()`. Accepts `StripParams(paths: list[str])`. Wildcards (`system.*.cache_control`), indices (`system.0.cache_control`), negative indices (`system.-1.cache_control`) |
+| `caching.insert` | shape (inner DAG) | Sets a value at a glom dot-path via `glom.assign()`. Accepts `InsertParams(path: str, value: Any)`. Default value: `{"type": "ephemeral"}` |
 
 **`shaping/`** — Request shaping framework (see `docs/shaping.md` for full reference):
 - **Shape**: a captured ``mitmproxy.http.HTTPFlow`` (e.g. a real Claude CLI request) persisted as a ``{provider}.mflow`` file. Captured via ``ccproxy flows shape --provider X`` with capture validation (POST + JSON + path pattern). At runtime, a working copy is created via ``http.Request.from_state()``, configured headers are stripped, ``content_fields`` from the provider's shaping profile are injected from the incoming request (with configurable merge strategies), shape hooks run via an inner DAG for dynamic operations, then ``apply_shape()`` stamps headers + query params + body onto the outbound flow. The shape is the proven foundation — everything not listed in ``content_fields`` persists from the shape.
@@ -152,6 +154,9 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 - `store.py` — ``ShapeStore`` singleton wrapping a directory of ``.mflow`` files. Uses ``mitmproxy.io.FlowWriter``/``FlowReader``. ``pick()`` returns the most recently appended flow for a provider.
 - `prepare.py` — ``strip_headers(shape_ctx, headers)``. Single function taking the provider's configured ``strip_headers`` list. Called by the shape hook before content injection.
 - `callbacks.py` — Shape hooks (``regenerate_user_prompt_id``, ``regenerate_session_id``). Standard ``@hook(reads=..., writes=...)`` decorated functions, DAG-ordered via ``HookDAG``. Registered via ``shaping.providers.{name}.shape_hooks`` dotted module paths.
+- `caching/` — Composable glom-based cache control hooks for the shape inner DAG:
+  - `strip.py` — ``strip`` hook. Deletes values at glom dot-paths via ``glom.delete(ctx._body, path, ignore_missing=True)``. Accepts ``StripParams(paths: list[str])`` Pydantic model via the hook system's ``model=`` parameter. Glom dot-path syntax: ``system.*.cache_control`` (wildcard over all items), ``system.0.cache_control`` (specific index), ``system.-1.cache_control`` (negative index).
+  - `insert.py` — ``insert`` hook. Sets a value at a glom dot-path via ``glom.assign(ctx._body, path, value)``. Accepts ``InsertParams(path: str, value: Any)`` Pydantic model. Default value is ``{"type": "ephemeral"}``. Separate modules ensure DAG priority ordering (strip runs before insert when both are configured).
 - `executor.py` — ``execute_shape_hooks(shape_ctx, incoming_ctx, hook_entries)`` builds a ``HookDAG`` from shape hook entries, executes in topological order. Caches resolved specs per hook-list.
 - The ``shape`` hook reads the provider profile from ``config.shaping.providers[provider]`` at runtime. Per-provider ``content_fields`` declare which body keys are injected from the incoming request. ``merge_strategies`` override the default ``replace`` behavior per field (``prepend_shape``, ``append_shape``, ``drop``). ``preserve_headers`` lists target flow headers that ``apply_shape`` must not overwrite (auth + routing). ``strip_headers`` lists shape headers to remove before stamping (auth + transport).
 
@@ -232,6 +237,13 @@ shaping:
         system: "prepend_shape:2"
       shape_hooks:
         - ccproxy.shaping.callbacks
+        - hook: ccproxy.shaping.caching.strip
+          params:
+            paths: ["system.*.cache_control"]
+        - hook: ccproxy.shaping.caching.insert
+          params:
+            path: "system.-1.cache_control"
+            value: {type: ephemeral}
       preserve_headers:
         - authorization
         - x-api-key
@@ -248,7 +260,7 @@ shaping:
       capture:
         path_pattern: "^/v1/messages"
 ```
-``content_fields`` lists body keys injected from the incoming request — everything else persists from the shape. ``merge_strategies`` override the default ``replace`` per field: ``prepend_shape`` (shape value + incoming), ``append_shape`` (incoming + shape value), ``drop`` (remove entirely). Append ``:N`` to ``prepend_shape`` or ``append_shape`` to slice the shape's array to the first *N* elements before merging (e.g. ``prepend_shape:2`` keeps only the first two shape system blocks). ``shape_hooks`` are dotted module paths to ``@hook``-decorated functions executed via an inner ``HookDAG`` after content injection. ``preserve_headers`` lists target flow headers that ``apply_shape`` must not overwrite (auth injected by ``forward_oauth``, host set by redirect handler). ``strip_headers`` lists shape headers to remove before stamping (stale auth tokens, transport headers that desync). ``capture.path_pattern`` validates flows during ``ccproxy flows shape`` (must also be POST + JSON).
+``content_fields`` lists body keys injected from the incoming request — everything else persists from the shape. ``merge_strategies`` override the default ``replace`` per field: ``prepend_shape`` (shape value + incoming), ``append_shape`` (incoming + shape value), ``drop`` (remove entirely). Append ``:N`` to ``prepend_shape`` or ``append_shape`` to slice the shape's array to the first *N* elements before merging (e.g. ``prepend_shape:2`` keeps only the first two shape system blocks). ``shape_hooks`` entries are dotted module paths (bare hooks) or ``{hook, params}`` dicts for parameterized hooks (same format as pipeline hook config). Executed via an inner ``HookDAG`` after content injection. The default Anthropic config uses the caching hooks to strip all ``cache_control`` from system blocks then insert one on the last block — this prevents exceeding Anthropic's 4-breakpoint limit when ``prepend_shape`` merges shape system blocks that carry their own ``cache_control``. ``preserve_headers`` lists target flow headers that ``apply_shape`` must not overwrite (auth injected by ``forward_oauth``, host set by redirect handler). ``strip_headers`` lists shape headers to remove before stamping (stale auth tokens, transport headers that desync). ``capture.path_pattern`` validates flows during ``ccproxy flows shape`` (must also be POST + JSON).
 
 **Flows config** — `flows.default_jq_filters` list of jq expressions applied before CLI `--jq` filters:
 ```yaml
