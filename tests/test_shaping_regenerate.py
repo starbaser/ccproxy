@@ -9,7 +9,7 @@ from typing import Any
 from mitmproxy import http
 
 from ccproxy.pipeline.context import Context
-from ccproxy.shaping.callbacks import regenerate_session_id, regenerate_user_prompt_id
+from ccproxy.shaping.regenerate import regenerate_session_id, regenerate_user_prompt_id
 
 
 def _shape_ctx(body: dict[str, Any] | None = None) -> Context:

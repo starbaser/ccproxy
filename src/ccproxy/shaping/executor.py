@@ -7,6 +7,7 @@ specs per hook-list to avoid per-request import overhead.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -17,19 +18,19 @@ from ccproxy.pipeline.loader import load_hooks
 
 logger = logging.getLogger(__name__)
 
-_shape_hook_cache: dict[tuple[str, ...], list[HookSpec]] = {}
+_shape_hook_cache: dict[str, list[HookSpec]] = {}
 
 
 def execute_shape_hooks(
     shape_ctx: Context,
     incoming_ctx: Context,
-    hook_entries: list[str],
+    hook_entries: list[str | dict[str, Any]],
 ) -> Context:
     """Load and execute shape hooks in DAG order against shape_ctx."""
     if not hook_entries:
         return shape_ctx
 
-    cache_key = tuple(hook_entries)
+    cache_key = json.dumps(hook_entries, sort_keys=True, default=str)
     if cache_key not in _shape_hook_cache:
         _shape_hook_cache[cache_key] = load_hooks(hook_entries)
 

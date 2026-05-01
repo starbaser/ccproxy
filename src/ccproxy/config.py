@@ -129,7 +129,7 @@ class ProviderShapingConfig(BaseModel):
     (e.g. ``prepend_shape:2`` keeps the first two shape blocks).
     """
 
-    shape_hooks: list[str] = Field(default_factory=list)
+    shape_hooks: list[str | dict[str, Any]] = Field(default_factory=list)
     """Dotted paths to ``@hook``-decorated functions run after content injection.
 
     Each hook is DAG-ordered by its ``reads``/``writes`` declarations and

@@ -302,7 +302,7 @@ ccproxy:
         merge_strategies:
           system: "prepend_shape:2"
         shape_hooks:
-          - ccproxy.shaping.callbacks
+          - ccproxy.shaping.regenerate
           - hook: ccproxy.shaping.caching.strip
             params:
               paths: ["system.*.cache_control"]

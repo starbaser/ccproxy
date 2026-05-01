@@ -46,7 +46,7 @@ def store(tmp_path: Path) -> Any:
                 "content_fields": ["model", "messages", "tools", "system", "thinking", "stream", "max_tokens"],
                 "merge_strategies": {"system": "prepend_shape"},
                 "shape_hooks": [
-                    "ccproxy.shaping.callbacks",
+                    "ccproxy.shaping.regenerate",
                 ],
                 "capture": {"path_pattern": "^/v1/messages"},
             },

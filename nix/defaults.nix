@@ -56,7 +56,7 @@
           ];
           merge_strategies = { system = "prepend_shape:2"; };
           shape_hooks = [
-            "ccproxy.shaping.callbacks"
+            "ccproxy.shaping.regenerate"
             {
               hook = "ccproxy.shaping.caching.strip";
               params = { paths = [ "system.*.cache_control" ]; };
@@ -80,7 +80,7 @@
         gemini = {
           content_fields = [ "model" "project" ];
           shape_hooks = [
-            "ccproxy.shaping.callbacks"
+            "ccproxy.shaping.regenerate"
             "ccproxy.shaping.gemini"
           ];
           preserve_headers = [ "authorization" "host" ];

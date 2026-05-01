@@ -164,7 +164,7 @@ Shape hooks can be either bare module paths (all `@hook`-decorated functions in 
 ```yaml
 shape_hooks:
   # Bare module path — loads all @hook functions from the module
-  - ccproxy.shaping.callbacks
+  - ccproxy.shaping.regenerate
   # Parameterized hook — dict with hook path and params
   - hook: ccproxy.shaping.caching.strip
     params:
@@ -175,8 +175,8 @@ shape_hooks:
 
 | Hook | Module | Purpose |
 |---|---|---|
-| `regenerate_user_prompt_id` | `ccproxy.shaping.callbacks` | Re-rolls `user_prompt_id` via `glom()`/`assign()`. reads/writes=`["user_prompt_id"]`. |
-| `regenerate_session_id` | `ccproxy.shaping.callbacks` | Parses nested JSON in `metadata.user_id` via `glom()`, re-rolls `session_id` into a fresh UUID4. reads/writes=`["metadata.user_id"]`. |
+| `regenerate_user_prompt_id` | `ccproxy.shaping.regenerate` | Re-rolls `user_prompt_id` via `glom()`/`assign()`. reads/writes=`["user_prompt_id"]`. |
+| `regenerate_session_id` | `ccproxy.shaping.regenerate` | Parses nested JSON in `metadata.user_id` via `glom()`, re-rolls `session_id` into a fresh UUID4. reads/writes=`["metadata.user_id"]`. |
 | `strip` | `ccproxy.shaping.caching.strip` | Deletes values at glom dot-paths via `delete()`. Parameterized via `StripParams(paths: list[str])`. reads/writes=`["system.*.cache_control", "tools.*.cache_control", "messages.*.content.*.cache_control"]`. |
 | `insert` | `ccproxy.shaping.caching.insert` | Sets a value at a glom dot-path via `assign()`. Parameterized via `InsertParams(path: str, value: Any)`. Default value: `{"type": "ephemeral"}`. reads/writes=`["system.*.cache_control", "tools.*.cache_control"]`. |
 
@@ -226,7 +226,7 @@ The default config strips all `cache_control` from system blocks, then inserts o
 
 ```yaml
 shape_hooks:
-  - ccproxy.shaping.callbacks
+  - ccproxy.shaping.regenerate
   - hook: ccproxy.shaping.caching.strip
     params:
       paths: ["system.*.cache_control"]
@@ -316,7 +316,7 @@ shaping:
       merge_strategies:
         system: "prepend_shape:2"
       shape_hooks:
-        - ccproxy.shaping.callbacks
+        - ccproxy.shaping.regenerate
         - hook: ccproxy.shaping.caching.strip
           params:
             paths: ["system.*.cache_control"]
