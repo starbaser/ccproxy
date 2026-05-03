@@ -475,6 +475,10 @@ async def _run_inspect(
 
         await verify_or_shutdown(get_config(), _cleanup)
 
+    from ccproxy.hooks.gemini_cli import prewarm_project
+
+    prewarm_project()
+
     try:
         wg_cli_conf = get_wg_client_conf(master, wg_cli_keypair_path)
         if wg_cli_conf:

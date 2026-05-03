@@ -15,7 +15,6 @@ from ccproxy.inspector.router import InspectorRouter
 from ccproxy.inspector.routes.transform import (
     _resolve_api_key,
     _resolve_transform_target,
-    _rewrite_path,
     register_transform_routes,
 )
 
@@ -472,33 +471,6 @@ class TestSafetyNet:
         assert "transform failed" in body["error"]
 
 
-class TestRewritePath:
-    """Tests for _rewrite_path — Gemini action extraction and path rewriting."""
-
-    def test_non_gemini_provider_returns_none(self) -> None:
-        target = TransformRoute(dest_provider="anthropic", match_path="/v1/")
-        assert _rewrite_path("/models/claude:chat", target) is None
-
-    def test_gemini_generate_content(self) -> None:
-        target = TransformRoute(dest_provider="gemini", match_path="/v1beta/")
-        result = _rewrite_path("/models/gemini-pro:generateContent", target)
-        assert result == "/v1internal:generateContent"
-
-    def test_gemini_stream_generate_content(self) -> None:
-        target = TransformRoute(dest_provider="gemini", match_path="/v1beta/")
-        result = _rewrite_path("/models/gemini-pro:streamGenerateContent", target)
-        assert result == "/v1internal:streamGenerateContent?alt=sse"
-
-    def test_gemini_stream_with_query_params(self) -> None:
-        target = TransformRoute(dest_provider="gemini", match_path="/v1beta/")
-        result = _rewrite_path("/models/gemini-pro:streamGenerateContent?alt=sse", target)
-        assert result == "/v1internal:streamGenerateContent?alt=sse"
-
-    def test_gemini_no_action_returns_none(self) -> None:
-        target = TransformRoute(dest_provider="gemini", match_path="/v1beta/")
-        assert _rewrite_path("/some/path/without/action", target) is None
-
-
 class TestHandleRedirect:
     """Tests for redirect mode — host rewriting, path override, auth injection."""
 
@@ -552,7 +524,12 @@ class TestHandleRedirect:
         # Prefix /gemini stripped, remainder preserved
         assert flow.request.path.startswith("/v1beta/")
 
-    def test_redirect_gemini_path_rewrite(self, cleanup: None) -> None:
+    def test_redirect_gemini_strips_prefix_only(self, cleanup: None) -> None:
+        """Redirect mode strips the match_path prefix but does NOT rewrite Gemini paths.
+
+        The gemini_cli outbound hook owns the v1internal path rewrite. Redirect
+        only does host swap + prefix strip.
+        """
         self._make_redirect_config(
             {
                 "match_path": "/gemini/",
@@ -566,7 +543,7 @@ class TestHandleRedirect:
         flow = self._make_redirect_flow(path="/gemini/models/gemini-pro:generateContent")
         router.request(flow)
 
-        assert flow.request.path == "/v1internal:generateContent"
+        assert flow.request.path == "/models/gemini-pro:generateContent"
         assert flow.request.host == "cloudcode-pa.googleapis.com"
 
     def test_redirect_missing_dest_host_passthrough(self, cleanup: None) -> None:

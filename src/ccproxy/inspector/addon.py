@@ -159,19 +159,29 @@ class InspectorAddon:
 
             optional_params = {k: v for k, v in transform.request_data.items() if k != "messages"}
             try:
-                transformer = make_sse_transformer(
+                sse_transformer = make_sse_transformer(
                     transform.provider,
                     transform.model,
                     optional_params,
                 )
-                flow.response.stream = transformer
-                flow.metadata["ccproxy.sse_transformer"] = transformer
+                flow.response.stream = sse_transformer
+                flow.metadata["ccproxy.sse_transformer"] = sse_transformer
             except Exception:
                 logger.warning(
                     "Failed to create SSE transformer, falling back to passthrough",
                     exc_info=True,
                 )
                 flow.response.stream = True
+        elif (
+            transform is not None
+            and transform.is_streaming
+            and transform.provider == "gemini"
+        ):
+            from ccproxy.hooks.gemini_cli import EnvelopeUnwrapStream
+
+            unwrap_stream = EnvelopeUnwrapStream()
+            flow.response.stream = unwrap_stream
+            flow.metadata["ccproxy.sse_transformer"] = unwrap_stream
         else:
             flow.response.stream = True
 

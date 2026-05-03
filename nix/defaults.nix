@@ -23,8 +23,6 @@
     hooks = {
       inbound = [
         "ccproxy.hooks.forward_oauth"
-        "ccproxy.hooks.gemini_cli_compat"
-        "ccproxy.hooks.reroute_gemini"
         "ccproxy.hooks.extract_session_id"
         # Example: uncomment to work around google-gemini/gemini-cli#21691 —
         # the Gemini CLI wipes its own refresh_token during access_token
@@ -34,6 +32,7 @@
         # "ccproxy.hooks.gemini_oauth_refresh"
       ];
       outbound = [
+        "ccproxy.hooks.gemini_cli"
         "ccproxy.hooks.inject_mcp_notifications"
         "ccproxy.hooks.verbose_mode"
         "ccproxy.hooks.shape"

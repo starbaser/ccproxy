@@ -117,7 +117,7 @@ def _strip_runtime_metadata(flow: http.HTTPFlow) -> http.HTTPFlow:
     (e.g. mitmproxy 12's FlowMeta enum members) that FlowWriter
     cannot serialize.
     """
-    clone = flow.copy()
+    clone: http.HTTPFlow = flow.copy()  # type: ignore[no-untyped-call]
     keys_to_remove = [
         k
         for k in clone.metadata
