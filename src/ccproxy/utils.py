@@ -39,6 +39,40 @@ def parse_session_id(user_id: str) -> str | None:
     return None
 
 
+def extract_first_user_text(messages: list[dict[str, Any]]) -> str:
+    """Return the text of the first user message's first text block.
+
+    Mirrors Claude Code's K19 helper (see opencode-claude-auth/src/signing.ts).
+    Skips non-text blocks (``tool_result``, ``image``, etc.) when locating the
+    first text block, but returns "" if that first text block has empty text —
+    matching signing.ts exactly so the derived ``cch`` agrees with Anthropic's
+    server-side billing validator.
+
+    Used by:
+    - shaping.regenerate.regenerate_billing_header for ``cch`` derivation
+    - inspector.addon for ``conversation_id`` derivation
+    """
+    user_msg = next(
+        (m for m in messages if isinstance(m, dict) and m.get("role") == "user"),
+        None,
+    )
+    if user_msg is None:
+        return ""
+    content = user_msg.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        text_block = next(
+            (b for b in content if isinstance(b, dict) and b.get("type") == "text"),
+            None,
+        )
+        if text_block is not None:
+            text = text_block.get("text")
+            if isinstance(text, str) and text:
+                return text
+    return ""
+
+
 def get_templates_dir() -> Path:
     """Get the path to the templates directory.
 

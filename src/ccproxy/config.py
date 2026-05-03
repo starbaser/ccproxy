@@ -11,7 +11,6 @@ Individual fields can be overridden via ``CCPROXY_`` prefixed env vars
 
 import logging
 import os
-import subprocess
 import threading
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -20,87 +19,23 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from ccproxy.oauth.sources import (
+    CredentialSource,
+    OAuthSource,
+    parse_oauth_source,
+)
+
 logger = logging.getLogger(__name__)
 
-
-class CredentialSource(BaseModel):
-    """Credential resolved from a file or shell command.
-
-    Exactly one of ``command`` or ``file`` must be provided.
-    """
-
-    command: str | None = None
-    """Shell command that outputs the credential value."""
-
-    file: str | None = None
-    """File path to read (contents stripped of whitespace)."""
-
-    @model_validator(mode="after")
-    def _validate_source(self) -> "CredentialSource":
-        if self.command and self.file:
-            raise ValueError("Specify either 'command' or 'file', not both")
-        if not self.command and not self.file:
-            raise ValueError("Must specify either 'command' or 'file'")
-        return self
-
-    def resolve(self, label: str = "credential") -> str | None:
-        """Resolve the credential value. Returns None on failure."""
-        if self.file:
-            return _read_credential_file(self.file, label)
-        if self.command:
-            return _run_credential_command(self.command, label)
-        return None
-
-
-def _read_credential_file(path_str: str, label: str) -> str | None:
-    try:
-        path = Path(path_str).expanduser().resolve()
-        if not path.is_file():
-            logger.error("%s file not found: %s", label, path)
-            return None
-        value = path.read_text().strip()
-        if not value:
-            logger.error("%s file is empty: %s", label, path)
-            return None
-        return value
-    except Exception as e:
-        logger.error("Failed to read %s file: %s", label, e)
-        return None
-
-
-def _run_credential_command(cmd: str, label: str) -> str | None:
-    try:
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=5)  # noqa: S602
-        if result.returncode != 0:
-            logger.error("%s command failed (exit %d): %s", label, result.returncode, result.stderr.strip())
-            return None
-        value = result.stdout.strip()
-        if not value:
-            logger.error("%s command returned empty output", label)
-            return None
-        return value
-    except subprocess.TimeoutExpired:
-        logger.error("%s command timed out after 5 seconds", label)
-        return None
-    except Exception as e:
-        logger.error("Failed to execute %s command: %s", label, e)
-        return None
-
-
-class OAuthSource(CredentialSource):
-    """OAuth token source with provider-specific fields."""
-
-    user_agent: str | None = None
-    """Optional custom User-Agent header to send with requests using this token"""
-
-    destinations: list[str] = Field(default_factory=lambda: [])
-    """URL patterns that should use this token (e.g., ['api.z.ai', 'anthropic.com'])"""
-
-    auth_header: str | None = None
-    """Target header name for the token (e.g., 'x-api-key').
-
-    When set, sends raw token as this header instead of Authorization: Bearer.
-    """
+__all__ = [
+    "CCProxyConfig",
+    "CredentialSource",
+    "OAuthSource",
+    "clear_config_instance",
+    "get_config",
+    "get_config_dir",
+    "set_config_instance",
+]
 
 
 class CaptureConfig(BaseModel):
@@ -179,6 +114,7 @@ class ShapingConfig(BaseModel):
 
     providers: dict[str, ProviderShapingConfig] = Field(default_factory=dict)
     """Per-provider shaping profiles keyed by provider name (e.g. ``anthropic``)."""
+
 
 
 class FlowsConfig(BaseModel):
@@ -408,7 +344,7 @@ class CCProxyConfig(BaseSettings):
 
     flows: FlowsConfig = Field(default_factory=lambda: FlowsConfig())
 
-    oat_sources: dict[str, str | OAuthSource | dict[str, Any]] = Field(default_factory=lambda: {})
+    oat_sources: dict[str, str | dict[str, Any] | OAuthSource] = Field(default_factory=lambda: {})
 
     _oat_values: dict[str, str] = PrivateAttr(default_factory=lambda: {})
 
@@ -461,13 +397,11 @@ class CCProxyConfig(BaseSettings):
             logger.warning("No OAuth source configured for provider '%s'", provider)
             return None
 
-        oauth_source: OAuthSource
-        if isinstance(source, str):
-            oauth_source = OAuthSource(command=source)
-        elif isinstance(source, OAuthSource):
-            oauth_source = source
-        else:
-            oauth_source = OAuthSource(**source)
+        try:
+            oauth_source = parse_oauth_source(source)
+        except (ValueError, TypeError) as exc:
+            logger.error("Invalid oat_sources entry for provider '%s': %s", provider, exc)
+            return None
 
         token = oauth_source.resolve(f"OAuth/{provider}")
         if token is None:
@@ -502,9 +436,12 @@ class CCProxyConfig(BaseSettings):
     def get_auth_header(self, provider: str) -> str | None:
         """Get target auth header name for a specific provider."""
         source = self.oat_sources.get(provider)
-        if isinstance(source, OAuthSource):
-            return source.auth_header
-        return None
+        if source is None or isinstance(source, str):
+            return None
+        try:
+            return parse_oauth_source(source).auth_header
+        except (ValueError, TypeError):
+            return None
 
     def get_provider_for_destination(self, api_base: str | None) -> str | None:
         """Find which provider should handle requests to a given api_base."""
@@ -515,13 +452,12 @@ class CCProxyConfig(BaseSettings):
 
         for provider, source in self.oat_sources.items():
             if isinstance(source, str):
-                continue  # Simple string form has no destinations
-            elif isinstance(source, OAuthSource):
-                oauth_source: OAuthSource = source
-            else:
-                oauth_source = OAuthSource(**source)
+                continue  # Bare command strings carry no destination metadata.
+            try:
+                oauth_source = parse_oauth_source(source)
+            except (ValueError, TypeError):
+                continue
 
-            # Check if api_base matches any destination pattern
             for dest in oauth_source.destinations:
                 if dest.lower() in api_base_lower:
                     logger.debug(

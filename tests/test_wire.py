@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 from pydantic_ai.messages import (
     CachePoint,
     ModelRequest,
@@ -26,7 +24,6 @@ from ccproxy.pipeline.wire import (
     serialize_system,
     serialize_tools,
 )
-
 
 # ---------------------------------------------------------------------------
 # parse_system
@@ -118,7 +115,16 @@ class TestParseTools:
         assert result[0].parameters_json_schema == {"type": "object"}
 
     def test_openai_format(self):
-        tools = [{"type": "function", "function": {"name": "search", "description": "Search", "parameters": {"type": "object"}}}]
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "search",
+                    "description": "Search",
+                    "parameters": {"type": "object"},
+                },
+            }
+        ]
         result = parse_tools(tools)
         assert result[0].name == "search"
         assert result[0].parameters_json_schema == {"type": "object"}
@@ -222,13 +228,13 @@ class TestParseMessages:
 
     def test_tool_use(self):
         msgs = [{"role": "assistant", "content": [
-            {"type": "tool_use", "id": "call_1", "name": "read_file", "input": {"path": "/tmp"}},
+            {"type": "tool_use", "id": "call_1", "name": "read_file", "input": {"path": "/etc/example"}},
         ]}]
         result = parse_messages(msgs)
         tc = result[0].parts[0]
         assert isinstance(tc, ToolCallPart)
         assert tc.tool_name == "read_file"
-        assert tc.args == {"path": "/tmp"}
+        assert tc.args == {"path": "/etc/example"}
         assert tc.tool_call_id == "call_1"
 
     def test_thinking(self):
@@ -449,7 +455,6 @@ class TestEdgeCases:
         assert result[0]["content"][0]["type"] == "tool_result"
 
     def test_serialize_tool_return_appended_to_user(self):
-        from pydantic_ai.messages import TextContent
         msgs = [ModelRequest(parts=[
             UserPromptPart(content="hi"),
             ToolReturnPart(tool_name="t", content="r", tool_call_id="c1"),
@@ -506,7 +511,7 @@ class TestRoundTrip:
     def test_tool_use_round_trip(self):
         original = [
             {"role": "assistant", "content": [
-                {"type": "tool_use", "id": "c1", "name": "read_file", "input": {"path": "/tmp/test"}},
+                {"type": "tool_use", "id": "c1", "name": "read_file", "input": {"path": "/etc/example/test"}},
             ]},
             {"role": "user", "content": [
                 {"type": "tool_result", "tool_use_id": "c1", "content": "file data"},

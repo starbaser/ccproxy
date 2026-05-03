@@ -145,7 +145,7 @@ def _common_prefix(paths: list[str]) -> str:
         return ""
     parts = [p.split(".") for p in paths]
     prefix: list[str] = []
-    for segments in zip(*parts):
+    for segments in zip(*parts, strict=False):
         if len(set(segments)) == 1:
             prefix.append(segments[0])
         else:

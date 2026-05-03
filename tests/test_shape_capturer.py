@@ -11,14 +11,14 @@ import pytest
 from mitmproxy import http
 from mitmproxy.test import tflow
 
-from ccproxy.shaping.store import ShapeStore, clear_store_instance
 from ccproxy.inspector.shape_capturer import ShapeCapturer
+from ccproxy.shaping.store import ShapeStore, clear_store_instance
 
 
 @pytest.fixture()
 def store(tmp_path: Path) -> Any:
-    from ccproxy.shaping.store import _store_lock
     from ccproxy.config import CCProxyConfig, set_config_instance
+    from ccproxy.shaping.store import _store_lock
 
     set_config_instance(CCProxyConfig())
     shape_store = ShapeStore(tmp_path / "shapes")

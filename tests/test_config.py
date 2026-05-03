@@ -10,12 +10,14 @@ import pytest
 from ccproxy.config import (
     CCProxyConfig,
     CredentialSource,
-    OAuthSource,
-    _read_credential_file,
-    _run_credential_command,
     clear_config_instance,
     get_config,
     get_config_dir,
+)
+from ccproxy.oauth.sources import (
+    CommandOAuthSource,
+    _read_credential_file,
+    _run_credential_command,
 )
 
 
@@ -390,7 +392,8 @@ class TestRefreshOAuthToken:
         assert changed is False
 
     def test_user_agent_stored(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        config = CCProxyConfig(oat_sources={"provider1": OAuthSource(command="echo tok", user_agent="CustomAgent/1.0")})
+        source = CommandOAuthSource(command="echo tok", user_agent="CustomAgent/1.0")
+        config = CCProxyConfig(oat_sources={"provider1": source})
         mock_result = mock.MagicMock(returncode=0, stdout="tok")
         monkeypatch.setattr(subprocess, "run", mock.Mock(return_value=mock_result))
 
@@ -412,7 +415,7 @@ class TestGetAuthProviderUA:
 
 class TestGetAuthHeader:
     def test_oauth_source_with_auth_header(self) -> None:
-        config = CCProxyConfig(oat_sources={"prov": OAuthSource(command="echo t", auth_header="x-api-key")})
+        config = CCProxyConfig(oat_sources={"prov": CommandOAuthSource(command="echo t", auth_header="x-api-key")})
         assert config.get_auth_header("prov") == "x-api-key"
 
     def test_string_source_returns_none(self) -> None:
@@ -435,13 +438,13 @@ class TestGetProviderForDestination:
 
     def test_matching_destination_case_insensitive(self) -> None:
         config = CCProxyConfig(
-            oat_sources={"anthropic": OAuthSource(command="cmd", destinations=["api.anthropic.com"])}
+            oat_sources={"anthropic": CommandOAuthSource(command="cmd", destinations=["api.anthropic.com"])}
         )
         assert config.get_provider_for_destination("https://API.ANTHROPIC.COM/v1") == "anthropic"
 
     def test_no_matching_destination_returns_none(self) -> None:
         config = CCProxyConfig(
-            oat_sources={"anthropic": OAuthSource(command="cmd", destinations=["api.anthropic.com"])}
+            oat_sources={"anthropic": CommandOAuthSource(command="cmd", destinations=["api.anthropic.com"])}
         )
         assert config.get_provider_for_destination("api.openai.com") is None
 

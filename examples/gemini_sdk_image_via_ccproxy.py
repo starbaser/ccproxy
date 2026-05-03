@@ -41,7 +41,8 @@ def make_client() -> genai.Client:
 
 
 def analyze_image(path: Path) -> None:
-    console.print(Panel(f"[cyan]Analyzing {path.name} ({path.stat().st_size / 1024:.1f} KB)[/cyan]", border_style="blue"))
+    title = f"[cyan]Analyzing {path.name} ({path.stat().st_size / 1024:.1f} KB)[/cyan]"
+    console.print(Panel(title, border_style="blue"))
 
     client = make_client()
     image_bytes = path.read_bytes()

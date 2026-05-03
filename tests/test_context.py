@@ -7,9 +7,7 @@ from unittest.mock import MagicMock
 
 from pydantic_ai.messages import (
     ModelRequest,
-    ModelResponse,
     SystemPromptPart,
-    TextPart,
     UserPromptPart,
 )
 from pydantic_ai.tools import ToolDefinition

@@ -581,7 +581,8 @@ class TestHandleRedirect:
         assert record.transform.provider == "anthropic"
 
     def test_redirect_injects_api_key(self, cleanup: None) -> None:
-        from ccproxy.config import CCProxyConfig, OAuthSource
+        from ccproxy.config import CCProxyConfig
+        from ccproxy.oauth.sources import CommandOAuthSource
 
         config = CCProxyConfig(
             inspector=InspectorConfig(
@@ -596,7 +597,7 @@ class TestHandleRedirect:
                     )
                 ]
             ),
-            oat_sources={"anthropic": OAuthSource(command="echo tok")},
+            oat_sources={"anthropic": CommandOAuthSource(command="echo tok")},
         )
         config._oat_values["anthropic"] = "injected-token"
         set_config_instance(config)

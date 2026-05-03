@@ -26,7 +26,7 @@ from ccproxy.flows.store import (
     create_flow_record,
     get_flow_record,
 )
-from ccproxy.utils import parse_session_id
+from ccproxy.utils import extract_first_user_text, parse_session_id
 
 if TYPE_CHECKING:
     from ccproxy.inspector.telemetry import InspectorTracer
@@ -84,6 +84,42 @@ class InspectorAddon:
 
         return parse_session_id(user_id)
 
+    @staticmethod
+    def _enrich_record_with_conversation_ids(flow: http.HTTPFlow, record: Any) -> None:
+        """Compute ``conversation_id`` and ``system_prompt_sha`` from the JSON body.
+
+        Quietly no-ops on non-JSON bodies, parse errors, or missing fields.
+        Stashes the values on both ``flow.metadata`` (for cross-addon access)
+        and the record (for typed Python access).
+        """
+        import hashlib
+
+        if not flow.request.content:
+            return
+        content_type = flow.request.headers.get("content-type", "").lower()
+        if "application/json" not in content_type:
+            return
+        try:
+            body = json.loads(flow.request.content)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return
+        if not isinstance(body, dict):
+            return
+
+        messages = body.get("messages")
+        if isinstance(messages, list):
+            text = extract_first_user_text(messages=messages)
+            conv_id = hashlib.sha256(text.encode()).hexdigest()[:12]
+            record.conversation_id = conv_id
+            flow.metadata["ccproxy.conversation_id"] = conv_id
+
+        system = body.get("system")
+        if system is not None:
+            serialized = json.dumps(system, sort_keys=True, default=str)
+            sys_sha = hashlib.sha256(serialized.encode()).hexdigest()[:12]
+            record.system_prompt_sha = sys_sha
+            flow.metadata["ccproxy.system_prompt_sha"] = sys_sha
+
     async def requestheaders(self, flow: http.HTTPFlow) -> None:
         """Disable request streaming for reverse proxy flows.
 
@@ -112,6 +148,7 @@ class InspectorAddon:
                 method=flow.request.method,
                 url=flow.request.pretty_url,
             )
+            self._enrich_record_with_conversation_ids(flow, record)
 
         flow.metadata[InspectorMeta.DIRECTION] = direction
         flow.metadata[InspectorMeta.RECORD] = record

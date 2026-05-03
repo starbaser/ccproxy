@@ -99,11 +99,6 @@ def render(s: dict[str, Any]) -> str:
     for hook in s["hooks"]["inbound"]:
         w(f"      - {hook}")
 
-    comment("Uncomment to work around google-gemini/gemini-cli#21691 —", indent=6)
-    comment("the Gemini CLI wipes its own refresh_token during access_token", indent=6)
-    comment("refresh, causing 'No refresh token is set' errors after ~1hr.", indent=6)
-    comment("- ccproxy.hooks.gemini_oauth_refresh", indent=6)
-
     w("    outbound:")
     for hook in s["hooks"]["outbound"]:
         w(f"      - {hook}")

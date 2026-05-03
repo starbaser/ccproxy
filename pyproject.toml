@@ -27,10 +27,12 @@ dependencies = [
   "humanize>=4.0.0",
   "pydantic-ai-slim>=1.85.1",
   "glom>=24.1.0",
+  "mcp>=1.0.0",
 ]
 
 [project.scripts]
 ccproxy = "ccproxy.cli:entry_point"
+ccproxy_mcp = "ccproxy.mcp.server:main"
 
 [project.optional-dependencies]
 otel = [
@@ -80,7 +82,6 @@ source = ["src/ccproxy"]
 omit = [
   "*/tests/*",
   "*/__init__.py",
-  "src/ccproxy/hooks/gemini_oauth_refresh.py",
 ]
 
 [tool.coverage.report]

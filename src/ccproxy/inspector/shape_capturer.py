@@ -100,13 +100,16 @@ def _validate_flow(
             flow.id, ct,
         )
         return False
-    if isinstance(profile, ProviderShapingConfig) and profile.capture.path_pattern:
-        if not re.search(profile.capture.path_pattern, flow.request.path):
-            logger.warning(
-                "ccproxy.shape: flow %s path %s doesn't match %s, skipping",
-                flow.id, flow.request.path, profile.capture.path_pattern,
-            )
-            return False
+    if (
+        isinstance(profile, ProviderShapingConfig)
+        and profile.capture.path_pattern
+        and not re.search(profile.capture.path_pattern, flow.request.path)
+    ):
+        logger.warning(
+            "ccproxy.shape: flow %s path %s doesn't match %s, skipping",
+            flow.id, flow.request.path, profile.capture.path_pattern,
+        )
+        return False
     return True
 
 

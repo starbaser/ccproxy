@@ -12,11 +12,10 @@ import pytest
 from mitmproxy import http
 from mitmproxy.test import tflow
 
-from ccproxy.config import ProviderShapingConfig
 from ccproxy.flows.store import InspectorMeta
 from ccproxy.hooks.shape import _parse_strategy, shape, shape_guard
-from ccproxy.shaping.executor import clear_shape_hook_cache
 from ccproxy.pipeline.context import Context
+from ccproxy.shaping.executor import clear_shape_hook_cache
 from ccproxy.shaping.store import ShapeStore, clear_store_instance
 
 
@@ -37,7 +36,6 @@ class _MockRecord:
 @pytest.fixture()
 def store(tmp_path: Path) -> Any:
     from ccproxy.config import CCProxyConfig, set_config_instance
-
     from ccproxy.shaping.store import _store_lock
 
     set_config_instance(CCProxyConfig(

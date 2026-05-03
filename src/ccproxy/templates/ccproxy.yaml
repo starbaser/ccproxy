@@ -42,10 +42,6 @@ ccproxy:
     inbound:
       - ccproxy.hooks.forward_oauth
       - ccproxy.hooks.extract_session_id
-      # Uncomment to work around google-gemini/gemini-cli#21691 —
-      # the Gemini CLI wipes its own refresh_token during access_token
-      # refresh, causing 'No refresh token is set' errors after ~1hr.
-      # - ccproxy.hooks.gemini_oauth_refresh
     outbound:
       - ccproxy.hooks.gemini_cli
       - {'hook': 'ccproxy.hooks.gemini_capacity_fallback', 'params': {'fallback_models': ['gemini-3-flash-preview', 'gemini-2.5-pro', 'gemini-2.5-flash']}}

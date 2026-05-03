@@ -7,13 +7,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ccproxy.config import CCProxyConfig, OAuthSource, set_config_instance
+from ccproxy.config import CCProxyConfig, set_config_instance
 from ccproxy.constants import OAUTH_SENTINEL_PREFIX, OAuthConfigError
 from ccproxy.hooks.forward_oauth import (
     _inject_token,
     forward_oauth,
     forward_oauth_guard,
 )
+from ccproxy.oauth.sources import CommandOAuthSource
 from ccproxy.pipeline.context import Context
 
 
@@ -191,7 +192,7 @@ class TestInjectToken:
         assert ctx.get_header("x-goog-api-key") == ""
 
     def test_custom_goog_api_key_header(self, clean_config: CCProxyConfig) -> None:
-        clean_config.oat_sources = {"google": OAuthSource(command="echo tok", auth_header="x-goog-api-key")}
+        clean_config.oat_sources = {"google": CommandOAuthSource(command="echo tok", auth_header="x-goog-api-key")}
         ctx = _make_ctx()
 
         _inject_token(ctx, "google", "goog-token")
@@ -204,7 +205,7 @@ class TestInjectToken:
         assert ctx.get_header("authorization") == ""
 
     def test_custom_x_api_key_header(self, clean_config: CCProxyConfig) -> None:
-        clean_config.oat_sources = {"prov": OAuthSource(command="echo tok", auth_header="x-api-key")}
+        clean_config.oat_sources = {"prov": CommandOAuthSource(command="echo tok", auth_header="x-api-key")}
         ctx = _make_ctx()
 
         _inject_token(ctx, "prov", "my-secret")

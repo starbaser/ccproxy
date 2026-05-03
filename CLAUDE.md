@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**IMPERATIVE**: ALL failures through ccproxy are OUR bug until proven otherwise. ccproxy is the intermediary — every header, token, body field, and user-agent passes through our code. When a request fails with any error (401/403/429/5xx), triage ccproxy first: check what we're injecting, stripping, mangling, or failing to masquerade before blaming the upstream provider. For Gemini specifically: if all Gemini requests fail with 401, run `gemini -m gemini-2.5-flash -p "hi"` directly (no ccproxy) to force an OAuth token refresh, then retry through ccproxy.
+**IMPERATIVE**: ALL failures through ccproxy are OUR bug until proven otherwise. ccproxy is the intermediary — every header, token, body field, and user-agent passes through our code. When a request fails with any error (401/403/429/5xx), triage ccproxy first: check what we're injecting, stripping, mangling, or failing to masquerade before blaming the upstream provider. For Gemini specifically: if all Gemini requests fail with 401, the in-process `GoogleOAuthSource` refresher should rotate the token automatically; if that fails, inspect `~/.gemini/oauth_creds.json` (the refresh response sometimes omits `refresh_token` per gemini-cli#21691 — the resolver preserves the on-disk value to work around this).
 
 **IMPERATIVE**: All API keys in MCP server configs and client environments MUST be ccproxy sentinel keys (`sk-ant-oat-ccproxy-{provider}`). Using raw provider keys (OpenRouter, direct API keys, etc.) bypasses the `forward_oauth` hook and the shaping pipeline — traffic escapes ccproxy's control. If a provider isn't routable through a sentinel key, add an `oat_sources` entry for it.
 
@@ -54,6 +54,7 @@ ccproxy flows diff [--jq FILTER]...              # Sliding-window diff across se
 ccproxy flows compare [--jq FILTER]...           # Per-flow client-vs-forwarded diff
 ccproxy flows clear [--all] [--jq FILTER]...     # Clear flow set (--all bypasses filters)
 ccproxy flows shape --provider X                 # Capture a shape for a provider
+ccproxy_mcp                                       # Launch MCP stdio server (separate console_script)
 ```
 
 ## Architecture
@@ -117,17 +118,18 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 - `overrides.py` — `x-ccproxy-hooks: +hook,-hook` header for per-request force-run/force-skip.
 
 **`inspector/`** — mitmproxy addon layer:
-- `addon.py` — `InspectorAddon`: OTel span lifecycle, FlowRecord creation, direction detection, client request snapshot, provider response capture. All flows are `"inbound"`. Snapshots the pre-pipeline request as `HttpSnapshot` before hooks mutate the flow. `responseheaders()` enables SSE streaming — sets `flow.response.stream` to `True` (passthrough) or `SseTransformer` (cross-provider transform); stashes the `SseTransformer` ref in `flow.metadata["ccproxy.sse_transformer"]`. `response()` captures raw provider response into `record.provider_response` before 401 retry, Gemini unwrap, and transform mutations — reads `SseTransformer.raw_body` for streaming transform flows. Exposes `ccproxy.clientrequest` mitmproxy command for structured JSON access to client requests.
+- `addon.py` — `InspectorAddon`: OTel span lifecycle, FlowRecord creation, direction detection, client request snapshot, provider response capture. All flows are `"inbound"`. Snapshots the pre-pipeline request as `HttpSnapshot` before hooks mutate the flow. After snapshotting, `_enrich_record_with_conversation_ids()` parses the JSON body and stamps SHA12 derivations onto both `record.{conversation_id, system_prompt_sha}` and `flow.metadata["ccproxy.{conversation_id, system_prompt_sha}"]`. `responseheaders()` enables SSE streaming — sets `flow.response.stream` to `True` (passthrough) or `SseTransformer` (cross-provider transform); stashes the `SseTransformer` ref in `flow.metadata["ccproxy.sse_transformer"]`. For streaming Gemini flows hitting capacity (429/503), defers stream setup so the body buffers for `gemini_capacity_fallback` retry. `response()` captures raw provider response into `record.provider_response` before 401 retry, Gemini unwrap, and transform mutations — reads `SseTransformer.raw_body` for streaming transform flows. Exposes `ccproxy.clientrequest` mitmproxy command for structured JSON access to client requests.
 - `process.py` — In-process mitmweb via WebMaster API. Two listeners (reverse + WireGuard). Options applied via `update_defer()`.
 - `pipeline.py` — `build_executor()` bridges hook registry with mitmproxy addons. `register_pipeline_routes()` wires DAG executors as xepor route handlers.
 - `router.py` — Vendored xepor `InterceptedAPI` subclass with mitmproxy 12.x fixes (keyword `Server(address=...)`, `name` dedup, `host=None` wildcard).
 - `routes/transform.py` — REQUEST handler: three modes, `transform` (rewrite body + destination via lightllm dispatch), `redirect` (rewrite destination host, preserve body), and `passthrough` (forward unchanged). For Gemini transform flows, calls `resolve_cached_content()` before `transform_to_provider()` to resolve context caching. Unmatched reverse proxy flows get 501; unmatched WireGuard flows pass through. RESPONSE handler: transforms non-streaming provider responses back to OpenAI format via `transform_to_openai()`. `TransformMeta` persisted on `FlowRecord` during request phase for response handler access.
+- `routes/models.py` — Synthetic `GET /v1/models` handler. Registered BEFORE `register_transform_routes` so the specific `/v1/models` path wins over the transform router's `/{path}` catch-all. Crafts `flow.response` directly from `ccproxy.specs.model_catalog.build_catalog()` — no upstream forwarding. `?refresh=true` query triggers a live merge against configured providers' upstream `/v1/models`.
 - `namespace.py` — Rootless user+net namespace via `unshare` + `slirp4netns` + WireGuard. Network topology: namespace TAP IP `10.0.2.100/24`, gateway (host) `10.0.2.2`, DNS `10.0.2.3`. Default route replaced with `wg0` so all internet traffic goes through WireGuard tunnel → mitmproxy. `route_localnet` sysctl enabled for iptables OUTPUT DNAT on loopback. Three DNAT rules: PREROUTING inbound (tap0→localhost), OUTPUT outbound (localhost→gateway), OUTPUT port remap (default port→running port). `PortForwarder` polls `/proc/{pid}/net/tcp` for dynamic `add_hostfwd` port forwarding. Requires `slirp4netns`, `wg`, `unshare`, `nsenter`, `ip`, `iptables`, `sysctl`.
 - `contentview.py` — Custom mitmproxy content views. `ClientRequestContentview` shows the pre-pipeline request (method, URL, headers, body). `ProviderResponseContentview` shows the raw provider response before transforms. Both registered via `contentviews.add()`.
 - `shape_capturer.py` — `ShapeCapturer` addon registering the `ccproxy.shape` mitmproxy command for shape capture with flow validation.
 
 **`flows/`** — Cross-addon flow state:
-- `store.py` — TTL store keyed by `x-ccproxy-flow-id` header for cross-addon state. `HttpSnapshot` dataclass is the unified HTTP message snapshot (headers, body, optional method/url for requests, optional status_code for responses). `FlowRecord` carries `client_request: HttpSnapshot` (pre-pipeline request), `provider_response: HttpSnapshot` (raw provider response before mutations), and `TransformMeta` (provider/model/request_data/is_streaming/mode from request phase to response phase). `ClientRequest` is an alias for `HttpSnapshot`.
+- `store.py` — TTL store keyed by `x-ccproxy-flow-id` header for cross-addon state. `HttpSnapshot` dataclass is the unified HTTP message snapshot (headers, body, optional method/url for requests, optional status_code for responses). `FlowRecord` carries `client_request: HttpSnapshot` (pre-pipeline request), `provider_response: HttpSnapshot` (raw provider response before mutations), `TransformMeta` (provider/model/request_data/is_streaming/mode from request phase to response phase), and two enrichment fields stamped by the addon: `conversation_id: str | None` (first 12 hex of `sha256(extract_first_user_text(messages))` — stable across requests in the same conversation) and `system_prompt_sha: str | None` (first 12 hex of `sha256(json.dumps(system, sort_keys=True))` — identifies which system prompt was in effect). `ClientRequest` is an alias for `HttpSnapshot`.
 - `multi_har_saver.py` — `MultiHARSaver` addon registering the `ccproxy.dump` mitmproxy command. Accepts comma-separated flow IDs, builds a multi-page HAR 1.2 via `SaveHar.make_har()`. Layout: `entries[2i] = [fwdreq, provider_response]` (forwarded request + raw provider response), `entries[2i+1] = [clireq, client_response]` (client request + post-transform response). `_build_provider_clone()` replaces response with raw snapshot; `_build_client_clone()` replaces request with client snapshot. Falls back when snapshots are absent. One page per flow, `pageref == flow.id`. Registered in `process.py` addon chain.
 - `telemetry.py` — Three-mode OTel: real OTLP export, no-op, or stub.
 - `wg_keylog.py` — Writes Wireshark-compatible keylog for WireGuard tunnel decryption.
@@ -137,13 +139,17 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 | Hook | Stage | Purpose |
 |------|-------|---------|
 | `forward_oauth` | inbound | Sentinel key (`sk-ant-oat-ccproxy-{provider}`) substitution from `oat_sources`. Header-only. |
-| `gemini_cli_compat` | inbound | Masquerades google-genai SDK user-agent as Gemini CLI for capacity allocation. Header-only. |
-| `reroute_gemini` | inbound | Reroutes WireGuard flows targeting `generativelanguage.googleapis.com` to `cloudcode-pa.googleapis.com` with `v1internal` envelope wrapping and project ID resolution. Uses `glom.delete()` for metadata stripping. reads=`["authorization", "x-goog-api-key"]` |
 | `extract_session_id` | inbound | Reads `metadata.user_id` via `glom(ctx._body, 'metadata.user_id')` → stores session_id on `flow.metadata` (NOT body metadata). reads=`["metadata.user_id"]` |
-| `gemini_oauth_refresh` | inbound | Preemptive Gemini OAuth token refresh with `refresh_token` backup (workaround for gemini-cli#21691). Optional — commented out in defaults. |
+| `gemini_cli` | outbound | Single hook for all Gemini sentinel-key traffic. Wraps standard Gemini bodies in the `v1internal` envelope, conditionally masquerades `google-genai-sdk/*` UAs as Gemini CLI (preserves urllib clients in their own rate-limit bucket), rewrites paths to `cloudcode-pa`, and unwraps the `{response: {...}}` envelope on the way back (buffered + SSE via `EnvelopeUnwrapStream`). The `cloudaicompanionProject` is resolved once at startup via `prewarm_project` in cli.py. |
+| `gemini_capacity_fallback` | outbound | Retries Gemini requests against a fallback model chain when cloudcode-pa returns 429 / 503 RESOURCE_EXHAUSTED. Sticky same-model retries honor `RetryInfo.retryDelay`, then walks the configured chain. 120s wall-clock budget. Streaming flows are supported via deferred stream setup in `responseheaders`. Default chain: `[gemini-3-flash-preview, gemini-2.5-pro, gemini-2.5-flash]`. |
 | `inject_mcp_notifications` | outbound | Injects buffered MCP terminal events as synthetic ToolCallPart/ToolReturnPart pairs. Typed layer. |
+| `inject_claude_code_identity` | outbound | Injects the required `You are Claude Code...` system prompt prefix when a sentinel-key request lacks it. |
 | `verbose_mode` | outbound | Strips `redact-thinking-*` from `anthropic-beta` header. Header-only. |
 | `shape` | outbound | Picks a per-provider captured shape, injects content fields from the incoming request per the provider's shaping profile, applies to the outbound flow. Uses `glom.delete()`/`glom.assign()` for content injection. |
+| `commitbee_compat` | outbound | Last-mile compatibility shim for the commitbee tool. |
+| `regenerate_user_prompt_id` | shape (inner DAG) | Re-rolls the shape's `user_prompt_id` per request. reads/writes=`["user_prompt_id"]`. |
+| `regenerate_session_id` | shape (inner DAG) | Re-rolls `metadata.user_id.session_id` if the shape carries an identity. reads/writes=`["metadata.user_id"]`. |
+| `regenerate_billing_header` | shape (inner DAG) | Re-signs the shape's `x-anthropic-billing-header` against the incoming first user message. Parses `cc_version` from the shape's existing billing block, looks up the matching salt in `{config_dir}/billing_salts.json`, recomputes the 3-hex `cc_version` suffix and the 5-hex `cch` token in place. `cc_entrypoint`, formatting, and block extras (e.g. `cache_control`) survive verbatim. No-op + warning when the salt for the shape's version is absent. reads=`["messages"]`, writes=`["system"]`. |
 | `caching.strip` | shape (inner DAG) | Deletes values at glom dot-paths via `glom.delete()`. Accepts `StripParams(paths: list[str])`. reads/writes=`["system.*.cache_control", "tools.*.cache_control", "messages.*.content.*.cache_control"]` |
 | `caching.insert` | shape (inner DAG) | Sets a value at a glom dot-path via `glom.assign()`. Accepts `InsertParams(path: str, value: Any)`. Default value: `{"type": "ephemeral"}`. reads/writes=`["system.*.cache_control", "tools.*.cache_control"]` |
 
@@ -153,14 +159,27 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 - `body.py` — JSON body helpers (``get_body``, ``set_body``, ``mutate_body``) for low-level access outside the typed layer.
 - `store.py` — ``ShapeStore`` singleton wrapping a directory of ``.mflow`` files. Uses ``mitmproxy.io.FlowWriter``/``FlowReader``. ``pick()`` returns the most recently appended flow for a provider.
 - `prepare.py` — ``strip_headers(shape_ctx, headers)``. Single function taking the provider's configured ``strip_headers`` list. Called by the shape hook before content injection.
-- `callbacks.py` — Shape hooks (``regenerate_user_prompt_id``, ``regenerate_session_id``). Uses ``glom()``/``assign()`` for all body access. ``regenerate_user_prompt_id``: reads/writes=``["user_prompt_id"]``. ``regenerate_session_id``: reads/writes=``["metadata.user_id"]``. DAG-ordered via ``HookDAG``. Registered via ``shaping.providers.{name}.shape_hooks`` dotted module paths.
+- `regenerate.py` — Shape inner-DAG hooks. ``regenerate_user_prompt_id`` (re-rolls the shape's ``user_prompt_id``), ``regenerate_session_id`` (re-rolls ``metadata.user_id.session_id``), and ``regenerate_billing_header`` (re-signs the shape's ``x-anthropic-billing-header`` against the incoming first user message — see `specs/billing_salt.py` for the version → salt JSON lookup). All use ``glom()``/``assign()`` for body access. DAG-ordered via ``HookDAG``. Registered via ``shaping.providers.{name}.shape_hooks`` — the loader auto-discovers all ``@hook``-decorated functions in any registered module.
 - `caching/` — Composable glom-based cache control hooks for the shape inner DAG:
   - `strip.py` — ``strip`` hook. Deletes values at glom dot-paths via ``glom.delete(ctx._body, path, ignore_missing=True)``. Accepts ``StripParams(paths: list[str])`` Pydantic model via the hook system's ``model=`` parameter. Glom dot-path syntax: ``system.*.cache_control`` (wildcard over all items), ``system.0.cache_control`` (specific index), ``system.-1.cache_control`` (negative index).
   - `insert.py` — ``insert`` hook. Sets a value at a glom dot-path via ``glom.assign(ctx._body, path, value)``. Accepts ``InsertParams(path: str, value: Any)`` Pydantic model. Default value is ``{"type": "ephemeral"}``. Separate modules ensure DAG priority ordering (strip runs before insert when both are configured).
 - `executor.py` — ``execute_shape_hooks(shape_ctx, incoming_ctx, hook_entries)`` builds a ``HookDAG`` from shape hook entries, executes in topological order. Caches resolved specs per hook-list.
 - The ``shape`` hook reads the provider profile from ``config.shaping.providers[provider]`` at runtime. Per-provider ``content_fields`` declare which body keys are injected from the incoming request. ``merge_strategies`` override the default ``replace`` behavior per field (``prepend_shape``, ``append_shape``, ``drop``). ``preserve_headers`` lists target flow headers that ``apply_shape`` must not overwrite (auth + routing). ``strip_headers`` lists shape headers to remove before stamping (auth + transport).
 
-**`mcp/`** — Thread-safe notification buffer (`NotificationBuffer` singleton) + `POST /mcp/notify` FastAPI endpoint for MCP terminal event ingestion.
+**`mcp/`** — Two functionally distinct surfaces:
+- `buffer.py` + `routes.py` — Thread-safe notification buffer (`NotificationBuffer` singleton) + `POST /mcp/notify` FastAPI endpoint for MCP terminal event ingestion (consumed by the `inject_mcp_notifications` hook).
+- `server.py` — FastMCP stdio server exposing 12 tools (`list_flows`, `get_flow`, `dump_har`, `get_request_body`, `get_response_body`, `diff_flows`, `compare_flow`, `clear_flows`, `capture_shape`, `list_shapes`, `list_conversations`, `list_models`) + 2 resources (`proxy://requests`, `proxy://status`). Wraps `MitmwebClient` and `ShapeStore` so MCP-aware clients can drive ccproxy without spawning the CLI per call. Launched via the `ccproxy_mcp` console script.
+
+**`oauth/`** — OAuth credential sources and provider-specific in-process refresh:
+- `sources.py` — Discriminated `OAuthSource` union: `CommandOAuthSource` (shell command), `FileOAuthSource` (file read), `AnthropicOAuthSource` (claude.ai/v1/oauth/token refresh), `GoogleOAuthSource` (oauth2.googleapis.com/token refresh). `parse_oauth_source(raw)` accepts bare strings (legacy command form), dicts with explicit `type:` discriminator, or dicts inferred by their keys (`command` / `file`). `CredentialSource` (the legacy generic form) is preserved for non-OAuth use cases like `MitmproxyOptions.web_password`. `atomic_write_back(path, data)` performs tmp-file → fsync → rename → chmod 0o600. `needs_refresh(expiry_ms)` enforces a 60s refresh headroom.
+- `anthropic.py` — `refresh_anthropic_token` POSTs `grant_type=refresh_token` form-encoded to the OAuth endpoint. `resolve_anthropic_token(source)` reads the refresh-token JSON file, refreshes if near expiry, atomically writes the merged response back, returns the access_token.
+- `google.py` — `refresh_google_token` mirrors the Anthropic flow but POSTs to Google's OAuth endpoint (requires `client_secret`). `resolve_google_token(source)` includes the gemini-cli #21691 workaround: if the refresh response omits `refresh_token`, the on-disk value is preserved.
+
+**`specs/`** — Vendored constant lists, Pydantic schemas, and the model catalog:
+- `claude_code_constants.py` — `BASE_BETAS`, `LONG_CONTEXT_BETAS` (vendored fact lists from publicly-observable claude-code behavior). No prose, diagrams, or TypeScript interfaces verbatim.
+- `claude_code_request.py` — `APIRequestParams(BaseModel)` mirroring the Anthropic `/v1/messages` request schema (permissive `extra="allow"`).
+- `billing_salt.py` — Reads `{config_dir}/billing_salts.json` (a JSON map `{cc_version: 12-hex-salt}`). `get_billing_salt_for_version(version)` returns the salt that pairs with that version. The file path is fixed (no config field, no env var) — controlled by the existing `CCPROXY_CONFIG_DIR` env var. mtime-cached. The committed default is empty: ccproxy ships zero salt; users extract them from their installed claude-code binary and write to this file (gitignored under `.ccproxy/` for dev, `~/.config/ccproxy/` for prod). Future binary-extraction work updates `load_billing_salts` only — call sites stay identical.
+- `model_catalog.py` — OpenAI-compatible `/v1/models` payload generator. `STATIC_MODEL_CATALOG: dict[provider, list[model_id]]` is the floor list. `build_catalog(refresh=False)` returns `{object: "list", data: [...]}`. `refresh=True` queries each provider's upstream `/v1/models` (using cached OAuth tokens) and unions deduplicated results; per-provider failures fall back to the static floor.
 
 **`tools/flows.py`** — `MitmwebClient` for programmatic mitmweb REST API access + `ccproxy flows` CLI tyro subcommands (`FlowsList`, `FlowsDump`, `FlowsDiff`, `FlowsCompare`, `FlowsClear`). All subcommands inherit `_FlowsBase` which provides a repeatable `--jq FILTER` arg.
 - **Auth**: Bearer token resolved from `inspector.mitmproxy.web_password` config (mitmproxy 12+ accepts `Authorization: Bearer` on the REST API directly).
@@ -172,22 +191,23 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 
 ### Configuration
 
-**Config discovery** (highest to lowest precedence):
-1. `$CCPROXY_CONFIG_DIR/ccproxy.yaml`
-2. `~/.config/ccproxy/ccproxy.yaml`
+**Config discovery** — `$CCPROXY_CONFIG_DIR` (default: `$XDG_CONFIG_HOME/ccproxy/`, i.e. `~/.config/ccproxy/`) is the one knob; both `ccproxy.yaml` and `billing_salts.json` are read from it. Setting `CCPROXY_CONFIG_DIR=$PWD/.ccproxy` (the dev shell does this) gives a project-local config.
 
 **Hook config format** — each entry is either a dotted module path (bare hook) or a ``{hook, params}`` dict for hooks with a ``model=`` Pydantic schema:
 ```yaml
 hooks:
   inbound:
     - ccproxy.hooks.forward_oauth
-    - ccproxy.hooks.gemini_cli_compat
-    - ccproxy.hooks.reroute_gemini
     - ccproxy.hooks.extract_session_id
   outbound:
+    - ccproxy.hooks.gemini_cli
+    - hook: ccproxy.hooks.gemini_capacity_fallback
+      params:
+        fallback_models: [gemini-3-flash-preview, gemini-2.5-pro, gemini-2.5-flash]
     - ccproxy.hooks.inject_mcp_notifications
     - ccproxy.hooks.verbose_mode
     - ccproxy.hooks.shape
+    - ccproxy.hooks.commitbee_compat
 ```
 
 **Transform config** — `inspector.transforms` list, first match wins. Three modes: `redirect` (default — rewrite destination, preserve body), `transform` (cross-format via lightllm), `passthrough` (forward unchanged):
@@ -272,14 +292,25 @@ Each filter must consume a JSON array and produce a JSON array. Filters chain in
 
 ### Singleton Patterns
 
-`CCProxyConfig`, `NotificationBuffer`, `FlowStore`, and `ShapeStore` use thread-safe singletons. Tests reset them via the `cleanup` autouse fixture (`clear_config_instance()`, `clear_buffer()`, `clear_flow_store()`, `clear_store_instance()`).
+`CCProxyConfig`, `NotificationBuffer`, `FlowStore`, and `ShapeStore` use thread-safe singletons. The billing-salts JSON loader (`specs/billing_salt.py`) keeps an mtime-keyed cache. Tests reset them via the `cleanup` autouse fixture (`clear_config_instance()`, `clear_buffer()`, `clear_flow_store()`, `clear_store_instance()`, `clear_salts_cache()`).
 
 ### OAuth
 
-- **Sentinel key**: `sk-ant-oat-ccproxy-{provider}` triggers token substitution from `oat_sources` config
-- **Token sources**: `oat_sources` entries with `command` (shell) or `file` (path) to obtain tokens
-- **Refresh**: On 401, re-resolves the credential source. If the token changed, retries the request with the fresh token. If unchanged, fails (credential is truly stale).
-- `forward_oauth` hook sets `x-ccproxy-oauth-injected: 1` to signal downstream
+- **Sentinel key**: `sk-ant-oat-ccproxy-{provider}` triggers token substitution from `oat_sources` config.
+- **Token sources** — `oat_sources` is a `dict[str, OAuthSource]` where `OAuthSource` is a discriminated union (defined in `src/ccproxy/oauth/sources.py`):
+  - `command` (default — bare YAML strings also map here): shell command whose stdout is the token. Backwards-compat: `oat_sources: foo: "echo bar"` still works.
+  - `file`: read token from a file path.
+  - `anthropic_oauth`: in-process refresh against `https://claude.ai/v1/oauth/token`. Reads JSON refresh-token file, refreshes when within 60s of expiry, atomically writes the merged response back. Configurable `refresh_token_file`, `client_id`, `endpoint`.
+  - `google_oauth`: in-process refresh against `https://oauth2.googleapis.com/token`. Required `client_id` + `client_secret` (gemini-cli's are public installed-app values; ccproxy ships none). Workaround for gemini-cli #21691: preserves on-disk `refresh_token` when Google's response omits it.
+- **401 retry**: On 401, re-resolves the credential source. If the token changed, retries the request with the fresh token. If unchanged, fails (credential is truly stale).
+- `forward_oauth` hook sets `x-ccproxy-oauth-injected: 1` to signal downstream.
+
+### Anthropic Billing Header
+
+- The `regenerate_billing_header` shape inner-DAG hook re-signs the shape's `x-anthropic-billing-header` against the incoming first user message. Anthropic's server validates the suffix against a `(salt, version)` pair embedded in each claude-code release.
+- Salts live at `{config_dir}/billing_salts.json` — a JSON map `{cc_version: 12-hex-salt}`. The path is fixed (no config field, no env var); the file is gitignored. Users extract salts from their installed claude-code binary and write them here.
+- The hook parses `cc_version` from the shape's existing billing block, looks up the matching salt, and replaces only the 3-hex suffix and the 5-hex `cch` token in place. Everything else (`cc_entrypoint`, formatting, block extras like `cache_control`) survives verbatim.
+- If no salt is configured for the shape's version, the hook no-ops with a warning and the shape's stale billing header passes through unchanged (Anthropic will then likely 400 the request — that's the correct semantics).
 
 ### Key Constants (`constants.py`)
 
@@ -287,6 +318,8 @@ Each filter must consume a JSON array and produce a JSON array. Filters chain in
 - `SENSITIVE_PATTERNS` — regex patterns for header redaction
 - `CLAUDE_CODE_SYSTEM_PREFIX` — required system prompt prefix for OAuth
 - `OAuthConfigError` — fatal exception that propagates through pipeline (not swallowed)
+
+Vendored fact lists live separately in `src/ccproxy/specs/claude_code_constants.py` (`BASE_BETAS`, `LONG_CONTEXT_BETAS`). The billing salt is NOT vendored — it lives in the user's `{config_dir}/billing_salts.json`.
 
 ## Implementation Notes
 
@@ -303,7 +336,7 @@ Each filter must consume a JSON array and produce a JSON array. Filters chain in
 - **Namespace lifecycle**: `--ready-fd`/`--exit-fd` pipes for clean slirp4netns lifecycle. `PortForwarder` background thread polls `/proc/{pid}/net/tcp` every 0.5s for dynamic `add_hostfwd` port forwarding.
 - **Namespace localhost routing**: Inside the WireGuard namespace, `127.0.0.1` is isolated loopback — host services are at `10.0.2.2` (slirp4netns gateway). `route_localnet` sysctl + iptables OUTPUT DNAT rules transparently redirect namespace localhost→gateway so tools with hardcoded `127.0.0.1` base URLs work. A port remap rule maps the default ccproxy port (4000) to the running instance's port when they differ.
 - **Prompt caching**: Anthropic `cache_control` annotations pass through transparently via `AnthropicConfig.transform_request()`. For Gemini/Vertex AI, `cache_control` triggers the `cachedContents` API flow in `context_cache.py` (only in `transform` mode — `redirect` and `passthrough` modes don't invoke lightllm transforms). Gemini OAuth tokens (`ya29.*`) use `Authorization: Bearer`; API keys use `?key=` in the URL. The Gemini CLI's OAuth scopes do NOT cover the `cachedContents` endpoint — only API keys (`AIza*`) work for Gemini context caching through Google AI Studio.
-- **Gemini through inspector**: Gemini CLI uses `cloudcode-pa.googleapis.com/v1internal:*` endpoints. These match the `passthrough` transform rule (`match_host: cloudcode-pa.googleapis.com`). PAL MCP server uses the google-genai Python SDK which connects to `generativelanguage.googleapis.com`, but its MCP config sets `GEMINI_BASE_URL=http://127.0.0.1:4000/gemini` with sentinel key `sk-ant-oat-ccproxy-gemini`. In inspect mode, the DNAT rules redirect this through the running ccproxy instance where `forward_oauth` resolves the sentinel to a real OAuth token. The Gemini `redirect` transform rules (`match_path: /v1internal`, `/gemini/`) rewrite paths to cloudcode-pa endpoints via `_rewrite_path()`.
+- **Gemini through inspector**: Gemini CLI uses `cloudcode-pa.googleapis.com/v1internal:*` endpoints. These match the `passthrough` transform rule (`match_host: cloudcode-pa.googleapis.com`). PAL MCP server uses the google-genai Python SDK which connects to `generativelanguage.googleapis.com`, but its MCP config sets `GEMINI_BASE_URL=http://127.0.0.1:4000/gemini` with sentinel key `sk-ant-oat-ccproxy-gemini`. In inspect mode, the DNAT rules redirect this through the running ccproxy instance where `forward_oauth` resolves the sentinel to a real OAuth token. The single `gemini_cli` outbound hook (replaces the older `gemini_cli_compat` + `reroute_gemini` pair) wraps standard Gemini bodies in the `v1internal` envelope, conditionally masquerades the user-agent (only when it matches `google-genai-sdk/*` — preserves urllib clients in their own rate-limit bucket), rewrites the path to cloudcode-pa, and unwraps the `{response: {...}}` envelope on the way back via `EnvelopeUnwrapStream`.
 
 ## Testing Patterns
 
@@ -329,6 +362,8 @@ Each filter must consume a JSON array and produce a JSON array. Filters chain in
 
 The Nix devShell creates a dev instance by overriding `defaultSettings` with dev-specific values: port 4001, inspector UI at 8084, cert store at `./.ccproxy` (project-local). Entering the devShell auto-symlinks the Nix-generated YAML to `.ccproxy/ccproxy.yaml` and sets `CCPROXY_CONFIG_DIR=$PWD/.ccproxy`. The dev instance runs at port 4001; the production instance (managed externally via Home Manager) runs at port 4000. Both can run simultaneously.
 
+**Editing `.ccproxy/ccproxy.yaml`**: it's a symlink into the Nix store (read-only). Do **not** try to edit it in place — modify the `devConfig` settings override in `flake.nix` instead, then `direnv reload` (or exit/re-enter the devShell) and `just down && just up`. The shellHook regenerates the symlink target at devShell entry time, so changes to `nix/defaults.nix` only take effect after a reload. To temporarily inject one-off values for testing, copy the symlink target to a real file (`cp $(readlink .ccproxy/ccproxy.yaml) /tmp/dev.yaml && rm .ccproxy/ccproxy.yaml && cp /tmp/dev.yaml .ccproxy/ccproxy.yaml && chmod 644 .ccproxy/ccproxy.yaml`), but remember the next `direnv reload` will replace it with a fresh symlink.
+
 ## Type Stubs (`stubs/`)
 
 Hand-written stubs for dependencies lacking `py.typed` or with incomplete types: `glom`, `litellm`, `opentelemetry` (optional, package not installed in dev), `xepor`. On `mypy_path = "stubs"`.
@@ -342,9 +377,11 @@ Hand-written stubs for dependencies lacking `py.typed` or with incomplete types:
 - **pydantic/pydantic-settings** — Configuration and validation
 - **pydantic-ai-slim** — Typed message/tool objects (`ModelMessage`, `SystemPromptPart`, `ToolDefinition`, `CachePoint`) for the pipeline's typed content layer
 - **tyro** + **attrs** — CLI subcommand generation
-- **anthropic** — Anthropic API client (OAuth token refresh)
-- **fastapi** — MCP notification endpoint (`POST /mcp/notify`)
-- **glom** — Standard primitive for all raw body mutations across the hook system (`glom`, `assign`, `delete`). Used by pipeline hooks (`extract_session_id`, `reroute_gemini`, `shape`), shaping callbacks, and caching hooks. Hook `reads`/`writes` declarations use glom dot-paths for DAG dependency resolution.
+- **anthropic** — Anthropic API client (used historically for OAuth token refresh; in-process refresh now lives in `oauth/anthropic.py` using plain `httpx`).
+- **fastapi** — MCP notification endpoint (`POST /mcp/notify`).
+- **mcp** — FastMCP stdio server (`src/ccproxy/mcp/server.py`, console_script `ccproxy_mcp`).
+- **httpx** — All in-process HTTP (OAuth refresh, model catalog live merge, mitmweb REST). Tests use `httpx.MockTransport` per the no-mocks-of-internals exception.
+- **glom** — Standard primitive for all raw body mutations across the hook system (`glom`, `assign`, `delete`). Used by pipeline hooks (`extract_session_id`, `gemini_cli`, `shape`), shape inner-DAG hooks (`regenerate_*`, `caching.{strip,insert}`). Hook `reads`/`writes` declarations use glom dot-paths for DAG dependency resolution.
 
 ## Marketplace Plugin Sync
 

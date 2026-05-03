@@ -90,8 +90,8 @@ class TestShapeStore:
 
 class TestGetStoreSingleton:
     def test_get_store_uses_configured_seeds_dir(self, tmp_path: Path) -> None:
-        from ccproxy.shaping.store import clear_store_instance, get_store
         from ccproxy.config import CCProxyConfig, set_config_instance
+        from ccproxy.shaping.store import clear_store_instance, get_store
 
         explicit_dir = tmp_path / "custom-seeds"
         config = CCProxyConfig()
@@ -107,8 +107,8 @@ class TestGetStoreSingleton:
     def test_get_store_falls_back_to_config_dir(
         self, tmp_path: Path, monkeypatch: Any
     ) -> None:
-        from ccproxy.shaping.store import clear_store_instance, get_store
         from ccproxy.config import CCProxyConfig, set_config_instance
+        from ccproxy.shaping.store import clear_store_instance, get_store
 
         monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
         set_config_instance(CCProxyConfig())
@@ -120,8 +120,8 @@ class TestGetStoreSingleton:
         clear_store_instance()
 
     def test_get_store_is_a_singleton(self, tmp_path: Path, monkeypatch: Any) -> None:
-        from ccproxy.shaping.store import clear_store_instance, get_store
         from ccproxy.config import CCProxyConfig, set_config_instance
+        from ccproxy.shaping.store import clear_store_instance, get_store
 
         monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
         set_config_instance(CCProxyConfig())

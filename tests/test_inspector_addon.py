@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from ccproxy.inspector.addon import InspectorAddon
 from ccproxy.flows.store import (
     FLOW_ID_HEADER,
     FlowRecord,
@@ -14,6 +13,7 @@ from ccproxy.flows.store import (
     TransformMeta,
     create_flow_record,
 )
+from ccproxy.inspector.addon import InspectorAddon
 
 
 def _make_mock_flow(*, reverse: bool = True) -> MagicMock:

@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock
 
-from ccproxy.inspector.contentview import ClientRequestContentview, ProviderResponseContentview
 from ccproxy.flows.store import FlowRecord, HttpSnapshot, InspectorMeta
+from ccproxy.inspector.contentview import ClientRequestContentview, ProviderResponseContentview
 
 
 def _make_cr(

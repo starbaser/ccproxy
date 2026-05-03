@@ -111,6 +111,19 @@ class FlowRecord:
     transform: TransformMeta | None = None
     """Transform context bridging request to response phase."""
 
+    conversation_id: str | None = None
+    """First 12 hex chars of ``sha256(extract_first_user_text(messages))``.
+
+    Stable across requests in the same conversation (same first user message),
+    so MCP and CLI tools can group flows by logical session.
+    """
+
+    system_prompt_sha: str | None = None
+    """First 12 hex chars of ``sha256(json.dumps(system, sort_keys=True))``.
+
+    Identifies which system prompt was in effect for this request.
+    """
+
 
 class InspectorMeta:
     """Flow metadata keys for ccproxy inspector."""
