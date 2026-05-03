@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 _CLOUDCODE_HOST = "cloudcode-pa.googleapis.com"
 _MODEL_RE = re.compile(r"/models/([^/:]+)")
 _ACTION_RE = re.compile(r":(\w+)$")
+_SDK_UA_RE = re.compile(r"google-genai-sdk/")
 
 _CLI_VERSION = "0.36.0"
 _NODE_CLIENT_VERSION = "9.15.1"
@@ -127,13 +128,21 @@ def gemini_cli(ctx: Context, _: dict[str, Any]) -> Context:
         inner = body.get("request") if isinstance(body.get("request"), dict) else None
         model = str(body.get("model", "")) if inner is None else str(inner.get("model", ""))
 
-    cli_ua = (
-        f"GeminiCLI/{_CLI_VERSION}/{model} "
-        f"(linux; x64; terminal) "
-        f"google-api-nodejs-client/{_NODE_CLIENT_VERSION}"
-    )
-    ctx.set_header("user-agent", cli_ua)
-    ctx.set_header("x-goog-api-client", f"gl-node/{_NODE_VERSION}")
+    # UA masquerade is intentionally conditional. cloudcode-pa rate-limits per
+    # (token, project, user-agent) bucket; forcing every Gemini-sentinel client
+    # to look like the CLI puts third-party tools (e.g. Glass on urllib) into
+    # the same bucket as the user's interactive CLI session and exhausts shared
+    # quota. Only masquerade when the caller is the google-genai SDK — that's
+    # the case the original gemini_cli_compat hook covered.
+    original_ua = ctx.get_header("user-agent", "")
+    if _SDK_UA_RE.search(original_ua):
+        cli_ua = (
+            f"GeminiCLI/{_CLI_VERSION}/{model} "
+            f"(linux; x64; terminal) "
+            f"google-api-nodejs-client/{_NODE_CLIENT_VERSION}"
+        )
+        ctx.set_header("user-agent", cli_ua)
+        ctx.set_header("x-goog-api-client", f"gl-node/{_NODE_VERSION}")
 
     already_wrapped = "request" in body and "contents" not in body
     if already_wrapped:

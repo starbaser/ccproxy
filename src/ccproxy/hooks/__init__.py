@@ -6,6 +6,7 @@ The HookDAG uses these to compute execution order via topological sort.
 
 from ccproxy.hooks.extract_session_id import extract_session_id
 from ccproxy.hooks.forward_oauth import forward_oauth
+from ccproxy.hooks.gemini_capacity_fallback import gemini_capacity_fallback
 from ccproxy.hooks.gemini_cli import gemini_cli
 from ccproxy.hooks.inject_claude_code_identity import inject_claude_code_identity
 from ccproxy.hooks.inject_mcp_notifications import inject_mcp_notifications
@@ -13,6 +14,7 @@ from ccproxy.hooks.inject_mcp_notifications import inject_mcp_notifications
 __all__ = [
     "extract_session_id",
     "forward_oauth",
+    "gemini_capacity_fallback",
     "gemini_cli",
     "inject_claude_code_identity",
     "inject_mcp_notifications",

@@ -33,6 +33,12 @@
       ];
       outbound = [
         "ccproxy.hooks.gemini_cli"
+        {
+          hook = "ccproxy.hooks.gemini_capacity_fallback";
+          params = {
+            fallback_models = [ "gemini-3-flash-preview" "gemini-2.5-pro" "gemini-2.5-flash" ];
+          };
+        }
         "ccproxy.hooks.inject_mcp_notifications"
         "ccproxy.hooks.verbose_mode"
         "ccproxy.hooks.shape"

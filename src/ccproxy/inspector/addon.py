@@ -177,6 +177,22 @@ class InspectorAddon:
             and transform.is_streaming
             and transform.provider == "gemini"
         ):
+            from ccproxy.hooks.gemini_capacity_fallback import (
+                _CAPACITY_STATUS_CODES,
+                has_fallback_configured,
+            )
+
+            if flow.response.status_code in _CAPACITY_STATUS_CODES and has_fallback_configured():
+                # Defer stream setup so mitmproxy buffers the error body.
+                # response() will then have a full body to inspect and can
+                # transparently retry with a fallback model.
+                logger.info(
+                    "Deferring stream setup for %d to allow capacity fallback retry (flow=%s)",
+                    flow.response.status_code,
+                    flow.id,
+                )
+                return
+
             from ccproxy.hooks.gemini_cli import EnvelopeUnwrapStream
 
             unwrap_stream = EnvelopeUnwrapStream()
@@ -211,6 +227,20 @@ class InspectorAddon:
             if response.status_code == 401 and flow.metadata.get("ccproxy.oauth_injected"):
                 retried = await self._retry_with_refreshed_token(flow)
                 if retried:
+                    response = flow.response
+
+            if (
+                response
+                and flow.metadata.get("ccproxy.oauth_provider") == "gemini"
+            ):
+                from ccproxy.hooks.gemini_capacity_fallback import (
+                    _CAPACITY_STATUS_CODES,
+                    try_fallback_models,
+                )
+
+                if response.status_code in _CAPACITY_STATUS_CODES and await try_fallback_models(
+                    flow
+                ):
                     response = flow.response
 
             # Unwrap cloudcode-pa response envelope for Gemini redirect flows

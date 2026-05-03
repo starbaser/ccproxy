@@ -153,7 +153,7 @@ class TestHostRewriting:
 
 
 class TestHeaderMasquerade:
-    def test_user_agent_rewritten_to_gemini_cli(self) -> None:
+    def test_user_agent_rewritten_for_google_genai_sdk(self) -> None:
         ctx = _make_ctx(headers={"user-agent": "google-genai-sdk/1.0"})
 
         gemini_cli(ctx, {})
@@ -162,12 +162,22 @@ class TestHeaderMasquerade:
         assert ua.startswith("GeminiCLI/")
         assert "gemini-3.1-pro-preview" in ua
 
-    def test_x_goog_api_client_set(self) -> None:
-        ctx = _make_ctx()
+    def test_x_goog_api_client_set_for_google_genai_sdk(self) -> None:
+        ctx = _make_ctx(headers={"user-agent": "google-genai-sdk/1.0"})
 
         gemini_cli(ctx, {})
 
         assert ctx.flow.request.headers.get("x-goog-api-client") == "gl-node/22.22.2"
+
+    def test_user_agent_preserved_for_non_sdk_clients(self) -> None:
+        """Glass and other third-party tools keep their own UA so cloudcode-pa
+        doesn't bucket them together with the user's real Gemini CLI session."""
+        ctx = _make_ctx(headers={"user-agent": "Python-urllib/3.13"})
+
+        gemini_cli(ctx, {})
+
+        assert ctx.flow.request.headers.get("user-agent") == "Python-urllib/3.13"
+        assert "x-goog-api-client" not in ctx.flow.request.headers
 
     def test_x_goog_api_key_stripped(self) -> None:
         ctx = _make_ctx(headers={"x-goog-api-key": "leftover-key"})
