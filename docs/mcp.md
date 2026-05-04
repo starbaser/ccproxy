@@ -125,17 +125,10 @@ class TaskBuffer:
 
 ### Pipeline Position
 
-```
-ccproxy hook pipeline:
-  1. forward_oauth
-  2. gemini_cli_compat
-  3. reroute_gemini
-  4. extract_session_id
-  ── transform (lightllm) ──
-  5. inject_mcp_notifications   <── HERE (outbound, before forwarding)
-  6. verbose_mode
-  7. shape
-```
+Run `ccproxy status` for the live pipeline order with each hook's
+reads/writes. `inject_mcp_notifications` runs in the outbound stage
+before `shape`, so the synthetic ToolCallPart/ToolReturnPart pairs are
+already in place when shape replay runs.
 
 ### Signature
 

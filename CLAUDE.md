@@ -45,7 +45,7 @@ Sends a real request through the WireGuard namespace jail. Verifies: namespace s
 ccproxy start                     # Start server (always inspector mode, foreground)
 ccproxy run <command> [args...]   # Run command with proxy env vars
 ccproxy run --inspect -- <cmd>    # Run command in WireGuard namespace jail
-ccproxy status [--json]           # Show running state
+ccproxy status [--json]           # Show running state + live hook pipeline (order, reads/writes, params)
 ccproxy init [--force]            # Initialize config files
 ccproxy logs [-f] [-n LINES]     # View logs
 ccproxy flows list [--json] [--jq FILTER]...     # List flow set
@@ -134,7 +134,7 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 - `telemetry.py` — Three-mode OTel: real OTLP export, no-op, or stub.
 - `wg_keylog.py` — Writes Wireshark-compatible keylog for WireGuard tunnel decryption.
 
-**`hooks/`** — Built-in pipeline hooks:
+**`hooks/`** — Built-in pipeline hooks. **For the live, authoritative view of which hooks are configured, in what order they execute, what each one reads/writes, and any param values, run `ccproxy status`** — it renders the resolved DAG against the running config. The table below is a static reference; the status command is ground truth.
 
 | Hook | Stage | Purpose |
 |------|-------|---------|
@@ -143,7 +143,6 @@ mitmweb binds two listeners: `reverse:http://localhost:1@{port}` (placeholder ba
 | `gemini_cli` | outbound | Single hook for all Gemini sentinel-key traffic. Wraps standard Gemini bodies in the `v1internal` envelope, conditionally masquerades `google-genai-sdk/*` UAs as Gemini CLI (preserves urllib clients in their own rate-limit bucket), rewrites paths to `cloudcode-pa`, and unwraps the `{response: {...}}` envelope on the way back (buffered + SSE via `EnvelopeUnwrapStream`). The `cloudaicompanionProject` is resolved once at startup via `prewarm_project` in cli.py. |
 | `gemini_capacity_fallback` | outbound | Retries Gemini requests against a fallback model chain when cloudcode-pa returns 429 / 503 RESOURCE_EXHAUSTED. Sticky same-model retries honor `RetryInfo.retryDelay`, then walks the configured chain. 120s wall-clock budget. Streaming flows are supported via deferred stream setup in `responseheaders`. Default chain: `[gemini-3-flash-preview, gemini-2.5-pro, gemini-2.5-flash]`. |
 | `inject_mcp_notifications` | outbound | Injects buffered MCP terminal events as synthetic ToolCallPart/ToolReturnPart pairs. Typed layer. |
-| `inject_claude_code_identity` | outbound | Injects the required `You are Claude Code...` system prompt prefix when a sentinel-key request lacks it. |
 | `verbose_mode` | outbound | Strips `redact-thinking-*` from `anthropic-beta` header. Header-only. |
 | `shape` | outbound | Picks a per-provider captured shape, injects content fields from the incoming request per the provider's shaping profile, applies to the outbound flow. Uses `glom.delete()`/`glom.assign()` for content injection. |
 | `commitbee_compat` | outbound | Last-mile compatibility shim for the commitbee tool. |

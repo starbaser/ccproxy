@@ -117,13 +117,14 @@ ccproxy:
   hooks:
     inbound:
       - ccproxy.hooks.forward_oauth
-      - ccproxy.hooks.gemini_cli_compat
-      - ccproxy.hooks.reroute_gemini
       - ccproxy.hooks.extract_session_id
     outbound:
+      - ccproxy.hooks.gemini_cli
+      - ccproxy.hooks.gemini_capacity_fallback
       - ccproxy.hooks.inject_mcp_notifications
       - ccproxy.hooks.verbose_mode
       - ccproxy.hooks.shape
+      - ccproxy.hooks.commitbee_compat
 
   inspector:
     transforms:
@@ -170,12 +171,13 @@ Per-request overrides via header: `x-ccproxy-hooks: +hook_name,-other_hook`.
 | Hook | Stage | Purpose |
 | --- | --- | --- |
 | `forward_oauth` | inbound | Sentinel key (`sk-ant-oat-ccproxy-{provider}`) substitution from `oat_sources` |
-| `gemini_cli_compat` | inbound | Masquerades google-genai SDK user-agent as Gemini CLI for capacity allocation |
-| `reroute_gemini` | inbound | Reroutes WireGuard flows targeting `generativelanguage.googleapis.com` to `cloudcode-pa.googleapis.com` with `v1internal` envelope |
 | `extract_session_id` | inbound | Parses `metadata.user_id` → stores session_id on `flow.metadata` |
+| `gemini_cli` | outbound | Single hook for Gemini sentinel-key traffic: `v1internal` envelope wrap, conditional UA masquerade, path rewrite to `cloudcode-pa`, and unwrap on the way back |
+| `gemini_capacity_fallback` | outbound | Retries Gemini requests against a fallback model chain on 429 / 503 RESOURCE_EXHAUSTED |
 | `inject_mcp_notifications` | outbound | Injects buffered MCP terminal events as synthetic tool_use/tool_result |
 | `verbose_mode` | outbound | Strips `redact-thinking-*` from `anthropic-beta` header |
-| `shape` | outbound | Stamps captured compliance envelopes onto proxied requests |
+| `shape` | outbound | Replays a captured shape and stamps content fields from the incoming request |
+| `commitbee_compat` | outbound | Last-mile compatibility shim for commitbee |
 
 ## CLI Reference
 

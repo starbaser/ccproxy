@@ -84,8 +84,9 @@ async def main() -> None:
     - hooks/: Built-in DAG pipeline hooks:
       * forward_oauth - Substitutes sentinel key with real OAuth token
       * extract_session_id - Extracts session identifiers from metadata.user_id
-      * add_beta_headers - Adds anthropic-beta headers for Claude Code OAuth
-      * inject_claude_code_identity - Injects required system message for OAuth
+      * shape - Replays a captured shape and stamps content fields from
+        the incoming request (handles the Claude Code system identity
+        prefix automatically — no separate identity-injection hook needed)
       * inject_mcp_notifications - Injects buffered MCP events into requests
       * verbose_mode - Debug logging for request/response bodies
     - cli.py: Tyro-based CLI interface for managing the proxy server

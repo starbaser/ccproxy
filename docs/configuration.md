@@ -42,13 +42,14 @@ ccproxy:
   hooks:
     inbound:
       - ccproxy.hooks.forward_oauth
-      - ccproxy.hooks.gemini_cli_compat
-      - ccproxy.hooks.reroute_gemini
       - ccproxy.hooks.extract_session_id
     outbound:
+      - ccproxy.hooks.gemini_cli
+      - ccproxy.hooks.gemini_capacity_fallback
       - ccproxy.hooks.inject_mcp_notifications
       - ccproxy.hooks.verbose_mode
       - ccproxy.hooks.shape
+      - ccproxy.hooks.commitbee_compat
 
   inspector:
     port: 8083               # mitmweb UI port
@@ -161,14 +162,13 @@ ccproxy:
 | Hook | Stage | Purpose |
 |---|---|---|
 | `ccproxy.hooks.forward_oauth` | inbound | Substitutes sentinel keys (`sk-ant-oat-ccproxy-{provider}`) with OAuth tokens from `oat_sources`; injects Bearer auth |
-| `ccproxy.hooks.gemini_cli_compat` | inbound | Masquerades google-genai SDK user-agent as Gemini CLI for capacity allocation on `cloudcode-pa.googleapis.com` |
-| `ccproxy.hooks.reroute_gemini` | inbound | Reroutes WireGuard flows targeting `generativelanguage.googleapis.com` to `cloudcode-pa.googleapis.com` with `v1internal` envelope wrapping. Uses `glom.delete()` for metadata stripping. |
 | `ccproxy.hooks.extract_session_id` | inbound | Reads `metadata.user_id` via `glom(ctx._body, 'metadata.user_id')` and stores session_id on `flow.metadata` for downstream use |
-| `ccproxy.hooks.gemini_oauth_refresh` | inbound | Preemptive Gemini OAuth token refresh with `refresh_token` backup (workaround for gemini-cli#21691). Optional — not enabled by default. |
+| `ccproxy.hooks.gemini_cli` | outbound | Single hook for all Gemini sentinel-key traffic. Wraps standard Gemini bodies in the `v1internal` envelope, conditionally masquerades `google-genai-sdk/*` UAs as Gemini CLI, rewrites paths to `cloudcode-pa`, and unwraps the `{response: {...}}` envelope on the way back. |
+| `ccproxy.hooks.gemini_capacity_fallback` | outbound | Retries Gemini requests against a fallback model chain when cloudcode-pa returns 429 / 503 RESOURCE_EXHAUSTED. Sticky same-model retries honor `RetryInfo.retryDelay`, then walks the configured chain. |
 | `ccproxy.hooks.inject_mcp_notifications` | outbound | Injects buffered MCP terminal events as synthetic tool_use/tool_result blocks |
 | `ccproxy.hooks.verbose_mode` | outbound | Strips `redact-thinking-*` flags from the `anthropic-beta` header |
-| `ccproxy.hooks.inject_claude_code_identity` | outbound | Prepends the required system prompt prefix for Anthropic OAuth requests. Optional — not enabled by default. |
-| `ccproxy.hooks.shape` | outbound | Picks a per-provider captured shape, injects content fields from the incoming request, applies the compliance envelope to the outbound flow |
+| `ccproxy.hooks.shape` | outbound | Picks a per-provider captured shape, injects content fields from the incoming request, applies it to the outbound flow. The shape carries the captured Claude client's identity verbatim — no separate identity-injection hook is needed. |
+| `ccproxy.hooks.commitbee_compat` | outbound | Last-mile compatibility shim for the commitbee tool. |
 
 ### Writing custom hooks
 
