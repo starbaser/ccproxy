@@ -28,6 +28,7 @@ dependencies = [
   "pydantic-ai-slim>=1.85.1",
   "glom>=24.1.0",
   "mcp>=1.0.0",
+  "xxhash>=3.0.0",
 ]
 
 [project.scripts]

@@ -131,13 +131,13 @@ ReadySignal → InspectorAddon → MultiHARSaver → ShapeCapturer
   | `commitbee_compat` | outbound | Last-mile compatibility shim for the commitbee tool. |
   | `regenerate_user_prompt_id` | shape inner-DAG | Re-rolls the shape's `user_prompt_id` per request. |
   | `regenerate_session_id` | shape inner-DAG | Re-rolls `metadata.user_id.session_id` if the shape carries an identity. |
-  | `regenerate_billing_header` | shape inner-DAG | Re-signs the shape's `x-anthropic-billing-header` against the incoming first user message. Reads salt from `{config_dir}/billing_salts.json`. |
+  | `regenerate_billing_header` | shape inner-DAG | Re-signs the shape's `x-anthropic-billing-header` against the incoming first user message. SHA-256 3-hex `cc_version` suffix in `_body`; xxhash64 5-hex `cch` over the serialized wire bytes (with `cch=00000` placeholder). Reads salt from `config.billing_salt` (or `CCPROXY_BILLING_SALT`). |
   | `caching.strip` | shape inner-DAG | Deletes values at glom dot-paths via `glom.delete()`. Accepts `StripParams(paths: list[str])`. |
   | `caching.insert` | shape inner-DAG | Sets a value at a glom dot-path via `glom.assign()`. Accepts `InsertParams(path: str, value: Any)`. Default value: `{"type": "ephemeral"}`. |
 
 - **`shaping/`** — Request shaping framework. A *shape* is a captured `mitmproxy.http.HTTPFlow` (real Claude CLI request) persisted as a `{provider}.mflow`. At runtime, the working copy is configured via `http.Request.from_state()`, configured headers are stripped, `content_fields` from the provider's profile are injected from the incoming request, shape inner-DAG hooks run, then `apply_shape()` stamps headers + query params + body onto the outbound flow. The shape is the proven foundation — everything not in `content_fields` persists from the shape.
   - `caching/` — Composable glom-based cache control hooks for the shape inner DAG: `strip` (deletes via `glom.delete`) and `insert` (sets via `glom.assign`). Separate modules ensure DAG priority ordering.
-  - `regenerate.py` — Shape inner-DAG hooks: `regenerate_user_prompt_id`, `regenerate_session_id`, `regenerate_billing_header` (re-signs the shape's `x-anthropic-billing-header` against the incoming first user message; reads salt from `{config_dir}/billing_salts.json`).
+  - `regenerate.py` — Shape inner-DAG hooks: `regenerate_user_prompt_id`, `regenerate_session_id`, `regenerate_billing_header` (re-signs `x-anthropic-billing-header`; SHA-256 cc_version suffix in `_body`, xxhash64 cch over the serialized wire bytes; reads salt from `config.billing_salt`).
   - `gemini.py` — Gemini-specific shape hook.
 
 - **`flows/store.py`** — TTL store keyed by `x-ccproxy-flow-id` for cross-addon state. `HttpSnapshot` is the unified HTTP message snapshot. `FlowRecord` carries `client_request`, `provider_response`, `TransformMeta`, and enrichment fields (`conversation_id` = SHA12 of first user text; `system_prompt_sha` = SHA12 of `json.dumps(system, sort_keys=True)`).
@@ -150,7 +150,7 @@ ReadySignal → InspectorAddon → MultiHARSaver → ShapeCapturer
 - **`specs/`** — Vendored constants, Pydantic schemas, model catalog.
   - `claude_code_constants.py` — `BASE_BETAS`, `LONG_CONTEXT_BETAS` (vendored fact lists).
   - `claude_code_request.py` — `APIRequestParams` mirroring `/v1/messages` schema (`extra="allow"`).
-  - `billing_salt.py` — Reads `{config_dir}/billing_salts.json` (`{cc_version: 12-hex-salt}` map). Path is fixed (no env var); file is gitignored. mtime-cached. Anthropic's server validates the billing-header suffix against a `(salt, version)` pair embedded in each claude-code release — the committed default ships zero salts.
+  - `billing_salt.py` — Returns the configured `billing_salt` from `CCProxyConfig`. Single static string; not committed. User supplies via `ccproxy.yaml` or `CCPROXY_BILLING_SALT` env var.
   - `model_catalog.py` — OpenAI-compatible `/v1/models` payload generator. `STATIC_MODEL_CATALOG` is the floor list; `build_catalog(refresh=True)` queries each provider's upstream `/v1/models` and unions deduplicated results, falling back to the static floor on per-provider failure.
 
 - **`mcp/`** — Two surfaces.
@@ -161,7 +161,7 @@ ReadySignal → InspectorAddon → MultiHARSaver → ShapeCapturer
 
 ### Configuration
 
-**Discovery**: `$CCPROXY_CONFIG_DIR` (default: `$XDG_CONFIG_HOME/ccproxy/`) is the single knob. Both `ccproxy.yaml` and `billing_salts.json` are read from it. Setting `CCPROXY_CONFIG_DIR=$PWD/.ccproxy` (the dev shell does this) yields a project-local config.
+**Discovery**: `$CCPROXY_CONFIG_DIR` (default: `$XDG_CONFIG_HOME/ccproxy/`) is the single knob. `ccproxy.yaml` is read from it. Setting `CCPROXY_CONFIG_DIR=$PWD/.ccproxy` (the dev shell does this) yields a project-local config.
 
 **Hook config format** — each entry is either a dotted module path (bare hook) or a `{hook, params}` dict:
 
@@ -181,7 +181,7 @@ hooks:
 
 ### Singleton Patterns
 
-`CCProxyConfig`, `NotificationBuffer`, `FlowStore`, `ShapeStore` are thread-safe singletons. `specs/billing_salt.py` keeps an mtime-keyed cache. The `cleanup` autouse fixture in `tests/conftest.py` resets all of them: `clear_config_instance()`, `clear_buffer()`, `clear_flow_store()`, `clear_store_instance()`, `clear_shape_hook_cache()`, `clear_salts_cache()`.
+`CCProxyConfig`, `NotificationBuffer`, `FlowStore`, `ShapeStore` are thread-safe singletons. The `cleanup` autouse fixture in `tests/conftest.py` resets them: `clear_config_instance()`, `clear_buffer()`, `clear_flow_store()`, `clear_store_instance()`, `clear_shape_hook_cache()`.
 
 ### OAuth & Sentinel Keys
 
@@ -191,9 +191,14 @@ The sentinel key `sk-ant-oat-ccproxy-{provider}` triggers token substitution fro
 
 ### Anthropic Billing Header
 
-The `regenerate_billing_header` shape inner-DAG hook re-signs the shape's `x-anthropic-billing-header` against the incoming first user message. Anthropic's server validates the suffix against a `(salt, version)` pair embedded in each claude-code release. Salts live at `{config_dir}/billing_salts.json` — a JSON map `{cc_version: 12-hex-salt}`. The path is fixed (no config field, no env var); the file is gitignored. Users extract salts from their installed claude-code binary and write them here.
+The `regenerate_billing_header` shape inner-DAG hook re-signs the shape's `x-anthropic-billing-header` (`cc_version=X.Y.Z.<3hex>; cc_entrypoint=...; cch=<5hex>;`) against the incoming first user message. The salt is a single static reverse-engineered constant (it does not rotate per release). It is **never committed to this repo**: users supply it via the `billing_salt` field in `ccproxy.yaml` or the `CCPROXY_BILLING_SALT` env var. When unset, the hook no-ops with a warning.
 
-The hook parses `cc_version` from the shape's existing billing block, looks up the matching salt, and replaces only the 3-hex suffix and the 5-hex `cch` token in place. Everything else (`cc_entrypoint`, formatting, block extras like `cache_control`) survives verbatim. If no salt is configured for the shape's version, the hook no-ops with a warning and the shape's stale billing header passes through unchanged (Anthropic will then likely 400 the request — that's the correct semantics).
+Two-phase signing matches what the leaked Bun-native claude-code source does:
+
+1. **Typed layer (`_body`)** — the hook reads `cc_version` from the shape's existing billing block, computes the 3-hex `cc_version` suffix as `sha256(salt + sampled + version)[:3]` (where `sampled` = chars at indices 4, 7, 20 of the incoming first user text, `"0"`-padded), and stamps the new text with `cch=00000;` as a placeholder. `cc_entrypoint`, formatting, position, and block extras (e.g. `cache_control`) survive verbatim.
+2. **Wire layer (serialized bytes)** — the hook force-commits to flush `_body` through `json.dumps`, then computes `xxhash64(body_bytes, seed=billing.seed) & 0xFFFFF` formatted as 5 lowercase hex, and substitutes the `cch=00000;` placeholder via a JSON-string-scoped regex. The wire bytes are then parsed back into `_body` so the outer commit re-serializes byte-identically.
+
+The version comes from the shape (not from incoming) because the shape's User-Agent and other release-pinned headers also come from the shape — everything advertised upstream stays internally consistent. Algorithm cross-validated against `router-for-me/CLIProxyAPI` (Go, `pierrec/xxHash`) and `Wei-Shaw/sub2api` (Go, `cespare/xxhash/v2`).
 
 ### Key Constants (`src/ccproxy/constants.py`)
 
@@ -202,7 +207,7 @@ The hook parses `cc_version` from the shape's existing billing block, looks up t
 - `CLAUDE_CODE_SYSTEM_PREFIX` — required system prompt prefix for OAuth
 - `OAuthConfigError` — fatal exception that propagates through pipeline (not swallowed)
 
-Vendored fact lists live separately in `src/ccproxy/specs/claude_code_constants.py` (`BASE_BETAS`, `LONG_CONTEXT_BETAS`). The billing salt is NOT vendored — it lives in the user's `{config_dir}/billing_salts.json`.
+Vendored fact lists live separately in `src/ccproxy/specs/claude_code_constants.py` (`BASE_BETAS`, `LONG_CONTEXT_BETAS`). The billing salt is NOT vendored — the user supplies `billing_salt` via `ccproxy.yaml` or `CCPROXY_BILLING_SALT`.
 
 ### Configuration Provenance
 

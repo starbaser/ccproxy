@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import uuid
 from dataclasses import dataclass
 from typing import Any
 
 import pytest
+import xxhash
 from mitmproxy import http
 
 from ccproxy.pipeline.context import Context
 from ccproxy.shaping.regenerate import (
-    _compute_cch,
+    _CCH_MASK,
     _compute_suffix,
     regenerate_billing_header,
     regenerate_session_id,
@@ -21,6 +23,7 @@ from ccproxy.shaping.regenerate import (
 )
 
 _TEST_VERSION = "2.1.87"
+_TEST_SEED = 0x0123456789ABCDEF
 
 
 def _shape_ctx(body: dict[str, Any] | None = None) -> Context:
@@ -91,23 +94,16 @@ class TestRegenerateSessionId:
         assert shape._body["metadata"]["user_id"] == 1234
 
 
-_SYNTHETIC_SALT = "deadbeefcafe"
+_SYNTHETIC_SALT = "0123456789ab"
 
 
 @dataclass(frozen=True)
-class BillingComputeCase:
+class SuffixCase:
     name: str
     """Descriptive name for the test scenario."""
 
     text: str
     """First user message text."""
-
-    expected_cch: str
-    """Expected ``cch`` (sha256(text)[:5])."""
-
-
-def _expected_cch(text: str) -> str:
-    return hashlib.sha256(text.encode()).hexdigest()[:5]
 
 
 def _expected_suffix(text: str, salt: str, version: str) -> str:
@@ -117,28 +113,19 @@ def _expected_suffix(text: str, salt: str, version: str) -> str:
 
 _LONG_TEXT = "hello world this is a long message"
 
-BILLING_COMPUTE_CASES: list[BillingComputeCase] = [
-    BillingComputeCase(name="empty", text="", expected_cch=_expected_cch("")),
-    BillingComputeCase(name="short", text="hi", expected_cch=_expected_cch("hi")),
-    BillingComputeCase(name="long", text=_LONG_TEXT, expected_cch=_expected_cch(_LONG_TEXT)),
-    BillingComputeCase(name="exact_21_chars", text="a" * 21, expected_cch=_expected_cch("a" * 21)),
+SUFFIX_CASES: list[SuffixCase] = [
+    SuffixCase(name="empty", text=""),
+    SuffixCase(name="short", text="hi"),
+    SuffixCase(name="long", text=_LONG_TEXT),
+    SuffixCase(name="exact_21_chars", text="a" * 21),
 ]
 
 
 @pytest.mark.parametrize(
     "case",
-    [pytest.param(c, id=c.name) for c in BILLING_COMPUTE_CASES],
+    [pytest.param(c, id=c.name) for c in SUFFIX_CASES],
 )
-def test_compute_cch(case: BillingComputeCase) -> None:
-    """``_compute_cch`` matches ``sha256(text).hex[:5]`` for varied inputs."""
-    assert _compute_cch(case.text) == case.expected_cch
-
-
-@pytest.mark.parametrize(
-    "case",
-    [pytest.param(c, id=c.name) for c in BILLING_COMPUTE_CASES],
-)
-def test_compute_suffix(case: BillingComputeCase) -> None:
+def test_compute_suffix(case: SuffixCase) -> None:
     """``_compute_suffix`` mirrors signing.ts (salt + sampled + version)."""
     expected = _expected_suffix(case.text, _SYNTHETIC_SALT, _TEST_VERSION)
     assert _compute_suffix(case.text, _SYNTHETIC_SALT, _TEST_VERSION) == expected
@@ -158,18 +145,25 @@ def _shape_billing_block(version: str, entrypoint: str, *, suffix: str = "abc", 
     }
 
 
-def _patch_salts(version_to_salt: dict[str, str]) -> Any:
-    """Patch ``get_billing_salt_for_version`` to look up from a fixed dict."""
+def _patch_billing(salt: str | None, seed: int | None = _TEST_SEED) -> Any:
+    """Patch both ``get_billing_salt`` and ``get_billing_cch_seed`` for the duration."""
+    from contextlib import ExitStack
     from unittest.mock import patch as _patch
 
-    return _patch(
-        "ccproxy.shaping.regenerate.get_billing_salt_for_version",
-        side_effect=version_to_salt.get,
-    )
+    stack = ExitStack()
+    stack.enter_context(_patch("ccproxy.shaping.regenerate.get_billing_salt", return_value=salt))
+    stack.enter_context(_patch("ccproxy.shaping.regenerate.get_billing_cch_seed", return_value=seed))
+    return stack
 
 
-def test_regenerate_billing_header_uses_shape_version_to_lookup_salt() -> None:
-    """Hook parses cc_version from shape, looks up matching salt, signs in place."""
+def _expected_cch_for_body(body_bytes: bytes) -> str:
+    """Replicate the wire-layer xxhash64 against a body that contains ``cch=00000``."""
+    digest = xxhash.xxh64(body_bytes, seed=_TEST_SEED).intdigest() & _CCH_MASK
+    return f"{digest:05x}"
+
+
+def test_regenerate_billing_header_signs_cch_via_xxhash64() -> None:
+    """End-to-end: cc_version suffix is SHA-256, cch is xxhash64 over the wire bytes."""
     body = {
         **_user_text_body("what is 7 times 8"),
         "system": [
@@ -178,31 +172,34 @@ def test_regenerate_billing_header_uses_shape_version_to_lookup_salt() -> None:
         ],
     }
     shape = _shape_ctx(body)
-    with _patch_salts({"2.1.87": _SYNTHETIC_SALT}):
+    with _patch_billing(_SYNTHETIC_SALT):
         regenerate_billing_header(shape, {})
 
     system = shape._body["system"]
     assert len(system) == 2  # No accumulation
     new_text = system[0]["text"]
 
-    expected_cch = _expected_cch("what is 7 times 8")
     expected_suffix = _expected_suffix("what is 7 times 8", _SYNTHETIC_SALT, "2.1.87")
-    expected_header = (
-        f"x-anthropic-billing-header: cc_version=2.1.87.{expected_suffix}; "
-        f"cc_entrypoint=cli; cch={expected_cch};"
-    )
-    assert new_text == expected_header
+    assert f"cc_version=2.1.87.{expected_suffix};" in new_text
+    assert "cc_entrypoint=cli" in new_text
     assert system[1] == {"type": "text", "text": "You are a Claude agent."}
 
+    # Verify the cch matches what xxhash64 would produce on the wire bytes
+    # with cch reset to the placeholder.
+    wire_bytes = shape._request.content  # type: ignore[union-attr]
+    placeholder_bytes = re.sub(rb"\bcch=[0-9a-f]+;", b"cch=00000;", wire_bytes, count=1)
+    expected_cch = _expected_cch_for_body(placeholder_bytes)
+    assert f"cch={expected_cch};" in new_text
 
-def test_regenerate_billing_header_preserves_shape_version() -> None:
-    """The shape's version is preserved verbatim (the salt is the matching one)."""
+
+def test_regenerate_billing_header_keeps_shape_version() -> None:
+    """The shape's ``cc_version`` major-part is preserved verbatim (only the 3-hex suffix changes)."""
     body = {
         **_user_text_body("x"),
         "system": [_shape_billing_block("3.0.0", "sdk-cli")],
     }
     shape = _shape_ctx(body)
-    with _patch_salts({"3.0.0": _SYNTHETIC_SALT}):
+    with _patch_billing(_SYNTHETIC_SALT):
         regenerate_billing_header(shape, {})
     text = shape._body["system"][0]["text"]
     expected_suffix = _expected_suffix("x", _SYNTHETIC_SALT, "3.0.0")
@@ -223,7 +220,7 @@ def test_regenerate_billing_header_preserves_block_extras() -> None:
         ],
     }
     shape = _shape_ctx(body)
-    with _patch_salts({"2.1.87": _SYNTHETIC_SALT}):
+    with _patch_billing(_SYNTHETIC_SALT):
         regenerate_billing_header(shape, {})
     block = shape._body["system"][0]
     assert block["cache_control"] == {"type": "ephemeral"}
@@ -234,32 +231,33 @@ def test_regenerate_billing_header_skips_when_no_messages_gemini_shape() -> None
     body_before = {"contents": [{"role": "user", "parts": [{"text": "hi"}]}]}
     shape = _shape_ctx(body_before)
     snapshot = json.loads(json.dumps(shape._body))
-    with _patch_salts({"2.1.87": _SYNTHETIC_SALT}):
+    with _patch_billing(_SYNTHETIC_SALT):
         regenerate_billing_header(shape, {})
     assert shape._body == snapshot
 
 
-def test_regenerate_billing_header_skips_when_no_salt_for_version() -> None:
-    """Shape's version isn't in the salts file → no-op + warning."""
+def test_regenerate_billing_header_skips_when_no_salt_configured() -> None:
+    """``billing.salt`` not configured → no-op + warning, body untouched."""
     body = {
         **_user_text_body("hi"),
         "system": [_shape_billing_block("2.1.87", "cli")],
     }
     shape = _shape_ctx(body)
     snapshot = json.loads(json.dumps(shape._body))
-    with _patch_salts({"9.9.9": _SYNTHETIC_SALT}):  # Doesn't include 2.1.87
+    with _patch_billing(None):
         regenerate_billing_header(shape, {})
     assert shape._body == snapshot
 
 
-def test_regenerate_billing_header_skips_when_salts_file_empty() -> None:
+def test_regenerate_billing_header_skips_when_no_seed_configured() -> None:
+    """``billing.seed`` not configured → no-op + warning, body untouched."""
     body = {
         **_user_text_body("hi"),
         "system": [_shape_billing_block("2.1.87", "cli")],
     }
     shape = _shape_ctx(body)
     snapshot = json.loads(json.dumps(shape._body))
-    with _patch_salts({}):
+    with _patch_billing(_SYNTHETIC_SALT, seed=None):
         regenerate_billing_header(shape, {})
     assert shape._body == snapshot
 
@@ -272,7 +270,7 @@ def test_regenerate_billing_header_skips_when_no_billing_block_in_shape() -> Non
     }
     shape = _shape_ctx(body)
     snapshot = json.loads(json.dumps(shape._body))
-    with _patch_salts({"2.1.87": _SYNTHETIC_SALT}):
+    with _patch_billing(_SYNTHETIC_SALT):
         regenerate_billing_header(shape, {})
     assert shape._body == snapshot
 
@@ -282,6 +280,21 @@ def test_regenerate_billing_header_skips_when_system_absent() -> None:
     body = _user_text_body("hi")
     shape = _shape_ctx(body)
     snapshot = json.loads(json.dumps(shape._body))
-    with _patch_salts({"2.1.87": _SYNTHETIC_SALT}):
+    with _patch_billing(_SYNTHETIC_SALT):
         regenerate_billing_header(shape, {})
     assert shape._body == snapshot
+
+
+def test_signed_body_round_trips_to_wire_bytes() -> None:
+    """After signing, ``_body`` re-serializes byte-identically — the outer commit is safe."""
+    body = {
+        **_user_text_body("round trip me"),
+        "system": [_shape_billing_block("2.1.87", "cli")],
+    }
+    shape = _shape_ctx(body)
+    with _patch_billing(_SYNTHETIC_SALT):
+        regenerate_billing_header(shape, {})
+
+    wire_bytes = shape._request.content  # type: ignore[union-attr]
+    re_serialized = json.dumps(shape._body).encode()
+    assert wire_bytes == re_serialized

@@ -1,76 +1,99 @@
-"""Tests for ccproxy.specs.billing_salt — JSON file lookup."""
+"""Tests for ccproxy.specs.billing_salt — nested per-provider config accessors."""
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 import pytest
 
-from ccproxy.specs.billing_salt import (
-    clear_salts_cache,
-    get_billing_salt_for_version,
-    load_billing_salts,
+from ccproxy.config import (
+    AnthropicShapingConfig,
+    BillingConfig,
+    CCProxyConfig,
+    ShapingConfig,
+    set_config_instance,
 )
+from ccproxy.specs.billing_salt import get_billing_cch_seed, get_billing_salt
 
 
-@pytest.fixture
-def salts_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
-    """Point ``get_config_dir`` at ``tmp_path`` so the salts file lives there."""
-    monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
-    clear_salts_cache()
-    return tmp_path / "billing_salts.json"
+def _set_config(*, salt: str | None = None, seed: str | None = None) -> None:
+    """Install a CCProxyConfig with the given Anthropic billing fields."""
+    set_config_instance(
+        CCProxyConfig(
+            shaping=ShapingConfig(
+                providers={
+                    "anthropic": AnthropicShapingConfig(
+                        billing=BillingConfig(salt=salt, seed=seed),
+                    ),
+                },
+            ),
+        ),
+    )
 
 
-def test_missing_file_returns_empty(salts_file: Path) -> None:
-    """No file at ``{config_dir}/billing_salts.json`` → empty map, no error."""
-    assert load_billing_salts() == {}
-    assert get_billing_salt_for_version("2.1.87") is None
+class TestGetBillingSalt:
+    def test_returns_configured(self) -> None:
+        _set_config(salt="0123456789ab")
+        assert get_billing_salt() == "0123456789ab"
+
+    def test_none_when_unset(self) -> None:
+        _set_config(salt=None)
+        assert get_billing_salt() is None
+
+    def test_empty_treated_as_unset(self) -> None:
+        _set_config(salt="")
+        assert get_billing_salt() is None
+
+    def test_none_when_no_anthropic_profile(self) -> None:
+        set_config_instance(CCProxyConfig(shaping=ShapingConfig(providers={})))
+        assert get_billing_salt() is None
+
+    def test_env_ref_expansion(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("MY_SALT", "deadbeefcafe")
+        _set_config(salt="${MY_SALT}")
+        assert get_billing_salt() == "deadbeefcafe"
+
+    def test_env_ref_unset_resolves_to_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("MISSING_SALT", raising=False)
+        _set_config(salt="${MISSING_SALT}")
+        assert get_billing_salt() is None
+
+    def test_env_ref_partial_substitution(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``prefix-${VAR}`` interpolates inline."""
+        monkeypatch.setenv("PART", "cafe")
+        _set_config(salt="dead${PART}")
+        assert get_billing_salt() == "deadcafe"
 
 
-def test_loads_version_salt_pairs(salts_file: Path) -> None:
-    salts_file.write_text(json.dumps({"2.1.26": "0123456789ab", "2.1.87": "fedcba987654"}))
-    assert load_billing_salts() == {"2.1.26": "0123456789ab", "2.1.87": "fedcba987654"}
-    assert get_billing_salt_for_version("2.1.26") == "0123456789ab"
-    assert get_billing_salt_for_version("2.1.87") == "fedcba987654"
-    assert get_billing_salt_for_version("9.9.9") is None
+class TestGetBillingCchSeed:
+    def test_parses_hex_with_prefix(self) -> None:
+        _set_config(seed="0x0123456789ABCDEF")
+        assert get_billing_cch_seed() == 0x0123456789ABCDEF
 
+    def test_parses_bare_hex(self) -> None:
+        _set_config(seed="0123456789ABCDEF")
+        assert get_billing_cch_seed() == 0x0123456789ABCDEF
 
-def test_unparseable_json_returns_empty(salts_file: Path) -> None:
-    salts_file.write_text("not json")
-    assert load_billing_salts() == {}
+    def test_parses_lowercase_hex(self) -> None:
+        _set_config(seed="0123456789abcdef")
+        assert get_billing_cch_seed() == 0x0123456789ABCDEF
 
+    def test_none_when_unset(self) -> None:
+        _set_config(seed=None)
+        assert get_billing_cch_seed() is None
 
-def test_non_object_root_returns_empty(salts_file: Path) -> None:
-    """A list at the root is not a valid version→salt map."""
-    salts_file.write_text(json.dumps(["2.1.26", "abcdef"]))
-    assert load_billing_salts() == {}
+    def test_empty_treated_as_unset(self) -> None:
+        _set_config(seed="")
+        assert get_billing_cch_seed() is None
 
+    def test_unparseable_returns_none(self) -> None:
+        _set_config(seed="not-a-hex-literal")
+        assert get_billing_cch_seed() is None
 
-def test_non_string_values_skipped(salts_file: Path) -> None:
-    """Entries whose values aren't strings are filtered out."""
-    salts_file.write_text(json.dumps({"2.1.26": "abc", "2.1.87": 12345, "2.1.99": None}))
-    salts = load_billing_salts()
-    assert salts == {"2.1.26": "abc"}
+    def test_env_ref_expansion(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("MY_SEED", "0xCAFEBABE")
+        _set_config(seed="${MY_SEED}")
+        assert get_billing_cch_seed() == 0xCAFEBABE
 
-
-def test_mtime_cache_invalidates_on_edit(salts_file: Path) -> None:
-    """Editing the file is picked up without restart."""
-    import os
-    import time
-
-    salts_file.write_text(json.dumps({"2.1.26": "first"}))
-    os.utime(salts_file, (time.time() - 100, time.time() - 100))
-    assert load_billing_salts() == {"2.1.26": "first"}
-
-    salts_file.write_text(json.dumps({"2.1.26": "second"}))
-    os.utime(salts_file, (time.time(), time.time()))
-    assert load_billing_salts() == {"2.1.26": "second"}
-
-
-def test_repeat_load_uses_cache(salts_file: Path) -> None:
-    """Multiple calls without mtime change return the same cached object."""
-    salts_file.write_text(json.dumps({"2.1.26": "abc"}))
-    first = load_billing_salts()
-    second = load_billing_salts()
-    assert first is second
+    def test_env_ref_unset_resolves_to_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("MISSING_SEED", raising=False)
+        _set_config(seed="${MISSING_SEED}")
+        assert get_billing_cch_seed() is None

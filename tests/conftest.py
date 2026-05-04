@@ -7,7 +7,6 @@ from ccproxy.flows.store import clear_flow_store
 from ccproxy.mcp.buffer import clear_buffer
 from ccproxy.shaping.executor import clear_shape_hook_cache
 from ccproxy.shaping.store import clear_store_instance
-from ccproxy.specs.billing_salt import clear_salts_cache
 
 
 @pytest.fixture(autouse=True)
@@ -19,4 +18,3 @@ def cleanup():
     clear_flow_store()
     clear_store_instance()
     clear_shape_hook_cache()
-    clear_salts_cache()

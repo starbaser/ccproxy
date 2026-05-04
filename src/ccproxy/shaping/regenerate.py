@@ -16,23 +16,31 @@ import re
 import uuid
 from typing import Any
 
+import xxhash
 from glom import assign, glom
 
 from ccproxy.pipeline.context import Context
 from ccproxy.pipeline.hook import hook
-from ccproxy.specs import get_billing_salt_for_version
+from ccproxy.specs import get_billing_cch_seed, get_billing_salt
 from ccproxy.utils import extract_first_user_text
 
 logger = logging.getLogger(__name__)
 
 _BILLING_HEADER_PREFIX = "x-anthropic-billing-header"
 
-# The two content-derived tokens in the captured header. Each is replaced
-# in-place with the value computed against the *incoming* first user message;
-# everything else (version major, cc_entrypoint, formatting) stays as the
-# shape captured it.
+# cch is xxhash64 of the serialized request body with a literal
+# ``cch=00000;`` placeholder, masked to 20 bits → 5 lowercase hex.
+_CCH_MASK = 0xFFFFF
+_CCH_PLACEHOLDER = "00000"
+
+# In-place rewrite tokens. ``cc_version=X.Y.Z.<3hex>`` — only the suffix
+# changes; the major-version part stays as the shape captured it.
 _VERSION_SUFFIX_RE = re.compile(r"(cc_version=[0-9]+(?:\.[0-9]+)*)\.[0-9a-f]{3}")
 _CCH_RE = re.compile(r"cch=[0-9a-f]+")
+# Byte-level placeholder substitution on the serialized body. Scoped to the
+# billing header value (``[^"]*?`` stops at the JSON string terminator) so
+# user message content can never spuriously match.
+_CCH_BYTES_RE = re.compile(rb'(x-anthropic-billing-header:[^"]*?\bcch=)(00000)(;)')
 
 
 @hook(reads=["user_prompt_id"], writes=["user_prompt_id"])
@@ -64,16 +72,13 @@ def regenerate_session_id(ctx: Context, params: dict[str, Any]) -> Context:
     return ctx
 
 
-def _compute_cch(text: str) -> str:
-    """First 5 hex of ``sha256(text)``. Mirrors signing.ts:32-34."""
-    return hashlib.sha256(text.encode()).hexdigest()[:5]
-
-
 def _compute_suffix(text: str, salt: str, version: str) -> str:
-    """3-hex suffix of ``sha256(salt + sampled + version)``.
+    """3-hex ``cc_version`` suffix.
 
-    ``sampled`` is text characters at indices 4, 7, 20 padded with ``"0"``
-    when the message is shorter. Mirrors signing.ts:42-51.
+    ``sha256(salt + sampled + version).hex[:3]`` where ``sampled`` is the
+    text characters at indices 4, 7, 20 (padded with ``"0"`` for short
+    messages). Confirmed by both Go reimplementations of the leaked
+    claude-code source.
     """
     sampled = "".join(text[i] if i < len(text) else "0" for i in (4, 7, 20))
     return hashlib.sha256(f"{salt}{sampled}{version}".encode()).hexdigest()[:3]
@@ -95,22 +100,31 @@ def _find_billing_block_index(system: list[Any]) -> int | None:
 def regenerate_billing_header(ctx: Context, params: dict[str, Any]) -> Context:
     """Re-sign the shape's ``x-anthropic-billing-header`` against the incoming first user message.
 
-    Parses ``cc_version`` from the shape's existing billing block, looks up
-    the matching salt in ``{config_dir}/billing_salts.json``, then rewrites
-    the block in place: only the 3-hex ``cc_version`` suffix and the 5-hex
-    ``cch`` token are replaced. ``cc_entrypoint``, formatting, position,
-    and block extras like ``cache_control`` survive verbatim.
+    Two-phase signing:
 
-    The version comes from the shape (not config) because the shape carries
-    the version embedded in the captured Claude client's release; the salt
-    must pair with that exact version per Anthropic's server-side validation.
+    1. **In ``_body`` (typed layer)** — parse ``cc_version`` from the shape's
+       existing billing block, look up the configured ``billing_salt``,
+       compute the SHA-256 ``cc_version`` suffix against the incoming first
+       user message, and stamp ``cch=00000;`` as a placeholder. The shape's
+       ``cc_entrypoint``, formatting, position, and block extras (e.g.
+       ``cache_control``) survive verbatim.
+
+    2. **On serialized bytes (wire layer)** — force-commit to flush ``_body``
+       through ``json.dumps``, then xxhash64 the resulting bytes with the
+       configured seed masked to 20 bits, and substitute the ``cch=00000;``
+       placeholder with the real 5-hex digest. Mirrors the upstream native
+       algorithm: the JS layer ships a placeholder and the native HTTP stack
+       swaps it for the real hash before send.
+
+    The version comes from the shape (not config) because the shape's
+    User-Agent and other release-pinned headers also come from the shape —
+    everything advertised upstream stays internally consistent.
 
     Self-gates (no-op + warning):
     - ``messages`` absent or not a list (Gemini shape replays).
     - No existing billing block in the shape's ``system`` array.
     - Billing block missing the parseable ``cc_version`` or ``cch`` token.
-    - No salt configured for the shape's version in
-      ``{config_dir}/billing_salts.json``.
+    - No ``billing_salt`` configured.
     """
     messages = glom(ctx._body, "messages", default=None)
     if not isinstance(messages, list):
@@ -136,24 +150,49 @@ def regenerate_billing_header(ctx: Context, params: dict[str, Any]) -> Context:
         return ctx
 
     version = version_match.group(1).removeprefix("cc_version=")
-    salt = get_billing_salt_for_version(version)
-    if salt is None:
+    salt = get_billing_salt()
+    seed = get_billing_cch_seed()
+    if salt is None or seed is None:
+        missing = ", ".join(
+            name
+            for name, value in (("salt", salt), ("seed", seed))
+            if value is None
+        )
         logger.warning(
-            "no billing salt configured for cc_version=%s in billing_salts.json; "
-            "skipping billing-header regeneration",
-            version,
+            "shaping.providers.anthropic.billing.%s unset; skipping billing-header regeneration",
+            missing,
         )
         return ctx
 
     text = extract_first_user_text(messages=messages)
-    cch = _compute_cch(text)
     suffix = _compute_suffix(text, salt, version)
 
-    new_text = _VERSION_SUFFIX_RE.sub(f"cc_version={version}.{suffix}", original_text, count=1)
-    new_text = _CCH_RE.sub(f"cch={cch}", new_text, count=1)
-
-    new_block = {**system[idx], "text": new_text}
+    # Phase 1: stamp cc_version suffix + cch=00000 placeholder into _body.
+    placeholder_text = _VERSION_SUFFIX_RE.sub(
+        f"cc_version={version}.{suffix}", original_text, count=1
+    )
+    placeholder_text = _CCH_RE.sub(f"cch={_CCH_PLACEHOLDER}", placeholder_text, count=1)
+    new_block = {**system[idx], "text": placeholder_text}
     new_system = list(system)
     new_system[idx] = new_block
     assign(ctx._body, "system", new_system)
+
+    # Phase 2: serialize, xxhash64 over the bytes (with placeholder), substitute.
+    ctx.commit()
+    request = ctx._resolve_request()
+    if request is None:  # defensive: every Context has either flow or _request
+        return ctx
+    body_bytes: bytes = request.content or b""
+    if not _CCH_BYTES_RE.search(body_bytes):
+        logger.warning("cch=00000 placeholder missing after commit; skipping cch sign")
+        return ctx
+    digest = xxhash.xxh64(body_bytes, seed=seed).intdigest() & _CCH_MASK
+    cch_bytes = f"{digest:05x}".encode()
+    signed_bytes = _CCH_BYTES_RE.sub(rb"\g<1>" + cch_bytes + rb"\g<3>", body_bytes, count=1)
+    request.content = signed_bytes
+    # Re-parse so the outer commit re-serializes to the same bytes.
+    try:
+        ctx._body = json.loads(signed_bytes)
+    except (json.JSONDecodeError, TypeError):
+        logger.warning("signed body failed to round-trip as JSON; leaving wire bytes intact")
     return ctx

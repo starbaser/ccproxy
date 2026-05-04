@@ -2,14 +2,10 @@
 
 Re-exports the public surface so import sites can stay terse:
 
-    from ccproxy.specs import CLAUDE_CC_VERSION, BASE_BETAS, get_billing_salt
+    from ccproxy.specs import BASE_BETAS, get_billing_salt
 """
 
-from ccproxy.specs.billing_salt import (
-    clear_salts_cache,
-    get_billing_salt_for_version,
-    load_billing_salts,
-)
+from ccproxy.specs.billing_salt import get_billing_cch_seed, get_billing_salt
 from ccproxy.specs.claude_code_constants import (
     BASE_BETAS,
     LONG_CONTEXT_BETAS,
@@ -23,7 +19,6 @@ __all__ = [
     "STATIC_MODEL_CATALOG",
     "APIRequestParams",
     "build_catalog",
-    "clear_salts_cache",
-    "get_billing_salt_for_version",
-    "load_billing_salts",
+    "get_billing_cch_seed",
+    "get_billing_salt",
 ]

@@ -13,10 +13,10 @@ import logging
 import os
 import threading
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Annotated, Any, Literal, cast
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from ccproxy.oauth.sources import (
@@ -28,14 +28,33 @@ from ccproxy.oauth.sources import (
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "AnthropicShapingConfig",
+    "BillingConfig",
     "CCProxyConfig",
     "CredentialSource",
     "OAuthSource",
+    "ProviderShapingConfig",
+    "ShapingConfig",
     "clear_config_instance",
     "get_config",
     "get_config_dir",
     "set_config_instance",
 ]
+
+
+def _expand_env(value: Any) -> Any:
+    """Expand ``${VAR}`` via ``os.path.expandvars``; return ``None`` if any
+    reference is left unresolved so downstream "unset → no-op" gates fire
+    instead of using the literal ``${VAR}`` string."""
+    if not isinstance(value, str):
+        return value
+    expanded = os.path.expandvars(value)
+    return None if "${" in expanded else expanded
+
+
+EnvTemplate = Annotated[str | None, BeforeValidator(_expand_env)]
+"""String field that supports ``${VAR}`` env-var references. Falls back to
+``None`` when any referenced variable is unset."""
 
 
 class CaptureConfig(BaseModel):
@@ -45,6 +64,24 @@ class CaptureConfig(BaseModel):
 
     path_pattern: str = ""
     """Regex matched against the flow's request path. Empty means no filter."""
+
+
+class BillingConfig(BaseModel):
+    """Anthropic billing-header signing constants for shape replay.
+
+     Each field accepts either a literal value or a
+    ``${VAR}`` reference that's expanded against the environment at load
+    time.
+    When either resolves to ``None``, ``regenerate_billing_header`` no-ops.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    salt: EnvTemplate = None
+    """Hex salt for the SHA-256 ``cc_version`` 3-hex suffix."""
+
+    seed: EnvTemplate = None
+    """xxhash64 seed for the 5-hex ``cch`` (hex, with or without ``0x``)."""
 
 
 class ProviderShapingConfig(BaseModel):
@@ -98,6 +135,25 @@ class ProviderShapingConfig(BaseModel):
     """
 
 
+class AnthropicShapingConfig(ProviderShapingConfig):
+    """Anthropic-only extension that adds billing-header signing constants.
+
+    The base ``ProviderShapingConfig`` covers fields shared by every
+    provider. Anthropic additionally requires the ``billing`` block because
+    the ``regenerate_billing_header`` shape inner-DAG hook re-signs
+    ``x-anthropic-billing-header`` per request. Other providers (Gemini,
+    DeepSeek, …) do not have an analogue and so do not carry this field.
+    """
+
+    billing: BillingConfig = Field(default_factory=BillingConfig)
+    """Billing-header signing constants — see :class:`BillingConfig`."""
+
+
+_PROVIDER_SHAPING_CLASSES: dict[str, type[ProviderShapingConfig]] = {
+    "anthropic": AnthropicShapingConfig,
+}
+
+
 class ShapingConfig(BaseModel):
     """Configuration for the request shaping system."""
 
@@ -113,7 +169,31 @@ class ShapingConfig(BaseModel):
     """
 
     providers: dict[str, ProviderShapingConfig] = Field(default_factory=dict)
-    """Per-provider shaping profiles keyed by provider name (e.g. ``anthropic``)."""
+    """Per-provider shaping profiles keyed by provider name (e.g. ``anthropic``).
+
+    The validator below routes known provider names to their dedicated
+    subclass (e.g. ``anthropic`` → :class:`AnthropicShapingConfig`) so
+    provider-specific fields like ``billing`` are typed where they apply
+    and absent everywhere else.
+    """
+
+    @field_validator("providers", mode="before")
+    @classmethod
+    def _route_provider_subclasses(cls, value: Any) -> Any:
+        """Construct provider profiles using the subclass registered for each key."""
+        if not isinstance(value, dict):
+            return value
+        result: dict[str, ProviderShapingConfig] = {}
+        for name, raw in value.items():
+            if isinstance(raw, ProviderShapingConfig):
+                result[name] = raw
+                continue
+            if not isinstance(raw, dict):
+                result[name] = raw  # let Pydantic raise on the wrong type
+                continue
+            target_cls = _PROVIDER_SHAPING_CLASSES.get(name, ProviderShapingConfig)
+            result[name] = target_cls(**raw)
+        return result
 
 
 
