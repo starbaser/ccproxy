@@ -33,6 +33,12 @@ def register_pipeline_routes(
 ) -> None:
     from ccproxy.inspector.router import RouteType
 
+    # Register both ``/`` and ``/{path}`` so flows targeting the root URL
+    # match cleanly. ``parse.Parser("/{path}")`` does not match the bare
+    # ``/`` (the ``{path}`` capture refuses empty segments), which would
+    # otherwise leave root requests unhandled and trip xepor's
+    # REQ_PASSTHROUGH behavior, blocking downstream synthetic routes.
+    @router.route("/", rtype=RouteType.REQUEST)
     @router.route("/{path}", rtype=RouteType.REQUEST)
     def handle_pipeline(flow: HTTPFlow, **kwargs: object) -> None:  # pyright: ignore[reportUnusedFunction]
         if flow.metadata.get(InspectorMeta.DIRECTION) != "inbound":

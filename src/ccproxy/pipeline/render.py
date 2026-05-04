@@ -116,18 +116,18 @@ def _hook_panel(spec: HookSpec) -> Panel:
     parts.append(Text(f"r: {reads}", style="green"))
     parts.append(Text(f"w: {writes}", style="red"))
     body = Group(*parts)
-    panel_kwargs: dict[str, object] = {
-        "title": f"[bold cyan]{spec.name}[/bold cyan]",
-        "border_style": "blue",
-        "padding": (0, 1),
-        "expand": False,
-    }
     # Borders + horizontal padding consume 4 columns; cap the panel at
     # MAX_PANEL_WIDTH when natural body width would exceed it so wrap kicks in.
     natural_body_width = _MEASURE_CONSOLE.measure(body).maximum
-    if natural_body_width + 4 > MAX_PANEL_WIDTH:
-        panel_kwargs["width"] = MAX_PANEL_WIDTH
-    return Panel(body, **panel_kwargs)
+    width = MAX_PANEL_WIDTH if natural_body_width + 4 > MAX_PANEL_WIDTH else None
+    return Panel(
+        body,
+        title=f"[bold cyan]{spec.name}[/bold cyan]",
+        border_style="blue",
+        padding=(0, 1),
+        expand=False,
+        width=width,
+    )
 
 
 def _render_signature(spec: HookSpec) -> RenderableType | None:

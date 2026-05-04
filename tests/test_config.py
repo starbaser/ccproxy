@@ -129,33 +129,6 @@ ccproxy:
         finally:
             yaml_path.unlink()
 
-    def test_resolved_log_file_relative(self, tmp_path: Path) -> None:
-        """Relative log_file resolves against ccproxy_config_path.parent."""
-        yaml_path = tmp_path / "ccproxy.yaml"
-        config = CCProxyConfig(
-            ccproxy_config_path=yaml_path,
-            log_file=Path("ccproxy.log"),
-        )
-        assert config.resolved_log_file == tmp_path / "ccproxy.log"
-
-    def test_resolved_log_file_absolute(self, tmp_path: Path) -> None:
-        """Absolute log_file passes through unchanged."""
-        abs_path = tmp_path / "custom" / "ccproxy.log"
-        config = CCProxyConfig(
-            ccproxy_config_path=tmp_path / "ccproxy.yaml",
-            log_file=abs_path,
-        )
-        assert config.resolved_log_file == abs_path
-
-    def test_resolved_log_file_none(self, tmp_path: Path) -> None:
-        """log_file=None returns None."""
-        config = CCProxyConfig(
-            ccproxy_config_path=tmp_path / "ccproxy.yaml",
-            log_file=None,
-        )
-        assert config.resolved_log_file is None
-
-
 class TestConfigSingleton:
     """Tests for configuration singleton functions."""
 

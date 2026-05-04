@@ -295,13 +295,6 @@ class CCProxyConfig(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     """Root Python logger level. Applies uniformly to all loggers."""
 
-    log_file: Path | None = Path("ccproxy.log")
-    """Path to the daemon log file. Relative paths resolve against the
-    config file's directory (``ccproxy_config_path.parent``); absolute
-    paths pass through; ``None`` disables file logging. Only applies to
-    ``ccproxy start`` — one-shot CLI commands never write here.
-    Access the resolved path via ``resolved_log_file``."""
-
     provider_timeout: float | None = None
     """Timeout budget (seconds) for httpx-based upstream calls inside ccproxy
     (OAuth 401 retry). ``None`` (default) disables the timeout entirely,
@@ -367,19 +360,6 @@ class CCProxyConfig(BaseSettings):
     )
 
     ccproxy_config_path: Path = Field(default_factory=lambda: Path("./ccproxy.yaml"))
-
-    @property
-    def resolved_log_file(self) -> Path | None:
-        """log_file resolved against ccproxy_config_path.parent.
-
-        Relative paths anchor to the config file's directory; absolute
-        paths pass through; None stays None.
-        """
-        if self.log_file is None:
-            return None
-        if self.log_file.is_absolute():
-            return self.log_file
-        return self.ccproxy_config_path.parent / self.log_file
 
     @property
     def oat_values(self) -> dict[str, str]:
@@ -528,9 +508,6 @@ class CCProxyConfig(BaseSettings):
                     instance.port = int(ccproxy_data["port"])
                 if "log_level" in ccproxy_data:
                     instance.log_level = ccproxy_data["log_level"]
-                if "log_file" in ccproxy_data:
-                    raw = ccproxy_data["log_file"]
-                    instance.log_file = Path(raw) if raw is not None else None
                 if "oat_sources" in ccproxy_data:
                     instance.oat_sources = ccproxy_data["oat_sources"]
                 inspector_data = ccproxy_data.get("inspector")

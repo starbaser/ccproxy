@@ -141,9 +141,6 @@ class StatusResult:
     hooks: dict[str, list[str | dict[str, Any]]]
     """Hook pipeline configuration."""
 
-    log: str | None
-    """Resolved log file path, if exists."""
-
     inspector: InspectorStatus
     """Inspector subsystem status."""
 
@@ -152,17 +149,16 @@ def setup_logging(
     config_dir: Path,
     log_level: str = "INFO",
     *,
-    log_file: Path | None = None,
     use_journal: bool = False,
     verbose: bool = True,
-) -> Path | None:
-    """Configure unified logging with optional file output.
+) -> None:
+    """Configure root logger output to stderr or the systemd journal.
 
     The effective root level is ``log_level`` when ``verbose=True``,
     otherwise ``max(log_level, WARNING)`` — one-shot CLI commands without
     ``-v`` still surface warnings and errors but suppress INFO/DEBUG noise.
 
-    Primary handler:
+    Handler selection:
       - ``use_journal=True``: ``systemd.journal.JournalHandler`` with
         ``SYSLOG_IDENTIFIER=ccproxy`` (requires the ``journal`` optional extra).
       - Otherwise: ``StreamHandler(sys.stderr)``.
@@ -170,10 +166,9 @@ def setup_logging(
     When the journal handler cannot be constructed (missing ``systemd-python``
     or no systemd socket), falls back to stderr and emits a warning log.
 
-    When ``log_file`` is provided and not running under systemd
-    (``INVOCATION_ID`` unset), also logs to that path (truncated on restart).
-
-    Returns the log file path if a FileHandler was installed, None otherwise.
+    Daemon stderr is captured by process-compose in dev (view via
+    ``ccproxy logs`` or ``just logs``) and by systemd-journald in production
+    (view via ``journalctl --user -u ccproxy.service`` or ``ccproxy logs``).
     """
     root = logging.getLogger()
     root.handlers.clear()
@@ -204,21 +199,11 @@ def setup_logging(
     handler.setFormatter(fmt)
     root.addHandler(handler)
 
-    log_path: Path | None = None
-    if log_file is not None and not os.environ.get("INVOCATION_ID"):
-        log_path = log_file
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        fh = logging.FileHandler(str(log_path), mode="w", encoding="utf-8")
-        fh.setFormatter(fmt)
-        root.addHandler(fh)
-
     if journal_fallback_reason is not None:
         logger.warning(
             "use_journal requested but JournalHandler unavailable (%s); falling back to stderr",
             journal_fallback_reason,
         )
-
-    return log_path
 
 
 def init_config(config_dir: Path, force: bool = False) -> None:
@@ -553,7 +538,13 @@ def start_server(
 
 
 def view_logs(follow: bool = False, lines: int = 100, config_dir: Path | None = None) -> None:
-    """View ccproxy logs from journal, process-compose, or log file."""
+    """View ccproxy logs from systemd journal or process-compose.
+
+    Production deployments (Home Manager systemd user service) route stderr
+    to the journal; this function prefers ``journalctl`` when the service is
+    active. Dev deployments use process-compose to capture stderr; falls
+    back to ``process-compose process logs`` when its socket is present.
+    """
     if shutil.which("systemctl"):
         result = subprocess.run(
             ["systemctl", "--user", "is-active", "ccproxy.service"],  # noqa: S607
@@ -596,22 +587,6 @@ def view_logs(follow: bool = False, lines: int = 100, config_dir: Path | None = 
             sys.exit(proc.returncode)
         except KeyboardInterrupt:
             sys.exit(0)
-
-    if config_dir:
-        # deferred: only needed for log file path
-        from ccproxy.config import get_config
-
-        log_path = get_config().resolved_log_file
-        if log_path is not None and log_path.exists():
-            tail_cmd = ["tail", "-n", str(lines)]
-            if follow:
-                tail_cmd.append("-f")
-            tail_cmd.append(str(log_path))
-            try:
-                proc = subprocess.run(tail_cmd)  # noqa: S603
-                sys.exit(proc.returncode)
-            except KeyboardInterrupt:
-                sys.exit(0)
 
     print(
         "No active ccproxy service found.\n"
@@ -678,7 +653,6 @@ def show_status(
         else:
             inspect_url = base
 
-    log_path = cfg.resolved_log_file
     inspector_status = InspectorStatus(
         running=combined_running,
         entry_port=main_port,
@@ -690,7 +664,6 @@ def show_status(
         url=proxy_url,
         config=config_paths,
         hooks=hooks,
-        log=str(log_path) if log_path is not None and log_path.exists() else None,
         inspector=inspector_status,
     )
 
@@ -734,9 +707,6 @@ def show_status(
         else:
             config_display = "[red]No config files found[/red]"
         table.add_row("config", config_display)
-
-        log_display = status.log if status.log else "[yellow]No log file[/yellow]"
-        table.add_row("log", log_display)
 
         console.print(Panel(table, title="[bold]ccproxy Status[/bold]", border_style="blue"))
 
@@ -807,7 +777,6 @@ def main(
     setup_logging(
         config_dir,
         log_level=log_level,
-        log_file=cfg.resolved_log_file if is_daemon else None,
         use_journal=cfg.use_journal and is_daemon,
         verbose=is_daemon or verbose,
     )

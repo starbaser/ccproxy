@@ -6,10 +6,6 @@ ccproxy:
   # httpcore, mitmproxy); INFO is recommended for normal use.
   # log_level: INFO
 
-  # Daemon log file path. Relative to config dir, or absolute.
-  # Set to null to disable file logging. Only `ccproxy start` writes here.
-  # log_file: ccproxy.log
-
   # Route daemon logging to the systemd journal via JournalHandler.
   # Applies only to `ccproxy start`. Requires the `journal` extra:
   #   pip install claude-ccproxy[journal]

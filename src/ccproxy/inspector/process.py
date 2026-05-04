@@ -109,6 +109,7 @@ def _make_pipeline_router(name: str, hook_entries: list[Any]) -> Any:
 def _make_transform_router() -> Any:
     # deferred: heavy mitmproxy router chain
     from ccproxy.inspector.router import InspectorRouter
+    from ccproxy.inspector.routes.health import register_health_routes
     from ccproxy.inspector.routes.models import register_models_routes
     from ccproxy.inspector.routes.transform import register_transform_routes
 
@@ -117,9 +118,10 @@ def _make_transform_router() -> Any:
         request_passthrough=True,
         response_passthrough=True,
     )
-    # /v1/models registers first so its specific match wins over the
-    # transform router's /{path} catch-all.
+    # /v1/models and /health register first so their specific matches win
+    # over the transform router's /{path} catch-all.
     register_models_routes(router)
+    register_health_routes(router)
     register_transform_routes(router)
     return router
 
