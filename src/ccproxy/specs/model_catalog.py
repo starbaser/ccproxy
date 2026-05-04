@@ -11,7 +11,7 @@ Ollama, LiteLLM, etc. Response shape::
       ]
     }
 
-ccproxy serves the union of models routable through configured ``oat_sources``
+ccproxy serves the union of models routable through configured ``providers``
 + ``inspector.transforms``. The static catalog below is the offline floor;
 when ``refresh=True`` is requested, providers' upstream ``/v1/models`` are
 queried and unioned in (with provider failures falling back to the floor).

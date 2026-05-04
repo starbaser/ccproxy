@@ -10,6 +10,7 @@ import pytest
 from ccproxy.config import (
     CCProxyConfig,
     CredentialSource,
+    Provider,
     clear_config_instance,
     get_config,
     get_config_dir,
@@ -19,6 +20,23 @@ from ccproxy.oauth.sources import (
     _read_credential_file,
     _run_credential_command,
 )
+
+
+def _make_provider(
+    *,
+    command: str = "echo tok",
+    header: str | None = None,
+    host: str = "api.example.com",
+    path: str = "/v1/messages",
+    provider: str = "anthropic",
+) -> Provider:
+    """Build a Provider with a CommandOAuthSource for tests."""
+    return Provider(
+        auth=CommandOAuthSource(command=command, header=header) if command else None,
+        host=host,
+        path=path,
+        provider=provider,
+    )
 
 
 class TestCCProxyConfig:
@@ -402,8 +420,8 @@ class TestCredentialSource:
 
 class TestRefreshOAuthToken:
     def test_token_changes_returns_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        config = CCProxyConfig(oat_sources={"provider1": "echo new-token"})
-        config._oat_values["provider1"] = "old-token"
+        config = CCProxyConfig(providers={"provider1": _make_provider(command="echo new-token")})
+        config._cached_auth_tokens["provider1"] = "old-token"
         mock_result = mock.MagicMock(returncode=0, stdout="new-token")
         monkeypatch.setattr(subprocess, "run", mock.Mock(return_value=mock_result))
 
@@ -411,11 +429,11 @@ class TestRefreshOAuthToken:
 
         assert token == "new-token"  # noqa: S105
         assert changed is True
-        assert config._oat_values["provider1"] == "new-token"
+        assert config._cached_auth_tokens["provider1"] == "new-token"
 
     def test_token_unchanged_returns_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        config = CCProxyConfig(oat_sources={"provider1": "echo current-token"})
-        config._oat_values["provider1"] = "current-token"
+        config = CCProxyConfig(providers={"provider1": _make_provider(command="echo current-token")})
+        config._cached_auth_tokens["provider1"] = "current-token"
         mock_result = mock.MagicMock(returncode=0, stdout="current-token")
         monkeypatch.setattr(subprocess, "run", mock.Mock(return_value=mock_result))
 
@@ -430,35 +448,14 @@ class TestRefreshOAuthToken:
         assert token is None
         assert changed is False
 
-    def test_user_agent_stored(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        source = CommandOAuthSource(command="echo tok", user_agent="CustomAgent/1.0")
-        config = CCProxyConfig(oat_sources={"provider1": source})
-        mock_result = mock.MagicMock(returncode=0, stdout="tok")
-        monkeypatch.setattr(subprocess, "run", mock.Mock(return_value=mock_result))
-
-        config.refresh_oauth_token("provider1")
-
-        assert config._oat_user_agents.get("provider1") == "CustomAgent/1.0"
-
-
-class TestGetAuthProviderUA:
-    def test_returns_stored_user_agent(self) -> None:
-        config = CCProxyConfig()
-        config._oat_user_agents["prov"] = "TestAgent/1.0"
-        assert config.get_auth_provider_ua("prov") == "TestAgent/1.0"
-
-    def test_returns_none_for_unknown_provider(self) -> None:
-        config = CCProxyConfig()
-        assert config.get_auth_provider_ua("unknown") is None
-
 
 class TestGetAuthHeader:
-    def test_oauth_source_with_auth_header(self) -> None:
-        config = CCProxyConfig(oat_sources={"prov": CommandOAuthSource(command="echo t", auth_header="x-api-key")})
+    def test_provider_with_auth_header(self) -> None:
+        config = CCProxyConfig(providers={"prov": _make_provider(header="x-api-key")})
         assert config.get_auth_header("prov") == "x-api-key"
 
-    def test_string_source_returns_none(self) -> None:
-        config = CCProxyConfig(oat_sources={"prov": "echo token"})
+    def test_provider_without_auth_header_returns_none(self) -> None:
+        config = CCProxyConfig(providers={"prov": _make_provider(header=None)})
         assert config.get_auth_header("prov") is None
 
     def test_missing_provider_returns_none(self) -> None:
@@ -466,57 +463,31 @@ class TestGetAuthHeader:
         assert config.get_auth_header("unknown") is None
 
 
-class TestGetProviderForDestination:
-    def test_none_api_base_returns_none(self) -> None:
-        config = CCProxyConfig()
-        assert config.get_provider_for_destination(None) is None
-
-    def test_empty_api_base_returns_none(self) -> None:
-        config = CCProxyConfig()
-        assert config.get_provider_for_destination("") is None
-
-    def test_matching_destination_case_insensitive(self) -> None:
-        config = CCProxyConfig(
-            oat_sources={"anthropic": CommandOAuthSource(command="cmd", destinations=["api.anthropic.com"])}
-        )
-        assert config.get_provider_for_destination("https://API.ANTHROPIC.COM/v1") == "anthropic"
-
-    def test_no_matching_destination_returns_none(self) -> None:
-        config = CCProxyConfig(
-            oat_sources={"anthropic": CommandOAuthSource(command="cmd", destinations=["api.anthropic.com"])}
-        )
-        assert config.get_provider_for_destination("api.openai.com") is None
-
-    def test_string_source_skipped(self) -> None:
-        config = CCProxyConfig(oat_sources={"prov": "echo tok"})
-        assert config.get_provider_for_destination("api.test.com") is None
-
-    def test_dict_source_matching(self) -> None:
-        config = CCProxyConfig(oat_sources={"prov": {"command": "echo t", "destinations": ["api.z.ai"]}})
-        assert config.get_provider_for_destination("https://api.z.ai/v1") == "prov"
-
-
 class TestLoadCredentials:
-    def test_empty_oat_sources_clears_values(self) -> None:
+    def test_empty_providers_clears_cache(self) -> None:
         config = CCProxyConfig()
-        config._oat_values = {"stale": "data"}
+        config._cached_auth_tokens = {"stale": "data"}
         config._load_credentials()
-        assert config._oat_values == {}
-        assert config._oat_user_agents == {}
+        assert config._cached_auth_tokens == {}
 
     def test_single_provider_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        config = CCProxyConfig(oat_sources={"prov1": "echo tok1"})
+        config = CCProxyConfig(providers={"prov1": _make_provider(command="echo tok1")})
         mock_result = mock.MagicMock(returncode=0, stdout="tok1")
         monkeypatch.setattr(subprocess, "run", mock.Mock(return_value=mock_result))
 
         config._load_credentials()
 
-        assert config._oat_values["prov1"] == "tok1"
+        assert config._cached_auth_tokens["prov1"] == "tok1"
 
     def test_partial_failure_logs_warning(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
-        config = CCProxyConfig(oat_sources={"prov1": "echo tok1", "prov2": "fail"})
+        config = CCProxyConfig(
+            providers={
+                "prov1": _make_provider(command="echo tok1"),
+                "prov2": _make_provider(command="fail"),
+            }
+        )
 
         def mock_run(cmd: str, **kwargs: object) -> mock.MagicMock:
             m = mock.MagicMock()
@@ -532,17 +503,22 @@ class TestLoadCredentials:
 
         config._load_credentials()
 
-        assert config._oat_values == {"prov1": "tok1"}
+        assert config._cached_auth_tokens == {"prov1": "tok1"}
         assert "but 1 provider(s) failed to load" in caplog.text
 
     def test_all_providers_fail_logs_error(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
-        config = CCProxyConfig(oat_sources={"prov1": "fail1", "prov2": "fail2"})
+        config = CCProxyConfig(
+            providers={
+                "prov1": _make_provider(command="fail1"),
+                "prov2": _make_provider(command="fail2"),
+            }
+        )
         mock_result = mock.MagicMock(returncode=1, stderr="err")
         monkeypatch.setattr(subprocess, "run", mock.Mock(return_value=mock_result))
 
         config._load_credentials()
 
-        assert config._oat_values == {}
-        assert "Failed to load OAuth tokens for all 2 provider(s)" in caplog.text
+        assert config._cached_auth_tokens == {}
+        assert "Failed to load auth tokens for all 2 provider(s)" in caplog.text

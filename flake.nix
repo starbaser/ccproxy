@@ -87,13 +87,13 @@
           }:
           let
             deepMerged = lib.recursiveUpdate defaultSettings.settings settings;
-            # oat_sources providers are discriminated unions (command|file|*_oauth);
-            # merge per-provider shallowly so user overrides replace the default
-            # block wholesale instead of mixing exclusive keys.
-            oatSources =
-              (defaultSettings.settings.oat_sources or { })
-              // (settings.oat_sources or { });
-            mergedSettings = deepMerged // { oat_sources = oatSources; };
+            # Provider entries carry a discriminated `auth` union; merge per
+            # provider shallowly so a user override replaces the entire entry
+            # instead of mixing exclusive auth keys.
+            providers =
+              (defaultSettings.settings.providers or { })
+              // (settings.providers or { });
+            mergedSettings = deepMerged // { inherit providers; };
             ccproxyYaml = yaml.generate "ccproxy.yaml" { ccproxy = mergedSettings; };
           in
           {

@@ -112,7 +112,7 @@ OAuth tokens from `~/.claude/.credentials.json` expire.
 # Check token age — is Claude Code signed in?
 ls -la ~/.claude/.credentials.json
 
-# Test the oat_sources command manually
+# Test the providers[name].auth command manually
 jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json
 # Empty/null output = expired or missing credentials
 
@@ -124,23 +124,31 @@ ccproxy auto-refreshes on 401: `InspectorAddon.response()` detects HTTP 401 with
 
 ### Wrong sentinel key provider name
 
-The provider name after `sk-ant-oat-ccproxy-` must exactly match a key in `oat_sources`:
+The provider name after `sk-ant-oat-ccproxy-` must exactly match a key in `providers`:
 
 ```yaml
-oat_sources:
-  anthropic: "..."  # Matches: sk-ant-oat-ccproxy-anthropic
-  gemini: "..."     # Matches: sk-ant-oat-ccproxy-gemini
+providers:
+  anthropic:
+    auth: "..."   # Matches: sk-ant-oat-ccproxy-anthropic
+    host: api.anthropic.com
+    path: /v1/messages
+    provider: anthropic
+  gemini:
+    auth: "..."   # Matches: sk-ant-oat-ccproxy-gemini
+    host: cloudcode-pa.googleapis.com
+    path: "/v1internal:{action}"
+    provider: gemini
 ```
 
-Using `sk-ant-oat-ccproxy-claude` when the source is named `anthropic` raises a fatal `OAuthConfigError`:
+Using `sk-ant-oat-ccproxy-claude` when the providers entry is named `anthropic` raises a fatal `OAuthConfigError`:
 ```
-OAuthConfigError: Sentinel key for provider 'claude' but no OAuth token configured in oat_sources
+OAuthConfigError: Sentinel key for provider 'claude' but no matching providers entry. Add 'providers.claude' to ccproxy.yaml.
 ```
 
-### oat_sources command failing
+### providers[name].auth command failing
 
 ```bash
-# Copy your oat_sources command from ccproxy.yaml and run it directly:
+# Copy your providers[name].auth.command from ccproxy.yaml and run it directly:
 jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json
 # Should output a token
 
@@ -155,7 +163,7 @@ jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json
 
 `forward_oauth` injects auth via the configured header:
 - Default: `Authorization: Bearer {token}`
-- If `oat_sources.{provider}.auth_header` is set: uses that header name with raw token value (e.g. `x-goog-api-key: {token}`)
+- If `providers.{provider}.auth.header` is set: uses that header name with raw token value (e.g. `x-api-key: {token}`)
 
 Check the forwarded request headers:
 ```bash
@@ -246,11 +254,11 @@ The inspector UI runs at `http://127.0.0.1:{inspector.port}/?token={web_token}`.
 ### Google (Gemini / cloudcode-pa)
 
 - cloudcode-pa flows use a body wrapper: `{model: X, request: {<body>}}` — handled by shaping `body_wrapper`
-- Gemini auth uses `x-goog-api-key` header — set via `oat_sources.gemini.auth_header: "x-goog-api-key"` or let `forward_oauth` handle it
-- Configure `destinations` to include both `generativelanguage.googleapis.com` and `cloudcode-pa.googleapis.com`
+- Gemini OAuth tokens (`ya29.*`) flow as `Authorization: Bearer`; raw API keys (`AIza*`) can override via `providers.gemini.auth.header: "x-goog-api-key"`
+- `providers.gemini.host` is a single destination (e.g. `cloudcode-pa.googleapis.com`); register a separate provider entry for `generativelanguage.googleapis.com` if you need to route both
 
 ### Other providers
 
 - Shaping profiles are per-provider — each provider's contract is learned independently
-- Provider detection uses `oat_sources.*.destinations` (substring match) then `inspector.provider_map` (exact hostname)
+- Provider resolution is sentinel-driven: `forward_oauth` parses the `sk-ant-oat-ccproxy-{name}` suffix and looks up `providers[name]`; with no sentinel it walks `config.providers` in dict order and falls back to the first entry with a cached token. The route handler then chooses `redirect` vs `transform` based on whether the incoming format matches the destination's `provider` field. `inspector.provider_map` is unrelated — it maps hostnames to OTel `gen_ai.system` attributes.
 - Transform rules handle cross-provider format conversion via lightllm

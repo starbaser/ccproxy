@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ccproxy.config import CCProxyConfig, set_config_instance
+from ccproxy.config import CCProxyConfig, Provider, set_config_instance
 from ccproxy.constants import OAUTH_SENTINEL_PREFIX, OAuthConfigError
 from ccproxy.hooks.forward_oauth import (
     _inject_token,
@@ -26,6 +26,16 @@ def _make_ctx(headers: dict[str, str] | None = None) -> Context:
     flow.request.headers = dict(headers or {})
     flow.metadata = {}
     return Context.from_flow(flow)
+
+
+def _make_provider(*, command: str = "echo tok", header: str | None = None) -> Provider:
+    """Build a Provider with a CommandOAuthSource for tests."""
+    return Provider(
+        auth=CommandOAuthSource(command=command, header=header),
+        host="api.example.com",
+        path="/v1/messages",
+        provider="anthropic",
+    )
 
 
 @pytest.fixture
@@ -59,7 +69,7 @@ class TestForwardOAuthGuard:
 
 class TestForwardOAuthSentinelPath:
     def test_sentinel_injects_bearer_and_sets_metadata(self, clean_config: CCProxyConfig) -> None:
-        clean_config._oat_values["anthropic"] = "real-token-xyz"
+        clean_config._cached_auth_tokens["anthropic"] = "real-token-xyz"
         ctx = _make_ctx({"x-api-key": f"{OAUTH_SENTINEL_PREFIX}anthropic"})
 
         result = forward_oauth(ctx, {})
@@ -70,7 +80,7 @@ class TestForwardOAuthSentinelPath:
         assert ctx.flow.metadata["ccproxy.oauth_provider"] == "anthropic"
 
     def test_sentinel_clears_x_api_key(self, clean_config: CCProxyConfig) -> None:
-        clean_config._oat_values["anthropic"] = "real-token"
+        clean_config._cached_auth_tokens["anthropic"] = "real-token"
         ctx = _make_ctx({"x-api-key": f"{OAUTH_SENTINEL_PREFIX}anthropic"})
 
         forward_oauth(ctx, {})
@@ -79,7 +89,7 @@ class TestForwardOAuthSentinelPath:
         assert ctx.get_header("x-api-key") == ""
 
     def test_sentinel_via_goog_api_key_header(self, clean_config: CCProxyConfig) -> None:
-        clean_config._oat_values["google"] = "goog-token"
+        clean_config._cached_auth_tokens["google"] = "goog-token"
         ctx = _make_ctx({"x-goog-api-key": f"{OAUTH_SENTINEL_PREFIX}google"})
 
         result = forward_oauth(ctx, {})
@@ -106,8 +116,8 @@ class TestForwardOAuthSentinelPath:
 
 class TestForwardOAuthCachedPath:
     def test_no_keys_cached_token_injects(self, clean_config: CCProxyConfig) -> None:
-        clean_config.oat_sources = {"fallback": "dummy"}
-        clean_config._oat_values["fallback"] = "cached-tok"
+        clean_config.providers = {"fallback": _make_provider()}
+        clean_config._cached_auth_tokens["fallback"] = "cached-tok"
         ctx = _make_ctx()
 
         result = forward_oauth(ctx, {})
@@ -118,10 +128,10 @@ class TestForwardOAuthCachedPath:
         assert ctx.flow.metadata["ccproxy.oauth_provider"] == "fallback"
 
     def test_first_provider_with_token_used(self, clean_config: CCProxyConfig) -> None:
-        # oat_sources iteration order → first loaded token wins
-        clean_config.oat_sources = {"p1": "d1", "p2": "d2"}
-        clean_config._oat_values["p1"] = "token-p1"
-        clean_config._oat_values["p2"] = "token-p2"
+        # providers iteration order → first loaded token wins
+        clean_config.providers = {"p1": _make_provider(), "p2": _make_provider()}
+        clean_config._cached_auth_tokens["p1"] = "token-p1"
+        clean_config._cached_auth_tokens["p2"] = "token-p2"
         ctx = _make_ctx()
 
         forward_oauth(ctx, {})
@@ -129,8 +139,8 @@ class TestForwardOAuthCachedPath:
         assert ctx.flow.metadata["ccproxy.oauth_provider"] == "p1"
 
     def test_no_keys_no_cached_token_noop(self, clean_config: CCProxyConfig) -> None:
-        clean_config.oat_sources = {"empty": "dummy"}
-        # _oat_values intentionally empty
+        clean_config.providers = {"empty": _make_provider()}
+        # _cached_auth_tokens intentionally empty
         ctx = _make_ctx()
 
         result = forward_oauth(ctx, {})
@@ -139,7 +149,7 @@ class TestForwardOAuthCachedPath:
         assert "ccproxy.oauth_injected" not in ctx.flow.metadata
         assert "ccproxy.oauth_provider" not in ctx.flow.metadata
 
-    def test_no_oat_sources_noop(self, clean_config: CCProxyConfig) -> None:
+    def test_no_providers_noop(self, clean_config: CCProxyConfig) -> None:
         ctx = _make_ctx()
 
         result = forward_oauth(ctx, {})
@@ -169,8 +179,8 @@ class TestForwardOAuthPassthrough:
 
     def test_real_auth_header_no_cached_injection(self, clean_config: CCProxyConfig) -> None:
         # Existing Bearer token → skip cached path
-        clean_config.oat_sources = {"fallback": "dummy"}
-        clean_config._oat_values["fallback"] = "cached"
+        clean_config.providers = {"fallback": _make_provider()}
+        clean_config._cached_auth_tokens["fallback"] = "cached"
         ctx = _make_ctx({"authorization": "Bearer real-existing-token"})
 
         result = forward_oauth(ctx, {})
@@ -192,7 +202,7 @@ class TestInjectToken:
         assert ctx.get_header("x-goog-api-key") == ""
 
     def test_custom_goog_api_key_header(self, clean_config: CCProxyConfig) -> None:
-        clean_config.oat_sources = {"google": CommandOAuthSource(command="echo tok", auth_header="x-goog-api-key")}
+        clean_config.providers = {"google": _make_provider(header="x-goog-api-key")}
         ctx = _make_ctx()
 
         _inject_token(ctx, "google", "goog-token")
@@ -205,7 +215,7 @@ class TestInjectToken:
         assert ctx.get_header("authorization") == ""
 
     def test_custom_x_api_key_header(self, clean_config: CCProxyConfig) -> None:
-        clean_config.oat_sources = {"prov": CommandOAuthSource(command="echo tok", auth_header="x-api-key")}
+        clean_config.providers = {"prov": _make_provider(header="x-api-key")}
         ctx = _make_ctx()
 
         _inject_token(ctx, "prov", "my-secret")

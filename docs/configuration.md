@@ -33,11 +33,14 @@ ccproxy:
   port: 4000                 # Reverse proxy listener port
   debug: false               # Debug logging
 
-  oat_sources:               # OAuth token sources, keyed by provider name
+  providers:                 # Provider entries keyed by sentinel suffix
     anthropic:
-      command: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
-      user_agent: "anthropic"
-      destinations: ["api.anthropic.com"]
+      auth:
+        type: command
+        command: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+      host: api.anthropic.com
+      path: /v1/messages
+      provider: anthropic    # LiteLLM provider identifier (drives format dispatch)
 
   hooks:
     inbound:
@@ -70,49 +73,81 @@ ccproxy:
 | `host` | string | `127.0.0.1` | Reverse proxy listen address |
 | `port` | int | `4000` | Reverse proxy listen port |
 | `debug` | bool | `false` | Enable debug logging |
-| `oat_sources` | map | `{}` | OAuth token sources by provider name |
+| `providers` | map | `{}` | Provider entries keyed by sentinel suffix (auth + destination + format) |
 | `hooks` | object | — | Two-stage hook pipeline (inbound/outbound) |
 | `inspector` | object | — | mitmweb and transform settings |
 | `otel` | object | — | OpenTelemetry export settings |
 
-## OAuth Configuration
+## Providers
 
-### oat_sources
+### providers
 
-`oat_sources` maps provider names to token retrieval configuration. The `forward_oauth` hook uses this to inject Bearer tokens into outbound requests.
+`providers` maps a sentinel suffix to a `Provider` entry: an auth source, a single destination (`host` + `path`), and a LiteLLM `provider` identifier that names the wire format the destination speaks. When ccproxy sees a sentinel key matching `sk-ant-oat-ccproxy-{name}`, the matching `Provider` drives both token injection (`forward_oauth`) and routing (auto-redirect or cross-format `transform` via lightllm).
 
-**Simple form** — shell command only:
+**Simple form** — auth dispatched as a bare shell command:
 
 ```yaml
 ccproxy:
-  oat_sources:
-    anthropic: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+  providers:
+    anthropic:
+      auth: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+      host: api.anthropic.com
+      path: /v1/messages
+      provider: anthropic
 ```
 
-**Extended form** — with user agent and destination filtering:
+**Full form** — explicit auth discriminator and per-provider auth header:
 
 ```yaml
 ccproxy:
-  oat_sources:
+  providers:
     anthropic:
-      command: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
-      user_agent: "anthropic"
-      destinations: ["api.anthropic.com"]
+      auth:
+        type: command
+        command: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+      host: api.anthropic.com
+      path: /v1/messages
+      provider: anthropic
 
     gemini:
-      command: "~/bin/get-gemini-token.sh"
-      user_agent: "MyApp/1.0"
-      destinations: ["generativelanguage.googleapis.com"]
+      auth:
+        type: command
+        command: "jq -r '.access_token' ~/.gemini/oauth_creds.json"
+      host: cloudcode-pa.googleapis.com
+      path: "/v1internal:{action}"
+      provider: gemini
+
+    deepseek:
+      auth:
+        type: command
+        command: "printenv DEEPSEEK_API_KEY"
+        header: x-api-key      # send token as `x-api-key: <token>` (not `Authorization: Bearer …`)
+      host: api.deepseek.com
+      path: /anthropic/v1/messages
+      provider: anthropic      # DeepSeek's anthropic-compat endpoint speaks the anthropic format
 ```
 
-**oat_sources entry fields:**
+**Provider entry fields:**
 
 | Field | Description |
 |---|---|
-| `command` | Shell command whose stdout is the token (mutually exclusive with `file`) |
-| `file` | File path to read the token from, whitespace stripped (mutually exclusive with `command`) |
-| `user_agent` | `User-Agent` header value for requests using this token |
-| `destinations` | Hostname list; token only injected when the request host matches one of these |
+| `auth` | Discriminated auth source. Bare strings coerce to `{type: command, command: <str>}`. |
+| `host` | Single destination hostname (e.g. `api.anthropic.com`). |
+| `path` | Destination path. Supports `{model}` and `{action}` templating substituted from the body / URL at routing time. Defaults to `/`. |
+| `provider` | LiteLLM provider identifier (`anthropic`, `gemini`, `deepseek`, `openai`, …). When the incoming format matches `provider`, the routing handler just rewrites the destination; when they differ, the body is rewritten via `lightllm.transform_to_provider`. |
+
+**Auth source types** (the `type:` discriminator inside `auth:`):
+
+| `type` | Required keys | Behavior |
+|---|---|---|
+| `command` | `command` | Shell command whose stdout is the token. Bare strings under `auth:` coerce to this. |
+| `file` | `file` | File path; contents stripped of whitespace are the token. |
+| `anthropic_oauth` | `refresh_token_file` (default `~/.config/ccproxy/oauth/anthropic.json`) | Refreshes Anthropic OAuth tokens in-process via `claude.ai/v1/oauth/token`. Atomically writes refreshed tokens back to disk. |
+| `google_oauth` | `client_id`, `client_secret`, `refresh_token_file` (default `~/.gemini/oauth_creds.json`) | Refreshes Google/Gemini OAuth tokens in-process via `oauth2.googleapis.com`. Preserves on-disk `refresh_token` when the refresh response omits it (gemini-cli #21691). |
+
+The `auth.header` field (inside any `auth:` block) overrides the default `Authorization: Bearer {token}` injection. Set it to a custom header name (e.g. `x-api-key`) when the destination expects the raw token in a non-Bearer header.
+
+**Iteration order is load-bearing.** `forward_oauth` walks `providers` in insertion order to pick a fallback when no sentinel key is present on the request — the first provider with a cached token wins. Keep the highest-priority provider (typically `anthropic`) first.
 
 ### Sentinel Key Mechanism
 
@@ -122,7 +157,7 @@ SDK clients can use a sentinel API key to trigger token substitution without mod
 client = Anthropic(api_key="sk-ant-oat-ccproxy-anthropic")
 ```
 
-When ccproxy sees a key matching `sk-ant-oat-ccproxy-{provider}`, it substitutes the actual token from `oat_sources[provider]` and applies the provider's `user_agent` and `destinations`.
+When ccproxy sees a key matching `sk-ant-oat-ccproxy-{name}`, it substitutes the actual token from `providers[name].auth`, sets the auth header (`Authorization: Bearer …` by default, or `providers[name].auth.header` when set), and routes the request to `providers[name].host` / `providers[name].path`. If the incoming wire format doesn't match `providers[name].provider`, lightllm rewrites the body too.
 
 ### Token Refresh
 
@@ -161,7 +196,7 @@ ccproxy:
 
 | Hook | Stage | Purpose |
 |---|---|---|
-| `ccproxy.hooks.forward_oauth` | inbound | Substitutes sentinel keys (`sk-ant-oat-ccproxy-{provider}`) with OAuth tokens from `oat_sources`; injects Bearer auth |
+| `ccproxy.hooks.forward_oauth` | inbound | Substitutes sentinel keys (`sk-ant-oat-ccproxy-{name}`) with the cached auth token from `providers[name].auth`; injects `Authorization: Bearer …` (or the custom `auth.header` when set) and stamps `flow.metadata["ccproxy.oauth_provider"]` for downstream routing |
 | `ccproxy.hooks.extract_session_id` | inbound | Reads `metadata.user_id` via `glom(ctx._body, 'metadata.user_id')` and stores session_id on `flow.metadata` for downstream use |
 | `ccproxy.hooks.gemini_cli` | outbound | Single hook for all Gemini sentinel-key traffic. Wraps standard Gemini bodies in the `v1internal` envelope, conditionally masquerades `google-genai-sdk/*` UAs as Gemini CLI, rewrites paths to `cloudcode-pa`, and unwraps the `{response: {...}}` envelope on the way back. |
 | `ccproxy.hooks.gemini_capacity_fallback` | outbound | Retries Gemini requests against a fallback model chain when cloudcode-pa returns 429 / 503 RESOURCE_EXHAUSTED. Sticky same-model retries honor `RetryInfo.retryDelay`, then walks the configured chain. |
@@ -205,55 +240,51 @@ Force-run or force-skip hooks via header:
 x-ccproxy-hooks: +inject_mcp_notifications,-verbose_mode
 ```
 
-## Transform Rules
+## Transform Overrides
 
-`inspector.transforms` is an ordered list of `TransformRoute` entries. The first match wins.
+The default `inspector.transforms` list is empty: routing comes from sentinel-key resolution against the `providers` map. When a sentinel key arrives, ccproxy resolves the matching `Provider`, sets `flow.metadata["ccproxy.oauth_provider"]`, and either redirects (incoming format matches `provider`) or cross-transforms via lightllm (formats differ). Most users never need a `TransformOverride`.
+
+`inspector.transforms` is an ordered list of `TransformOverride` entries layered on top of Provider auto-routing. The first regex match wins. Use overrides for edge cases — bypassing auth for a specific host, forcing a particular destination for a path/model combo, etc.
 
 ```yaml
 ccproxy:
   inspector:
     transforms:
-      - mode: passthrough
-        match_host: cloudcode-pa.googleapis.com
+      # Bypass interception for a host: forward unchanged to its original destination.
+      - action: passthrough
+        match_host: cloudcode-pa\.googleapis\.com
 
-      - match_path: /v1/messages
-        mode: redirect
+      # Force a specific provider for a path. dest_provider resolves to providers["anthropic"]
+      # for host/path/auth — no separate api-key reference is required.
+      - match_path: ^/v1/messages$
+        action: redirect
         dest_provider: anthropic
-        dest_host: api.anthropic.com
-        dest_path: /v1/messages
-        dest_api_key_ref: anthropic
 
-      - match_path: /v1internal
-        mode: redirect
-        dest_provider: gemini
-        dest_host: cloudcode-pa.googleapis.com
-        dest_api_key_ref: gemini
-
-      - match_path: /v1/chat/completions
-        match_model: gpt-4o
-        mode: transform
+      # Cross-format transform: OpenAI-shape requests for gpt-4o get rewritten to Anthropic's
+      # /v1/messages format and routed through providers["anthropic"].
+      - match_path: ^/v1/chat/completions$
+        match_model: ^gpt-4o
+        action: transform
         dest_provider: anthropic
         dest_model: claude-haiku-4-5-20251001
-        dest_api_key_ref: anthropic
 ```
 
-### TransformRoute fields
+### TransformOverride fields
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `mode` | string | `redirect` | `redirect`: rewrite destination host, preserve request body (same-format). `transform`: rewrite both destination and body via lightllm (cross-format). `passthrough`: forward to original destination unchanged. |
-| `match_host` | string | — | Optional. Checked against the request's `Host` header, `pretty_host`, and `X-Forwarded-Host`. |
-| `match_path` | string | `/` | URL path prefix to match. |
-| `match_model` | string | — | Substring match against the `model` field in the request body. |
-| `dest_provider` | string | — | Provider name (e.g. `anthropic`, `gemini`). Used by `transform` for lightllm dispatch and `redirect` for shaping profile lookup. |
-| `dest_model` | string | — | Model identifier sent to the provider. Only used in `transform` mode. |
-| `dest_host` | string | — | Explicit destination host for `redirect` mode (e.g. `api.anthropic.com`). Required for `redirect` mode. |
-| `dest_path` | string | — | Override the request path in `redirect` mode. If not set, the original path is preserved. |
-| `dest_api_key_ref` | string | — | Provider name in `oat_sources` for credential lookup, or an environment variable name. |
+| `action` | string | `redirect` | `redirect`: rewrite destination, preserve body (same-format). `transform`: rewrite both destination and body via lightllm (cross-format). `passthrough`: forward unchanged. |
+| `match_host` | regex | — | Optional. Matched against `pretty_host`, the `Host` header, and `X-Forwarded-Host`. |
+| `match_path` | regex | `.*` | Matched against the request path. |
+| `match_model` | regex | — | Matched against `glom(body, "model")`. |
+| `dest_provider` | string | — | ccproxy provider name. Resolves to a `providers` entry for host/path/auth/format. The provider's auth is applied automatically — no separate api-key field is required. |
+| `dest_model` | string | — | Rewrites `body['model']`. Only used in `transform` mode. |
+| `dest_host` | string | — | Raw host override. Bypasses Provider lookup. |
+| `dest_path` | string | — | Raw path override. Bypasses Provider lookup. |
 | `dest_vertex_project` | string | — | GCP project ID for Vertex AI transforms. Required for context caching with `vertex_ai`/`vertex_ai_beta` providers. |
 | `dest_vertex_location` | string | — | GCP region for Vertex AI transforms (e.g. `us-central1`). |
 
-All match fields are optional and ANDed together. A rule with no match fields matches every request — use as a catch-all at the end of the list.
+`match_*` fields are full regex (compiled with `re.compile`). All match fields are optional and ANDed together. A rule with no match fields matches every request — use as a catch-all at the end of the list. Auth resolves via `dest_provider` lookup; there is no separate api-key reference field.
 
 ## Inspector Settings
 

@@ -1,25 +1,27 @@
 """OAuth credential sources — discriminated union with polymorphic ``resolve``.
 
-Configuration shape in ``ccproxy.yaml``::
+Configuration shape in ``ccproxy.yaml``, nested under each Provider's ``auth``::
 
-    oat_sources:
-      anthropic: "jq -r '.access_token' ~/.claude/.credentials.json"  # bare command
-      gemini:
-        type: command
-        command: "..."
-        user_agent: "..."
+    providers:
+      anthropic:
+        auth:
+          type: command
+          command: "jq -r '.access_token' ~/.claude/.credentials.json"
+          header: authorization
+        host: api.anthropic.com
+        path: /v1/messages
+        provider: anthropic
       claude_oauth:
-        type: anthropic_oauth
-        refresh_token_file: "~/.config/ccproxy/oauth/anthropic.json"
-      gemini_oauth:
-        type: google_oauth
-        refresh_token_file: "~/.gemini/oauth_creds.json"
-        client_id: "..."
-        client_secret: "..."
+        auth:
+          type: anthropic_oauth
+          refresh_token_file: "~/.config/ccproxy/oauth/anthropic.json"
+          header: authorization
+        host: api.anthropic.com
+        path: /v1/messages
+        provider: anthropic
 
 The discriminated union dispatches via the ``type`` field. Bare command
-strings and legacy dict-without-type forms are resolved via
-``parse_oauth_source`` for backward compatibility.
+strings and dict-without-type forms are resolved via ``parse_oauth_source``.
 """
 
 from __future__ import annotations
@@ -30,7 +32,7 @@ import time
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -106,14 +108,10 @@ class _OAuthFields(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    user_agent: str | None = None
-    """Optional custom User-Agent header to send with requests using this token."""
-
-    destinations: list[str] = Field(default_factory=list)
-    """URL patterns that should use this token (e.g. ``['api.z.ai', 'anthropic.com']``)."""
-
-    auth_header: str | None = None
-    """Target header name (e.g. ``x-api-key``). When set, sends raw token instead of ``Authorization: Bearer``."""
+    header: str | None = None
+    """Target header name (e.g. ``x-api-key``). When set, the resolved token
+    is injected as a raw value into this header. ``None`` (default) sends
+    ``Authorization: Bearer {token}``."""
 
 
 class CommandOAuthSource(_OAuthFields):
@@ -184,12 +182,12 @@ OAuthSource = CommandOAuthSource | FileOAuthSource | AnthropicOAuthSource | Goog
 
 
 def parse_oauth_source(raw: str | dict[str, Any] | OAuthSource) -> OAuthSource:
-    """Resolve a raw ``oat_sources`` entry into a typed OAuthSource subclass.
+    """Resolve a raw ``Provider.auth`` value into a typed OAuthSource subclass.
 
     Accepts:
     - bare string → ``CommandOAuthSource(command=raw)``
     - dict with ``type`` field → discriminated dispatch
-    - legacy dict with only ``command``/``file`` keys → inferred type
+    - dict with only ``command``/``file`` keys (no ``type``) → inferred
     - already-typed OAuthSource → passthrough
     """
     if isinstance(raw, str):
@@ -210,7 +208,7 @@ def parse_oauth_source(raw: str | dict[str, Any] | OAuthSource) -> OAuthSource:
             f"Cannot infer OAuthSource type from keys {list(raw.keys())!r}; "
             f"specify 'type: command|file|anthropic_oauth|google_oauth'",
         )
-    raise TypeError(f"Unsupported oat_sources entry: {type(raw).__name__}")
+    raise TypeError(f"Unsupported auth entry: {type(raw).__name__}")
 
 
 def atomic_write_back(path: Path, data: dict[str, Any]) -> None:

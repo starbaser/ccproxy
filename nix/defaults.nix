@@ -3,22 +3,34 @@
     host = "127.0.0.1";
     port = 4000;
     log_level = "INFO";
-    oat_sources = {
+    providers = {
       anthropic = {
-        command = "printenv CLAUDE_CODE_OAUTH_TOKEN";
-        destinations = [ "api.anthropic.com" ];
+        auth = {
+          type = "command";
+          command = "printenv CLAUDE_CODE_OAUTH_TOKEN";
+        };
+        host = "api.anthropic.com";
+        path = "/v1/messages";
+        provider = "anthropic";
       };
       gemini = {
-        command = "jq -r '.access_token' ~/.gemini/oauth_creds.json";
-        destinations = [
-          "cloudcode-pa.googleapis.com"
-        ];
-        user_agent = "GeminiCLI";
+        auth = {
+          type = "command";
+          command = "jq -r '.access_token' ~/.gemini/oauth_creds.json";
+        };
+        host = "cloudcode-pa.googleapis.com";
+        path = "/v1internal:{action}";
+        provider = "gemini";
       };
       deepseek = {
-        command = "printenv DEEPSEEK_API_KEY";
-        destinations = [ "api.deepseek.com" ];
-        auth_header = "x-api-key";
+        auth = {
+          type = "command";
+          command = "printenv DEEPSEEK_API_KEY";
+          header = "x-api-key";
+        };
+        host = "api.deepseek.com";
+        path = "/anthropic/v1/messages";
+        provider = "anthropic";
       };
     };
     hooks = {
@@ -95,13 +107,7 @@
     inspector = {
       port = 8083;
       cert_dir = "~/.config/ccproxy";
-      transforms = [
-        { match_host = "cloudcode-pa.googleapis.com"; mode = "passthrough"; }
-        { match_path = "/v1/messages"; match_model = "deepseek"; mode = "redirect"; dest_provider = "deepseek"; dest_host = "api.deepseek.com"; dest_path = "/anthropic/v1/messages"; dest_api_key_ref = "deepseek"; }
-        { match_path = "/v1/messages"; mode = "redirect"; dest_provider = "anthropic"; dest_host = "api.anthropic.com"; dest_path = "/v1/messages"; dest_api_key_ref = "anthropic"; }
-        { match_path = "/v1internal"; mode = "redirect"; dest_provider = "gemini"; dest_host = "cloudcode-pa.googleapis.com"; dest_api_key_ref = "gemini"; }
-        { match_path = "/gemini/"; mode = "redirect"; dest_provider = "gemini"; dest_host = "cloudcode-pa.googleapis.com"; dest_api_key_ref = "gemini"; }
-      ];
+      transforms = [];
     };
   };
 }

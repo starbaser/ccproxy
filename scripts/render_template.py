@@ -72,29 +72,42 @@ def render(s: dict[str, Any]) -> str:
     comment("journal_identifier: ccproxy-myproject")
     blank()
 
-    # ── oat_sources ──
+    # ── providers ──
 
-    comment("OAuth token sources — shell commands that output tokens.")
-    comment("Sentinel key sk-ant-oat-ccproxy-{name} triggers lookup.")
-    w("  oat_sources:")
+    comment("Provider entries keyed by sentinel suffix. The sentinel key")
+    comment("`sk-ant-oat-ccproxy-{name}` resolves to providers[name] for token")
+    comment("injection and routing. Iteration order is load-bearing — the first")
+    comment("provider with a cached token wins as the no-sentinel fallback.")
+    w("  providers:")
 
-    # Nix toJSON alphabetizes keys; preserve a logical ordering.
-    oat_order = ["anthropic", "gemini", "deepseek"]
-    oat_names = [n for n in oat_order if n in s["oat_sources"]]
-    oat_names += [n for n in s["oat_sources"] if n not in oat_order]
+    # Nix toJSON alphabetizes keys; preserve a logical priority ordering.
+    provider_order = ["anthropic", "gemini", "deepseek"]
+    provider_names = [n for n in provider_order if n in s["providers"]]
+    provider_names += [n for n in s["providers"] if n not in provider_order]
 
-    for name in oat_names:
-        src = s["oat_sources"][name]
+    auth_key_order = [
+        "type", "command", "file", "refresh_token_file",
+        "client_id", "client_secret", "endpoint", "expiry_field", "header",
+    ]
+
+    for name in provider_names:
+        entry = s["providers"][name]
         w(f"    {name}:")
-        w(f'      command: "{src["command"]}"')
-        if "destinations" in src:
-            w("      destinations:")
-            for dest in src["destinations"]:
-                w(f"        - {_scalar(dest)}")
-        if "user_agent" in src:
-            w(f"      user_agent: {_scalar(src['user_agent'])}")
-        if "auth_header" in src:
-            w(f"      auth_header: {_scalar(src['auth_header'])}")
+        auth = entry.get("auth")
+        if auth:
+            w("      auth:")
+            sorted_auth = sorted(
+                auth.items(),
+                key=lambda kv: auth_key_order.index(kv[0]) if kv[0] in auth_key_order else len(auth_key_order),
+            )
+            for k, v in sorted_auth:
+                w(f"        {k}: {_scalar(v)}")
+        if "host" in entry:
+            w(f"      host: {_scalar(entry['host'])}")
+        if "path" in entry:
+            w(f"      path: {_scalar(entry['path'])}")
+        if "provider" in entry:
+            w(f"      provider: {_scalar(entry['provider'])}")
         blank()
 
     # ── hooks ──
@@ -178,27 +191,30 @@ def render(s: dict[str, Any]) -> str:
 
     if "transforms" in insp:
         blank()
-        comment("Transform rules — first match wins.", indent=4)
-        comment("Modes: passthrough (forward unchanged), redirect (rewrite host),", indent=4)
-        comment("  transform (cross-format via lightllm).", indent=4)
-        comment("Matching: match_host, match_path (prefix), match_model (substring).", indent=4)
-        w("    transforms:")
-        # Nix toJSON alphabetizes keys; reorder so match_* leads, mode next, dest_* last.
-        key_order = [
-            "match_host", "match_path", "match_model",
-            "mode",
-            "dest_provider", "dest_host", "dest_path", "dest_api_key_ref",
-            "dest_vertex_project", "dest_vertex_location",
-        ]
-        for rule in insp["transforms"]:
-            ordered = sorted(
-                rule.items(),
-                key=lambda kv: key_order.index(kv[0]) if kv[0] in key_order else len(key_order),
-            )
-            k0, v0 = ordered[0]
-            w(f"      - {k0}: {_scalar(v0)}")
-            for k, v in ordered[1:]:
-                w(f"        {k}: {_scalar(v)}")
+        comment("Optional regex-matched override rules layered on top of the", indent=4)
+        comment("sentinel-driven providers map. Default is empty: most routing", indent=4)
+        comment("comes from `providers` via forward_oauth's sentinel detection.", indent=4)
+        comment("First match wins. Match fields are regex; actions are", indent=4)
+        comment("passthrough | redirect | transform.", indent=4)
+        if not insp["transforms"]:
+            w("    transforms: []")
+        else:
+            w("    transforms:")
+            key_order = [
+                "match_host", "match_path", "match_model",
+                "action",
+                "dest_provider", "dest_host", "dest_path", "dest_model",
+                "dest_vertex_project", "dest_vertex_location",
+            ]
+            for rule in insp["transforms"]:
+                ordered = sorted(
+                    rule.items(),
+                    key=lambda kv: key_order.index(kv[0]) if kv[0] in key_order else len(key_order),
+                )
+                k0, v0 = ordered[0]
+                w(f"      - {k0}: {_scalar(v0)}")
+                for k, v in ordered[1:]:
+                    w(f"        {k}: {_scalar(v)}")
 
     # trailing newline
     blank()

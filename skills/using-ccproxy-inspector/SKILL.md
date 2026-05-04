@@ -227,7 +227,7 @@ Problem?
 ├─ Provider returns auth errors (401/403)
 │  ▶ Check: ccproxy flows dump <id> | jq '.log.entries[0].request.headers' — is Authorization header present?
 │  ▶ Check: x-ccproxy-oauth-injected header — did forward_oauth run?
-│  ▶ Check: oat_sources config — is the token source valid?
+│  ▶ Check: providers[name].auth — is the token source valid?
 │  ▶ Check: sentinel key format — sk-ant-oat-ccproxy-{provider}
 │
 ├─ Request not being transformed
@@ -239,7 +239,7 @@ Problem?
 │  ▶ Check: shaping_status.py — is a profile finalized?
 │  ▶ Check: flow mode — is it a reverse proxy flow? (not WireGuard)
 │  ▶ Check: TransformMeta — did the flow match a transform rule?
-│  ▶ Check: ua_hint — does oat_sources[provider].user_agent match the profile?
+│  ▶ Check: ua_hint — does the gemini_cli hook's hardcoded UA match the profile? See ccproxy/hooks/gemini_cli.py for the literal value.
 │
 ├─ Body format wrong / API rejection
 │  ▶ Run: inspect_flow.py <id> --json — compare client vs forwarded body

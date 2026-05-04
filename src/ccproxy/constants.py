@@ -7,8 +7,8 @@ class OAuthConfigError(ValueError):
 
 
 # Sentinel API key prefix that triggers OAuth token substitution from ccproxy config.
-# Format: sk-ant-oat-ccproxy-{provider} where {provider} matches a key in oat_sources.
-# Example: sk-ant-oat-ccproxy-anthropic uses the token from oat_sources.anthropic
+# Format: sk-ant-oat-ccproxy-{provider} where {provider} matches a key in providers.
+# Example: sk-ant-oat-ccproxy-anthropic uses the token from providers.anthropic.auth
 OAUTH_SENTINEL_PREFIX = "sk-ant-oat-ccproxy-"
 
 # Regex patterns for detecting sensitive header values to redact.

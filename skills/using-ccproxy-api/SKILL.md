@@ -26,7 +26,7 @@ inputs.ccproxy.url = "github:starbaser/ccproxy";
 programs.ccproxy = {
   enable = true;
   settings = {
-    # Override defaults here (port, oat_sources, transforms, etc.)
+    # Override defaults here (port, providers, transforms, etc.)
   };
 };
 ```
@@ -54,7 +54,7 @@ ccproxy start
 
 ### Per-project instance
 
-Each project can run its own ccproxy with isolated config, port, and transforms via the flake's `mkConfig`. Use `ccproxy.defaultSettings.settings` (top-level, no `${system}` selector needed) as the base to inherit all defaults (hooks, shaping, oat_sources, otel).
+Each project can run its own ccproxy with isolated config, port, and transforms via the flake's `mkConfig`. Use `ccproxy.defaultSettings.settings` (top-level, no `${system}` selector needed) as the base to inherit all defaults (hooks, shaping, providers, otel).
 
 ```nix
 # project flake.nix
@@ -77,9 +77,9 @@ Each project can run its own ccproxy with isolated config, port, and transforms 
               port = 8090;
               cert_dir = "./.ccproxy";
               transforms = [
-                { match_path = "/v1/messages"; mode = "redirect";
+                { match_path = "/v1/messages"; action = "redirect";
                   dest_provider = "anthropic"; dest_host = "api.anthropic.com";
-                  dest_path = "/v1/messages"; dest_api_key_ref = "anthropic"; }
+                  dest_path = "/v1/messages"; }
               ];
             };
           };
@@ -192,14 +192,21 @@ ccproxy:
   host: 127.0.0.1
   port: 4000
 
-  oat_sources:
+  providers:
     anthropic:
-      command: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
-      destinations: ["api.anthropic.com"]
+      auth:
+        type: command
+        command: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+      host: api.anthropic.com
+      path: /v1/messages
+      provider: anthropic
     gemini:
-      command: "jq -r '.access_token' ~/.gemini/oauth_creds.json"
-      destinations: ["generativelanguage.googleapis.com", "cloudcode-pa.googleapis.com"]
-      user_agent: "GeminiCLI"
+      auth:
+        type: command
+        command: "jq -r '.access_token' ~/.gemini/oauth_creds.json"
+      host: cloudcode-pa.googleapis.com
+      path: "/v1internal:{action}"
+      provider: gemini
 
   hooks:
     inbound:
@@ -208,32 +215,30 @@ ccproxy:
     outbound:
       - ccproxy.hooks.inject_mcp_notifications
       - ccproxy.hooks.verbose_mode
-      - ccproxy.hooks.apply_shaping
+      - ccproxy.hooks.shape
 
   shaping:
     enabled: true
-    min_observations: 3
-    seed_anthropic: true
+    shapes_dir: ~/.config/ccproxy/shaping/shapes
 
   inspector:
     port: 8083
     cert_dir: ~/.config/ccproxy
     transforms:
       - match_path: /v1/messages
-        mode: redirect
+        action: redirect
         dest_provider: anthropic
         dest_host: api.anthropic.com
         dest_path: /v1/messages
-        dest_api_key_ref: anthropic
 ```
 
-See [reference/routing-and-config.md](reference/routing-and-config.md) for transform rules, oat_sources patterns, and hook parameters.
+See [reference/routing-and-config.md](reference/routing-and-config.md) for transform rules, providers patterns, and hook parameters.
 
 ## How authentication works
 
 **OAuth mode** (subscription accounts -- Claude Max, Team, Enterprise):
 1. Client sends sentinel key `sk-ant-oat-ccproxy-{provider}` as API key
-2. `forward_oauth` hook detects sentinel prefix, looks up real token from `oat_sources`
+2. `forward_oauth` hook detects sentinel prefix, looks up real token from `providers[name].auth`
 3. `apply_shaping` hook stamps learned headers (`anthropic-beta`, `anthropic-version`), system prompt, and body envelope fields from a shaping profile
 4. Request reaches provider API with valid OAuth Bearer token and full shaping contract
 
@@ -247,9 +252,9 @@ See [reference/routing-and-config.md](reference/routing-and-config.md) for trans
 sk-ant-oat-ccproxy-{provider}
 ```
 
-Where `{provider}` matches a key in `oat_sources` config. Common values:
-- `sk-ant-oat-ccproxy-anthropic` -- uses `oat_sources.anthropic` token
-- `sk-ant-oat-ccproxy-gemini` -- uses `oat_sources.gemini` token
+Where `{provider}` matches a key in `providers` config. Common values:
+- `sk-ant-oat-ccproxy-anthropic` -- uses `providers.anthropic.auth` token
+- `sk-ant-oat-ccproxy-gemini` -- uses `providers.gemini.auth` token
 
 ### Default hooks
 

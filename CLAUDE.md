@@ -121,7 +121,7 @@ ReadySignal → InspectorAddon → MultiHARSaver → ShapeCapturer
 
   | Hook | Stage | Purpose |
   |------|-------|---------|
-  | `forward_oauth` | inbound | Sentinel-key (`sk-ant-oat-ccproxy-{provider}`) substitution from `oat_sources`. Header-only. |
+  | `forward_oauth` | inbound | Sentinel-key (`sk-ant-oat-ccproxy-{provider}`) substitution from `providers`. Header-only. |
   | `extract_session_id` | inbound | Reads `metadata.user_id` via `glom(ctx._body, 'metadata.user_id')` → stores session_id on `flow.metadata` (NOT body metadata). |
   | `gemini_cli` | outbound | Single hook for all Gemini sentinel-key traffic: wraps standard Gemini bodies in the `v1internal` envelope, conditionally masquerades `google-genai-sdk/*` UAs as Gemini CLI (preserves urllib clients in their own rate-limit bucket), rewrites paths to `cloudcode-pa`, and unwraps the `{response: {...}}` envelope on the way back via `EnvelopeUnwrapStream`. The `cloudaicompanionProject` is resolved once at startup via `prewarm_project` in `cli.py`. |
   | `gemini_capacity_fallback` | outbound | Retries Gemini requests against a fallback model chain on 429 / 503 RESOURCE_EXHAUSTED. Sticky same-model retries honor `RetryInfo.retryDelay`, then walks the configured chain. 120s wall-clock budget. Streaming flows are supported via deferred stream setup in `responseheaders`. Default chain: `[gemini-3-flash-preview, gemini-2.5-pro, gemini-2.5-flash]`. |
@@ -175,7 +175,7 @@ hooks:
     - ccproxy.hooks.shape
 ```
 
-**Transform matching** — `inspector.transforms` list, first match wins. Match fields: `match_host` (checked against `pretty_host` + Host + X-Forwarded-Host), `match_path` (prefix), `match_model` (substring in body). Three modes: `redirect` (default), `transform`, `passthrough`. Vertex AI fields: `dest_vertex_project`, `dest_vertex_location`.
+**Transform matching** — `inspector.transforms` is a list of `TransformOverride` rules layered on top of sentinel-driven Provider routing. Default is empty. Match fields are regexes: `match_host` (checked against `pretty_host` + Host + X-Forwarded-Host), `match_path`, `match_model` (matched against `glom(body, "model")`). First match wins. Three actions: `redirect` (default), `transform`, `passthrough`. Auth resolves through `dest_provider` → `config.providers[name]`; `dest_host`/`dest_path` are raw overrides that bypass the Provider lookup. Vertex AI fields: `dest_vertex_project`, `dest_vertex_location`.
 
 **Shaping config** — per-provider profiles. `content_fields` lists keys injected from the incoming request — everything else persists from the shape. `merge_strategies` overrides the default `replace`: `prepend_shape`, `append_shape`, `drop`. Append `:N` to slice the shape's array first (e.g. `prepend_shape:2`). `preserve_headers` lists target flow headers `apply_shape` must not overwrite. `strip_headers` lists shape headers to remove before stamping. `capture.path_pattern` validates flows during `ccproxy flows shape`.
 
@@ -183,11 +183,13 @@ hooks:
 
 `CCProxyConfig`, `NotificationBuffer`, `FlowStore`, `ShapeStore` are thread-safe singletons. The `cleanup` autouse fixture in `tests/conftest.py` resets them: `clear_config_instance()`, `clear_buffer()`, `clear_flow_store()`, `clear_store_instance()`, `clear_shape_hook_cache()`.
 
-### OAuth & Sentinel Keys
+### Providers & Sentinel Keys
 
-The sentinel key `sk-ant-oat-ccproxy-{provider}` triggers token substitution from `oat_sources` via the `forward_oauth` hook. ALL API keys in MCP server configs and client environments must be ccproxy sentinel keys — using raw provider keys bypasses the `forward_oauth` hook and the shaping pipeline. If a provider isn't routable through a sentinel key, add an `oat_sources` entry for it.
+The sentinel key `sk-ant-oat-ccproxy-{name}` triggers a `providers[name]` lookup via the `forward_oauth` hook: token resolution, target auth header, and routing all flow from a single `Provider` entry. ALL API keys in MCP server configs and client environments must be ccproxy sentinel keys — using raw provider keys bypasses the `forward_oauth` hook and the shaping pipeline. If a destination isn't routable through a sentinel key, add a `providers` entry for it.
 
-`oat_sources` is a `dict[str, OAuthSource]` discriminated union (see `oauth/sources.py`): `command` (bare YAML strings also map here), `file`, `anthropic_oauth`, `google_oauth`. On 401, the credential source is re-resolved; if the token changed, the request is retried with the fresh token.
+`providers` is a `dict[str, Provider]`. Each `Provider` carries `auth` (an `OAuthSource` discriminated union, see `oauth/sources.py`: `command` / `file` / `anthropic_oauth` / `google_oauth` — bare YAML strings auto-coerce to `command`), `host` (single destination hostname), `path` (with `{model}` / `{action}` templating), and `provider` (LiteLLM provider identifier driving format dispatch). The optional `auth.header` field overrides the target auth header (default `authorization` with `Bearer`; set to `x-api-key` for raw injection). On 401, the credential source is re-resolved; if the token changed, the request is retried with the fresh token. `providers` iteration order is load-bearing — the first entry with a cached token is the no-sentinel fallback.
+
+Routing precedence per request: (1) `inspector.transforms` regex match wins first; (2) sentinel resolution via `flow.metadata["ccproxy.oauth_provider"]` set by `forward_oauth` resolves to a `providers[name]` lookup; (3) ReverseMode flows fall through to a 501 OpenAI-shape error, WireGuard flows pass through unchanged. For sentinel-resolved Provider routing the action auto-derives: matching wire format → `redirect`, otherwise cross-format `transform` via lightllm.
 
 ### Anthropic Billing Header
 

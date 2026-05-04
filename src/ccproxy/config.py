@@ -11,11 +11,13 @@ Individual fields can be overridden via ``CCPROXY_`` prefixed env vars
 
 import logging
 import os
+import re
 import threading
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
 
 import yaml
+from litellm.types.utils import LlmProviders
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -33,8 +35,10 @@ __all__ = [
     "CCProxyConfig",
     "CredentialSource",
     "OAuthSource",
+    "Provider",
     "ProviderShapingConfig",
     "ShapingConfig",
+    "TransformOverride",
     "clear_config_instance",
     "get_config",
     "get_config_dir",
@@ -252,8 +256,8 @@ class MitmproxyOptions(BaseModel):
 
     web_password: str | CredentialSource | dict[str, str] | None = None
     """mitmweb UI password. Accepts a plain string, or a ``file``/``command``
-    credential source (same format as ``oat_sources``). None generates a
-    random token on each startup."""
+    credential source (same format as a Provider's ``auth`` block). None
+    generates a random token on each startup."""
 
     web_open_browser: bool = False
     """Auto-open browser when mitmweb starts."""
@@ -271,57 +275,106 @@ class MitmproxyOptions(BaseModel):
     """Flow output verbosity: 0=none, 1=url+status, 2=headers, 3=truncated body, 4=full body."""
 
 
-class TransformRoute(BaseModel):
-    """A single lightllm transformation rule for the inspector."""
+class Provider(BaseModel):
+    """Auth + single destination + LiteLLM format identifier.
 
-    mode: str = "redirect"
-    """``redirect`` (default): rewrite destination host, preserve request body (same-format).
-    ``transform``: rewrite both destination and body via lightllm (cross-format).
-    ``passthrough``: forward to the original destination unchanged."""
+    Keyed by sentinel suffix in :class:`CCProxyConfig.providers`. When a
+    request arrives with ``x-api-key: sk-ant-oat-ccproxy-{name}``, the
+    matching Provider entry drives token injection and routing.
+    """
+
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    auth: OAuthSource | None = None
+    """Discriminated OAuth source (Command/File/AnthropicOAuth/GoogleOAuth).
+    ``None`` means no managed auth — the request must already carry
+    credentials."""
+
+    host: str
+    """Destination hostname (e.g. ``api.anthropic.com``)."""
+
+    path: str = "/"
+    """Destination path. Supports ``{model}`` and ``{action}`` templating
+    substituted from glom-read body fields and URL captures at routing time."""
+
+    provider: LlmProviders
+    """LiteLLM provider identifier (``anthropic``, ``gemini``, ``deepseek``,
+    ``openai``, …). Drives ``lightllm.transform_to_provider`` when the
+    incoming format differs from what the destination speaks. When the
+    incoming format matches, the routing handler just rewrites destination
+    and preserves the body."""
+
+    @field_validator("auth", mode="before")
+    @classmethod
+    def _parse_auth(cls, value: Any) -> Any:
+        """Dispatch raw dict / bare-string YAML through ``parse_oauth_source``
+        so the discriminated union resolves to the right OAuthSource subclass."""
+        if value is None:
+            return None
+        return parse_oauth_source(value)
+
+
+class TransformOverride(BaseModel):
+    """Optional regex-matched override layer over Provider auto-routing.
+
+    The default ``inspector.transforms`` list is empty; sentinel-keyed flows
+    route through :class:`CCProxyConfig.providers` automatically. Override
+    rules cover edge cases — forcing a specific provider for a path/model
+    combo, bypassing auth for a specific host, etc.
+    """
+
+    model_config = ConfigDict(extra="ignore")
 
     match_host: str | None = None
-    """Hostname to match (e.g. ``api.openai.com``). Checked against
-    ``pretty_host``, ``Host`` header, and ``X-Forwarded-Host``.
-    ``None`` matches any host."""
+    """Regex matched against ``pretty_host``, ``Host`` header, and
+    ``X-Forwarded-Host``. ``None`` matches any host."""
 
-    match_path: str = "/"
-    """Path prefix to match (e.g. ``/v1/chat/completions``). Matches any
-    path that starts with this prefix."""
+    match_path: str = ".*"
+    """Regex matched against the request path."""
 
     match_model: str | None = None
-    """Model name substring to match in the request body's ``model`` field.
-    ``None`` matches any model. Most useful for reverse proxy flows where
-    all traffic arrives at the same host."""
+    """Regex matched against ``glom(body, "model")``. ``None`` matches
+    any model."""
 
-    dest_provider: str = ""
-    """Destination provider name (e.g. ``anthropic``, ``gemini``).
-    Used by ``transform`` for lightllm dispatch and ``redirect`` for
-    shaping profile lookup. Not used in ``passthrough`` mode."""
+    action: Literal["passthrough", "redirect", "transform"] = "redirect"
+    """``redirect``: rewrite destination, preserve body (same-format).
+    ``transform``: rewrite both destination and body via lightllm
+    (cross-format). ``passthrough``: forward unchanged."""
 
-    dest_model: str = ""
-    """Destination model name for lightllm dispatch.
-    Only used in ``transform`` mode."""
+    dest_provider: str | None = None
+    """ccproxy provider name — resolves to a ``CCProxyConfig.providers``
+    entry (host/path/auth/format)."""
 
     dest_host: str | None = None
-    """Explicit destination host for ``redirect`` mode
-    (e.g. ``generativelanguage.googleapis.com``). If not set, ``redirect``
-    mode is invalid."""
+    """Raw host override. Bypasses Provider lookup."""
 
     dest_path: str | None = None
-    """Override the request path in ``redirect`` mode. If not set, the
-    original path is preserved."""
+    """Raw path override."""
 
-    dest_api_key_ref: str | None = None
-    """Provider name in ``oat_sources`` for credential lookup, or an
-    environment variable name.  ``None`` skips API key injection."""
+    dest_model: str | None = None
+    """Rewrites ``body['model']``."""
 
     dest_vertex_project: str | None = None
     """GCP project ID for Vertex AI transforms. Required for context caching
     with ``vertex_ai`` / ``vertex_ai_beta`` providers."""
 
     dest_vertex_location: str | None = None
-    """GCP region for Vertex AI transforms (e.g. ``us-central1``).
-    Required for context caching with ``vertex_ai`` / ``vertex_ai_beta`` providers."""
+    """GCP region for Vertex AI transforms (e.g. ``us-central1``)."""
+
+    match_host_re: re.Pattern[str] | None = Field(default=None, exclude=True, repr=False)
+    match_path_re: re.Pattern[str] = Field(
+        default_factory=lambda: re.compile(r".*"), exclude=True, repr=False,
+    )
+    match_model_re: re.Pattern[str] | None = Field(default=None, exclude=True, repr=False)
+
+    @model_validator(mode="after")
+    def _compile_match_regexes(self) -> "TransformOverride":
+        if self.match_host is not None:
+            self.match_host_re = re.compile(self.match_host)
+        self.match_path_re = re.compile(self.match_path)
+        if self.match_model is not None:
+            self.match_model_re = re.compile(self.match_model)
+        return self
 
 
 class InspectorConfig(BaseModel):
@@ -345,10 +398,12 @@ class InspectorConfig(BaseModel):
     )
     """Hostname → OTel gen_ai.system attribute mapping for provider identification."""
 
-    transforms: list[TransformRoute] = Field(default_factory=list)
-    """lightllm transformation rules. Each rule matches inbound flows by
-    host+path and rewrites them to a different provider format via the
-    lightllm dispatch."""
+    transforms: list[TransformOverride] = Field(default_factory=list)
+    """Optional regex-matched override rules layered on top of the
+    sentinel-driven Provider routing. Default is empty: most routing comes
+    from :class:`CCProxyConfig.providers` via ``forward_oauth``'s sentinel
+    detection. Override rules force a specific destination for a
+    path/model/host combination."""
 
     mitmproxy: MitmproxyOptions = Field(default_factory=MitmproxyOptions)
     """mitmproxy option overrides passed via --set flags."""
@@ -432,11 +487,17 @@ class CCProxyConfig(BaseSettings):
 
     flows: FlowsConfig = Field(default_factory=lambda: FlowsConfig())
 
-    oat_sources: dict[str, str | dict[str, Any] | OAuthSource] = Field(default_factory=lambda: {})
+    providers: dict[str, Provider] = Field(default_factory=dict)
+    """Provider entries keyed by sentinel suffix.
 
-    _oat_values: dict[str, str] = PrivateAttr(default_factory=lambda: {})
+    Iteration order is load-bearing: ``forward_oauth._try_cached_token``
+    walks this dict in insertion order to pick a fallback when no auth
+    header is present. ``nix/defaults.nix`` and ``ccproxy.yaml`` should
+    preserve the intended priority (anthropic, gemini, deepseek, …)."""
 
-    _oat_user_agents: dict[str, str] = PrivateAttr(default_factory=lambda: {})
+    _cached_auth_tokens: dict[str, str] = PrivateAttr(default_factory=dict)
+    """Resolved auth token cache, keyed by provider name. Populated by
+    ``_load_credentials`` at startup and refreshed on 401 retry."""
 
     # Hook configurations — either a flat list (all inbound) or a dict
     # with ``inbound`` and ``outbound`` keys for two-stage pipeline.
@@ -469,132 +530,79 @@ class CCProxyConfig(BaseSettings):
             return self.log_file
         return self.ccproxy_config_path.parent / self.log_file
 
-    @property
-    def oat_values(self) -> dict[str, str]:
-        """Get the cached OAuth token values."""
-        return dict(self._oat_values)
-
     def get_oauth_token(self, provider: str) -> str | None:
-        """Get cached OAuth token for a specific provider."""
-        return self._oat_values.get(provider)
+        """Get cached auth token for a specific provider."""
+        return self._cached_auth_tokens.get(provider)
 
-    def _resolve_oauth_token(self, provider: str) -> tuple[str, str | None] | None:
-        """Resolve OAuth token for a provider via its credential source."""
-        source = self.oat_sources.get(provider)
-        if not source:
-            logger.warning("No OAuth source configured for provider '%s'", provider)
+    def _resolve_oauth_token(self, provider: str) -> str | None:
+        """Resolve auth token for a provider via its ``Provider.auth`` source."""
+        provider_entry = self.providers.get(provider)
+        if provider_entry is None or provider_entry.auth is None:
+            logger.warning("No auth configured for provider '%s'", provider)
             return None
-
-        try:
-            oauth_source = parse_oauth_source(source)
-        except (ValueError, TypeError) as exc:
-            logger.error("Invalid oat_sources entry for provider '%s': %s", provider, exc)
-            return None
-
-        token = oauth_source.resolve(f"OAuth/{provider}")
-        if token is None:
-            return None
-        return (token, oauth_source.user_agent)
+        return provider_entry.auth.resolve(f"OAuth/{provider}")
 
     def refresh_oauth_token(self, provider: str) -> tuple[str | None, bool]:
-        """Re-resolve OAuth token for a provider and update cache if changed.
+        """Re-resolve auth token for a provider and update cache if changed.
 
-        Thread-safe. Returns (new_token, changed) — changed is True only when
-        the freshly resolved token differs from the cached value.
+        Thread-safe. Returns ``(new_token, changed)`` — ``changed`` is True
+        only when the freshly resolved token differs from the cached value.
         """
         with _config_lock:
-            result = self._resolve_oauth_token(provider)
-            if result is None:
+            token = self._resolve_oauth_token(provider)
+            if token is None:
                 return None, False
 
-            token, user_agent = result
-            old_token = self._oat_values.get(provider)
+            old_token = self._cached_auth_tokens.get(provider)
             changed = token != old_token
-            self._oat_values[provider] = token
-            if user_agent:
-                self._oat_user_agents[provider] = user_agent
+            self._cached_auth_tokens[provider] = token
             if changed:
-                logger.info("OAuth token changed for provider '%s'", provider)
+                logger.info("Auth token changed for provider '%s'", provider)
             return token, changed
 
-    def get_auth_provider_ua(self, provider: str) -> str | None:
-        """Get custom User-Agent for a specific provider."""
-        return self._oat_user_agents.get(provider)
-
     def get_auth_header(self, provider: str) -> str | None:
-        """Get target auth header name for a specific provider."""
-        source = self.oat_sources.get(provider)
-        if source is None or isinstance(source, str):
+        """Get target auth header name for a specific provider.
+
+        Reads ``providers[name].auth.header``. Returns ``None`` when the
+        provider is unknown, has no auth, or its auth source did not
+        specify a header (callers default to ``Authorization: Bearer``).
+        """
+        provider_entry = self.providers.get(provider)
+        if provider_entry is None or provider_entry.auth is None:
             return None
-        try:
-            return parse_oauth_source(source).auth_header
-        except (ValueError, TypeError):
-            return None
-
-    def get_provider_for_destination(self, api_base: str | None) -> str | None:
-        """Find which provider should handle requests to a given api_base."""
-        if not api_base:
-            return None
-
-        api_base_lower = api_base.lower()
-
-        for provider, source in self.oat_sources.items():
-            if isinstance(source, str):
-                continue  # Bare command strings carry no destination metadata.
-            try:
-                oauth_source = parse_oauth_source(source)
-            except (ValueError, TypeError):
-                continue
-
-            for dest in oauth_source.destinations:
-                if dest.lower() in api_base_lower:
-                    logger.debug(
-                        "Matched api_base '%s' to provider '%s' via destination '%s'",
-                        api_base, provider, dest,
-                    )
-                    return provider
-
-        return None
+        return provider_entry.auth.header
 
     def _load_credentials(self) -> None:
-        """Execute shell commands to load OAuth tokens for all configured providers at startup."""
-        if not self.oat_sources:
-            self._oat_values = {}
-            self._oat_user_agents = {}
+        """Resolve auth tokens for every Provider entry that declares one."""
+        eligible = [name for name, p in self.providers.items() if p.auth is not None]
+        if not eligible:
+            self._cached_auth_tokens = {}
             return
 
-        loaded_tokens: dict[str, str] = {}
-        loaded_user_agents: dict[str, str] = {}
+        loaded: dict[str, str] = {}
         errors: list[str] = []
 
-        for provider in self.oat_sources:
-            result = self._resolve_oauth_token(provider)
-            if result is None:
-                errors.append(f"Failed to load OAuth token for provider '{provider}'")
+        for provider in eligible:
+            token = self._resolve_oauth_token(provider)
+            if token is None:
+                errors.append(f"Failed to load auth token for provider '{provider}'")
                 continue
+            loaded[provider] = token
+            logger.debug("Successfully loaded auth token for provider '%s'", provider)
 
-            token, user_agent = result
-            loaded_tokens[provider] = token
-            logger.debug("Successfully loaded OAuth token for provider '%s'", provider)
+        self._cached_auth_tokens = loaded
 
-            if user_agent:
-                loaded_user_agents[provider] = user_agent
-                logger.debug("Loaded custom User-Agent for provider '%s': %s", provider, user_agent)
-
-        self._oat_values = loaded_tokens
-        self._oat_user_agents = loaded_user_agents
-
-        if errors and loaded_tokens:
+        if errors and loaded:
             logger.warning(
-                "Loaded OAuth tokens for %d provider(s), but %d provider(s) failed to load",
-                len(loaded_tokens), len(errors),
+                "Loaded auth tokens for %d provider(s), but %d provider(s) failed to load",
+                len(loaded), len(errors),
             )
 
-        if errors and not loaded_tokens:
+        if errors and not loaded:
             logger.error(
-                "Failed to load OAuth tokens for all %d provider(s). "
+                "Failed to load auth tokens for all %d provider(s). "
                 "Requests requiring OAuth will fail until tokens are available:\n%s",
-                len(self.oat_sources),
+                len(eligible),
                 "\n".join(f"  - {err}" for err in errors),
             )
 
@@ -621,8 +629,12 @@ class CCProxyConfig(BaseSettings):
                     instance.log_file = Path(raw) if raw is not None else None
                 if "journal_identifier" in ccproxy_data:
                     instance.journal_identifier = ccproxy_data["journal_identifier"]
-                if "oat_sources" in ccproxy_data:
-                    instance.oat_sources = ccproxy_data["oat_sources"]
+                if "providers" in ccproxy_data:
+                    raw_providers = ccproxy_data["providers"] or {}
+                    instance.providers = {
+                        name: spec if isinstance(spec, Provider) else Provider(**spec)
+                        for name, spec in raw_providers.items()
+                    }
                 inspector_data = ccproxy_data.get("inspector")
                 if inspector_data:
                     instance.inspector = InspectorConfig(**cast(dict[str, Any], inspector_data))

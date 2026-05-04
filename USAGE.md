@@ -18,9 +18,9 @@ ccproxy init              # writes ~/.config/ccproxy/ccproxy.yaml
 ccproxy init --force      # overwrite existing config
 ```
 
-Edit `~/.config/ccproxy/ccproxy.yaml` to configure transform rules, OAuth sources, and
-hooks. The config directory can be overridden with `--config PATH` or the
-`CCPROXY_CONFIG_DIR` environment variable.
+Edit `~/.config/ccproxy/ccproxy.yaml` to configure providers, transform
+overrides, and hooks. The config directory can be overridden with
+`--config PATH` or the `CCPROXY_CONFIG_DIR` environment variable.
 
 ### Start the server
 
@@ -220,20 +220,26 @@ x-ccproxy-hooks: +extra_hook,-verbose_mode
 
 ## 4. Transform Rules
 
-Transform rules live under `inspector.transforms` in the config.
-Each rule defines match criteria and a dispatch mode.
+Transform rules — `TransformOverride` entries under `inspector.transforms` —
+are an optional override layer on top of sentinel-driven Provider routing.
+The default list is empty; most routing comes from `providers` via
+`forward_oauth`'s sentinel detection. Override rules cover edge cases:
+forcing a specific destination for a path/model/host combination, bypassing
+auth for a specific host, etc.
 Rules are evaluated in order; first match wins.
 
 ### Matching
 
-All match fields are optional and combined with AND logic:
+All match fields are optional regexes and combined with AND logic:
 
-- `match_host` — checked against the request's host, `Host` header, and
+- `match_host` — regex matched against the request's host, `Host` header, and
   `X-Forwarded-Host`.
-- `match_path` — URL prefix match (default `/` matches everything).
-- `match_model` — substring match on the `model` field in the JSON request body.
+- `match_path` — regex matched against the URL path (default `.*` matches
+  everything).
+- `match_model` — regex matched against `glom(body, "model")` from the JSON
+  request body.
 
-### Three modes
+### Three actions
 
 **`passthrough`** — Forward to the original destination unchanged.
 The request is observed (logged, traced) but not modified.
@@ -242,22 +248,21 @@ Useful for WireGuard reference traffic that should flow through transparently.
 ```yaml
 inspector:
   transforms:
-    - mode: passthrough
-      match_host: cloudcode-pa.googleapis.com
+    - action: passthrough
+      match_host: cloudcode-pa\.googleapis\.com$
 ```
 
 **`redirect`** — Rewrite the destination host/port/scheme/path and inject auth
 credentials, but preserve the request body format.
-For same-format routing where the body is already correct (e.g.
-Anthropic-to-Anthropic, Gemini SDK-to-cloudcode-pa).
+For same-format routing where the body is already correct.
+Auth resolves via `dest_provider` → `providers[name]`.
 
 ```yaml
 inspector:
   transforms:
-    - mode: redirect
-      match_path: /v1internal
-      dest_host: cloudcode-pa.googleapis.com
-      dest_api_key_ref: gemini
+    - action: redirect
+      match_path: ^/v1internal
+      dest_provider: gemini
 ```
 
 **`transform`** — Full cross-provider rewrite via lightllm.
@@ -268,27 +273,25 @@ The response is also transformed back to the client's expected format.
 ```yaml
 inspector:
   transforms:
-    - mode: transform
-      match_path: /v1/chat/completions
-      match_model: gpt-4o
+    - action: transform
+      match_path: ^/v1/chat/completions
+      match_model: ^gpt-4o
       dest_provider: anthropic
       dest_model: claude-haiku-4-5-20251001
-      dest_api_key_ref: anthropic
 ```
 
 ### Transform rule fields
 
-| Field | Modes | Purpose |
+| Field | Actions | Purpose |
 | --- | --- | --- |
-| `mode` | all | `passthrough`, `redirect`, or `transform` (default: `redirect`) |
-| `match_host` | all | Hostname match (optional) |
-| `match_path` | all | URL prefix match (default: `/`) |
-| `match_model` | all | Model substring match (optional) |
-| `dest_provider` | redirect, transform | Provider name (e.g. `anthropic`, `gemini`) |
+| `action` | all | `passthrough`, `redirect`, or `transform` (default: `redirect`) |
+| `match_host` | all | Hostname regex (optional) |
+| `match_path` | all | Path regex (default: `.*`) |
+| `match_model` | all | Model regex (optional) |
+| `dest_provider` | redirect, transform | Provider name in `providers` — resolves host/path/auth/format |
 | `dest_model` | transform | Destination model name |
-| `dest_host` | redirect | Explicit destination host |
-| `dest_path` | redirect | Override request path |
-| `dest_api_key_ref` | redirect, transform | Provider name in `oat_sources` for auth |
+| `dest_host` | redirect | Raw host override (bypasses Provider lookup) |
+| `dest_path` | redirect | Raw path override |
 | `dest_vertex_project` | transform | GCP project ID (Vertex AI) |
 | `dest_vertex_location` | transform | GCP region (Vertex AI) |
 
@@ -316,28 +319,43 @@ sk-ant-oat-ccproxy-{provider}
 ```
 
 For example, `sk-ant-oat-ccproxy-anthropic` tells the `forward_oauth` hook to
-resolve the real token from `oat_sources.anthropic`.
+resolve the real token from `providers.anthropic.auth`.
 
-### Configuring token sources
+### Configuring providers
 
 ```yaml
-oat_sources:
+providers:
   anthropic:
-    command: "cat ~/.anthropic/oauth_token"
+    auth:
+      type: command
+      command: "cat ~/.anthropic/oauth_token"
+    host: api.anthropic.com
+    path: /v1/messages
+    provider: anthropic
+
   gemini:
-    file: "~/.config/gemini/oauth_token"
+    auth:
+      type: file
+      path: "~/.config/gemini/oauth_token"
+    host: cloudcode-pa.googleapis.com
+    path: "/v1internal:{action}"
+    provider: gemini
+
   openai:
-    command: "op read 'op://vault/openai/api_key'"
-    auth_header: "authorization"
+    auth:
+      type: command
+      command: "op read 'op://vault/openai/api_key'"
+      header: "authorization"
+    host: api.openai.com
+    path: /v1/chat/completions
+    provider: openai
 ```
 
-Each source can be a shell `command` or a `file` path.
-Optional fields:
-
-- `auth_header` — target header name (default: `authorization` with `Bearer`
-  prefix; set to `x-api-key` for raw injection).
-- `user_agent` — custom User-Agent for requests using this token.
-- `destinations` — URL patterns that should use this token.
+Each `auth` block is a discriminated `OAuthSource` — `command`, `file`,
+`anthropic_oauth`, or `google_oauth`. A bare YAML string under `auth:`
+auto-coerces to a `command` source.
+Optional `auth.header` overrides the target header name (default:
+`authorization` with `Bearer` prefix; set to `x-api-key` for raw injection).
 
 ### 401 retry
 
@@ -696,19 +714,37 @@ provider_map:
 | `termlog_verbosity` | `warn` | mitmproxy terminal log level |
 | `flow_detail` | `0` | Flow output verbosity (0-4) |
 
-### `oat_sources`
+### `providers`
 
 ```yaml
-oat_sources:
+providers:
   anthropic:
-    command: "cat ~/.anthropic/oauth_token"
-  gemini:
-    file: "~/.config/gemini/oauth_token"
-    auth_header: "x-api-key"
-    user_agent: "my-tool/1.0"
-    destinations:
-      - "generativelanguage.googleapis.com"
+    auth:
+      type: command
+      command: "cat ~/.anthropic/oauth_token"
+    host: api.anthropic.com
+    path: /v1/messages
+    provider: anthropic
+
+  deepseek:
+    auth:
+      type: command
+      command: "printenv DEEPSEEK_API_KEY"
+      header: x-api-key
+    host: api.deepseek.com
+    path: /anthropic/v1/messages
+    provider: anthropic
 ```
+
+Per-entry fields:
+
+- `auth` — discriminated `OAuthSource` (`command` / `file` / `anthropic_oauth`
+  / `google_oauth`). A bare string auto-coerces to a `command` source.
+  Optional `auth.header` overrides the target auth header name.
+- `host` — single destination hostname.
+- `path` — destination path. Supports `{model}` and `{action}` templating.
+- `provider` — LiteLLM provider identifier (`anthropic`, `gemini`, `openai`,
+  `deepseek`, …) driving format dispatch.
 
 ### `hooks`
 

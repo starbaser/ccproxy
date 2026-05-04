@@ -4,7 +4,7 @@ Calls resolve_cached_content() against the live Google AI Studio API to
 create/find a cached content resource, then makes a generateContent call
 with the cached_content name to confirm the provider accepts it.
 
-Requires a Gemini API key (resolved from ccproxy's oat_sources config).
+Requires a Gemini API key (resolved from ccproxy's providers config).
 
 Usage:
     uv run python scripts/test_gemini_cache.py
@@ -44,12 +44,12 @@ def _get_gemini_key() -> str:
         ).strip()
     except (FileNotFoundError, subprocess.CalledProcessError):
         pass
-    # Fall back to ccproxy oat_sources
+    # Fall back to ccproxy providers
     config = get_config()
     token = config.get_oauth_token("gemini")
     if token:
         return token
-    console.print("[red]Set GEMINI_API_KEY or configure opc/oat_sources[/red]")
+    console.print("[red]Set GEMINI_API_KEY or configure opc/providers[/red]")
     sys.exit(1)
 
 

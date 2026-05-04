@@ -51,7 +51,7 @@ _cached_project: str | None = None
 def prewarm_project() -> None:
     """Resolve the cloudaicompanion project ID at startup.
 
-    Called once after readiness if ``oat_sources.gemini`` is configured.
+    Called once after readiness if ``providers.gemini`` is configured.
     Calls ``loadCodeAssist`` with the Gemini OAuth token, caches the
     resulting ``cloudaicompanionProject`` for the process lifetime. On
     failure logs a warning but does not block startup — the hook will
@@ -62,12 +62,12 @@ def prewarm_project() -> None:
         return
 
     config = get_config()
-    if "gemini" not in config.oat_sources:
+    if "gemini" not in config.providers:
         return
 
     token = config.get_oauth_token("gemini")
     if not token:
-        logger.warning("gemini_cli: oat_sources.gemini configured but token is empty; project resolution skipped")
+        logger.warning("gemini_cli: providers.gemini configured but token is empty; project resolution skipped")
         return
 
     try:

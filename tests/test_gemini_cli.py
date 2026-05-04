@@ -289,7 +289,7 @@ class TestPrewarmProject:
         mock_resp.json.return_value = {"cloudaicompanionProject": "abc-xyz"}
 
         mock_config = MagicMock()
-        mock_config.oat_sources = {"gemini": object()}
+        mock_config.providers = {"gemini": object()}
         mock_config.get_oauth_token.return_value = "tok"
 
         with (
@@ -304,7 +304,7 @@ class TestPrewarmProject:
 
     def test_prewarm_skips_when_no_gemini_oat_source(self) -> None:
         mock_config = MagicMock()
-        mock_config.oat_sources = {}
+        mock_config.providers = {}
 
         with (
             patch("ccproxy.hooks.gemini_cli.get_config", return_value=mock_config),
@@ -317,7 +317,7 @@ class TestPrewarmProject:
 
     def test_prewarm_skips_when_token_missing(self) -> None:
         mock_config = MagicMock()
-        mock_config.oat_sources = {"gemini": object()}
+        mock_config.providers = {"gemini": object()}
         mock_config.get_oauth_token.return_value = ""
 
         with (
@@ -334,7 +334,7 @@ class TestPrewarmProject:
         mock_resp.status_code = 500
 
         mock_config = MagicMock()
-        mock_config.oat_sources = {"gemini": object()}
+        mock_config.providers = {"gemini": object()}
         mock_config.get_oauth_token.return_value = "tok"
 
         with (

@@ -108,11 +108,26 @@ also read from `$CCPROXY_CONFIG_DIR/ccproxy.yaml`.
 ccproxy:
   port: 4000
 
-  # OAuth token sources: map provider names to shell commands or file paths.
-  # Tokens are substituted when the sentinel key sk-ant-oat-ccproxy-{provider} is used.
-  oat_sources:
+  # Provider entries keyed by sentinel suffix. The sentinel key
+  # sk-ant-oat-ccproxy-{name} resolves to providers[name] for token
+  # injection and routing.
+  providers:
     anthropic:
-      command: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+      auth:
+        type: command
+        command: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+      host: api.anthropic.com
+      path: /v1/messages
+      provider: anthropic
+
+    deepseek:
+      auth:
+        type: command
+        command: "printenv DEEPSEEK_API_KEY"
+        header: x-api-key
+      host: api.deepseek.com
+      path: /anthropic/v1/messages
+      provider: anthropic
 
   hooks:
     inbound:
@@ -127,30 +142,23 @@ ccproxy:
       - ccproxy.hooks.commitbee_compat
 
   inspector:
+    # Optional regex-matched override rules layered on top of the
+    # sentinel-driven providers map. Default is empty: most routing
+    # comes from `providers` via forward_oauth's sentinel detection.
     transforms:
-      - mode: passthrough
-        match_host: cloudcode-pa.googleapis.com
-
-      - match_path: /v1/messages
-        mode: redirect
-        dest_provider: anthropic
-        dest_host: api.anthropic.com
-        dest_path: /v1/messages
-        dest_api_key_ref: anthropic
-
-      - match_path: /v1/chat/completions
-        match_model: gpt-4o
-        mode: transform
+      - match_path: ^/v1/chat/completions
+        match_model: ^gpt-4o
+        action: transform
         dest_provider: anthropic
         dest_model: claude-haiku-4-5-20251001
-        dest_api_key_ref: anthropic
 ```
 
-**Transform matching**: `match_host` (optional, checked against `pretty_host` +
-Host header + X-Forwarded-Host), `match_path` (prefix), `match_model` (substring
-in request body). First match wins.
-Three modes: `redirect` (default — rewrite destination, preserve body),
+**Transform matching**: `match_host` (optional regex, checked against
+`pretty_host` + Host header + X-Forwarded-Host), `match_path` (regex,
+default `.*`), `match_model` (regex, optional). First match wins.
+Three actions: `redirect` (default — rewrite destination, preserve body),
 `transform` (cross-format via lightllm), `passthrough` (forward unchanged).
+Auth resolves through `dest_provider` → `providers[name]`.
 
 **Hook config**: hooks in each stage list are topologically sorted by
 `@hook(reads=..., writes=...)` dependency declarations and executed in parallel
@@ -170,7 +178,7 @@ Per-request overrides via header: `x-ccproxy-hooks: +hook_name,-other_hook`.
 
 | Hook | Stage | Purpose |
 | --- | --- | --- |
-| `forward_oauth` | inbound | Sentinel key (`sk-ant-oat-ccproxy-{provider}`) substitution from `oat_sources` |
+| `forward_oauth` | inbound | Sentinel key (`sk-ant-oat-ccproxy-{provider}`) substitution from `providers` |
 | `extract_session_id` | inbound | Parses `metadata.user_id` → stores session_id on `flow.metadata` |
 | `gemini_cli` | outbound | Single hook for Gemini sentinel-key traffic: `v1internal` envelope wrap, conditional UA masquerade, path rewrite to `cloudcode-pa`, and unwrap on the way back |
 | `gemini_capacity_fallback` | outbound | Retries Gemini requests against a fallback model chain on 429 / 503 RESOURCE_EXHAUSTED |
@@ -382,9 +390,10 @@ manager.
 
 ### OAuth token errors
 
-OAuth tokens are loaded at startup from `oat_sources`. If a token command fails
-or returns an empty string, the sentinel key substitution is skipped and the raw
-sentinel key is forwarded — which will be rejected by the provider.
+OAuth tokens are loaded at startup from each `providers[name].auth` source. If
+a token command fails or returns an empty string, the sentinel key substitution
+is skipped and the raw sentinel key is forwarded — which will be rejected by
+the provider.
 Verify your token command works standalone:
 
 ```bash
@@ -392,8 +401,8 @@ jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json
 ```
 
 Tokens are refreshed automatically (TTL-based every 30 min, immediate on 401).
-Set `oat_sources` correctly and restart `ccproxy start` if tokens were stale at
-startup.
+Fix your `providers` entries and restart `ccproxy start` if tokens were stale
+at startup.
 
 ### TLS certificate errors in `ccproxy run`
 

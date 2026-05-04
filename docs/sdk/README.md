@@ -23,12 +23,12 @@ client = anthropic.Anthropic(
 ```
 
 When ccproxy sees this sentinel key, it:
-1. Looks up the OAuth token for the specified provider from `oat_sources` config
-2. Substitutes the sentinel with the real OAuth token
+1. Looks up the OAuth token for the specified provider from the `providers` map
+2. Substitutes the sentinel with the real OAuth token (and routes the request to the matching `Provider`'s `host`/`path`)
 3. If shaping is enabled, stamps captured compliance headers (beta flags, user-agent, etc.) onto the request
 
 **Requirements:**
-- OAuth credentials configured in `~/.config/ccproxy/ccproxy.yaml` under `oat_sources`
+- A `providers` entry configured in `~/.config/ccproxy/ccproxy.yaml` for the sentinel suffix
 - Pipeline hooks enabled: `forward_oauth`, `shape`
 
 ```bash
@@ -192,17 +192,21 @@ ccproxy status
 
 Examples expect ccproxy running with:
 - **Proxy port**: 4000 (default)
-- **OAuth credentials**: Configured in `~/.config/ccproxy/ccproxy.yaml` under `oat_sources`
-- **Model routing**: Configured via `inspector.transforms` in `~/.config/ccproxy/ccproxy.yaml`
+- **OAuth credentials**: Configured in `~/.config/ccproxy/ccproxy.yaml` under `providers`
+- **Model routing**: Driven by sentinel-key resolution against `providers`. Use `inspector.transforms` (`TransformOverride` entries) only for edge cases — bypassing auth for a host or forcing a specific destination for a path/model combo.
 
-### Example ccproxy.yaml OAuth Configuration
+### Example ccproxy.yaml Provider Configuration
 
 ```yaml
 ccproxy:
-  oat_sources:
+  providers:
     anthropic:
-      command: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
-      user_agent: "anthropic"
+      auth:
+        type: command
+        command: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+      host: api.anthropic.com
+      path: /v1/messages
+      provider: anthropic
 ```
 
 ## Troubleshooting
@@ -210,7 +214,7 @@ ccproxy:
 If examples fail:
 
 1. **Verify ccproxy is running**: `ccproxy status`
-2. **Check OAuth credentials**: Verify `oat_sources` in `~/.config/ccproxy/ccproxy.yaml`
+2. **Check provider configuration**: Verify the relevant entry under `providers` in `~/.config/ccproxy/ccproxy.yaml`
 3. **Review logs**: `ccproxy logs -f` for detailed error messages
 4. **Check pipeline hooks**: Ensure `forward_oauth` and `shape` are enabled in hooks configuration
 5. **Verify port**: Default is 4000, ensure it's not blocked or in use

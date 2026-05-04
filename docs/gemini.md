@@ -132,41 +132,43 @@ layers, each owning one transformation.
 
 ## Authentication
 
-`oat_sources.gemini` resolves the OAuth token from
+`providers.gemini.auth` resolves the OAuth token from
 `~/.gemini/oauth_creds.json`:
 
 ```yaml
-oat_sources:
+providers:
   gemini:
-    command: "jq -r '.access_token' ~/.gemini/oauth_creds.json"
-    destinations: ["cloudcode-pa.googleapis.com"]
-    user_agent: "GeminiCLI"
+    auth:
+      type: command
+      command: "jq -r '.access_token' ~/.gemini/oauth_creds.json"
+    host: cloudcode-pa.googleapis.com
+    path: "/v1internal:{action}"
+    provider: gemini
 ```
 
-`forward_oauth` substitutes the sentinel key with the resolved token. On 401,
-the addon retries once after refreshing the token.
+`forward_oauth` substitutes the sentinel key with the resolved token and stamps
+`flow.metadata["ccproxy.oauth_provider"] = "gemini"` so the `gemini_cli` hook
+fires. On 401, the addon retries once after refreshing the token.
 
 ## Configuration
 
-Default `nix/defaults.nix` ships these transform routes:
+The Gemini route is driven by `providers.gemini` — the sentinel key
+`sk-ant-oat-ccproxy-gemini` resolves to that entry for auth, host, and path.
+`inspector.transforms` is empty by default; the SDK and Glass paths below
+both ride sentinel-key resolution, not transform overrides.
 
 ```nix
-inspector.transforms = [
-  # WireGuard CLI flows already targeting cloudcode-pa — pass through unchanged
-  { match_host = "cloudcode-pa.googleapis.com"; mode = "passthrough"; }
+providers.gemini = {
+  auth = {
+    type = "command";
+    command = "jq -r '.access_token' ~/.gemini/oauth_creds.json";
+  };
+  host = "cloudcode-pa.googleapis.com";
+  path = "/v1internal:{action}";
+  provider = "gemini";
+};
 
-  # Gemini SDK pointed at ccproxy reverse proxy: /gemini/* → cloudcode-pa
-  { match_path = "/gemini/"; mode = "redirect";
-    dest_provider = "gemini";
-    dest_host = "cloudcode-pa.googleapis.com";
-    dest_api_key_ref = "gemini"; }
-
-  # Native v1internal clients (Glass) — body already wrapped
-  { match_path = "/v1internal"; mode = "redirect";
-    dest_provider = "gemini";
-    dest_host = "cloudcode-pa.googleapis.com";
-    dest_api_key_ref = "gemini"; }
-];
+inspector.transforms = [];
 
 hooks.outbound = [
   "ccproxy.hooks.gemini_cli"            # envelope wrap, header masquerade
@@ -175,6 +177,12 @@ hooks.outbound = [
   "ccproxy.hooks.shape"                 # optional CLI-fingerprint shape
 ];
 ```
+
+WireGuard CLI flows (where the Gemini CLI talks to `cloudcode-pa.googleapis.com`
+directly through the namespace jail) are handled by `gemini_cli`'s
+sentinel-aware trigger and the Provider's path templating — no `passthrough`
+override is required. Add a `TransformOverride` only when you need to bypass
+auth or force a specific destination for a non-sentinel flow.
 
 ## Working examples
 
@@ -224,5 +232,5 @@ The `compare` view will show:
 | Project resolution | `src/ccproxy/hooks/_gemini_project.py` |
 | Buffered response unwrap | `src/ccproxy/inspector/addon.py:_unwrap_gemini_response` |
 | Streaming response unwrap | `src/ccproxy/hooks/gemini_cli.py:EnvelopeUnwrapStream` |
-| Transform routes | `nix/defaults.nix` `inspector.transforms` |
+| Provider routing | `nix/defaults.nix` `providers.gemini` |
 | Tests | `tests/test_gemini_cli.py` |

@@ -1,4 +1,4 @@
-"""Regression: legacy oat_sources YAML formats still resolve after the oauth/ split.
+"""Regression: legacy auth-source YAML formats still resolve after the oauth/ split.
 
 The split moved CredentialSource/OAuthSource out of config.py and into a
 discriminated union under ccproxy.oauth.sources. parse_oauth_source must
@@ -23,7 +23,7 @@ from ccproxy.oauth.sources import (
 
 
 def test_bare_string_resolves_as_command_source() -> None:
-    """Legacy ``oat_sources: foo: "echo bar"`` still maps to a CommandOAuthSource."""
+    """Legacy ``providers.foo.auth: "echo bar"`` still maps to a CommandOAuthSource."""
     source = parse_oauth_source("echo bar")
     assert isinstance(source, CommandOAuthSource)
     assert source.command == "echo bar"
@@ -35,7 +35,6 @@ def test_dict_with_command_only_resolves_as_command_source() -> None:
     source = parse_oauth_source({"command": "echo tok", "user_agent": "Test/1.0"})
     assert isinstance(source, CommandOAuthSource)
     assert source.command == "echo tok"
-    assert source.user_agent == "Test/1.0"
 
 
 def test_dict_with_file_only_resolves_as_file_source() -> None:
@@ -43,7 +42,6 @@ def test_dict_with_file_only_resolves_as_file_source() -> None:
     source = parse_oauth_source({"file": "/etc/example/token", "destinations": ["api.test.com"]})
     assert isinstance(source, FileOAuthSource)
     assert source.file == "/etc/example/token"
-    assert source.destinations == ["api.test.com"]
 
 
 def test_explicit_type_command_dispatches_correctly() -> None:

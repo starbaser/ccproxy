@@ -485,22 +485,33 @@ class TestTransformMetaPersistence:
         from ccproxy.config import (
             CCProxyConfig,
             InspectorConfig,
-            TransformRoute,
+            Provider,
+            TransformOverride,
             set_config_instance,
         )
         from ccproxy.inspector.router import InspectorRouter
         from ccproxy.inspector.routes.transform import register_transform_routes
 
         transform_routes = [
-            TransformRoute(
-                mode="transform",
+            TransformOverride(
+                action="transform",
                 match_host="api.openai.com",
                 match_path="/v1/chat/completions",
                 dest_provider="anthropic",
                 dest_model="claude-3",
             )
         ]
-        config = CCProxyConfig(inspector=InspectorConfig(transforms=transform_routes))
+        providers = {
+            "anthropic": Provider(
+                host="api.anthropic.com",
+                path="/v1/messages",
+                provider="anthropic",
+            ),
+        }
+        config = CCProxyConfig(
+            inspector=InspectorConfig(transforms=transform_routes),
+            providers=providers,
+        )
         set_config_instance(config)
 
         mock_transform.return_value = ("https://api.anthropic.com/v1/messages", {}, b"{}")
@@ -550,15 +561,15 @@ class TestTransformMetaPersistence:
         from ccproxy.config import (
             CCProxyConfig,
             InspectorConfig,
-            TransformRoute,
+            TransformOverride,
             set_config_instance,
         )
         from ccproxy.inspector.router import InspectorRouter
         from ccproxy.inspector.routes.transform import register_transform_routes
 
         transform_routes = [
-            TransformRoute(
-                mode="redirect",
+            TransformOverride(
+                action="redirect",
                 match_host="api.openai.com",
                 match_path="/v1/",
                 dest_provider="anthropic",
@@ -606,19 +617,19 @@ class TestTransformMetaPersistence:
         from ccproxy.config import (
             CCProxyConfig,
             InspectorConfig,
-            TransformRoute,
+            TransformOverride,
             set_config_instance,
         )
         from ccproxy.inspector.router import InspectorRouter
         from ccproxy.inspector.routes.transform import register_transform_routes
 
         transform_routes = [
-            TransformRoute(
+            TransformOverride(
                 match_host="api.openai.com",
                 match_path="/",
                 dest_provider="anthropic",
                 dest_model="claude-3",
-                mode="passthrough",
+                action="passthrough",
             )
         ]
         config = CCProxyConfig(inspector=InspectorConfig(transforms=transform_routes))

@@ -29,13 +29,17 @@ logger = logging.getLogger(__name__)
 
 _noop = NoopLogging()
 
-# Providers whose get_complete_url() inherits the base class no-op.
-# Path suffixes normally added by litellm/main.py.
+_GEMINI_PROVIDERS = {"gemini", "vertex_ai", "vertex_ai_beta"}
+"""LiteLLM provider identifiers that share the Gemini code path (custom URL
+construction + custom transform_request bypass + Gemini SSE iterator)."""
+
 _PATH_SUFFIXES: dict[str, str] = {
     "anthropic": "/v1/messages",
 }
-
-_GEMINI_PROVIDERS = {"gemini", "vertex_ai", "vertex_ai_beta"}
+"""Path suffix LiteLLM normally appends in ``litellm/main.py`` for providers
+whose ``get_complete_url`` inherits the BaseConfig no-op. We replicate the
+append here so the lightllm dispatch returns a complete URL on its own —
+ccproxy's route layer can override with ``Provider.path`` when desired."""
 
 
 def _resolve_api_base(provider: str, model: str, api_base: str | None) -> str | None:

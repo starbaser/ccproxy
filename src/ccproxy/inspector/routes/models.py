@@ -46,7 +46,13 @@ def register_models_routes(router: InspectorRouter) -> None:
 
             flow.response = Response.make(
                 500,
-                b'{"error": "model catalog build failed"}',
+                json.dumps({
+                    "error": {
+                        "message": "model catalog build failed",
+                        "type": "server_error",
+                        "code": 500,
+                    },
+                }).encode(),
                 {"Content-Type": "application/json"},
             )
             return

@@ -51,11 +51,14 @@ ccproxy:
   port: 4000
   debug: true
 
-  oat_sources:
+  providers:
     anthropic:
-      command: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
-      user_agent: "claude-code"
-      destinations: ["api.anthropic.com"]
+      auth:
+        type: command
+        command: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+      host: api.anthropic.com
+      path: /v1/messages
+      provider: anthropic
 
   hooks:
     inbound:
@@ -74,12 +77,11 @@ ccproxy:
     port: 8083
     transforms:
       - match_host: cloudcode-pa.googleapis.com
-        mode: passthrough
+        action: passthrough
       - match_path: /v1/chat/completions
         match_model: gpt-4o
         dest_provider: anthropic
         dest_model: claude-haiku-4-5-20251001
-        dest_api_key_ref: anthropic
 ```
 
 ### Hook parameters
@@ -102,19 +104,22 @@ hooks:
 
 ## Transform rules
 
-Transform rules are configured under `inspector.transforms`. Each rule is a `TransformRoute` with these fields:
+The default `inspector.transforms` list is empty: sentinel-keyed flows route through `providers` automatically. Override rules cover edge cases — forcing a specific provider for a path/model combo, bypassing auth for a specific host, etc. Each rule is a `TransformOverride` with these fields:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `mode` | `redirect` \| `transform` \| `passthrough` | Default: `redirect`. Redirect rewrites host/auth only. Transform rewrites body format. Passthrough forwards unchanged. |
-| `match_host` | `str?` | Hostname to match (checked against `pretty_host` + `Host` header). |
-| `match_path` | `str` | Path prefix to match (default: `/`). |
-| `match_model` | `str?` | Model name substring to match in the request body. |
-| `dest_provider` | `str` | Provider name for lightllm dispatch (e.g. `anthropic`, `gemini`). |
-| `dest_model` | `str` | Model name for lightllm dispatch. |
-| `dest_host` | `str?` | Target hostname (redirect mode). |
-| `dest_path` | `str?` | Override path (redirect mode). |
-| `dest_api_key_ref` | `str?` | Provider name in `oat_sources` for credential lookup. |
+| `action` | `redirect` \| `transform` \| `passthrough` | Default: `redirect`. Redirect rewrites host/auth only. Transform rewrites body format via lightllm. Passthrough forwards unchanged. |
+| `match_host` | `str?` | Regex matched against `pretty_host`, `Host` header, and `X-Forwarded-Host`. |
+| `match_path` | `str` | Regex matched against the request path. Default: `.*`. |
+| `match_model` | `str?` | Regex matched against the `model` field in the request body. |
+| `dest_provider` | `str?` | ccproxy provider name — resolves to a `providers[name]` entry (host/path/auth/format). |
+| `dest_model` | `str?` | Rewrites `body['model']`. |
+| `dest_host` | `str?` | Raw host override. Bypasses provider lookup. |
+| `dest_path` | `str?` | Raw path override. |
+| `dest_vertex_project` | `str?` | GCP project ID for Vertex AI transforms. |
+| `dest_vertex_location` | `str?` | GCP region for Vertex AI transforms. |
+
+Auth is resolved via the `dest_provider` lookup: when a rule names `dest_provider: anthropic`, the auth comes from `providers.anthropic.auth` automatically — no separate auth-ref field is needed.
 
 ### Examples
 
@@ -122,7 +127,7 @@ Transform rules are configured under `inspector.transforms`. Each rule is a `Tra
 inspector:
   transforms:
     # Gemini passthrough (don't transform)
-    - mode: passthrough
+    - action: passthrough
       match_host: cloudcode-pa.googleapis.com
 
     # Route OpenAI requests to Anthropic
@@ -130,56 +135,66 @@ inspector:
       match_model: gpt-4o
       dest_provider: anthropic
       dest_model: claude-haiku-4-5-20251001
-      dest_api_key_ref: anthropic
 
     # Route all /v1/messages to a different Anthropic model
     - match_path: /v1/messages
       match_model: claude-sonnet
       dest_provider: anthropic
       dest_model: claude-opus-4-5-20251101
-      dest_api_key_ref: anthropic
 ```
 
-First match wins. Unmatched flows pass through unchanged to the original destination.
+First regex match wins. Unmatched reverse proxy flows return a 501 error (OpenAI shape); unmatched WireGuard flows pass through unchanged.
 
 ---
 
 ## OAuth token management
 
-### oat_sources configuration
+### providers configuration
 
-**Simple form** (command string):
-```yaml
-oat_sources:
-  anthropic: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
-```
+A `Provider` entry binds an auth source, a single destination (host + path), and a LiteLLM format identifier under a sentinel-suffix key. The sentinel key `sk-ant-oat-ccproxy-{name}` resolves to `providers[name]` for token injection and routing.
 
-**Extended form** (with user_agent and destinations):
+**Compact form** (bare command string auto-coerces to a `command` auth):
 ```yaml
-oat_sources:
+providers:
   anthropic:
-    command: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
-    user_agent: "ClaudeCode/1.0"
-    destinations: ["api.anthropic.com"]
-
-  zai:
-    command: "jq -r '.accessToken' ~/.zai/credentials.json"
-    user_agent: "MyApp/1.0"
-    destinations: ["api.z.ai", "z.ai"]
+    auth: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+    host: api.anthropic.com
+    path: /v1/messages
+    provider: anthropic
 ```
 
-Fields:
-- `command` (required) — shell command that outputs the token
-- `user_agent` (optional) — custom User-Agent header for this provider
-- `destinations` (optional) — URL patterns for auto-matching api_base to provider
+**Explicit form**:
+```yaml
+providers:
+  anthropic:
+    auth:
+      type: command
+      command: "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json"
+    host: api.anthropic.com
+    path: /v1/messages
+    provider: anthropic
+
+  deepseek:
+    auth:
+      type: command
+      command: "printenv DEEPSEEK_API_KEY"
+      header: x-api-key       # custom auth header — defaults to Authorization: Bearer
+    host: api.deepseek.com
+    path: /anthropic/v1/messages
+    provider: anthropic       # destination format for lightllm dispatch
+```
+
+Provider fields:
+- `auth` — discriminated union: `command`, `file`, `anthropic_oauth`, `google_oauth`. A bare string is coerced to `{type: command, command: <string>}`.
+- `auth.header` — target header name; omit for the default `Authorization: Bearer {token}`.
+- `host` — single destination hostname.
+- `path` — destination path. Supports `{model}` and `{action}` templating substituted from glom-read body fields and URL captures.
+- `provider` — LiteLLM provider identifier (`anthropic`, `gemini`, `openai`, `deepseek`, …). Drives `lightllm.transform_to_provider` when the incoming format differs from what the destination speaks.
 
 ### Token refresh
 
 On HTTP 401 with `x-ccproxy-oauth-injected: 1`, the inspector addon calls `refresh_oauth_token(provider)` to re-resolve the credential source. If the token changed, the request is retried with the fresh token. If unchanged, the error propagates (credential is truly stale).
 
-### Destination matching
+### Provider resolution
 
-When `forward_oauth` needs to determine which provider a request targets, it uses this priority:
-
-1. `destinations` patterns in `oat_sources` (checks if host contains pattern)
-2. `inspector.provider_map` (exact hostname lookup)
+Provider resolution is sentinel-driven, not destination-driven. `forward_oauth` reads the `x-api-key` / `Authorization` header, parses the `sk-ant-oat-ccproxy-{name}` suffix, and looks up `providers[name]`. When no sentinel is present, it walks `config.providers` in dict insertion order and uses the first entry with a cached token as a fallback. `Provider.host` is a single value — there is no destinations-pattern matching layer. (`inspector.provider_map` is unrelated: it's a hostname → `gen_ai.system` mapping for OTel attribution only.)

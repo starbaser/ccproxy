@@ -6,17 +6,22 @@ import json
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-import pytest
 from mitmproxy.proxy.mode_specs import ProxyMode
 
-from ccproxy.config import InspectorConfig, TransformRoute, set_config_instance
+from ccproxy.config import (
+    CCProxyConfig,
+    InspectorConfig,
+    Provider,
+    TransformOverride,
+    set_config_instance,
+)
 from ccproxy.flows.store import FlowRecord, InspectorMeta
 from ccproxy.inspector.router import InspectorRouter
 from ccproxy.inspector.routes.transform import (
-    _resolve_api_key,
     _resolve_transform_target,
     register_transform_routes,
 )
+from ccproxy.oauth.sources import CommandOAuthSource
 
 
 def _make_flow(
@@ -52,13 +57,35 @@ def _make_flow(
 
 
 def _make_config_with_transforms(transforms: list[dict[str, Any]]) -> None:
-    """Set up a CCProxyConfig with transform rules."""
-    from ccproxy.config import CCProxyConfig
-
-    transform_routes = [TransformRoute(**t) for t in transforms]
-    inspector = InspectorConfig(transforms=transform_routes)
+    """Set up a CCProxyConfig with transform override rules."""
+    overrides = [TransformOverride(**t) for t in transforms]
+    inspector = InspectorConfig(transforms=overrides)
     config = CCProxyConfig(inspector=inspector)
     set_config_instance(config)
+
+
+def _make_config_with_providers(providers: dict[str, Provider]) -> CCProxyConfig:
+    """Set up a CCProxyConfig with sentinel-keyed Provider entries."""
+    config = CCProxyConfig(providers=providers, inspector=InspectorConfig())
+    set_config_instance(config)
+    return config
+
+
+def _make_provider(
+    *,
+    command: str = "echo tok",
+    header: str | None = None,
+    host: str = "api.anthropic.com",
+    path: str = "/v1/messages",
+    provider: str = "anthropic",
+) -> Provider:
+    """Build a Provider with a CommandOAuthSource for tests."""
+    return Provider(
+        auth=CommandOAuthSource(command=command, header=header) if command else None,
+        host=host,
+        path=path,
+        provider=provider,
+    )
 
 
 class TestResolveTransformTarget:
@@ -195,31 +222,54 @@ class TestResolveTransformTarget:
         assert target is not None
 
 
-class TestResolveApiKey:
-    def test_none_ref(self) -> None:
-        target = TransformRoute(
-            match_host="x",
-            dest_provider="anthropic",
-            dest_model="m",
-            dest_api_key_ref=None,
-        )
-        assert _resolve_api_key(target) is None
+class TestSentinelResolvedProvider:
+    """Resolve target via flow.metadata['ccproxy.oauth_provider'] when no override matches."""
 
-    def test_env_var_fallback(self, monkeypatch: pytest.MonkeyPatch, cleanup: None) -> None:
-        monkeypatch.setenv("MY_API_KEY", "env-key-value")
+    def test_returns_provider_for_known_sentinel(self, cleanup: None) -> None:
+        provider = _make_provider(host="api.anthropic.com", path="/v1/messages", provider="anthropic")
+        _make_config_with_providers({"anthropic": provider})
+
+        flow = _make_flow(host="proxy.local", path="/v1/chat/completions")
+        flow.metadata["ccproxy.oauth_provider"] = "anthropic"
+
+        target = _resolve_transform_target(flow)
+        assert isinstance(target, Provider)
+        assert target is provider
+
+    def test_returns_none_when_no_override_and_no_sentinel(self, cleanup: None) -> None:
+        _make_config_with_providers({})
+        flow = _make_flow(host="proxy.local", path="/v1/chat/completions")
+        assert _resolve_transform_target(flow) is None
+
+    def test_returns_none_when_sentinel_provider_not_registered(self, cleanup: None) -> None:
+        _make_config_with_providers({})
+        flow = _make_flow(host="proxy.local", path="/v1/chat/completions")
+        flow.metadata["ccproxy.oauth_provider"] = "anthropic"
+        assert _resolve_transform_target(flow) is None
+
+    def test_override_wins_over_sentinel(self, cleanup: None) -> None:
+        """First-match override beats the sentinel-resolved Provider fallback."""
         from ccproxy.config import CCProxyConfig
 
-        config = CCProxyConfig()
+        sentinel_provider = _make_provider(host="api.anthropic.com", provider="anthropic")
+        override = TransformOverride(
+            match_host="proxy.local",
+            match_path="/v1/chat/completions",
+            dest_provider="anthropic",
+            dest_model="claude-3-5-sonnet-20241022",
+        )
+        config = CCProxyConfig(
+            inspector=InspectorConfig(transforms=[override]),
+            providers={"anthropic": sentinel_provider},
+        )
         set_config_instance(config)
 
-        target = TransformRoute(
-            match_host="x",
-            dest_provider="anthropic",
-            dest_model="m",
-            dest_api_key_ref="MY_API_KEY",
-        )
-        result = _resolve_api_key(target)
-        assert result == "env-key-value"
+        flow = _make_flow(host="proxy.local", path="/v1/chat/completions")
+        flow.metadata["ccproxy.oauth_provider"] = "anthropic"
+
+        target = _resolve_transform_target(flow)
+        assert isinstance(target, TransformOverride)
+        assert target is override
 
 
 class TestHandleTransform:
@@ -271,17 +321,25 @@ class TestHandleTransform:
 
     @patch("ccproxy.lightllm.transform_to_provider")
     def test_rewrites_matched_flow(self, mock_transform: MagicMock, cleanup: None) -> None:
-        _make_config_with_transforms(
-            [
-                {
-                    "mode": "transform",
-                    "match_host": "api.openai.com",
-                    "match_path": "/v1/chat/completions",
-                    "dest_provider": "anthropic",
-                    "dest_model": "claude-3-5-sonnet-20241022",
-                }
-            ]
+        # transform action with an override requires a registered Provider entry
+        # for dest_provider so the handler can resolve the LiteLLM format.
+        config = CCProxyConfig(
+            inspector=InspectorConfig(
+                transforms=[
+                    TransformOverride(
+                        action="transform",
+                        match_host="api.openai.com",
+                        match_path="/v1/chat/completions",
+                        dest_provider="anthropic",
+                        dest_model="claude-3-5-sonnet-20241022",
+                    )
+                ]
+            ),
+            providers={
+                "anthropic": _make_provider(host="api.anthropic.com", provider="anthropic"),
+            },
         )
+        set_config_instance(config)
         mock_transform.return_value = (
             "https://api.anthropic.com/v1/messages",
             {"x-api-key": "test-key", "anthropic-version": "2023-06-01"},
@@ -307,18 +365,23 @@ class TestHandleTransform:
 
     @patch("ccproxy.lightllm.transform_to_provider")
     def test_passes_messages_and_params(self, mock_transform: MagicMock, cleanup: None) -> None:
-        _make_config_with_transforms(
-            [
-                {
-                    "mode": "transform",
-                    "match_host": "api.openai.com",
-                    "match_path": "/",
-                    "dest_provider": "anthropic",
-                    "dest_model": "claude-3-5-sonnet-20241022",
-                    "dest_api_key_ref": None,
-                }
-            ]
+        config = CCProxyConfig(
+            inspector=InspectorConfig(
+                transforms=[
+                    TransformOverride(
+                        action="transform",
+                        match_host="api.openai.com",
+                        match_path="/",
+                        dest_provider="anthropic",
+                        dest_model="claude-3-5-sonnet-20241022",
+                    )
+                ]
+            ),
+            providers={
+                "anthropic": _make_provider(host="api.anthropic.com", provider="anthropic"),
+            },
         )
+        set_config_instance(config)
         mock_transform.return_value = ("https://api.anthropic.com/v1/messages", {}, b"{}")
 
         flow = _make_flow(
@@ -372,6 +435,8 @@ class TestHandleTransform:
 
         assert flow.response is not None
         assert flow.response.status_code == 501
+        body = json.loads(flow.response.content)
+        assert body["error"]["type"] == "not_implemented_error"
 
     def test_wireguard_unmatched_passes_through(self, cleanup: None) -> None:
         _make_config_with_transforms(
@@ -409,7 +474,7 @@ class TestHandleTransform:
                     "match_path": "/v1/chat/completions",
                     "dest_provider": "anthropic",
                     "dest_model": "claude-3-5-sonnet-20241022",
-                    "mode": "passthrough",
+                    "action": "passthrough",
                 }
             ]
         )
@@ -440,7 +505,7 @@ class TestSafetyNet:
         _make_config_with_transforms(
             [
                 {
-                    "mode": "redirect",
+                    "action": "redirect",
                     "match_host": "proxy.local",
                     "match_path": "/v1/",
                     "dest_provider": "anthropic",
@@ -468,7 +533,8 @@ class TestSafetyNet:
         assert flow.response is not None
         assert flow.response.status_code == 502
         body = json.loads(flow.response.content)
-        assert "transform failed" in body["error"]
+        assert body["error"]["type"] == "api_error"
+        assert "transform failed" in body["error"]["message"]
 
 
 class TestHandleRedirect:
@@ -476,7 +542,7 @@ class TestHandleRedirect:
 
     def _make_redirect_config(self, overrides: dict[str, Any] | None = None) -> None:
         base = {
-            "mode": "redirect",
+            "action": "redirect",
             "match_host": "proxy.local",
             "match_path": "/v1/",
             "dest_provider": "anthropic",
@@ -513,44 +579,13 @@ class TestHandleRedirect:
 
         assert flow.request.path == "/v2/override"
 
-    def test_redirect_strips_match_prefix(self, cleanup: None) -> None:
-        self._make_redirect_config({"match_path": "/gemini/"})
-        router = InspectorRouter(name="test_redir", request_passthrough=True, response_passthrough=True)
-        register_transform_routes(router)
-
-        flow = self._make_redirect_flow(path="/gemini/v1beta/models/gemini-pro:generateContent")
-        router.request(flow)
-
-        # Prefix /gemini stripped, remainder preserved
-        assert flow.request.path.startswith("/v1beta/")
-
-    def test_redirect_gemini_strips_prefix_only(self, cleanup: None) -> None:
-        """Redirect mode strips the match_path prefix but does NOT rewrite Gemini paths.
-
-        The gemini_cli outbound hook owns the v1internal path rewrite. Redirect
-        only does host swap + prefix strip.
-        """
-        self._make_redirect_config(
-            {
-                "match_path": "/gemini/",
-                "dest_provider": "gemini",
-                "dest_host": "cloudcode-pa.googleapis.com",
-            }
-        )
-        router = InspectorRouter(name="test_redir", request_passthrough=True, response_passthrough=True)
-        register_transform_routes(router)
-
-        flow = self._make_redirect_flow(path="/gemini/models/gemini-pro:generateContent")
-        router.request(flow)
-
-        assert flow.request.path == "/models/gemini-pro:generateContent"
-        assert flow.request.host == "cloudcode-pa.googleapis.com"
-
     def test_redirect_missing_dest_host_passthrough(self, cleanup: None) -> None:
+        # No dest_host AND no providers entry for "anthropic" → handler returns
+        # without rewriting; flow.request.host stays at the inbound value.
         _make_config_with_transforms(
             [
                 {
-                    "mode": "redirect",
+                    "action": "redirect",
                     "match_host": "proxy.local",
                     "match_path": "/v1/",
                     "dest_provider": "anthropic",
@@ -581,25 +616,29 @@ class TestHandleRedirect:
         assert record.transform.provider == "anthropic"
 
     def test_redirect_injects_api_key(self, cleanup: None) -> None:
-        from ccproxy.config import CCProxyConfig
-        from ccproxy.oauth.sources import CommandOAuthSource
-
+        """Override-driven redirect injects Authorization from the bound Provider."""
         config = CCProxyConfig(
             inspector=InspectorConfig(
                 transforms=[
-                    TransformRoute(
-                        mode="redirect",
+                    TransformOverride(
+                        action="redirect",
                         match_host="proxy.local",
                         match_path="/v1/",
                         dest_provider="anthropic",
                         dest_host="api.anthropic.com",
-                        dest_api_key_ref="anthropic",
                     )
                 ]
             ),
-            oat_sources={"anthropic": CommandOAuthSource(command="echo tok")},
+            providers={
+                "anthropic": Provider(
+                    auth=CommandOAuthSource(command="echo tok"),
+                    host="api.anthropic.com",
+                    path="/v1/messages",
+                    provider="anthropic",
+                ),
+            },
         )
-        config._oat_values["anthropic"] = "injected-token"
+        config._cached_auth_tokens["anthropic"] = "injected-token"
         set_config_instance(config)
 
         router = InspectorRouter(name="test_redir", request_passthrough=True, response_passthrough=True)
@@ -622,17 +661,27 @@ class TestContextCacheInTransform:
         mock_transform: MagicMock,
         cleanup: None,
     ) -> None:
-        _make_config_with_transforms(
-            [
-                {
-                    "mode": "transform",
-                    "match_host": "api.openai.com",
-                    "match_path": "/",
-                    "dest_provider": "gemini",
-                    "dest_model": "gemini-2.0-flash",
-                }
-            ]
+        config = CCProxyConfig(
+            inspector=InspectorConfig(
+                transforms=[
+                    TransformOverride(
+                        action="transform",
+                        match_host="api.openai.com",
+                        match_path="/",
+                        dest_provider="gemini",
+                        dest_model="gemini-2.0-flash",
+                    )
+                ]
+            ),
+            providers={
+                "gemini": _make_provider(
+                    host="generativelanguage.googleapis.com",
+                    path="/v1beta",
+                    provider="gemini",
+                ),
+            },
         )
+        set_config_instance(config)
 
         mock_cache.return_value = (
             [{"role": "user", "content": "filtered"}],
@@ -665,17 +714,27 @@ class TestContextCacheInTransform:
         mock_transform: MagicMock,
         cleanup: None,
     ) -> None:
-        _make_config_with_transforms(
-            [
-                {
-                    "mode": "transform",
-                    "match_host": "api.openai.com",
-                    "match_path": "/",
-                    "dest_provider": "gemini",
-                    "dest_model": "gemini-2.0-flash",
-                }
-            ]
+        config = CCProxyConfig(
+            inspector=InspectorConfig(
+                transforms=[
+                    TransformOverride(
+                        action="transform",
+                        match_host="api.openai.com",
+                        match_path="/",
+                        dest_provider="gemini",
+                        dest_model="gemini-2.0-flash",
+                    )
+                ]
+            ),
+            providers={
+                "gemini": _make_provider(
+                    host="generativelanguage.googleapis.com",
+                    path="/v1beta",
+                    provider="gemini",
+                ),
+            },
         )
+        set_config_instance(config)
 
         mock_transform.return_value = ("https://gemini.googleapis.com/v1", {}, b"{}")
 
@@ -700,17 +759,23 @@ class TestContextCacheInTransform:
         mock_transform: MagicMock,
         cleanup: None,
     ) -> None:
-        _make_config_with_transforms(
-            [
-                {
-                    "mode": "transform",
-                    "match_host": "api.openai.com",
-                    "match_path": "/",
-                    "dest_provider": "anthropic",
-                    "dest_model": "claude-3",
-                }
-            ]
+        config = CCProxyConfig(
+            inspector=InspectorConfig(
+                transforms=[
+                    TransformOverride(
+                        action="transform",
+                        match_host="api.openai.com",
+                        match_path="/",
+                        dest_provider="anthropic",
+                        dest_model="claude-3",
+                    )
+                ]
+            ),
+            providers={
+                "anthropic": _make_provider(host="api.anthropic.com", provider="anthropic"),
+            },
         )
+        set_config_instance(config)
 
         mock_transform.return_value = ("https://api.anthropic.com/v1/messages", {}, b"{}")
 
@@ -728,8 +793,6 @@ class TestResponseTransformExceptionHandling:
 
     @patch("ccproxy.lightllm.transform_to_openai", side_effect=RuntimeError("transform exploded"))
     def test_transform_exception_passes_through(self, mock_transform: MagicMock, cleanup: None) -> None:
-        from ccproxy.config import CCProxyConfig
-
         config = CCProxyConfig()
         set_config_instance(config)
 
