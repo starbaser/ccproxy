@@ -64,6 +64,13 @@ def render(s: dict[str, Any]) -> str:
     comment("Falls back to stderr with a warning when systemd-python is unavailable.")
     comment("use_journal: false")
     blank()
+    comment("SYSLOG_IDENTIFIER for the journal handler when use_journal=true.")
+    comment("Defaults derive from the config-dir basename:")
+    comment("  ~/.config/ccproxy/            -> ccproxy")
+    comment("  ~/dev/projects/foo/.ccproxy/  -> ccproxy-foo")
+    comment("Override here, or via CCPROXY_JOURNAL_IDENTIFIER env var.")
+    comment("journal_identifier: ccproxy-myproject")
+    blank()
 
     # ── oat_sources ──
 

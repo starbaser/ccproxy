@@ -129,6 +129,72 @@ ccproxy:
         finally:
             yaml_path.unlink()
 
+
+class TestResolvedLogFile:
+    """Tests for the ``resolved_log_file`` property."""
+
+    def test_resolved_log_file_relative(self, tmp_path: Path) -> None:
+        """Relative log_file resolves against ccproxy_config_path.parent."""
+        config = CCProxyConfig()
+        config.ccproxy_config_path = tmp_path / "ccproxy.yaml"
+        config.log_file = Path("ccproxy.log")
+        assert config.resolved_log_file == tmp_path / "ccproxy.log"
+
+    def test_resolved_log_file_absolute(self, tmp_path: Path) -> None:
+        """Absolute log_file passes through unchanged."""
+        config = CCProxyConfig()
+        config.ccproxy_config_path = tmp_path / "ccproxy.yaml"
+        absolute_path = tmp_path / "elsewhere" / "ccproxy.log"
+        config.log_file = absolute_path
+        assert config.resolved_log_file == absolute_path
+
+    def test_resolved_log_file_none(self) -> None:
+        """log_file=None resolves to None."""
+        config = CCProxyConfig()
+        config.log_file = None
+        assert config.resolved_log_file is None
+
+    def test_log_file_from_yaml(self, tmp_path: Path) -> None:
+        """YAML log_file value is parsed into the field."""
+        yaml_path = tmp_path / "ccproxy.yaml"
+        absolute_log = tmp_path / "foo.log"
+        yaml_path.write_text(f"ccproxy:\n  log_file: {absolute_log}\n")
+        config = CCProxyConfig.from_yaml(yaml_path)
+        assert config.log_file == absolute_log
+        assert config.resolved_log_file == absolute_log
+
+    def test_log_file_yaml_null_disables(self, tmp_path: Path) -> None:
+        """YAML log_file: null sets the field to None."""
+        yaml_path = tmp_path / "ccproxy.yaml"
+        yaml_path.write_text("ccproxy:\n  log_file: null\n")
+        config = CCProxyConfig.from_yaml(yaml_path)
+        assert config.log_file is None
+        assert config.resolved_log_file is None
+
+
+class TestJournalIdentifier:
+    """Tests for the ``journal_identifier`` config field."""
+
+    def test_journal_identifier_default_none(self, monkeypatch: mock.MagicMock) -> None:
+        """Default value is None (derivation happens in cli._derive_journal_identifier)."""
+        monkeypatch.delenv("CCPROXY_JOURNAL_IDENTIFIER", raising=False)
+        config = CCProxyConfig()
+        assert config.journal_identifier is None
+
+    def test_journal_identifier_explicit_override(self, tmp_path: Path) -> None:
+        """YAML journal_identifier value is parsed into the field."""
+        yaml_path = tmp_path / "ccproxy.yaml"
+        yaml_path.write_text("ccproxy:\n  journal_identifier: ccproxy-myproj\n")
+        config = CCProxyConfig.from_yaml(yaml_path)
+        assert config.journal_identifier == "ccproxy-myproj"
+
+    def test_journal_identifier_env_override(self, monkeypatch: mock.MagicMock) -> None:
+        """CCPROXY_JOURNAL_IDENTIFIER env var sets the field via pydantic-settings."""
+        monkeypatch.setenv("CCPROXY_JOURNAL_IDENTIFIER", "ccproxy-fromenv")
+        config = CCProxyConfig()
+        assert config.journal_identifier == "ccproxy-fromenv"
+
+
 class TestConfigSingleton:
     """Tests for configuration singleton functions."""
 

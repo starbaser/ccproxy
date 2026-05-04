@@ -283,89 +283,95 @@ ccproxy:
 
 
 class TestViewLogs:
-    @patch("shutil.which")
+    """Tests for ``view_logs`` — tails ``cfg.resolved_log_file``."""
+
+    @staticmethod
+    def _setup_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        """Write a minimal ccproxy.yaml + log file, return the log path."""
+        ccproxy_config = tmp_path / "ccproxy.yaml"
+        ccproxy_config.write_text("ccproxy:\n  host: 127.0.0.1\n  port: 4000\n")
+        log_file = tmp_path / "ccproxy.log"
+        log_file.write_text("log content\n")
+        monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
+        clear_config_instance()
+        return log_file
+
     @patch("subprocess.run")
-    def test_logs_journalctl_when_service_active(self, mock_run: Mock, mock_which: Mock) -> None:
-        """Test that logs delegates to journalctl when systemd service is active."""
-        mock_which.return_value = "/usr/bin/systemctl"
-        mock_run.side_effect = [
-            Mock(stdout="active\n", returncode=0),
-            Mock(returncode=0),
-        ]
+    def test_view_logs_tails_config_dir_file(
+        self, mock_run: Mock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Default invocation tails ``cfg.resolved_log_file`` via ``tail``."""
+        log_file = self._setup_config(tmp_path, monkeypatch)
+        mock_run.return_value = Mock(returncode=0)
 
         with pytest.raises(SystemExit) as exc_info:
             view_logs()
 
         assert exc_info.value.code == 0
-        journalctl_call = mock_run.call_args_list[1]
-        assert "journalctl" in journalctl_call[0][0]
-        assert "-u" in journalctl_call[0][0]
-        assert "ccproxy.service" in journalctl_call[0][0]
+        cmd = mock_run.call_args[0][0]
+        assert cmd[0] == "tail"
+        assert cmd[-1] == str(log_file)
 
-    @patch("shutil.which")
     @patch("subprocess.run")
-    def test_logs_follow_passes_flag(self, mock_run: Mock, mock_which: Mock) -> None:
-        """Test that follow flag is passed to journalctl."""
-        mock_which.return_value = "/usr/bin/systemctl"
-        mock_run.side_effect = [
-            Mock(stdout="active\n", returncode=0),
-            Mock(returncode=0),
-        ]
+    def test_view_logs_follow_passes_flag(
+        self, mock_run: Mock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``follow=True`` adds ``-f`` to the tail invocation."""
+        self._setup_config(tmp_path, monkeypatch)
+        mock_run.return_value = Mock(returncode=0)
 
         with pytest.raises(SystemExit):
             view_logs(follow=True)
 
-        journalctl_call = mock_run.call_args_list[1]
-        assert "-f" in journalctl_call[0][0]
+        cmd = mock_run.call_args[0][0]
+        assert "-f" in cmd
 
-    @patch("shutil.which")
     @patch("subprocess.run")
-    def test_logs_lines_passed_to_journalctl(self, mock_run: Mock, mock_which: Mock) -> None:
-        """Test that lines count is passed to journalctl."""
-        mock_which.return_value = "/usr/bin/systemctl"
-        mock_run.side_effect = [
-            Mock(stdout="active\n", returncode=0),
-            Mock(returncode=0),
-        ]
+    def test_view_logs_lines_passed_to_tail(
+        self, mock_run: Mock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``lines=N`` reaches the ``tail -n N`` argument."""
+        self._setup_config(tmp_path, monkeypatch)
+        mock_run.return_value = Mock(returncode=0)
 
         with pytest.raises(SystemExit):
-            view_logs(lines=50)
+            view_logs(lines=42)
 
-        journalctl_call = mock_run.call_args_list[1]
-        cmd = journalctl_call[0][0]
+        cmd = mock_run.call_args[0][0]
         n_idx = cmd.index("-n")
-        assert cmd[n_idx + 1] == "50"
+        assert cmd[n_idx + 1] == "42"
 
-    @patch("ccproxy.cli.Path")
-    @patch("shutil.which")
-    @patch("subprocess.run")
-    def test_logs_process_compose_when_socket_present(self, mock_run: Mock, mock_which: Mock, mock_path: Mock) -> None:
-        """Test that logs delegates to process-compose when socket exists."""
-        mock_which.side_effect = lambda cmd: "/usr/bin/systemctl" if cmd == "systemctl" else "/usr/bin/process-compose"
-        mock_run.side_effect = [
-            Mock(stdout="inactive\n", returncode=3),
-            Mock(returncode=0),
-        ]
-        mock_socket = Mock()
-        mock_socket.exists.return_value = True
-        mock_path.return_value = mock_socket
+    def test_view_logs_no_log_file_exits_1(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """When the resolved log file does not exist, exits 1 with an error."""
+        ccproxy_config = tmp_path / "ccproxy.yaml"
+        ccproxy_config.write_text("ccproxy:\n  log_file: null\n")
+        monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
+        clear_config_instance()
 
-        with pytest.raises(SystemExit) as exc_info:
-            view_logs()
-
-        assert exc_info.value.code == 0
-        pc_call = mock_run.call_args_list[1]
-        assert "process-compose" in pc_call[0][0]
-
-    @patch("shutil.which", return_value=None)
-    def test_logs_exits_1_when_no_supervisor(self, mock_which: Mock, capsys) -> None:
-        """Test that logs exits 1 when no supervisor is found."""
         with pytest.raises(SystemExit) as exc_info:
             view_logs()
 
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
-        assert "No active ccproxy service found" in captured.err
+        assert "No log file at" in captured.err
+
+    def test_view_logs_missing_file_exits_1(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """log_file configured but not yet created → exit 1."""
+        ccproxy_config = tmp_path / "ccproxy.yaml"
+        ccproxy_config.write_text("ccproxy:\n  log_file: ccproxy.log\n")
+        monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
+        clear_config_instance()
+
+        with pytest.raises(SystemExit) as exc_info:
+            view_logs()
+
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "No log file at" in captured.err
 
 
 class TestShowStatus:
@@ -395,6 +401,8 @@ ccproxy:
         status = json.loads(captured.out)
         assert status["proxy"] is True
         assert status["config"]["ccproxy.yaml"] == str(ccproxy_config)
+        # No log file written yet, so status.log should be None.
+        assert status["log"] is None
 
     @patch("socket.create_connection", side_effect=OSError)
     def test_status_json_proxy_stopped(self, mock_conn: Mock, tmp_path: Path, capsys, monkeypatch) -> None:
@@ -415,6 +423,7 @@ ccproxy:
         status = json.loads(captured.out)
         assert status["proxy"] is False
         assert status["config"]["ccproxy.yaml"] == str(ccproxy_config)
+        assert status["log"] is None
 
     @patch("socket.create_connection", side_effect=OSError)
     def test_status_json_no_config(self, mock_conn: Mock, tmp_path: Path, capsys, monkeypatch) -> None:
@@ -454,6 +463,8 @@ ccproxy:
     inbound:
       - ccproxy.hooks.forward_oauth
 """)
+        log_file = tmp_path / "ccproxy.log"
+        log_file.write_text("log content")
 
         monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
         clear_config_instance()
@@ -470,6 +481,10 @@ ccproxy:
         assert "true" in captured.out
         assert "config" in captured.out
         assert "ccproxy.yaml" in captured.out
+        # The "log" row label appears; the path itself may be truncated by
+        # rich at narrow terminal widths, so we don't assert on the full path.
+        # Full-path verification lives in the JSON test (status["log"]).
+        assert "log" in captured.out
 
     def test_status_rich_output_no_config(self, tmp_path: Path, capsys, monkeypatch) -> None:
         """Test status rich output with no config files."""
@@ -583,8 +598,8 @@ class TestSetupLogging:
         self._root().handlers.clear()
         self._root().setLevel(logging.WARNING)
 
-    def test_stderr_handler_when_use_journal_false(self, tmp_path: Path) -> None:
-        """Default path: StreamHandler pointed at sys.stderr."""
+    def test_stderr_handler_when_no_log_file_no_journal(self, tmp_path: Path) -> None:
+        """Without log_file or journal, only the stderr StreamHandler is installed."""
         try:
             setup_logging(tmp_path, log_level="INFO", use_journal=False)
             handlers = self._root().handlers
@@ -593,6 +608,45 @@ class TestSetupLogging:
             assert handlers[0].stream is sys.stderr
         finally:
             self._reset_root()
+
+    def test_file_handler_added_when_log_file_set(self, tmp_path: Path) -> None:
+        """log_file=<path> adds a FileHandler alongside the stderr StreamHandler.
+
+        No INVOCATION_ID heuristic — file logging is unconditional.
+        """
+        target = tmp_path / "ccproxy.log"
+        try:
+            setup_logging(
+                tmp_path,
+                log_level="INFO",
+                log_file=target,
+                use_journal=False,
+            )
+            handlers = self._root().handlers
+            assert len(handlers) == 2
+            handler_types = {type(h).__name__ for h in handlers}
+            assert "FileHandler" in handler_types
+            assert "StreamHandler" in handler_types
+            assert target.exists()
+        finally:
+            self._reset_root()
+            target.unlink(missing_ok=True)
+
+    def test_file_handler_truncates_on_each_call(self, tmp_path: Path) -> None:
+        """FileHandler opens with mode='w' — pre-existing content is wiped on restart."""
+        target = tmp_path / "ccproxy.log"
+        target.write_text("stale content from a previous daemon run\n")
+        try:
+            setup_logging(
+                tmp_path,
+                log_level="INFO",
+                log_file=target,
+                use_journal=False,
+            )
+            assert target.read_text() == ""
+        finally:
+            self._reset_root()
+            target.unlink(missing_ok=True)
 
     def test_journal_fallback_when_systemd_missing(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """use_journal=True falls back to stderr when systemd-python is unavailable.
@@ -620,7 +674,7 @@ class TestSetupLogging:
             self._reset_root()
 
     def test_journal_handler_installed_when_systemd_available(self, tmp_path: Path) -> None:
-        """use_journal=True installs JournalHandler when systemd.journal imports cleanly."""
+        """use_journal=True installs JournalHandler with the derived identifier."""
         mock_handler = Mock(spec=logging.Handler)
         mock_handler.level = logging.NOTSET
         fake_journal_module = Mock()
@@ -635,8 +689,36 @@ class TestSetupLogging:
             ):
                 setup_logging(tmp_path, log_level="INFO", use_journal=True)
 
-            fake_journal_module.JournalHandler.assert_called_once_with(SYSLOG_IDENTIFIER="ccproxy")
+            # tmp_path's basename is something like "test_NAME0"; the derivation
+            # rule yields "ccproxy-{name}" for any non-special directory name.
+            call_kwargs = fake_journal_module.JournalHandler.call_args.kwargs
+            assert call_kwargs["SYSLOG_IDENTIFIER"].startswith("ccproxy-")
             assert mock_handler in self._root().handlers
+        finally:
+            self._reset_root()
+
+    def test_journal_handler_uses_explicit_identifier(self, tmp_path: Path) -> None:
+        """Explicit journal_identifier overrides the derivation."""
+        mock_handler = Mock(spec=logging.Handler)
+        mock_handler.level = logging.NOTSET
+        fake_journal_module = Mock()
+        fake_journal_module.JournalHandler = Mock(return_value=mock_handler)
+        fake_systemd_module = Mock()
+        fake_systemd_module.journal = fake_journal_module
+
+        try:
+            with patch.dict(
+                sys.modules,
+                {"systemd": fake_systemd_module, "systemd.journal": fake_journal_module},
+            ):
+                setup_logging(
+                    tmp_path,
+                    log_level="INFO",
+                    use_journal=True,
+                    journal_identifier="ccproxy-explicit",
+                )
+
+            fake_journal_module.JournalHandler.assert_called_once_with(SYSLOG_IDENTIFIER="ccproxy-explicit")
         finally:
             self._reset_root()
 
@@ -699,6 +781,62 @@ class TestSetupLogging:
             assert self._root().level == logging.DEBUG
         finally:
             self._reset_root()
+
+
+class TestDeriveJournalIdentifier:
+    """Tests for the ``_derive_journal_identifier`` helper."""
+
+    def test_explicit_override_wins(self, tmp_path: Path) -> None:
+        from ccproxy.cli import _derive_journal_identifier
+
+        result = _derive_journal_identifier(tmp_path, override="ccproxy-myproj")
+        assert result == "ccproxy-myproj"
+
+    def test_dot_ccproxy_uses_parent_name(self, tmp_path: Path) -> None:
+        """``.ccproxy/`` directory derives ``ccproxy-{parent}``."""
+        from ccproxy.cli import _derive_journal_identifier
+
+        project_dir = tmp_path / "myproject"
+        project_dir.mkdir()
+        config_dir = project_dir / ".ccproxy"
+        config_dir.mkdir()
+
+        result = _derive_journal_identifier(config_dir, override=None)
+        assert result == "ccproxy-myproject"
+
+    def test_xdg_ccproxy_uses_bare_name(self, tmp_path: Path) -> None:
+        """``ccproxy/`` directory derives just ``ccproxy``."""
+        from ccproxy.cli import _derive_journal_identifier
+
+        config_dir = tmp_path / "ccproxy"
+        config_dir.mkdir()
+
+        result = _derive_journal_identifier(config_dir, override=None)
+        assert result == "ccproxy"
+
+    def test_other_name_uses_basename(self, tmp_path: Path) -> None:
+        """Any other directory name derives ``ccproxy-{name}``."""
+        from ccproxy.cli import _derive_journal_identifier
+
+        config_dir = tmp_path / "custom-config"
+        config_dir.mkdir()
+
+        result = _derive_journal_identifier(config_dir, override=None)
+        assert result == "ccproxy-custom-config"
+
+    def test_resolves_relative_paths(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Relative ``.ccproxy`` is resolved before parent-name derivation."""
+        from ccproxy.cli import _derive_journal_identifier
+
+        project_dir = tmp_path / "relproj"
+        project_dir.mkdir()
+        config_dir = project_dir / ".ccproxy"
+        config_dir.mkdir()
+        monkeypatch.chdir(project_dir)
+
+        # Pass a *relative* path — derivation must resolve before reading parent.
+        result = _derive_journal_identifier(Path(".ccproxy"), override=None)
+        assert result == "ccproxy-relproj"
 
 
 class TestStatusPipeline:

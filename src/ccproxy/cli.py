@@ -63,7 +63,7 @@ class Run(BaseModel):
 
 
 class Logs(BaseModel):
-    """View ccproxy logs from journal or process-compose."""
+    """Tail ``${CCPROXY_CONFIG_DIR}/ccproxy.log``."""
 
     follow: Annotated[bool, tyro.conf.arg(aliases=["-f"])] = False
     """Follow log output (like tail -f)."""
@@ -141,34 +141,65 @@ class StatusResult:
     hooks: dict[str, list[str | dict[str, Any]]]
     """Hook pipeline configuration."""
 
+    log: str | None
+    """Resolved log file path, if it exists."""
+
     inspector: InspectorStatus
     """Inspector subsystem status."""
+
+
+def _derive_journal_identifier(config_dir: Path, override: str | None) -> str:
+    """Derive ``SYSLOG_IDENTIFIER`` from the config-dir basename.
+
+    Resolution rule:
+      - ``override`` wins when set.
+      - ``.ccproxy/`` (project-local convention) → ``ccproxy-{parent_dir_name}``.
+      - ``ccproxy/`` (XDG convention) → ``ccproxy``.
+      - Otherwise → ``ccproxy-{name}``.
+
+    ``config_dir.resolve()`` is called first so a bare ``Path(".ccproxy")``
+    yields the actual project name rather than an empty parent.
+    Falls back to ``"ccproxy"`` for filesystem-root edge cases.
+    """
+    if override:
+        return override
+    resolved = config_dir.resolve()
+    name = resolved.name
+    if name == ".ccproxy":
+        parent = resolved.parent.name
+        return f"ccproxy-{parent}" if parent else "ccproxy"
+    if name == "ccproxy":
+        return "ccproxy"
+    return f"ccproxy-{name}" if name else "ccproxy"
 
 
 def setup_logging(
     config_dir: Path,
     log_level: str = "INFO",
     *,
+    log_file: Path | None = None,
     use_journal: bool = False,
+    journal_identifier: str | None = None,
     verbose: bool = True,
 ) -> None:
-    """Configure root logger output to stderr or the systemd journal.
+    """Configure the root logger across stderr, file, and (optional) journal.
 
     The effective root level is ``log_level`` when ``verbose=True``,
     otherwise ``max(log_level, WARNING)`` — one-shot CLI commands without
     ``-v`` still surface warnings and errors but suppress INFO/DEBUG noise.
 
-    Handler selection:
-      - ``use_journal=True``: ``systemd.journal.JournalHandler`` with
-        ``SYSLOG_IDENTIFIER=ccproxy`` (requires the ``journal`` optional extra).
-      - Otherwise: ``StreamHandler(sys.stderr)``.
+    Handlers installed:
+      - ``StreamHandler(sys.stderr)`` — always.
+      - ``FileHandler(log_file, mode="w")`` — when ``log_file`` is set.
+        Truncated on each ``setup_logging`` call (i.e. each daemon start).
+      - ``JournalHandler(SYSLOG_IDENTIFIER=<derived>)`` — when
+        ``use_journal=True``. Falls back silently to stderr-only-journal
+        when ``systemd-python`` is unavailable, and emits a warning.
 
-    When the journal handler cannot be constructed (missing ``systemd-python``
-    or no systemd socket), falls back to stderr and emits a warning log.
-
-    Daemon stderr is captured by process-compose in dev (view via
-    ``ccproxy logs`` or ``just logs``) and by systemd-journald in production
-    (view via ``journalctl --user -u ccproxy.service`` or ``ccproxy logs``).
+    The file is the canonical per-project log. Stderr is captured by
+    whatever supervises the daemon (process-compose, systemd, or none).
+    Journal is opt-in; the identifier is derived per-project so multiple
+    projects can run side-by-side without colliding in journald.
     """
     root = logging.getLogger()
     root.handlers.clear()
@@ -183,21 +214,27 @@ def setup_logging(
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    handler: logging.Handler
+    stderr_handler = logging.StreamHandler(sys.stderr)
+    stderr_handler.setFormatter(fmt)
+    root.addHandler(stderr_handler)
+
     journal_fallback_reason: str | None = None
     if use_journal:
         try:
             from systemd.journal import JournalHandler  # type: ignore[import-not-found]
 
-            handler = JournalHandler(SYSLOG_IDENTIFIER="ccproxy")
+            identifier = _derive_journal_identifier(config_dir, journal_identifier)
+            journal_handler = JournalHandler(SYSLOG_IDENTIFIER=identifier)
+            journal_handler.setFormatter(fmt)
+            root.addHandler(journal_handler)
         except Exception as exc:  # ImportError or runtime socket errors
-            handler = logging.StreamHandler(sys.stderr)
             journal_fallback_reason = f"{type(exc).__name__}: {exc}"
-    else:
-        handler = logging.StreamHandler(sys.stderr)
 
-    handler.setFormatter(fmt)
-    root.addHandler(handler)
+    if log_file is not None:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(str(log_file), mode="w", encoding="utf-8")
+        file_handler.setFormatter(fmt)
+        root.addHandler(file_handler)
 
     if journal_fallback_reason is not None:
         logger.warning(
@@ -538,63 +575,30 @@ def start_server(
 
 
 def view_logs(follow: bool = False, lines: int = 100, config_dir: Path | None = None) -> None:
-    """View ccproxy logs from systemd journal or process-compose.
+    """Tail the per-project log file at ``cfg.resolved_log_file``.
 
-    Production deployments (Home Manager systemd user service) route stderr
-    to the journal; this function prefers ``journalctl`` when the service is
-    active. Dev deployments use process-compose to capture stderr; falls
-    back to ``process-compose process logs`` when its socket is present.
+    The file is written unconditionally by the daemon, so this is the
+    canonical channel. Users wanting journald-filtered views run
+    ``journalctl --user -t <identifier>`` directly; users wanting the
+    supervisor's stderr capture run ``journalctl --user -u ccproxy.service``
+    or ``process-compose process logs ccproxy`` directly.
     """
-    if shutil.which("systemctl"):
-        result = subprocess.run(
-            ["systemctl", "--user", "is-active", "ccproxy.service"],  # noqa: S607
-            capture_output=True,
-            text=True,
-        )
-        if result.stdout.strip() in ("active", "activating"):
-            jctl_cmd: list[str] = [
-                "journalctl",
-                "--user",
-                "-u",
-                "ccproxy.service",
-                "-n",
-                str(lines),
-            ]
-            if follow:
-                jctl_cmd.append("-f")
-            try:
-                proc = subprocess.run(jctl_cmd)  # noqa: S603
-                sys.exit(proc.returncode)
-            except KeyboardInterrupt:
-                sys.exit(0)
+    from ccproxy.config import get_config
 
-    pc_socket = Path("/tmp/process-compose-ccproxy.sock")  # noqa: S108
-    if pc_socket.exists() and shutil.which("process-compose"):
-        pc_cmd: list[str] = [
-            "process-compose",
-            "--unix-socket",
-            str(pc_socket),
-            "process",
-            "logs",
-            "ccproxy",
-            "-n",
-            str(lines),
-        ]
-        if follow:
-            pc_cmd.append("-f")
-        try:
-            proc = subprocess.run(pc_cmd)  # noqa: S603
-            sys.exit(proc.returncode)
-        except KeyboardInterrupt:
-            sys.exit(0)
+    log_path = get_config().resolved_log_file
+    if log_path is None or not log_path.exists():
+        builtin_print(f"No log file at {log_path}", file=sys.stderr)
+        sys.exit(1)
 
-    print(
-        "No active ccproxy service found.\n"
-        "Run 'systemctl --user status ccproxy.service' or "
-        "'process-compose attach' to inspect.",
-        file=sys.stderr,
-    )
-    sys.exit(1)
+    tail_cmd: list[str] = ["tail", "-n", str(lines)]
+    if follow:
+        tail_cmd.append("-f")
+    tail_cmd.append(str(log_path))
+    try:
+        proc = subprocess.run(tail_cmd)  # noqa: S603
+        sys.exit(proc.returncode)
+    except KeyboardInterrupt:
+        sys.exit(0)
 
 
 def show_status(
@@ -659,11 +663,13 @@ def show_status(
         inspect_port=inspect_port,
         inspect_url=inspect_url,
     )
+    log_path = cfg.resolved_log_file
     status = StatusResult(
         proxy=proxy_running,
         url=proxy_url,
         config=config_paths,
         hooks=hooks,
+        log=str(log_path) if log_path is not None and log_path.exists() else None,
         inspector=inspector_status,
     )
 
@@ -707,6 +713,9 @@ def show_status(
         else:
             config_display = "[red]No config files found[/red]"
         table.add_row("config", config_display)
+
+        log_display = status.log if status.log else "[yellow]No log file[/yellow]"
+        table.add_row("log", log_display)
 
         console.print(Panel(table, title="[bold]ccproxy Status[/bold]", border_style="blue"))
 
@@ -777,7 +786,9 @@ def main(
     setup_logging(
         config_dir,
         log_level=log_level,
+        log_file=cfg.resolved_log_file if is_daemon else None,
         use_journal=cfg.use_journal and is_daemon,
+        journal_identifier=cfg.journal_identifier,
         verbose=is_daemon or verbose,
     )
 

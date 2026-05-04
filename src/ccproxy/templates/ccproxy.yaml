@@ -6,11 +6,22 @@ ccproxy:
   # httpcore, mitmproxy); INFO is recommended for normal use.
   # log_level: INFO
 
+  # Daemon log file path. Relative to config dir, or absolute.
+  # Set to null to disable file logging. Only `ccproxy start` writes here.
+  # log_file: ccproxy.log
+
   # Route daemon logging to the systemd journal via JournalHandler.
   # Applies only to `ccproxy start`. Requires the `journal` extra:
   #   pip install claude-ccproxy[journal]
   # Falls back to stderr with a warning when systemd-python is unavailable.
   # use_journal: false
+
+  # SYSLOG_IDENTIFIER for the journal handler when use_journal=true.
+  # Defaults derive from the config-dir basename:
+  #   ~/.config/ccproxy/            -> ccproxy
+  #   ~/dev/projects/foo/.ccproxy/  -> ccproxy-foo
+  # Override here, or via CCPROXY_JOURNAL_IDENTIFIER env var.
+  # journal_identifier: ccproxy-myproject
 
   # OAuth token sources — shell commands that output tokens.
   # Sentinel key sk-ant-oat-ccproxy-{name} triggers lookup.
