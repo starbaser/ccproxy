@@ -744,7 +744,7 @@ def show_status(
             # deferred: heavy pipeline rendering chain
             from ccproxy.pipeline.executor import PipelineExecutor
             from ccproxy.pipeline.loader import load_hooks
-            from ccproxy.pipeline.render import render_pipeline
+            from ccproxy.pipeline.render import render_pipeline, render_shape_pipeline
 
             inbound_specs = load_hooks(status.hooks.get("inbound", []))
             outbound_specs = load_hooks(status.hooks.get("outbound", []))
@@ -752,6 +752,19 @@ def show_status(
             outbound_exec = PipelineExecutor(hooks=outbound_specs)
             pipeline = render_pipeline(inbound_exec, outbound_exec)
             console.print(Panel(pipeline, title="[bold]Pipeline[/bold]", border_style="green"))
+
+            if cfg.shaping.enabled:
+                for provider_name, provider in cfg.shaping.providers.items():
+                    if not provider.shape_hooks:
+                        continue
+                    shape_dag = render_shape_pipeline(provider.shape_hooks)
+                    console.print(
+                        Panel(
+                            shape_dag,
+                            title=f"[bold]Shape pipeline: {provider_name}[/bold]",
+                            border_style="magenta",
+                        )
+                    )
 
 
 def main(

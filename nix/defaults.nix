@@ -2,6 +2,7 @@
   settings = {
     host = "127.0.0.1";
     port = 4000;
+    log_level = "INFO";
     oat_sources = {
       anthropic = {
         command = "printenv CLAUDE_CODE_OAUTH_TOKEN";
@@ -35,8 +36,8 @@
         }
         "ccproxy.hooks.inject_mcp_notifications"
         "ccproxy.hooks.verbose_mode"
-        "ccproxy.hooks.shape"
         "ccproxy.hooks.commitbee_compat"
+        "ccproxy.hooks.shape"
       ];
     };
     otel = {
@@ -96,7 +97,7 @@
       cert_dir = "~/.config/ccproxy";
       transforms = [
         { match_host = "cloudcode-pa.googleapis.com"; mode = "passthrough"; }
-        { match_path = "/v1/messages"; match_model = "deepseek-v4"; mode = "redirect"; dest_provider = "anthropic"; dest_host = "api.deepseek.com"; dest_path = "/anthropic/v1/messages"; dest_api_key_ref = "deepseek"; }
+        { match_path = "/v1/messages"; match_model = "deepseek"; mode = "redirect"; dest_provider = "deepseek"; dest_host = "api.deepseek.com"; dest_path = "/anthropic/v1/messages"; dest_api_key_ref = "deepseek"; }
         { match_path = "/v1/messages"; mode = "redirect"; dest_provider = "anthropic"; dest_host = "api.anthropic.com"; dest_path = "/v1/messages"; dest_api_key_ref = "anthropic"; }
         { match_path = "/v1internal"; mode = "redirect"; dest_provider = "gemini"; dest_host = "cloudcode-pa.googleapis.com"; dest_api_key_ref = "gemini"; }
         { match_path = "/gemini/"; mode = "redirect"; dest_provider = "gemini"; dest_host = "cloudcode-pa.googleapis.com"; dest_api_key_ref = "gemini"; }

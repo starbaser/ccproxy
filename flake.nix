@@ -82,11 +82,19 @@
 
         mkConfig =
           {
-            settings ? defaultSettings.settings,
+            settings ? { },
             configDir ? ".ccproxy",
           }:
           let
-            ccproxyYaml = yaml.generate "ccproxy.yaml" { ccproxy = settings; };
+            deepMerged = lib.recursiveUpdate defaultSettings.settings settings;
+            # oat_sources providers are discriminated unions (command|file|*_oauth);
+            # merge per-provider shallowly so user overrides replace the default
+            # block wholesale instead of mixing exclusive keys.
+            oatSources =
+              (defaultSettings.settings.oat_sources or { })
+              // (settings.oat_sources or { });
+            mergedSettings = deepMerged // { oat_sources = oatSources; };
+            ccproxyYaml = yaml.generate "ccproxy.yaml" { ccproxy = mergedSettings; };
           in
           {
             inherit ccproxyYaml;
@@ -99,15 +107,13 @@
           };
 
         devConfig = mkConfig {
-          settings = defaultSettings.settings // {
+          settings = {
             port = 4001;
-            inspector = defaultSettings.settings.inspector // {
+            inspector = {
               port = 8084;
               cert_dir = "./.ccproxy";
               mitmproxy = {
-                web_password = {
-                  command = "opc secret op://dev/ccproxy/web_password";
-                };
+                web_password.command = "opc secret op://dev/ccproxy/web_password";
                 ignore_hosts = [
                   "oauth2\\.googleapis\\.com"
                   "accounts\\.google\\.com"

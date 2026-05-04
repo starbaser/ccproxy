@@ -15,17 +15,26 @@ geometry.
 from __future__ import annotations
 
 import inspect
+import io
 from typing import TYPE_CHECKING
 
 from rich.align import Align
 from rich.columns import Columns
-from rich.console import Group, RenderableType
+from rich.console import Console, Group, RenderableType
 from rich.panel import Panel
 from rich.text import Text
 
 if TYPE_CHECKING:
     from ccproxy.pipeline.executor import PipelineExecutor
     from ccproxy.pipeline.hook import HookSpec
+
+
+MAX_PANEL_WIDTH = 60
+"""Maximum width (columns) for a single hook panel. Wraps long content lines
+(e.g. multi-arg param signatures) so one wide panel doesn't dominate the
+parallel-row layout."""
+
+_MEASURE_CONSOLE = Console(width=10000, file=io.StringIO())
 
 
 def render_pipeline(
@@ -64,6 +73,22 @@ def render_pipeline(
     )
 
 
+def render_shape_pipeline(hook_entries: list[str | dict[str, object]]) -> RenderableType:
+    """Return a Rich renderable for a provider's shape inner-DAG.
+
+    The shape pipeline runs inside the outbound ``shape`` hook, after
+    content_fields injection but before the shape is stamped onto the
+    outbound flow. The caller wraps the result in
+    ``Panel(title="Shape pipeline: <provider>", ...)``.
+    """
+    from ccproxy.pipeline.executor import PipelineExecutor
+    from ccproxy.pipeline.loader import load_hooks
+
+    specs = load_hooks(hook_entries)
+    executor = PipelineExecutor(hooks=specs)
+    return _render_stage(executor)
+
+
 def _render_stage(executor: PipelineExecutor) -> RenderableType:
     groups = executor.get_parallel_groups()
     if not groups:
@@ -90,13 +115,19 @@ def _hook_panel(spec: HookSpec) -> Panel:
         parts.append(sig)
     parts.append(Text(f"r: {reads}", style="green"))
     parts.append(Text(f"w: {writes}", style="red"))
-    return Panel(
-        Group(*parts),
-        title=f"[bold cyan]{spec.name}[/bold cyan]",
-        border_style="blue",
-        padding=(0, 1),
-        expand=False,
-    )
+    body = Group(*parts)
+    panel_kwargs: dict[str, object] = {
+        "title": f"[bold cyan]{spec.name}[/bold cyan]",
+        "border_style": "blue",
+        "padding": (0, 1),
+        "expand": False,
+    }
+    # Borders + horizontal padding consume 4 columns; cap the panel at
+    # MAX_PANEL_WIDTH when natural body width would exceed it so wrap kicks in.
+    natural_body_width = _MEASURE_CONSOLE.measure(body).maximum
+    if natural_body_width + 4 > MAX_PANEL_WIDTH:
+        panel_kwargs["width"] = MAX_PANEL_WIDTH
+    return Panel(body, **panel_kwargs)
 
 
 def _render_signature(spec: HookSpec) -> RenderableType | None:

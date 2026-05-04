@@ -62,6 +62,36 @@ def inject_gemini_content(ctx: Context, params: dict[str, Any]) -> Context:
     return ctx
 
 
+@hook(reads=["request"], writes=["request"])
+def strip_unset_content(ctx: Context, params: dict[str, Any]) -> Context:
+    """Drop shape's ``request.systemInstruction`` and ``request.tools`` when
+    the incoming request omits them.
+
+    Captured Gemini CLI shapes carry the CLI's full system prompt and tool
+    declarations. Clients that intentionally send neither (e.g. Glass's pure
+    VLM analysis) would otherwise inherit them through the shape replay,
+    corrupting the request semantics. ``inject_gemini_content`` already
+    overwrites these fields when incoming provides them; this hook closes
+    the asymmetric gap by stripping when incoming does not.
+    """
+    incoming_ctx = params.get("incoming_ctx")
+    if incoming_ctx is None:
+        return ctx
+
+    shape_request = ctx._body.get("request")
+    if not isinstance(shape_request, dict):
+        return ctx
+
+    incoming_request = incoming_ctx._body.get("request")
+    incoming_request = incoming_request if isinstance(incoming_request, dict) else {}
+
+    for field in ("systemInstruction", "tools"):
+        if field not in incoming_request:
+            shape_request.pop(field, None)
+
+    return ctx
+
+
 def _sync_streaming(shape_ctx: Context, incoming_ctx: Context) -> None:
     """Align the shape's streaming mode with the incoming request.
 

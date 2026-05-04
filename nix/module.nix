@@ -6,7 +6,15 @@ let
   defaults = import ./defaults.nix;
   yaml = pkgs.formats.yaml { };
 
-  ccproxyYaml = yaml.generate "ccproxy.yaml" { ccproxy = cfg.settings; };
+  deepMerged = lib.recursiveUpdate defaults.settings cfg.settings;
+  # oat_sources providers are discriminated unions (command|file|*_oauth);
+  # merge per-provider shallowly so user overrides replace the default
+  # block wholesale instead of mixing exclusive keys.
+  oatSources =
+    (defaults.settings.oat_sources or { })
+    // (cfg.settings.oat_sources or { });
+  mergedSettings = deepMerged // { oat_sources = oatSources; };
+  ccproxyYaml = yaml.generate "ccproxy.yaml" { ccproxy = mergedSettings; };
 in
 {
   options.programs.ccproxy = {
@@ -26,10 +34,12 @@ in
 
     settings = lib.mkOption {
       type = lib.types.attrs;
-      default = defaults.settings;
+      default = { };
       description = ''
         ccproxy settings (the `ccproxy:` section of ccproxy.yaml).
-        Freeform attrset — any key is accepted and serialized to YAML.
+        Freeform attrset — any key is accepted and recursively merged over
+        the defaults from `nix/defaults.nix`. Lists replace wholesale; only
+        attrset keys deep-merge.
       '';
     };
   };
