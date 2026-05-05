@@ -111,12 +111,10 @@ def test_get_request_body_decodes_utf8(mock_client: Any) -> None:
 
 
 def test_get_response_body_decodes_utf8(mock_client: Any) -> None:
-    inner = MagicMock()
-    inner.get.return_value.content = b'{"id": "msg-1"}'
-    inner.get.return_value.raise_for_status.return_value = None
-    mock_client._client = inner
+    mock_client.get_response_body.return_value = b'{"id": "msg-1"}'
     with _patch_make_client(mock_client):
         body = _registered_tool_fn("get_response_body")(flow_id="flow-a")
+    mock_client.get_response_body.assert_called_once_with("flow-a")
     assert body == '{"id": "msg-1"}'
 
 

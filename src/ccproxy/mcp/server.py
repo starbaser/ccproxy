@@ -72,10 +72,7 @@ def get_request_body(flow_id: str) -> str:
 def get_response_body(flow_id: str) -> str:
     """Return the response body for a single flow (UTF-8 decoded best-effort)."""
     with _make_client() as client:
-        path = f"/flows/{flow_id}/response/content.data"
-        resp = client._client.get(path)  # type: ignore[attr-defined]
-        resp.raise_for_status()
-        body = resp.content
+        body = client.get_response_body(flow_id)
     return body.decode("utf-8", errors="replace")
 
 
