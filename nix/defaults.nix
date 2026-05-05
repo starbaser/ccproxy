@@ -40,17 +40,19 @@
       ];
       outbound = [
         "ccproxy.hooks.gemini_cli"
-        {
-          hook = "ccproxy.hooks.gemini_capacity_fallback";
-          params = {
-            fallback_models = [ "gemini-3-flash-preview" "gemini-2.5-pro" "gemini-2.5-flash" ];
-          };
-        }
         "ccproxy.hooks.inject_mcp_notifications"
         "ccproxy.hooks.verbose_mode"
         "ccproxy.hooks.commitbee_compat"
         "ccproxy.hooks.shape"
       ];
+    };
+    gemini_capacity = {
+      enabled = true;
+      fallback_models = [ "gemini-3-flash-preview" "gemini-2.5-pro" "gemini-2.5-flash" ];
+      sticky_retry_attempts = 3;
+      sticky_retry_max_delay_seconds = 60;
+      terminal_delay_threshold_seconds = 300;
+      total_retry_budget_seconds = 120;
     };
     otel = {
       enabled = false;

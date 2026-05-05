@@ -718,6 +718,13 @@ class TestSafeKill:
 class TestCliInspectHardFailure:
     """Verify that ccproxy run --inspect refuses to run without the jail."""
 
+    @pytest.fixture(autouse=True)
+    def _isolate_config_dir(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """Pin ``CCPROXY_CONFIG_DIR`` at the per-test ``tmp_path`` so
+        ``run_with_proxy`` reads the test's ``ccproxy.yaml`` instead of the
+        developer's actual ``~/.config/ccproxy/ccproxy.yaml``."""
+        monkeypatch.setenv("CCPROXY_CONFIG_DIR", str(tmp_path))
+
     @patch("ccproxy.cli.run_with_proxy")
     def test_inspect_flag_passed_through(self, mock_run: Mock, tmp_path: Path) -> None:
         """--inspect flag is extracted from args and passed to run_with_proxy."""

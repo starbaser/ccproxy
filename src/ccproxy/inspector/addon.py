@@ -173,7 +173,7 @@ class InspectorAddon:
         chunk transformer. For Gemini redirect-mode streaming flows this
         returns without touching ``flow.response.stream`` so the downstream
         :class:`~ccproxy.inspector.gemini_addon.GeminiAddon` can install its
-        envelope-unwrap stream (or skip it during a capacity-fallback retry).
+        envelope-unwrap stream (or defer it during a capacity-fallback retry).
         For same-provider or unmatched flows, passes bytes through unchanged.
         """
         if not flow.response:
@@ -205,22 +205,6 @@ class InspectorAddon:
                     exc_info=True,
                 )
                 flow.response.stream = True
-        elif transform is not None and transform.is_streaming and transform.provider == "gemini":
-            # Capacity-fallback defer branch (Wave 6 absorbs this into GeminiAddon).
-            # GeminiAddon.responseheaders installs EnvelopeUnwrapStream when this
-            # branch returns without setting the stream — see its docstring.
-            from ccproxy.hooks.gemini_capacity_fallback import (
-                _CAPACITY_STATUS_CODES,
-                has_fallback_configured,
-            )
-
-            if flow.response.status_code in _CAPACITY_STATUS_CODES and has_fallback_configured():
-                logger.info(
-                    "Deferring stream setup for %d to allow capacity fallback retry (flow=%s)",
-                    flow.response.status_code,
-                    flow.id,
-                )
-            return
         else:
             flow.response.stream = True
 
@@ -246,15 +230,6 @@ class InspectorAddon:
                         body=response.content,
                         status_code=response.status_code,
                     )
-
-            if response and flow.metadata.get("ccproxy.oauth_provider") == "gemini":
-                from ccproxy.hooks.gemini_capacity_fallback import (
-                    _CAPACITY_STATUS_CODES,
-                    try_fallback_models,
-                )
-
-                if response.status_code in _CAPACITY_STATUS_CODES and await try_fallback_models(flow):
-                    response = flow.response
 
             started = flow.request.timestamp_start
             ended = response.timestamp_end if response else None

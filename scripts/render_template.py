@@ -9,6 +9,7 @@ Usage:
       | python3 scripts/render_template.py \
       > src/ccproxy/templates/ccproxy.yaml
 """
+
 from __future__ import annotations
 
 import json
@@ -23,7 +24,7 @@ def _scalar(v: Any) -> str:
     if isinstance(v, (int, float)):
         return str(v)
     if isinstance(v, str):
-        needs_quote = any(c in v for c in ':{}[],"\'|>&*!%#`@\n')
+        needs_quote = any(c in v for c in ":{}[],\"'|>&*!%#`@\n")
         needs_quote = needs_quote or v in ("true", "false", "null", "yes", "no")
         return f'"{v}"' if needs_quote else v
     return str(v)
@@ -86,8 +87,15 @@ def render(s: dict[str, Any]) -> str:
     provider_names += [n for n in s["providers"] if n not in provider_order]
 
     auth_key_order = [
-        "type", "command", "file", "refresh_token_file",
-        "client_id", "client_secret", "endpoint", "expiry_field", "header",
+        "type",
+        "command",
+        "file",
+        "refresh_token_file",
+        "client_id",
+        "client_secret",
+        "endpoint",
+        "expiry_field",
+        "header",
     ]
 
     for name in provider_names:
@@ -123,6 +131,28 @@ def render(s: dict[str, Any]) -> str:
     for hook in s["hooks"]["outbound"]:
         w(f"      - {hook}")
     blank()
+
+    # ── gemini_capacity ──
+
+    if "gemini_capacity" in s:
+        comment("Sticky-retry + fallback chain for Gemini RESOURCE_EXHAUSTED responses.")
+        comment("Owned by GeminiAddon; no @hook entry. Disabled by default.")
+        gc = s["gemini_capacity"]
+        w("  gemini_capacity:")
+        w(f"    enabled: {_scalar(gc['enabled'])}")
+        if "fallback_models" in gc:
+            w("    fallback_models:")
+            for m in gc["fallback_models"]:
+                w(f"      - {m}")
+        for key in (
+            "sticky_retry_attempts",
+            "sticky_retry_max_delay_seconds",
+            "terminal_delay_threshold_seconds",
+            "total_retry_budget_seconds",
+        ):
+            if key in gc:
+                w(f"    {key}: {_scalar(gc[key])}")
+        blank()
 
     # ── otel ──
 
@@ -201,10 +231,16 @@ def render(s: dict[str, Any]) -> str:
         else:
             w("    transforms:")
             key_order = [
-                "match_host", "match_path", "match_model",
+                "match_host",
+                "match_path",
+                "match_model",
                 "action",
-                "dest_provider", "dest_host", "dest_path", "dest_model",
-                "dest_vertex_project", "dest_vertex_location",
+                "dest_provider",
+                "dest_host",
+                "dest_path",
+                "dest_model",
+                "dest_vertex_project",
+                "dest_vertex_location",
             ]
             for rule in insp["transforms"]:
                 ordered = sorted(

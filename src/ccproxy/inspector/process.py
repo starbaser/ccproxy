@@ -129,21 +129,15 @@ def _make_transform_router() -> Any:
 def _build_addons(
     wg_cli_port: int,
 ) -> list[Any]:
-    """Addon order: OAuthAddon (response-side 401 retry) → InspectorAddon (OTel,
-    flow records, capacity-fallback dispatch) → inbound pipeline (OAuth, session
-    extraction) → transform (lightllm) → outbound pipeline (beta headers, identity
-    injection) → GeminiAddon (envelope unwrap).
+    """Final addon chain: ``InspectorAddon → MultiHARSaver → ShapeCapturer →
+    inbound pipeline → transform (lightllm) → outbound pipeline → OAuthAddon →
+    GeminiAddon``.
 
-    OAuthAddon precedes InspectorAddon so the 401-retry runs before
-    InspectorAddon's still-resident capacity-fallback branch sees the response.
-    GeminiAddon is appended last so its ``responseheaders`` runs after
-    InspectorAddon's; mitmproxy dispatches addons in registration order, so
-    later addons see the modified flow state. This lets GeminiAddon install
-    :class:`~ccproxy.hooks.gemini_envelope.EnvelopeUnwrapStream` on streaming
-    Gemini redirect flows that InspectorAddon left untouched. Phase E.2
-    transitional layout — Wave 6 moves the capacity-fallback defer branch out
-    of InspectorAddon into GeminiAddon, at which point the chain becomes more
-    linear.
+    mitmproxy dispatches addons in registration order. ``OAuthAddon`` and
+    ``GeminiAddon`` both sit AFTER the outbound pipeline so they see
+    ccproxy-finalized requests/responses. ``OAuthAddon.response`` runs before
+    ``GeminiAddon.response``, so a 401 → refresh → replay → 429 sequence
+    naturally cascades into ``GeminiAddon``'s capacity fallback.
     """
     # deferred: heavy mitmproxy addon chain
     from mitmproxy import contentviews
@@ -198,7 +192,7 @@ def _build_addons(
     inbound_hooks = hooks_cfg.get("inbound", []) if isinstance(hooks_cfg, dict) else hooks_cfg
     outbound_hooks = hooks_cfg.get("outbound", []) if isinstance(hooks_cfg, dict) else []
 
-    addons: list[Any] = [OAuthAddon(), addon, MultiHARSaver(), ShapeCapturer()]
+    addons: list[Any] = [addon, MultiHARSaver(), ShapeCapturer()]
 
     if inbound_hooks:
         addons.append(_make_pipeline_router("ccproxy_inbound", inbound_hooks))
@@ -208,6 +202,7 @@ def _build_addons(
     if outbound_hooks:
         addons.append(_make_pipeline_router("ccproxy_outbound", outbound_hooks))
 
+    addons.append(OAuthAddon())
     addons.append(GeminiAddon())
 
     return addons

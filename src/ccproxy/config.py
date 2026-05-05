@@ -35,6 +35,7 @@ __all__ = [
     "BillingConfig",
     "CCProxyConfig",
     "CredentialSource",
+    "GeminiCapacityFallbackConfig",
     "Provider",
     "ProviderShapingConfig",
     "ShapingConfig",
@@ -229,6 +230,32 @@ class OtelConfig(BaseModel):
 
     service_name: str = "ccproxy"
     """OTel resource service.name attribute."""
+
+
+class GeminiCapacityFallbackConfig(BaseModel):
+    """Sticky-retry then fallback chain for Gemini RESOURCE_EXHAUSTED responses."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = False
+    """Master switch. When False, capacity errors pass through unchanged."""
+
+    fallback_models: list[str] = Field(default_factory=list)
+    """Models tried in order after sticky retries on the original are exhausted."""
+
+    sticky_retry_attempts: int = Field(default=3, ge=0, le=10)
+    """Same-model retries on the original before falling through."""
+
+    sticky_retry_max_delay_seconds: float = Field(default=60.0, gt=0)
+    """Per-attempt cap on retryDelay. If server asks for longer, skip remaining
+    sticky attempts and move to next candidate."""
+
+    terminal_delay_threshold_seconds: float = Field(default=300.0, gt=0)
+    """Hard ceiling. retryDelay above this halts the entire chain — server
+    is signaling sustained outage."""
+
+    total_retry_budget_seconds: float = Field(default=120.0, gt=0)
+    """Wall-clock budget for the entire retry chain across all candidates."""
 
 
 class MitmproxyOptions(BaseModel):
@@ -493,6 +520,10 @@ class CCProxyConfig(BaseSettings):
 
     flows: FlowsConfig = Field(default_factory=lambda: FlowsConfig())
 
+    gemini_capacity: GeminiCapacityFallbackConfig = Field(default_factory=GeminiCapacityFallbackConfig)
+    """Sticky-retry + fallback chain for Gemini RESOURCE_EXHAUSTED responses.
+    Owned by :class:`~ccproxy.inspector.gemini_addon.GeminiAddon`."""
+
     providers: dict[str, Provider] = Field(default_factory=dict)
     """Provider entries keyed by sentinel suffix.
 
@@ -679,9 +710,46 @@ class CCProxyConfig(BaseSettings):
                 if hooks_data:
                     instance.hooks = hooks_data
 
+                gemini_capacity_data = ccproxy_data.get("gemini_capacity")
+                if gemini_capacity_data:
+                    instance.gemini_capacity = GeminiCapacityFallbackConfig(**gemini_capacity_data)
+
+        _reject_legacy_capacity_fallback_hook(instance.hooks)
+
         instance._load_credentials()
 
         return instance
+
+
+_LEGACY_CAPACITY_FALLBACK_HOOK = "ccproxy.hooks.gemini_capacity_fallback"
+
+
+def _reject_legacy_capacity_fallback_hook(hooks: Any) -> None:
+    """Raise on stale ``ccproxy.hooks.gemini_capacity_fallback`` hook entries.
+
+    The capacity-fallback retry orchestration moved onto
+    :class:`~ccproxy.inspector.gemini_addon.GeminiAddon` and its Pydantic
+    params graduated to :attr:`CCProxyConfig.gemini_capacity`. The legacy
+    hook entry is a hard error at config load — no backwards-compat shim.
+    """
+    if isinstance(hooks, dict):
+        outbound = hooks.get("outbound", [])
+    elif isinstance(hooks, list):
+        outbound = hooks
+    else:
+        return
+    for entry in outbound:
+        name = entry.get("hook") if isinstance(entry, dict) else entry
+        if name == _LEGACY_CAPACITY_FALLBACK_HOOK:
+            raise RuntimeError(
+                "ccproxy.hooks.gemini_capacity_fallback is no longer a hook. "
+                "Move its params to the `gemini_capacity:` config block. "
+                "Example:\n"
+                "  ccproxy:\n"
+                "    gemini_capacity:\n"
+                "      enabled: true\n"
+                "      fallback_models: [gemini-3-flash-preview, gemini-2.5-pro]\n"
+            )
 
 
 _config_instance: CCProxyConfig | None = None

@@ -1,17 +1,33 @@
-"""Tests for GeminiAddon — response-side envelope unwrap (Phase E.2).
+"""Tests for GeminiAddon — response-side envelope unwrap (Phase E.2/E.3).
 
-Capacity-fallback responsibility moves into this addon in Wave 6 (Phase E.3);
-those tests live in ``test_gemini_capacity_fallback.py`` until then.
+Capacity-fallback tests live in ``test_gemini_addon_capacity.py``; this file
+covers the envelope-unwrap responsibilities of the addon.
 """
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
+from ccproxy.config import (
+    CCProxyConfig,
+    GeminiCapacityFallbackConfig,
+    set_config_instance,
+)
 from ccproxy.flows.store import FlowRecord, InspectorMeta, TransformMeta
 from ccproxy.hooks.gemini_envelope import EnvelopeUnwrapStream
 from ccproxy.inspector.gemini_addon import GeminiAddon
+
+
+def _set_capacity(*, enabled: bool, fallback_models: list[str] | None = None) -> None:
+    set_config_instance(
+        CCProxyConfig(
+            gemini_capacity=GeminiCapacityFallbackConfig(
+                enabled=enabled,
+                fallback_models=fallback_models or [],
+            )
+        )
+    )
 
 
 def _make_gemini_flow(
@@ -63,14 +79,11 @@ class TestResponseHeadersStreamingInstall:
     @pytest.mark.asyncio
     async def test_installs_envelope_unwrap_for_streaming_redirect(self) -> None:
         """Streaming Gemini redirect flow installs EnvelopeUnwrapStream."""
+        _set_capacity(enabled=False)
         flow = _make_gemini_flow(is_streaming=True, mode="redirect", status_code=200)
         addon = GeminiAddon()
 
-        with patch(
-            "ccproxy.hooks.gemini_capacity_fallback.has_fallback_configured",
-            return_value=False,
-        ):
-            await addon.responseheaders(flow)
+        await addon.responseheaders(flow)
 
         assert isinstance(flow.response.stream, EnvelopeUnwrapStream)
         assert flow.metadata.get("ccproxy.sse_transformer") is flow.response.stream
@@ -78,6 +91,7 @@ class TestResponseHeadersStreamingInstall:
     @pytest.mark.asyncio
     async def test_no_install_for_transform_mode(self) -> None:
         """Streaming Gemini transform-mode is left to InspectorAddon's lightllm path."""
+        _set_capacity(enabled=False)
         flow = _make_gemini_flow(is_streaming=True, mode="transform", status_code=200)
         addon = GeminiAddon()
 
@@ -88,15 +102,12 @@ class TestResponseHeadersStreamingInstall:
 
     @pytest.mark.asyncio
     async def test_no_install_when_capacity_fallback_deferring(self) -> None:
-        """When InspectorAddon is buffering for a fallback retry, GeminiAddon stays out."""
+        """When capacity fallback is configured for a 429, defer stream install."""
+        _set_capacity(enabled=True, fallback_models=["gemini-2.5-pro"])
         flow = _make_gemini_flow(is_streaming=True, mode="redirect", status_code=429)
         addon = GeminiAddon()
 
-        with patch(
-            "ccproxy.hooks.gemini_capacity_fallback.has_fallback_configured",
-            return_value=True,
-        ):
-            await addon.responseheaders(flow)
+        await addon.responseheaders(flow)
 
         assert flow.response.stream is None
         assert "ccproxy.sse_transformer" not in flow.metadata
@@ -104,34 +115,40 @@ class TestResponseHeadersStreamingInstall:
     @pytest.mark.asyncio
     async def test_install_on_429_when_no_fallback_configured(self) -> None:
         """A 429 with no fallback chain configured still gets the unwrap stream."""
+        _set_capacity(enabled=False)
         flow = _make_gemini_flow(is_streaming=True, mode="redirect", status_code=429)
         addon = GeminiAddon()
 
-        with patch(
-            "ccproxy.hooks.gemini_capacity_fallback.has_fallback_configured",
-            return_value=False,
-        ):
-            await addon.responseheaders(flow)
+        await addon.responseheaders(flow)
+
+        assert isinstance(flow.response.stream, EnvelopeUnwrapStream)
+
+    @pytest.mark.asyncio
+    async def test_install_on_429_when_fallback_disabled(self) -> None:
+        """Capacity fallback configured but disabled → still install unwrap stream."""
+        _set_capacity(enabled=False, fallback_models=["gemini-2.5-pro"])
+        flow = _make_gemini_flow(is_streaming=True, mode="redirect", status_code=429)
+        addon = GeminiAddon()
+
+        await addon.responseheaders(flow)
 
         assert isinstance(flow.response.stream, EnvelopeUnwrapStream)
 
     @pytest.mark.asyncio
     async def test_no_install_for_503_when_fallback_configured(self) -> None:
         """503 also triggers the capacity-defer path when fallbacks are configured."""
+        _set_capacity(enabled=True, fallback_models=["gemini-2.5-pro"])
         flow = _make_gemini_flow(is_streaming=True, mode="redirect", status_code=503)
         addon = GeminiAddon()
 
-        with patch(
-            "ccproxy.hooks.gemini_capacity_fallback.has_fallback_configured",
-            return_value=True,
-        ):
-            await addon.responseheaders(flow)
+        await addon.responseheaders(flow)
 
         assert flow.response.stream is None
 
     @pytest.mark.asyncio
     async def test_no_install_for_non_gemini_oauth_flow(self) -> None:
         """A flow without ``ccproxy.oauth_provider == "gemini"`` is left alone."""
+        _set_capacity(enabled=False)
         flow = _make_gemini_flow(is_streaming=True, mode="redirect", oauth_provider="anthropic")
         addon = GeminiAddon()
 
@@ -142,6 +159,7 @@ class TestResponseHeadersStreamingInstall:
     @pytest.mark.asyncio
     async def test_no_install_for_non_streaming_response(self) -> None:
         """Non-streaming responses do not get an SSE transformer installed."""
+        _set_capacity(enabled=False)
         flow = _make_gemini_flow(is_streaming=False, mode="redirect", content_type="application/json")
         addon = GeminiAddon()
 
@@ -162,6 +180,7 @@ class TestResponseHeadersStreamingInstall:
     @pytest.mark.asyncio
     async def test_no_install_when_no_record(self) -> None:
         """A streaming Gemini flow without a FlowRecord is left alone."""
+        _set_capacity(enabled=False)
         flow = _make_gemini_flow(is_streaming=True, mode="redirect", include_transform=False)
         addon = GeminiAddon()
 
@@ -198,6 +217,7 @@ class TestResponseBufferedUnwrap:
     @pytest.mark.asyncio
     async def test_unwraps_buffered_success_envelope(self) -> None:
         """Buffered Gemini success unwraps the {response: {...}} envelope."""
+        _set_capacity(enabled=False)
         inner = {"candidates": [{"content": "hello"}]}
         flow = _make_gemini_flow(
             is_streaming=False,
@@ -215,6 +235,7 @@ class TestResponseBufferedUnwrap:
     @pytest.mark.asyncio
     async def test_skips_error_response(self) -> None:
         """Errors (status >= 400) are left alone so the original body surfaces."""
+        _set_capacity(enabled=False)
         original = json.dumps({"response": {"inner": True}}).encode()
         flow = _make_gemini_flow(
             is_streaming=False,
@@ -232,6 +253,7 @@ class TestResponseBufferedUnwrap:
     @pytest.mark.asyncio
     async def test_skips_streaming_flow(self) -> None:
         """Streaming flows were already unwrapped chunk-by-chunk by EnvelopeUnwrapStream."""
+        _set_capacity(enabled=False)
         original = json.dumps({"response": {"inner": True}}).encode()
         flow = _make_gemini_flow(
             is_streaming=True,
@@ -249,6 +271,7 @@ class TestResponseBufferedUnwrap:
     @pytest.mark.asyncio
     async def test_skips_non_gemini_flow(self) -> None:
         """A flow with a non-gemini ``ccproxy.oauth_provider`` is left alone."""
+        _set_capacity(enabled=False)
         original = json.dumps({"response": {"inner": True}}).encode()
         flow = _make_gemini_flow(
             is_streaming=False,
@@ -267,6 +290,7 @@ class TestResponseBufferedUnwrap:
     @pytest.mark.asyncio
     async def test_no_op_when_envelope_key_absent(self) -> None:
         """A buffered Gemini body without ``response`` key is left unchanged."""
+        _set_capacity(enabled=False)
         original = json.dumps({"other": "data"}).encode()
         flow = _make_gemini_flow(
             is_streaming=False,
@@ -284,6 +308,7 @@ class TestResponseBufferedUnwrap:
     @pytest.mark.asyncio
     async def test_no_op_on_invalid_json(self) -> None:
         """Invalid JSON in the body is left unchanged (graceful no-op)."""
+        _set_capacity(enabled=False)
         original = b"not-json{{{"
         flow = _make_gemini_flow(
             is_streaming=False,
@@ -311,6 +336,7 @@ class TestResponseBufferedUnwrap:
     @pytest.mark.asyncio
     async def test_no_op_when_no_transform(self) -> None:
         """A flow without a FlowRecord transform is left alone."""
+        _set_capacity(enabled=False)
         flow = _make_gemini_flow(
             is_streaming=False,
             mode="redirect",
@@ -329,6 +355,7 @@ class TestResponseBufferedUnwrap:
     @pytest.mark.asyncio
     async def test_handles_empty_body(self) -> None:
         """Empty body unwraps to empty without raising."""
+        _set_capacity(enabled=False)
         flow = _make_gemini_flow(
             is_streaming=False,
             mode="redirect",
@@ -345,6 +372,7 @@ class TestResponseBufferedUnwrap:
     @pytest.mark.asyncio
     async def test_handles_none_body(self) -> None:
         """``None`` body coerces to ``b""`` without raising."""
+        _set_capacity(enabled=False)
         flow = _make_gemini_flow(
             is_streaming=False,
             mode="redirect",
@@ -377,6 +405,7 @@ class TestAddonChainOrdering:
         capacity-fallback has done nothing for a 200, GeminiAddon strips the
         envelope so downstream consumers see the canonical Gemini shape.
         """
+        _set_capacity(enabled=False)
         inner = {"candidates": [{"content": "ok"}]}
         flow = _make_gemini_flow(
             is_streaming=False,

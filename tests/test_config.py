@@ -13,6 +13,7 @@ import pytest
 from ccproxy.config import (
     CCProxyConfig,
     CredentialSource,
+    GeminiCapacityFallbackConfig,
     Provider,
     clear_config_instance,
     get_config,
@@ -289,10 +290,9 @@ class TestGetConfigDir:
 class TestThreadSafety:
     """Tests for thread-safe configuration access."""
 
-    def test_concurrent_get_config(self) -> None:
+    def test_concurrent_get_config(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test that concurrent access to get_config is thread-safe."""
         import concurrent.futures
-        import os
         import threading
 
         clear_config_instance()
@@ -305,9 +305,7 @@ ccproxy:
             ccproxy_path = Path(temp_dir) / "ccproxy.yaml"
             ccproxy_path.write_text(yaml_content)
 
-            original_cwd = Path.cwd()
-            os.chdir(temp_dir)
-
+            monkeypatch.setenv("CCPROXY_CONFIG_DIR", temp_dir)
             try:
                 config_ids: set[int] = set()
                 lock = threading.Lock()
@@ -323,7 +321,6 @@ ccproxy:
 
                 assert len(config_ids) == 1
             finally:
-                os.chdir(original_cwd)
                 clear_config_instance()
 
 
@@ -624,3 +621,87 @@ class TestRefreshOAuthTokenConcurrency:
         assert fast_elapsed < 1.0, (
             f"fast provider refresh took {fast_elapsed:.3f}s — per-provider locks are not isolating providers"
         )
+
+
+class TestGeminiCapacityConfig:
+    """Tests for the gemini_capacity config block."""
+
+    def test_default_is_disabled_with_empty_chain(self) -> None:
+        config = CCProxyConfig()
+        assert config.gemini_capacity.enabled is False
+        assert config.gemini_capacity.fallback_models == []
+        assert config.gemini_capacity.sticky_retry_attempts == 3
+        assert config.gemini_capacity.sticky_retry_max_delay_seconds == 60.0
+        assert config.gemini_capacity.terminal_delay_threshold_seconds == 300.0
+        assert config.gemini_capacity.total_retry_budget_seconds == 120.0
+
+    def test_loads_from_yaml(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "ccproxy.yaml"
+        yaml_path.write_text(
+            "ccproxy:\n"
+            "  gemini_capacity:\n"
+            "    enabled: true\n"
+            "    fallback_models: [gemini-3-flash-preview, gemini-2.5-pro]\n"
+            "    sticky_retry_attempts: 5\n"
+            "    sticky_retry_max_delay_seconds: 30\n"
+            "    terminal_delay_threshold_seconds: 600\n"
+            "    total_retry_budget_seconds: 240\n"
+        )
+        config = CCProxyConfig.from_yaml(yaml_path)
+        assert config.gemini_capacity.enabled is True
+        assert config.gemini_capacity.fallback_models == ["gemini-3-flash-preview", "gemini-2.5-pro"]
+        assert config.gemini_capacity.sticky_retry_attempts == 5
+        assert config.gemini_capacity.sticky_retry_max_delay_seconds == 30.0
+        assert config.gemini_capacity.terminal_delay_threshold_seconds == 600.0
+        assert config.gemini_capacity.total_retry_budget_seconds == 240.0
+
+    def test_partial_block_keeps_defaults(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "ccproxy.yaml"
+        yaml_path.write_text(
+            "ccproxy:\n  gemini_capacity:\n    enabled: true\n    fallback_models: [gemini-2.5-flash]\n"
+        )
+        config = CCProxyConfig.from_yaml(yaml_path)
+        assert config.gemini_capacity.enabled is True
+        assert config.gemini_capacity.fallback_models == ["gemini-2.5-flash"]
+        assert config.gemini_capacity.sticky_retry_attempts == 3
+
+    def test_validation_rejects_negative_attempts(self) -> None:
+        import pydantic
+
+        with pytest.raises(pydantic.ValidationError):
+            GeminiCapacityFallbackConfig(sticky_retry_attempts=-1)
+
+    def test_validation_rejects_zero_max_delay(self) -> None:
+        import pydantic
+
+        with pytest.raises(pydantic.ValidationError):
+            GeminiCapacityFallbackConfig(sticky_retry_max_delay_seconds=0)
+
+
+class TestLegacyCapacityFallbackHookEntry:
+    """Stale ``ccproxy.hooks.gemini_capacity_fallback`` entries are a load-time error."""
+
+    def test_legacy_dict_entry_raises(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "ccproxy.yaml"
+        yaml_path.write_text(
+            "ccproxy:\n"
+            "  hooks:\n"
+            "    outbound:\n"
+            "      - hook: ccproxy.hooks.gemini_capacity_fallback\n"
+            "        params:\n"
+            "          fallback_models: [gemini-2.5-pro]\n"
+        )
+        with pytest.raises(RuntimeError, match="gemini_capacity_fallback is no longer a hook"):
+            CCProxyConfig.from_yaml(yaml_path)
+
+    def test_legacy_string_entry_raises(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "ccproxy.yaml"
+        yaml_path.write_text("ccproxy:\n  hooks:\n    outbound:\n      - ccproxy.hooks.gemini_capacity_fallback\n")
+        with pytest.raises(RuntimeError, match="Move its params to the `gemini_capacity:` config block"):
+            CCProxyConfig.from_yaml(yaml_path)
+
+    def test_no_legacy_entry_loads_clean(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "ccproxy.yaml"
+        yaml_path.write_text("ccproxy:\n  hooks:\n    outbound:\n      - ccproxy.hooks.gemini_cli\n")
+        config = CCProxyConfig.from_yaml(yaml_path)
+        assert config.hooks["outbound"] == ["ccproxy.hooks.gemini_cli"]

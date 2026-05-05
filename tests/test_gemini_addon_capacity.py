@@ -1,46 +1,38 @@
-"""Tests for the gemini_capacity_fallback hook + retry logic."""
+"""Tests for GeminiAddon's capacity-fallback retry orchestrator (Phase E.3)."""
 
 from __future__ import annotations
 
 import json
-import sys
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
+from ccproxy.config import (
+    CCProxyConfig,
+    GeminiCapacityFallbackConfig,
+    set_config_instance,
+)
 from ccproxy.flows.store import FlowRecord, InspectorMeta, TransformMeta
-from ccproxy.hooks.gemini_capacity_fallback import (
-    GeminiCapacityFallbackParams,
+from ccproxy.inspector import gemini_addon as gemini_addon_module
+from ccproxy.inspector.gemini_addon import (
+    GeminiAddon,
     _extract_retry_delay,
     _parse_duration,
-    gemini_capacity_fallback,
-    has_fallback_configured,
-    reset_config,
-    try_fallback_models,
 )
-from ccproxy.pipeline.context import Context
-
-fallback_module = sys.modules["ccproxy.hooks.gemini_capacity_fallback"]
 
 
-def _set_params(**overrides: Any) -> None:
-    """Configure the module-level params from kwargs (test helper)."""
-    fallback_module._configured_params = GeminiCapacityFallbackParams(**overrides)
-
-
-@pytest.fixture(autouse=True)
-def reset() -> None:
-    reset_config()
-    yield
-    reset_config()
+def _set_capacity(**overrides: Any) -> None:
+    """Configure the gemini_capacity block on a fresh CCProxyConfig instance."""
+    overrides.setdefault("enabled", True)
+    set_config_instance(CCProxyConfig(gemini_capacity=GeminiCapacityFallbackConfig(**overrides)))
 
 
 @pytest.fixture(autouse=True)
 def patch_sleep() -> AsyncMock:
     """Mock asyncio.sleep so retry tests don't actually wait."""
-    with patch("ccproxy.hooks.gemini_capacity_fallback.asyncio.sleep", new_callable=AsyncMock) as mock:
+    with patch("ccproxy.inspector.gemini_addon.asyncio.sleep", new_callable=AsyncMock) as mock:
         yield mock
 
 
@@ -84,7 +76,7 @@ def _make_flow(
         request_data={},
         is_streaming=is_streaming,
     )
-    flow.metadata = {InspectorMeta.RECORD: record}
+    flow.metadata = {InspectorMeta.RECORD: record, "ccproxy.oauth_provider": "gemini"}
     return flow
 
 
@@ -106,32 +98,6 @@ def _success_response(content: bytes = b'{"candidates":[{}]}') -> MagicMock:
     resp.headers.get = MagicMock(return_value="application/json")
     resp.headers.multi_items = MagicMock(return_value=[("content-type", "application/json")])
     return resp
-
-
-class TestRegistration:
-    def test_hook_records_fallback_models(self) -> None:
-        ctx = MagicMock(spec=Context)
-        gemini_capacity_fallback(ctx, {"fallback_models": ["gemini-2.5-pro", "gemini-2.5-flash"]})
-        assert fallback_module._configured_params is not None
-        assert fallback_module._configured_params.fallback_models == [
-            "gemini-2.5-pro",
-            "gemini-2.5-flash",
-        ]
-
-    def test_empty_params_creates_default_config(self) -> None:
-        ctx = MagicMock(spec=Context)
-        gemini_capacity_fallback(ctx, {})
-        assert fallback_module._configured_params is not None
-        assert fallback_module._configured_params.fallback_models == []
-
-
-class TestHasFallbackConfigured:
-    def test_returns_true_when_models_configured(self) -> None:
-        _set_params(fallback_models=["gemini-2.5-pro"])
-        assert has_fallback_configured() is True
-
-    def test_returns_false_when_empty(self) -> None:
-        assert has_fallback_configured() is False
 
 
 class TestParseDuration:
@@ -177,38 +143,51 @@ class TestExtractRetryDelay:
 
 class TestTryFallbackGuards:
     @pytest.mark.asyncio
-    async def test_no_op_when_no_fallback_configured(self) -> None:
+    async def test_no_op_when_capacity_disabled(self) -> None:
+        _set_capacity(enabled=False, fallback_models=["gemini-2.5-pro"])
         flow = _make_flow()
-        result = await try_fallback_models(flow)
+        addon = GeminiAddon()
+        result = await addon._try_fallback_models(flow)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_no_op_when_no_fallback_models(self) -> None:
+        _set_capacity(enabled=True, fallback_models=[])
+        flow = _make_flow()
+        addon = GeminiAddon()
+        result = await addon._try_fallback_models(flow)
         assert result is False
 
     @pytest.mark.asyncio
     async def test_no_op_when_status_not_capacity(self) -> None:
-        _set_params(fallback_models=["gemini-2.5-pro"], sticky_retry_attempts=0)
+        _set_capacity(fallback_models=["gemini-2.5-pro"], sticky_retry_attempts=0)
         flow = _make_flow(status=500)
-        result = await try_fallback_models(flow)
+        addon = GeminiAddon()
+        result = await addon._try_fallback_models(flow)
         assert result is False
 
     @pytest.mark.asyncio
     async def test_no_op_when_capacity_status_not_resource_exhausted(self) -> None:
-        _set_params(fallback_models=["gemini-2.5-pro"], sticky_retry_attempts=0)
+        _set_capacity(fallback_models=["gemini-2.5-pro"], sticky_retry_attempts=0)
         flow = _make_flow(
             status=429,
             response_body={"error": {"code": 429, "status": "QUOTA_EXCEEDED"}},
         )
-        result = await try_fallback_models(flow)
+        addon = GeminiAddon()
+        result = await addon._try_fallback_models(flow)
         assert result is False
 
     @pytest.mark.asyncio
     async def test_503_resource_exhausted_triggers_retry(self) -> None:
         """503 capacity errors should be retried just like 429."""
-        _set_params(fallback_models=["gemini-2.5-pro"], sticky_retry_attempts=0)
+        _set_capacity(fallback_models=["gemini-2.5-pro"], sticky_retry_attempts=0)
         flow = _make_flow(status=503)
+        addon = GeminiAddon()
 
         success = _success_response()
         with patch("httpx.AsyncClient") as mock_client:
             mock_client.return_value.__aenter__.return_value.request = AsyncMock(return_value=success)
-            result = await try_fallback_models(flow)
+            result = await addon._try_fallback_models(flow)
 
         assert result is True
         assert flow.response.status_code == 200
@@ -217,7 +196,7 @@ class TestTryFallbackGuards:
 class TestStickyRetry:
     @pytest.mark.asyncio
     async def test_sticky_retry_honors_server_retry_delay(self, patch_sleep: AsyncMock) -> None:
-        _set_params(fallback_models=["gemini-2.5-pro"], sticky_retry_attempts=2)
+        _set_capacity(fallback_models=["gemini-2.5-pro"], sticky_retry_attempts=2)
         flow = _make_flow(
             status=429,
             response_body={
@@ -233,19 +212,21 @@ class TestStickyRetry:
                 }
             },
         )
+        addon = GeminiAddon()
 
         success = _success_response()
         with patch("httpx.AsyncClient") as mock_client:
             mock_client.return_value.__aenter__.return_value.request = AsyncMock(return_value=success)
-            result = await try_fallback_models(flow)
+            result = await addon._try_fallback_models(flow)
 
         assert result is True
         patch_sleep.assert_awaited_with(7.0)
 
     @pytest.mark.asyncio
     async def test_sticky_retry_succeeds_on_second_attempt(self, patch_sleep: AsyncMock) -> None:
-        _set_params(fallback_models=["gemini-2.5-pro"], sticky_retry_attempts=3)
+        _set_capacity(fallback_models=["gemini-2.5-pro"], sticky_retry_attempts=3)
         flow = _make_flow()
+        addon = GeminiAddon()
 
         exhausted = _capacity_response(429, retry_delay="2s")
         success = _success_response(b'{"candidates":[{"text":"ok"}]}')
@@ -253,7 +234,7 @@ class TestStickyRetry:
 
         with patch("httpx.AsyncClient") as mock_client:
             mock_client.return_value.__aenter__.return_value.request = request_mock
-            result = await try_fallback_models(flow)
+            result = await addon._try_fallback_models(flow)
 
         assert result is True
         assert request_mock.call_count == 2
@@ -263,11 +244,12 @@ class TestStickyRetry:
 
     @pytest.mark.asyncio
     async def test_sticky_retry_exhausted_falls_through_to_fallback(self, patch_sleep: AsyncMock) -> None:
-        _set_params(
+        _set_capacity(
             fallback_models=["gemini-2.5-pro"],
             sticky_retry_attempts=2,
         )
         flow = _make_flow()
+        addon = GeminiAddon()
 
         exhausted = _capacity_response(429, retry_delay="1s")
         success = _success_response()
@@ -275,7 +257,7 @@ class TestStickyRetry:
 
         with patch("httpx.AsyncClient") as mock_client:
             mock_client.return_value.__aenter__.return_value.request = request_mock
-            result = await try_fallback_models(flow)
+            result = await addon._try_fallback_models(flow)
 
         assert result is True
         assert request_mock.call_count == 3
@@ -291,7 +273,7 @@ class TestDelayCaps:
     @pytest.mark.asyncio
     async def test_terminal_delay_stops_chain(self, patch_sleep: AsyncMock) -> None:
         """retryDelay > terminal threshold halts the entire chain."""
-        _set_params(
+        _set_capacity(
             fallback_models=["gemini-2.5-pro", "gemini-2.5-flash"],
             sticky_retry_attempts=3,
             terminal_delay_threshold_seconds=300.0,
@@ -310,11 +292,12 @@ class TestDelayCaps:
                 }
             }
         )
+        addon = GeminiAddon()
 
         request_mock = AsyncMock()
         with patch("httpx.AsyncClient") as mock_client:
             mock_client.return_value.__aenter__.return_value.request = request_mock
-            result = await try_fallback_models(flow)
+            result = await addon._try_fallback_models(flow)
 
         assert result is False
         assert request_mock.call_count == 0
@@ -323,7 +306,7 @@ class TestDelayCaps:
     @pytest.mark.asyncio
     async def test_per_model_cap_falls_through(self, patch_sleep: AsyncMock) -> None:
         """retryDelay between per-model cap and terminal skips remaining sticky attempts."""
-        _set_params(
+        _set_capacity(
             fallback_models=["gemini-2.5-pro"],
             sticky_retry_attempts=3,
             sticky_retry_max_delay_seconds=60.0,
@@ -343,12 +326,13 @@ class TestDelayCaps:
                 }
             }
         )
+        addon = GeminiAddon()
 
         success = _success_response()
         request_mock = AsyncMock(return_value=success)
         with patch("httpx.AsyncClient") as mock_client:
             mock_client.return_value.__aenter__.return_value.request = request_mock
-            result = await try_fallback_models(flow)
+            result = await addon._try_fallback_models(flow)
 
         assert result is True
         models_tried = [json.loads(call.kwargs["content"])["model"] for call in request_mock.call_args_list]
@@ -357,7 +341,7 @@ class TestDelayCaps:
     @pytest.mark.asyncio
     async def test_total_budget_exhausted_returns_false(self, patch_sleep: AsyncMock) -> None:
         """When the wall-clock budget would be exceeded, return False."""
-        _set_params(
+        _set_capacity(
             fallback_models=["gemini-2.5-pro"],
             sticky_retry_attempts=3,
             total_retry_budget_seconds=5.0,
@@ -376,6 +360,7 @@ class TestDelayCaps:
                 }
             }
         )
+        addon = GeminiAddon()
 
         clock = [1000.0]
 
@@ -384,11 +369,11 @@ class TestDelayCaps:
 
         request_mock = AsyncMock()
         with (
-            patch("ccproxy.hooks.gemini_capacity_fallback.time.monotonic", side_effect=fake_monotonic),
+            patch("ccproxy.inspector.gemini_addon.time.monotonic", side_effect=fake_monotonic),
             patch("httpx.AsyncClient") as mock_client,
         ):
             mock_client.return_value.__aenter__.return_value.request = request_mock
-            result = await try_fallback_models(flow)
+            result = await addon._try_fallback_models(flow)
 
         assert result is False
         assert request_mock.call_count == 0
@@ -397,19 +382,20 @@ class TestDelayCaps:
     async def test_no_retry_delay_uses_exponential_backoff(self, patch_sleep: AsyncMock) -> None:
         """Without a retryDelay, sleep is exponential: 1s, 2s, 4s. The first
         attempt of a candidate runs immediately; subsequent attempts back off."""
-        _set_params(
+        _set_capacity(
             fallback_models=["gemini-2.5-pro"],
             sticky_retry_attempts=4,
             sticky_retry_max_delay_seconds=60.0,
         )
         flow = _make_flow()
+        addon = GeminiAddon()
 
         exhausted = _capacity_response(429)
         success = _success_response()
         request_mock = AsyncMock(side_effect=[exhausted, exhausted, exhausted, success])
         with patch("httpx.AsyncClient") as mock_client:
             mock_client.return_value.__aenter__.return_value.request = request_mock
-            result = await try_fallback_models(flow)
+            result = await addon._try_fallback_models(flow)
 
         assert result is True
         delays = [call.args[0] for call in patch_sleep.await_args_list]
@@ -419,16 +405,17 @@ class TestDelayCaps:
 class TestFallbackChainBehavior:
     @pytest.mark.asyncio
     async def test_succeeds_on_first_fallback_replaces_response(self, patch_sleep: AsyncMock) -> None:
-        _set_params(
+        _set_capacity(
             fallback_models=["gemini-2.5-pro", "gemini-2.5-flash"],
             sticky_retry_attempts=0,
         )
         flow = _make_flow()
+        addon = GeminiAddon()
 
         success = _success_response(b'{"candidates":[{"text":"ok"}]}')
         with patch("httpx.AsyncClient") as mock_client:
             mock_client.return_value.__aenter__.return_value.request = AsyncMock(return_value=success)
-            result = await try_fallback_models(flow)
+            result = await addon._try_fallback_models(flow)
 
         assert result is True
         assert flow.response.status_code == 200
@@ -437,18 +424,19 @@ class TestFallbackChainBehavior:
 
     @pytest.mark.asyncio
     async def test_walks_chain_on_consecutive_capacity_errors(self, patch_sleep: AsyncMock) -> None:
-        _set_params(
+        _set_capacity(
             fallback_models=["gemini-2.5-pro", "gemini-2.5-flash"],
             sticky_retry_attempts=0,
         )
         flow = _make_flow()
+        addon = GeminiAddon()
 
         exhausted = _capacity_response(429)
         success = _success_response()
         request_mock = AsyncMock(side_effect=[exhausted, success])
         with patch("httpx.AsyncClient") as mock_client:
             mock_client.return_value.__aenter__.return_value.request = request_mock
-            result = await try_fallback_models(flow)
+            result = await addon._try_fallback_models(flow)
 
         assert result is True
         assert request_mock.call_count == 2
@@ -457,11 +445,12 @@ class TestFallbackChainBehavior:
 
     @pytest.mark.asyncio
     async def test_stops_on_non_capacity_error(self, patch_sleep: AsyncMock) -> None:
-        _set_params(
+        _set_capacity(
             fallback_models=["gemini-2.5-pro", "gemini-2.5-flash"],
             sticky_retry_attempts=0,
         )
         flow = _make_flow()
+        addon = GeminiAddon()
 
         server_err = MagicMock()
         server_err.status_code = 500
@@ -470,57 +459,60 @@ class TestFallbackChainBehavior:
         request_mock = AsyncMock(return_value=server_err)
         with patch("httpx.AsyncClient") as mock_client:
             mock_client.return_value.__aenter__.return_value.request = request_mock
-            result = await try_fallback_models(flow)
+            result = await addon._try_fallback_models(flow)
 
         assert result is False
         assert request_mock.call_count == 1
 
     @pytest.mark.asyncio
     async def test_skips_network_error_continues_chain(self, patch_sleep: AsyncMock) -> None:
-        _set_params(
+        _set_capacity(
             fallback_models=["gemini-2.5-pro", "gemini-2.5-flash"],
             sticky_retry_attempts=0,
         )
         flow = _make_flow()
+        addon = GeminiAddon()
 
         success = _success_response()
         request_mock = AsyncMock(side_effect=[httpx.ConnectError("boom"), success])
         with patch("httpx.AsyncClient") as mock_client:
             mock_client.return_value.__aenter__.return_value.request = request_mock
-            result = await try_fallback_models(flow)
+            result = await addon._try_fallback_models(flow)
 
         assert result is True
         assert request_mock.call_count == 2
 
     @pytest.mark.asyncio
     async def test_returns_false_when_all_fallbacks_exhausted(self, patch_sleep: AsyncMock) -> None:
-        _set_params(
+        _set_capacity(
             fallback_models=["gemini-2.5-pro", "gemini-2.5-flash"],
             sticky_retry_attempts=0,
         )
         flow = _make_flow()
+        addon = GeminiAddon()
 
         exhausted = _capacity_response(429)
         request_mock = AsyncMock(return_value=exhausted)
         with patch("httpx.AsyncClient") as mock_client:
             mock_client.return_value.__aenter__.return_value.request = request_mock
-            result = await try_fallback_models(flow)
+            result = await addon._try_fallback_models(flow)
 
         assert result is False
         assert request_mock.call_count == 2
 
     @pytest.mark.asyncio
     async def test_skips_fallback_matching_original_model(self, patch_sleep: AsyncMock) -> None:
-        _set_params(
+        _set_capacity(
             fallback_models=["gemini-3.1-pro-preview", "gemini-2.5-pro"],
             sticky_retry_attempts=0,
         )
         flow = _make_flow(request_model="gemini-3.1-pro-preview")
+        addon = GeminiAddon()
 
         success = _success_response()
         with patch("httpx.AsyncClient") as mock_client:
             mock_client.return_value.__aenter__.return_value.request = AsyncMock(return_value=success)
-            result = await try_fallback_models(flow)
+            result = await addon._try_fallback_models(flow)
 
         assert result is True
         sent_body = json.loads(mock_client.return_value.__aenter__.return_value.request.call_args.kwargs["content"])
@@ -530,21 +522,20 @@ class TestFallbackChainBehavior:
     async def test_request_body_dict_not_mutated_across_retries(self, patch_sleep: AsyncMock) -> None:
         """Regression: ``_attempt_request`` must not mutate the caller's dict.
 
-        Previously ``request_body["model"] = model`` rewrote the original
-        dict in place on every retry. Today the retry uses a defensive copy
-        (``{**request_body, "model": model}``). Verifies the dict parsed
-        from ``flow.request.content`` survives a 4-attempt walk through the
-        sticky retries plus two fallback candidates with its original
-        ``model`` field intact.
+        The retry uses a defensive copy (``{**request_body, "model": model}``).
+        Verifies the dict parsed from ``flow.request.content`` survives a
+        4-attempt walk through the sticky retries plus two fallback candidates
+        with its original ``model`` field intact.
         """
-        _set_params(
+        _set_capacity(
             fallback_models=["gemini-2.5-pro", "gemini-2.5-flash"],
             sticky_retry_attempts=2,
         )
         flow = _make_flow()
+        addon = GeminiAddon()
 
         captured: list[dict[str, Any]] = []
-        original_attempt_request = fallback_module._attempt_request
+        original_attempt_request = gemini_addon_module.GeminiAddon._attempt_request
 
         async def spy_attempt_request(flow: Any, model: str, request_body: dict[str, Any]) -> Any:
             captured.append(request_body)
@@ -555,11 +546,11 @@ class TestFallbackChainBehavior:
         request_mock = AsyncMock(side_effect=[exhausted, exhausted, exhausted, success])
 
         with (
-            patch.object(fallback_module, "_attempt_request", side_effect=spy_attempt_request),
+            patch.object(GeminiAddon, "_attempt_request", side_effect=spy_attempt_request),
             patch("httpx.AsyncClient") as mock_client,
         ):
             mock_client.return_value.__aenter__.return_value.request = request_mock
-            result = await try_fallback_models(flow)
+            result = await addon._try_fallback_models(flow)
 
         assert result is True
         assert request_mock.call_count == 4
@@ -582,8 +573,9 @@ class TestFallbackChainBehavior:
     @pytest.mark.asyncio
     async def test_streaming_flows_retry_with_envelope_unwrap(self, patch_sleep: AsyncMock) -> None:
         """Streaming capacity errors are retried; SSE retry body has v1internal unwrapped."""
-        _set_params(fallback_models=["gemini-2.5-pro"], sticky_retry_attempts=0)
+        _set_capacity(fallback_models=["gemini-2.5-pro"], sticky_retry_attempts=0)
         flow = _make_flow(is_streaming=True)
+        addon = GeminiAddon()
 
         sse_resp = MagicMock()
         sse_resp.status_code = 200
@@ -593,32 +585,80 @@ class TestFallbackChainBehavior:
 
         with patch("httpx.AsyncClient") as mock_client:
             mock_client.return_value.__aenter__.return_value.request = AsyncMock(return_value=sse_resp)
-            result = await try_fallback_models(flow)
+            result = await addon._try_fallback_models(flow)
 
         assert result is True
         assert b'"x": 1' in flow.response.content
         assert b'"response"' not in flow.response.content
 
 
-class _Response:
-    """Plain stand-in for flow.response so attribute presence is verifiable."""
+class TestResponseEntrypointBypass:
+    """``GeminiAddon.response`` calls ``_try_fallback_models`` only when capacity
+    is enabled and configured. These tests exercise the addon entrypoint."""
 
-    def __init__(self, status_code: int, content_type: str) -> None:
-        self.status_code = status_code
-        self.headers = {"content-type": content_type}
+    @pytest.mark.asyncio
+    async def test_capacity_disabled_passes_429_through(self) -> None:
+        """Master switch off → addon does not retry, leaves response intact."""
+        _set_capacity(enabled=False, fallback_models=["gemini-2.5-pro"])
+        flow = _make_flow()
+        addon = GeminiAddon()
+
+        with patch("httpx.AsyncClient") as mock_client:
+            request_mock = AsyncMock()
+            mock_client.return_value.__aenter__.return_value.request = request_mock
+            await addon.response(flow)
+
+        assert request_mock.await_count == 0
+        assert flow.response.status_code == 429
+
+    @pytest.mark.asyncio
+    async def test_capacity_enabled_no_fallback_models_passes_through(self) -> None:
+        """Empty fallback_models list → no retry, no upstream call."""
+        _set_capacity(enabled=True, fallback_models=[])
+        flow = _make_flow()
+        addon = GeminiAddon()
+
+        with patch("httpx.AsyncClient") as mock_client:
+            request_mock = AsyncMock()
+            mock_client.return_value.__aenter__.return_value.request = request_mock
+            await addon.response(flow)
+
+        assert request_mock.await_count == 0
+        assert flow.response.status_code == 429
+
+    @pytest.mark.asyncio
+    async def test_capacity_retries_via_response_entrypoint(self) -> None:
+        """Enabled + configured + 429 → addon.response triggers fallback retry."""
+        _set_capacity(
+            enabled=True,
+            fallback_models=["gemini-2.5-pro"],
+            sticky_retry_attempts=0,
+        )
+        flow = _make_flow()
+        addon = GeminiAddon()
+
+        success = _success_response(b'{"candidates":[{"text":"ok"}]}')
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.request = AsyncMock(return_value=success)
+            await addon.response(flow)
+
+        assert flow.response.status_code == 200
 
 
-class TestResponseHeadersDefer:
+class TestResponseHeadersDeferEntrypoint:
+    """The capacity-defer branch on streaming flows lives on GeminiAddon."""
+
     @pytest.mark.asyncio
     async def test_503_in_responseheaders_defers_stream(self) -> None:
-        """503 + gemini + fallback configured → no stream installed (deferred)."""
-        from ccproxy.inspector.addon import InspectorAddon
-
-        _set_params(fallback_models=["gemini-2.5-pro"])
+        """503 + gemini + capacity enabled → no stream installed (deferred)."""
+        _set_capacity(enabled=True, fallback_models=["gemini-2.5-pro"])
 
         flow = MagicMock()
         flow.id = "f1"
-        flow.response = _Response(status_code=503, content_type="text/event-stream")
+        flow.response = MagicMock()
+        flow.response.status_code = 503
+        flow.response.headers = {"content-type": "text/event-stream"}
+        flow.response.stream = None
         record = FlowRecord(direction="inbound")
         record.transform = TransformMeta(
             provider="gemini",
@@ -626,9 +666,9 @@ class TestResponseHeadersDefer:
             request_data={},
             is_streaming=True,
         )
-        flow.metadata = {InspectorMeta.RECORD: record}
+        flow.metadata = {InspectorMeta.RECORD: record, "ccproxy.oauth_provider": "gemini"}
 
-        addon = InspectorAddon()
+        addon = GeminiAddon()
         await addon.responseheaders(flow)
 
-        assert not hasattr(flow.response, "stream")
+        assert flow.response.stream is None
