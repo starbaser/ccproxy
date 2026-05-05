@@ -173,8 +173,8 @@ async def _attempt_request(
     model: str,
     request_body: dict[str, Any],
 ) -> httpx.Response | None:
-    request_body["model"] = model
-    new_body = json.dumps(request_body).encode()
+    retry_body = {**request_body, "model": model}
+    new_body = json.dumps(retry_body).encode()
     retry_headers = {
         k: v
         for k, v in flow.request.headers.items()  # type: ignore[no-untyped-call]
@@ -275,9 +275,7 @@ async def try_fallback_models(flow: http.HTTPFlow) -> bool:
     last_capacity_body: Any = err_body
 
     candidates: list[tuple[str, int]] = [(original_model, params.sticky_retry_attempts)]
-    candidates.extend(
-        (m, 1) for m in params.fallback_models if m != original_model
-    )
+    candidates.extend((m, 1) for m in params.fallback_models if m != original_model)
 
     for candidate_idx, (model, attempts) in enumerate(candidates):
         if attempts <= 0:

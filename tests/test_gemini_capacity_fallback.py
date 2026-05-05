@@ -91,9 +91,7 @@ def _make_flow(
 def _capacity_response(status: int, retry_delay: str | None = None) -> MagicMock:
     body: dict[str, Any] = {"error": {"code": status, "status": "RESOURCE_EXHAUSTED"}}
     if retry_delay is not None:
-        body["error"]["details"] = [
-            {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": retry_delay}
-        ]
+        body["error"]["details"] = [{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": retry_delay}]
     resp = MagicMock()
     resp.status_code = status
     resp.content = json.dumps(body).encode()
@@ -218,9 +216,7 @@ class TestTryFallbackGuards:
 
 class TestStickyRetry:
     @pytest.mark.asyncio
-    async def test_sticky_retry_honors_server_retry_delay(
-        self, patch_sleep: AsyncMock
-    ) -> None:
+    async def test_sticky_retry_honors_server_retry_delay(self, patch_sleep: AsyncMock) -> None:
         _set_params(fallback_models=["gemini-2.5-pro"], sticky_retry_attempts=2)
         flow = _make_flow(
             status=429,
@@ -247,9 +243,7 @@ class TestStickyRetry:
         patch_sleep.assert_awaited_with(7.0)
 
     @pytest.mark.asyncio
-    async def test_sticky_retry_succeeds_on_second_attempt(
-        self, patch_sleep: AsyncMock
-    ) -> None:
+    async def test_sticky_retry_succeeds_on_second_attempt(self, patch_sleep: AsyncMock) -> None:
         _set_params(fallback_models=["gemini-2.5-pro"], sticky_retry_attempts=3)
         flow = _make_flow()
 
@@ -263,16 +257,12 @@ class TestStickyRetry:
 
         assert result is True
         assert request_mock.call_count == 2
-        models_tried = [
-            json.loads(call.kwargs["content"])["model"] for call in request_mock.call_args_list
-        ]
+        models_tried = [json.loads(call.kwargs["content"])["model"] for call in request_mock.call_args_list]
         assert models_tried == ["gemini-3.1-pro-preview", "gemini-3.1-pro-preview"]
         assert patch_sleep.await_count == 1
 
     @pytest.mark.asyncio
-    async def test_sticky_retry_exhausted_falls_through_to_fallback(
-        self, patch_sleep: AsyncMock
-    ) -> None:
+    async def test_sticky_retry_exhausted_falls_through_to_fallback(self, patch_sleep: AsyncMock) -> None:
         _set_params(
             fallback_models=["gemini-2.5-pro"],
             sticky_retry_attempts=2,
@@ -289,9 +279,7 @@ class TestStickyRetry:
 
         assert result is True
         assert request_mock.call_count == 3
-        models_tried = [
-            json.loads(call.kwargs["content"])["model"] for call in request_mock.call_args_list
-        ]
+        models_tried = [json.loads(call.kwargs["content"])["model"] for call in request_mock.call_args_list]
         assert models_tried == [
             "gemini-3.1-pro-preview",
             "gemini-3.1-pro-preview",
@@ -363,15 +351,11 @@ class TestDelayCaps:
             result = await try_fallback_models(flow)
 
         assert result is True
-        models_tried = [
-            json.loads(call.kwargs["content"])["model"] for call in request_mock.call_args_list
-        ]
+        models_tried = [json.loads(call.kwargs["content"])["model"] for call in request_mock.call_args_list]
         assert models_tried == ["gemini-2.5-pro"]
 
     @pytest.mark.asyncio
-    async def test_total_budget_exhausted_returns_false(
-        self, patch_sleep: AsyncMock
-    ) -> None:
+    async def test_total_budget_exhausted_returns_false(self, patch_sleep: AsyncMock) -> None:
         """When the wall-clock budget would be exceeded, return False."""
         _set_params(
             fallback_models=["gemini-2.5-pro"],
@@ -400,9 +384,7 @@ class TestDelayCaps:
 
         request_mock = AsyncMock()
         with (
-            patch(
-                "ccproxy.hooks.gemini_capacity_fallback.time.monotonic", side_effect=fake_monotonic
-            ),
+            patch("ccproxy.hooks.gemini_capacity_fallback.time.monotonic", side_effect=fake_monotonic),
             patch("httpx.AsyncClient") as mock_client,
         ):
             mock_client.return_value.__aenter__.return_value.request = request_mock
@@ -412,9 +394,7 @@ class TestDelayCaps:
         assert request_mock.call_count == 0
 
     @pytest.mark.asyncio
-    async def test_no_retry_delay_uses_exponential_backoff(
-        self, patch_sleep: AsyncMock
-    ) -> None:
+    async def test_no_retry_delay_uses_exponential_backoff(self, patch_sleep: AsyncMock) -> None:
         """Without a retryDelay, sleep is exponential: 1s, 2s, 4s. The first
         attempt of a candidate runs immediately; subsequent attempts back off."""
         _set_params(
@@ -438,9 +418,7 @@ class TestDelayCaps:
 
 class TestFallbackChainBehavior:
     @pytest.mark.asyncio
-    async def test_succeeds_on_first_fallback_replaces_response(
-        self, patch_sleep: AsyncMock
-    ) -> None:
+    async def test_succeeds_on_first_fallback_replaces_response(self, patch_sleep: AsyncMock) -> None:
         _set_params(
             fallback_models=["gemini-2.5-pro", "gemini-2.5-flash"],
             sticky_retry_attempts=0,
@@ -458,9 +436,7 @@ class TestFallbackChainBehavior:
         assert mock_client.return_value.__aenter__.return_value.request.call_count == 1
 
     @pytest.mark.asyncio
-    async def test_walks_chain_on_consecutive_capacity_errors(
-        self, patch_sleep: AsyncMock
-    ) -> None:
+    async def test_walks_chain_on_consecutive_capacity_errors(self, patch_sleep: AsyncMock) -> None:
         _set_params(
             fallback_models=["gemini-2.5-pro", "gemini-2.5-flash"],
             sticky_retry_attempts=0,
@@ -476,9 +452,7 @@ class TestFallbackChainBehavior:
 
         assert result is True
         assert request_mock.call_count == 2
-        models_tried = [
-            json.loads(call.kwargs["content"])["model"] for call in request_mock.call_args_list
-        ]
+        models_tried = [json.loads(call.kwargs["content"])["model"] for call in request_mock.call_args_list]
         assert models_tried == ["gemini-2.5-pro", "gemini-2.5-flash"]
 
     @pytest.mark.asyncio
@@ -519,9 +493,7 @@ class TestFallbackChainBehavior:
         assert request_mock.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_returns_false_when_all_fallbacks_exhausted(
-        self, patch_sleep: AsyncMock
-    ) -> None:
+    async def test_returns_false_when_all_fallbacks_exhausted(self, patch_sleep: AsyncMock) -> None:
         _set_params(
             fallback_models=["gemini-2.5-pro", "gemini-2.5-flash"],
             sticky_retry_attempts=0,
@@ -551,15 +523,64 @@ class TestFallbackChainBehavior:
             result = await try_fallback_models(flow)
 
         assert result is True
-        sent_body = json.loads(
-            mock_client.return_value.__aenter__.return_value.request.call_args.kwargs["content"]
-        )
+        sent_body = json.loads(mock_client.return_value.__aenter__.return_value.request.call_args.kwargs["content"])
         assert sent_body["model"] == "gemini-2.5-pro"
 
     @pytest.mark.asyncio
-    async def test_streaming_flows_retry_with_envelope_unwrap(
-        self, patch_sleep: AsyncMock
-    ) -> None:
+    async def test_request_body_dict_not_mutated_across_retries(self, patch_sleep: AsyncMock) -> None:
+        """Regression: ``_attempt_request`` must not mutate the caller's dict.
+
+        Previously ``request_body["model"] = model`` rewrote the original
+        dict in place on every retry. Today the retry uses a defensive copy
+        (``{**request_body, "model": model}``). Verifies the dict parsed
+        from ``flow.request.content`` survives a 4-attempt walk through the
+        sticky retries plus two fallback candidates with its original
+        ``model`` field intact.
+        """
+        _set_params(
+            fallback_models=["gemini-2.5-pro", "gemini-2.5-flash"],
+            sticky_retry_attempts=2,
+        )
+        flow = _make_flow()
+
+        captured: list[dict[str, Any]] = []
+        original_attempt_request = fallback_module._attempt_request
+
+        async def spy_attempt_request(flow: Any, model: str, request_body: dict[str, Any]) -> Any:
+            captured.append(request_body)
+            return await original_attempt_request(flow, model, request_body)
+
+        exhausted = _capacity_response(429)
+        success = _success_response()
+        request_mock = AsyncMock(side_effect=[exhausted, exhausted, exhausted, success])
+
+        with (
+            patch.object(fallback_module, "_attempt_request", side_effect=spy_attempt_request),
+            patch("httpx.AsyncClient") as mock_client,
+        ):
+            mock_client.return_value.__aenter__.return_value.request = request_mock
+            result = await try_fallback_models(flow)
+
+        assert result is True
+        assert request_mock.call_count == 4
+
+        models_tried = [json.loads(call.kwargs["content"])["model"] for call in request_mock.call_args_list]
+        assert models_tried == [
+            "gemini-3.1-pro-preview",
+            "gemini-3.1-pro-preview",
+            "gemini-2.5-pro",
+            "gemini-2.5-flash",
+        ]
+
+        assert len(captured) == 4
+        request_body = captured[0]
+        assert all(rb is request_body for rb in captured)
+        snapshot = json.dumps(request_body, sort_keys=True)
+        assert request_body["model"] == "gemini-3.1-pro-preview"
+        assert json.dumps(request_body, sort_keys=True) == snapshot
+
+    @pytest.mark.asyncio
+    async def test_streaming_flows_retry_with_envelope_unwrap(self, patch_sleep: AsyncMock) -> None:
         """Streaming capacity errors are retried; SSE retry body has v1internal unwrapped."""
         _set_params(fallback_models=["gemini-2.5-pro"], sticky_retry_attempts=0)
         flow = _make_flow(is_streaming=True)
