@@ -97,6 +97,35 @@ class TestMitmwebClientGetRequestBody:
             client.get_request_body("missing-id")
 
 
+class TestMitmwebClientGetResponseBody:
+    """Tests for MitmwebClient.get_response_body."""
+
+    def test_returns_raw_bytes(self) -> None:
+        mock_resp = MagicMock()
+        mock_resp.content = b'{"id": "msg-1"}'
+        mock_resp.raise_for_status = MagicMock()
+
+        client = MitmwebClient(host="localhost", port=8084, token="tok")  # noqa: S106
+        client._client = MagicMock()
+        client._client.get.return_value = mock_resp
+
+        result = client.get_response_body("flow-id-1")
+
+        client._client.get.assert_called_once_with("/flows/flow-id-1/response/content.data")
+        assert result == b'{"id": "msg-1"}'
+
+    def test_raises_on_http_error(self) -> None:
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError("404", request=MagicMock(), response=MagicMock())
+
+        client = MitmwebClient(host="localhost", port=8084, token="tok")  # noqa: S106
+        client._client = MagicMock()
+        client._client.get.return_value = mock_resp
+
+        with pytest.raises(httpx.HTTPStatusError):
+            client.get_response_body("missing-id")
+
+
 class TestMitmwebClientPost:
     """Tests for MitmwebClient._post (XSRF token pair generation + optional JSON body)."""
 

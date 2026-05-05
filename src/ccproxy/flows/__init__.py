@@ -59,6 +59,12 @@ class MitmwebClient:
         resp.raise_for_status()
         return resp.content
 
+    def get_response_body(self, flow_id: str) -> bytes:
+        """Fetch the response body for a flow as raw bytes."""
+        resp = self._client.get(f"/flows/{flow_id}/response/content.data")
+        resp.raise_for_status()
+        return resp.content
+
     def dump_har(self, flow_ids: list[str]) -> str:
         """Invoke ``ccproxy.dump`` with one or more flow ids; returns HAR JSON string."""
         if not flow_ids:
@@ -384,9 +390,18 @@ def _git_diff(text_a: str, text_b: str, label_a: str, label_b: str) -> None:
         fb.write(text_b)
         fb.flush()
         subprocess.run(  # noqa: S603
-            ["git", "--no-pager", "diff", "--no-index", "--color=auto",  # noqa: S607
-                f"--src-prefix={label_a}/", f"--dst-prefix={label_b}/",
-                "--", fa.name, fb.name],
+            [
+                "git",
+                "--no-pager",
+                "diff",
+                "--no-index",
+                "--color=auto",  # noqa: S607
+                f"--src-prefix={label_a}/",
+                f"--dst-prefix={label_b}/",
+                "--",
+                fa.name,
+                fb.name,
+            ],
             check=False,
         )
 
