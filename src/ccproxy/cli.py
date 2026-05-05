@@ -326,6 +326,31 @@ def _ensure_combined_ca_bundle(
         return None
 
 
+def _sweep_stale_wg_files(config_dir: Path, *, current_pid: int) -> None:
+    """Delete leftover WireGuard config files from prior runs.
+
+    The current ``ccproxy run --inspect`` writes ``wireguard-cli.{pid}.conf``
+    and unlinks it on graceful shutdown. SIGKILL, panics, and reboots leak
+    the file. ``wireguard-gateway.{pid}.conf`` and bare ``wireguard.conf``
+    are pure historical droppings (no current writer); always remove them.
+    """
+    for path in config_dir.glob("wireguard-cli.*.conf"):
+        suffix = path.name.removeprefix("wireguard-cli.").removesuffix(".conf")
+        if not suffix.isdigit():
+            continue
+        leftover_pid = int(suffix)
+        if leftover_pid == current_pid:
+            continue
+        # PID 0 is reserved (kill(2) treats it as the process group); a
+        # missing /proc/{pid} is the live-process probe we actually want.
+        if not Path(f"/proc/{leftover_pid}").exists():
+            path.unlink(missing_ok=True)
+
+    for path in config_dir.glob("wireguard-gateway.*.conf"):
+        path.unlink(missing_ok=True)
+    (config_dir / "wireguard.conf").unlink(missing_ok=True)
+
+
 def run_with_proxy(
     config_dir: Path,
     command: list[str],
@@ -467,6 +492,7 @@ async def _run_inspect(
     wg_cli_keypair_path = config_dir / f"wireguard-cli.{pid}.conf"
 
     (config_dir / ".inspector-wireguard-client.conf").unlink(missing_ok=True)
+    _sweep_stale_wg_files(config_dir, current_pid=pid)
 
     logger.info(
         "Starting inspector: mitmweb reverse@%d + wg-cli (auto-port), UI@%d",
