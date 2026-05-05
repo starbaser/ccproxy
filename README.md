@@ -174,6 +174,35 @@ hooks:
 
 Per-request overrides via header: `x-ccproxy-hooks: +hook_name,-other_hook`.
 
+### Sharing credentials with the Claude Code CLI
+
+If you also run the Claude Code CLI on the same machine, point ccproxy's
+`anthropic` provider at the CLI's own credential file. Both tools then read
+*and* write the same JSON, so a refresh from either side is visible to the
+other on the next read.
+
+```yaml
+ccproxy:
+  providers:
+    anthropic:
+      auth:
+        type: anthropic_oauth
+        file_path: ~/.claude/.credentials.json
+        access_path: claudeAiOauth.accessToken
+        refresh_path: claudeAiOauth.refreshToken
+        expiry_path: claudeAiOauth.expiresAt
+        header: authorization
+      host: api.anthropic.com
+      path: /v1/messages
+      provider: anthropic
+```
+
+The four glom paths declare the file's schema (`{claudeAiOauth: {accessToken,
+refreshToken, expiresAt, ...}}`), so existing siblings the CLI maintains
+(`scopes`, `subscriptionType`, etc.) are preserved on write. The atomic
+write-back (tmpfile → fsync → rename → chmod 0600) keeps the file consistent
+even if both tools refresh concurrently.
+
 ## Hook Pipeline
 
 | Hook | Stage | Purpose |

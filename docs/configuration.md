@@ -163,6 +163,51 @@ When ccproxy sees a key matching `sk-ant-oat-ccproxy-{name}`, it substitutes the
 
 Tokens are loaded at startup and cached in memory. On a 401 response from the provider, ccproxy re-resolves the credential source (re-reads the file or re-runs the command). If the new token differs from the cached value, the request is retried with the fresh token. If the token is unchanged, the 401 is returned to the client.
 
+### Sharing the Claude Code CLI credential file
+
+When you run both ccproxy and the Claude Code CLI on the same machine, the recommended setup is to point the `anthropic` provider at the CLI's own credential file (`~/.claude/.credentials.json`). Both tools then read *and* write the same JSON, so a refresh performed by either side is visible to the other on the next read — eliminating token desync.
+
+```yaml
+ccproxy:
+  providers:
+    anthropic:
+      auth:
+        type: anthropic_oauth
+        file_path: ~/.claude/.credentials.json
+        access_path: claudeAiOauth.accessToken
+        refresh_path: claudeAiOauth.refreshToken
+        expiry_path: claudeAiOauth.expiresAt
+        header: authorization
+      host: api.anthropic.com
+      path: /v1/messages
+      provider: anthropic
+```
+
+The Claude Code CLI stores its OAuth state under a `claudeAiOauth` envelope:
+
+```json
+{
+  "claudeAiOauth": {
+    "accessToken": "...",
+    "refreshToken": "...",
+    "expiresAt": 1735689600000,
+    "scopes": ["org:create_api_key", "user:profile"],
+    "subscriptionType": "max"
+  }
+}
+```
+
+The four glom path fields declare where each credential lives inside that file:
+
+| Field | Purpose | Example |
+|---|---|---|
+| `file_path` | Path to the credential file on disk. `~` is expanded. | `~/.claude/.credentials.json` |
+| `access_path` | Glom dot-path to the access token (read on every request, written after refresh). | `claudeAiOauth.accessToken` |
+| `refresh_path` | Glom dot-path to the refresh token (used to mint a new access token). | `claudeAiOauth.refreshToken` |
+| `expiry_path` | Glom dot-path to the expiry timestamp (millis since epoch; ccproxy refreshes a few minutes before expiry). | `claudeAiOauth.expiresAt` |
+
+Write-back is atomic — tmpfile → fsync → rename → chmod 0600 — and only the three values addressed by the glom paths are mutated. Sibling fields the CLI maintains (`scopes`, `subscriptionType`, anything else under `claudeAiOauth` or at the top level) are preserved verbatim, so the CLI keeps working without re-authentication after ccproxy refreshes the token.
+
 ## Hook Pipeline
 
 Hooks run in two stages: `inbound` (before the request reaches the provider) and `outbound` (before the response reaches the client).
