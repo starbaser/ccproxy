@@ -109,7 +109,10 @@ class InspectorAddon:
         messages = body.get("messages")
         if isinstance(messages, list):
             text = extract_first_user_text(messages=messages)
-            conv_id = hashlib.sha256(text.encode()).hexdigest()[:12]
+            # Empty first-text-block messages all collide on the same SHA otherwise;
+            # fall back to flow.id so distinct requests stay distinguishable.
+            seed = text or f"flow:{flow.id}"
+            conv_id = hashlib.sha256(seed.encode()).hexdigest()[:12]
             record.conversation_id = conv_id
             flow.metadata["ccproxy.conversation_id"] = conv_id
 

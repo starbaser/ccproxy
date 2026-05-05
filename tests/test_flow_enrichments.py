@@ -14,9 +14,14 @@ from ccproxy.flows.store import FlowRecord, HttpSnapshot
 from ccproxy.inspector.addon import InspectorAddon
 
 
-def _flow_with_body(body: dict[str, Any], content_type: str = "application/json") -> Any:
+def _flow_with_body(
+    body: dict[str, Any],
+    content_type: str = "application/json",
+    flow_id: str = "fixed-flow-id",
+) -> Any:
     """Build a fake HTTPFlow whose request.content is serialized JSON."""
     flow = MagicMock()
+    flow.id = flow_id
     flow.request.content = json.dumps(body).encode()
     flow.request.headers = {"content-type": content_type}
     flow.metadata = {}
@@ -78,7 +83,7 @@ ENRICHMENT_CASES: list[EnrichmentCase] = [
     EnrichmentCase(
         name="empty_user_message",
         body={"messages": [{"role": "user", "content": ""}]},
-        expected_conv_id_text="",
+        expected_conv_id_text="flow:fixed-flow-id",
         expected_system=None,
     ),
     EnrichmentCase(
@@ -147,6 +152,33 @@ def test_enrichment_handles_invalid_json() -> None:
     InspectorAddon._enrich_record_with_conversation_ids(flow, record)
     assert record.conversation_id is None
     assert record.system_prompt_sha is None
+
+
+def test_empty_first_text_uses_flow_id_seed_to_avoid_collision() -> None:
+    """Two flows whose first user message has empty text must NOT collide on conversation_id.
+
+    Regression for the bug where ``extract_first_user_text`` returns ``""`` for
+    empty first-text-block messages (intentional, for billing-validator parity),
+    and the enrichment blindly hashed it — causing every empty-message request
+    to share the same SHA12 (``e3b0c44298fc``).
+    """
+    body_a = {"messages": [{"role": "user", "content": [{"type": "text", "text": ""}]}]}
+    body_b = {"messages": [{"role": "user", "content": ""}]}
+
+    flow_a = _flow_with_body(body_a, flow_id="flow-a-uuid")
+    flow_b = _flow_with_body(body_b, flow_id="flow-b-uuid")
+    record_a = FlowRecord(direction="inbound")
+    record_b = FlowRecord(direction="inbound")
+
+    InspectorAddon._enrich_record_with_conversation_ids(flow_a, record_a)
+    InspectorAddon._enrich_record_with_conversation_ids(flow_b, record_b)
+
+    assert record_a.conversation_id is not None
+    assert record_b.conversation_id is not None
+    assert record_a.conversation_id != record_b.conversation_id
+    empty_sha = _expected_conversation_id("")
+    assert record_a.conversation_id != empty_sha
+    assert record_b.conversation_id != empty_sha
 
 
 def test_record_preserves_client_request_alongside_enrichment() -> None:
