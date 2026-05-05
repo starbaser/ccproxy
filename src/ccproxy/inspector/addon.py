@@ -64,14 +64,10 @@ class InspectorAddon:
 
         return None
 
-    def _extract_session_id(self, request: http.Request) -> str | None:
+    @staticmethod
+    def _extract_session_id_from_body(body: dict[str, Any] | None) -> str | None:
         """Extract session_id from Claude Code's metadata.user_id field."""
-        if not request.content:
-            return None
-
-        try:
-            body = json.loads(request.content)
-        except (json.JSONDecodeError, UnicodeDecodeError):
+        if not body:
             return None
 
         metadata = body.get("metadata", {})
@@ -94,16 +90,11 @@ class InspectorAddon:
         """
         import hashlib
 
-        if not flow.request.content:
-            return
         content_type = flow.request.headers.get("content-type", "").lower()
         if "application/json" not in content_type:
             return
-        try:
-            body = json.loads(flow.request.content)
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            return
-        if not isinstance(body, dict):
+        body = record.parsed_request_body(flow.request.content)
+        if body is None:
             return
 
         messages = body.get("messages")
@@ -159,7 +150,8 @@ class InspectorAddon:
         host = flow.request.pretty_host
 
         try:
-            session_id = self._extract_session_id(flow.request)
+            body = record.parsed_request_body(flow.request.content)
+            session_id = self._extract_session_id_from_body(body)
 
             if self.tracer:
                 self.tracer.start_span(flow, direction, host, flow.request.method, session_id)
@@ -212,11 +204,7 @@ class InspectorAddon:
                     exc_info=True,
                 )
                 flow.response.stream = True
-        elif (
-            transform is not None
-            and transform.is_streaming
-            and transform.provider == "gemini"
-        ):
+        elif transform is not None and transform.is_streaming and transform.provider == "gemini":
             from ccproxy.hooks.gemini_capacity_fallback import (
                 _CAPACITY_STATUS_CODES,
                 has_fallback_configured,
@@ -269,18 +257,13 @@ class InspectorAddon:
                 if retried:
                     response = flow.response
 
-            if (
-                response
-                and flow.metadata.get("ccproxy.oauth_provider") == "gemini"
-            ):
+            if response and flow.metadata.get("ccproxy.oauth_provider") == "gemini":
                 from ccproxy.hooks.gemini_capacity_fallback import (
                     _CAPACITY_STATUS_CODES,
                     try_fallback_models,
                 )
 
-                if response.status_code in _CAPACITY_STATUS_CODES and await try_fallback_models(
-                    flow
-                ):
+                if response.status_code in _CAPACITY_STATUS_CODES and await try_fallback_models(flow):
                     response = flow.response
 
             # Unwrap cloudcode-pa response envelope for Gemini redirect flows

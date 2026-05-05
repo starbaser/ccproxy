@@ -179,60 +179,40 @@ class TestGetDirectionEdgeCases:
 
 
 class TestExtractSessionId:
-    """Tests for _extract_session_id."""
+    """Tests for _extract_session_id_from_body."""
 
-    def _make_request(self, content: bytes | None) -> MagicMock:
-        req = MagicMock()
-        req.content = content
-        return req
+    def test_no_body(self) -> None:
+        assert InspectorAddon._extract_session_id_from_body(None) is None
 
-    def test_no_content(self) -> None:
-        addon = InspectorAddon()
-        req = self._make_request(None)
-        assert addon._extract_session_id(req) is None
-
-    def test_invalid_json(self) -> None:
-        addon = InspectorAddon()
-        req = self._make_request(b"not-json{{{")
-        assert addon._extract_session_id(req) is None
+    def test_empty_body(self) -> None:
+        assert InspectorAddon._extract_session_id_from_body({}) is None
 
     def test_missing_metadata(self) -> None:
-        addon = InspectorAddon()
-        req = self._make_request(json.dumps({"model": "claude"}).encode())
-        assert addon._extract_session_id(req) is None
+        assert InspectorAddon._extract_session_id_from_body({"model": "claude"}) is None
 
     def test_metadata_not_dict(self) -> None:
-        addon = InspectorAddon()
-        req = self._make_request(json.dumps({"metadata": "a string"}).encode())
-        assert addon._extract_session_id(req) is None
+        assert InspectorAddon._extract_session_id_from_body({"metadata": "a string"}) is None
 
     def test_empty_user_id(self) -> None:
-        addon = InspectorAddon()
-        req = self._make_request(json.dumps({"metadata": {"user_id": ""}}).encode())
-        assert addon._extract_session_id(req) is None
+        assert InspectorAddon._extract_session_id_from_body({"metadata": {"user_id": ""}}) is None
 
     def test_json_format_session_id(self) -> None:
-        addon = InspectorAddon()
         user_id_obj = json.dumps({"session_id": "abc123"})
-        req = self._make_request(json.dumps({"metadata": {"user_id": user_id_obj}}).encode())
-        assert addon._extract_session_id(req) == "abc123"
+        assert InspectorAddon._extract_session_id_from_body({"metadata": {"user_id": user_id_obj}}) == "abc123"
 
     def test_legacy_format(self) -> None:
-        addon = InspectorAddon()
-        req = self._make_request(
-            json.dumps({"metadata": {"user_id": "user_hash_account_uuid_session_sid123"}}).encode()
+        assert (
+            InspectorAddon._extract_session_id_from_body(
+                {"metadata": {"user_id": "user_hash_account_uuid_session_sid123"}}
+            )
+            == "sid123"
         )
-        assert addon._extract_session_id(req) == "sid123"
 
     def test_multiple_session_separators(self) -> None:
-        addon = InspectorAddon()
-        req = self._make_request(json.dumps({"metadata": {"user_id": "a_session_b_session_c"}}).encode())
-        assert addon._extract_session_id(req) is None
+        assert InspectorAddon._extract_session_id_from_body({"metadata": {"user_id": "a_session_b_session_c"}}) is None
 
     def test_neither_format(self) -> None:
-        addon = InspectorAddon()
-        req = self._make_request(json.dumps({"metadata": {"user_id": "plain-user-id"}}).encode())
-        assert addon._extract_session_id(req) is None
+        assert InspectorAddon._extract_session_id_from_body({"metadata": {"user_id": "plain-user-id"}}) is None
 
 
 class TestRequestFlowStore:

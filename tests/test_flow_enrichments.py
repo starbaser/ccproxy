@@ -196,3 +196,130 @@ def test_record_preserves_client_request_alongside_enrichment() -> None:
 
     assert record.client_request is snapshot
     assert record.conversation_id == _expected_conversation_id("hi")
+
+
+class TestParsedRequestBodyCache:
+    """Tests for FlowRecord.parsed_request_body parse-once cache."""
+
+    def test_caches_one_parse_per_flow(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``json.loads`` runs exactly once even when the cache is queried twice."""
+        record = FlowRecord(direction="inbound")
+        content = json.dumps({"messages": [{"role": "user", "content": "x"}], "metadata": {"user_id": "u"}}).encode()
+
+        import ccproxy.flows.store as store_mod
+
+        call_count = 0
+        real_loads = json.loads
+
+        def counting_loads(*args: Any, **kwargs: Any) -> Any:
+            nonlocal call_count
+            call_count += 1
+            return real_loads(*args, **kwargs)
+
+        monkeypatch.setattr(store_mod.json, "loads", counting_loads)
+
+        first = record.parsed_request_body(content)
+        second = record.parsed_request_body(content)
+        assert first is second  # same cached dict, not a fresh parse
+        assert call_count == 1
+
+    def test_returns_none_on_invalid_json(self) -> None:
+        """Invalid bytes cache as ``None`` and never re-parse."""
+        record = FlowRecord(direction="inbound")
+        assert record.parsed_request_body(b"not json") is None
+        assert record._parse_attempted is True
+        # Subsequent call still returns None without re-parsing
+        assert record.parsed_request_body(b"not json") is None
+
+    def test_invalid_json_does_not_re_parse(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Failed parse caches the failure; second call must not invoke ``json.loads``."""
+        record = FlowRecord(direction="inbound")
+        import ccproxy.flows.store as store_mod
+
+        call_count = 0
+        real_loads = json.loads
+
+        def counting_loads(*args: Any, **kwargs: Any) -> Any:
+            nonlocal call_count
+            call_count += 1
+            return real_loads(*args, **kwargs)
+
+        monkeypatch.setattr(store_mod.json, "loads", counting_loads)
+
+        record.parsed_request_body(b"<<malformed>>")
+        record.parsed_request_body(b"<<malformed>>")
+        assert call_count == 1
+
+    def test_returns_none_on_empty_content(self) -> None:
+        """Empty bodies never invoke the parser but still mark ``_parse_attempted``."""
+        record = FlowRecord(direction="inbound")
+        assert record.parsed_request_body(b"") is None
+        assert record._parse_attempted is True
+
+    def test_returns_none_on_none_content(self) -> None:
+        """``None`` content (request without body) yields ``None`` and marks attempted."""
+        record = FlowRecord(direction="inbound")
+        assert record.parsed_request_body(None) is None
+        assert record._parse_attempted is True
+
+    def test_returns_none_when_root_not_dict(self) -> None:
+        """JSON arrays at the root yield ``None`` (we only model dict bodies)."""
+        record = FlowRecord(direction="inbound")
+        assert record.parsed_request_body(b"[1, 2, 3]") is None
+
+    def test_returns_none_when_root_is_string(self) -> None:
+        record = FlowRecord(direction="inbound")
+        assert record.parsed_request_body(b'"just a string"') is None
+
+    def test_returns_dict_on_valid_json(self) -> None:
+        record = FlowRecord(direction="inbound")
+        body = record.parsed_request_body(b'{"k": "v"}')
+        assert body == {"k": "v"}
+
+    def test_handles_invalid_utf8(self) -> None:
+        """Bytes that aren't valid UTF-8 surface as ``None`` rather than crashing."""
+        record = FlowRecord(direction="inbound")
+        assert record.parsed_request_body(b"\xff\xfe\x00bad") is None
+
+
+class TestSingleParseAcrossEnrichmentAndExtract:
+    """Integration: enrichment + session-id extraction share one parse per flow."""
+
+    def test_single_body_parse_for_full_request_pipeline(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Both addon-side body consumers share one parse per flow.
+
+        The legacy ``user_..._session_<id>`` user_id format is used so
+        ``parse_session_id`` doesn't introduce its own ``json.loads`` for the
+        inner user_id payload — letting us assert exactly one body parse.
+        """
+        body_dict = {
+            "messages": [{"role": "user", "content": "what's 2+2"}],
+            "system": [{"type": "text", "text": "You are Claude."}],
+            "metadata": {"user_id": "user_h_account_acct_session_sess-xyz"},
+        }
+        content = json.dumps(body_dict).encode()
+        flow = _flow_with_body(body_dict)
+        record = FlowRecord(direction="inbound")
+
+        import ccproxy.flows.store as store_mod
+
+        call_count = 0
+        real_loads = json.loads
+
+        def counting_loads(*args: Any, **kwargs: Any) -> Any:
+            nonlocal call_count
+            call_count += 1
+            return real_loads(*args, **kwargs)
+
+        monkeypatch.setattr(store_mod.json, "loads", counting_loads)
+
+        # First consumer: enrichment hashes messages + system
+        InspectorAddon._enrich_record_with_conversation_ids(flow, record)
+        # Second consumer: session_id extraction reads the cached body
+        body = record.parsed_request_body(content)
+        session_id = InspectorAddon._extract_session_id_from_body(body)
+
+        assert call_count == 1
+        assert session_id == "sess-xyz"
+        assert record.conversation_id == _expected_conversation_id("what's 2+2")
+        assert record.system_prompt_sha == _expected_system_prompt_sha([{"type": "text", "text": "You are Claude."}])

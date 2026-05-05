@@ -6,10 +6,11 @@ the ``x-ccproxy-flow-id`` header so that inbound auth decisions are readable
 when the corresponding response phase fires.
 """
 
+import json
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 FLOW_ID_HEADER = "x-ccproxy-flow-id"
@@ -123,6 +124,32 @@ class FlowRecord:
 
     Identifies which system prompt was in effect for this request.
     """
+
+    _parsed_request_body: dict[str, Any] | None = field(default=None, init=False, repr=False)
+    """Parse-once cache of the JSON request body, populated lazily by
+    ``parsed_request_body``."""
+
+    _parse_attempted: bool = field(default=False, init=False, repr=False)
+    """Sentinel ensuring the parse runs at most once per record (so a malformed
+    body returning ``None`` doesn't trigger repeated re-parses)."""
+
+    def parsed_request_body(self, content: bytes | None) -> dict[str, Any] | None:
+        """Parse the JSON request body once and cache the result.
+
+        Returns ``None`` on empty bodies, parse failures, or non-dict roots.
+        Subsequent calls reuse the cached value (or cached ``None`` failure)
+        without re-parsing.
+        """
+        if not self._parse_attempted:
+            self._parse_attempted = True
+            if content:
+                try:
+                    parsed = json.loads(content)
+                    if isinstance(parsed, dict):
+                        self._parsed_request_body = parsed
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    pass
+        return self._parsed_request_body
 
 
 class InspectorMeta:
