@@ -19,7 +19,7 @@ from ccproxy.config import (
     get_config_dir,
 )
 from ccproxy.oauth.sources import (
-    CommandOAuthSource,
+    CommandAuthSource,
     _read_credential_file,
     _run_credential_command,
 )
@@ -33,9 +33,9 @@ def _make_provider(
     path: str = "/v1/messages",
     provider: str = "anthropic",
 ) -> Provider:
-    """Build a Provider with a CommandOAuthSource for tests."""
+    """Build a Provider with a CommandAuthSource for tests."""
     return Provider(
-        auth=CommandOAuthSource(command=command, header=header) if command else None,
+        auth=CommandAuthSource(command=command, header=header) if command else None,
         host=host,
         path=path,
         provider=provider,
@@ -624,4 +624,3 @@ class TestRefreshOAuthTokenConcurrency:
         assert fast_elapsed < 1.0, (
             f"fast provider refresh took {fast_elapsed:.3f}s — per-provider locks are not isolating providers"
         )
-

@@ -1,4 +1,4 @@
-"""OAuth credential sources — discriminated union with polymorphic ``resolve``.
+"""Auth credential sources — discriminated union with polymorphic ``resolve``.
 
 Configuration shape in ``ccproxy.yaml``, nested under each Provider's ``auth``::
 
@@ -14,25 +14,32 @@ Configuration shape in ``ccproxy.yaml``, nested under each Provider's ``auth``::
       claude_oauth:
         auth:
           type: anthropic_oauth
-          refresh_token_file: "~/.config/ccproxy/oauth/anthropic.json"
+          file_path: "~/.claude/.credentials.json"
+          access_path: claudeAiOauth.accessToken
+          refresh_path: claudeAiOauth.refreshToken
+          expiry_path: claudeAiOauth.expiresAt
           header: authorization
         host: api.anthropic.com
         path: /v1/messages
         provider: anthropic
 
 The discriminated union dispatches via the ``type`` field. Bare command
-strings and dict-without-type forms are resolved via ``parse_oauth_source``.
+strings and dict-without-type forms are resolved via ``parse_auth_source``.
 """
 
 from __future__ import annotations
 
+import copy
+import json
 import logging
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, model_validator
+import httpx
+from glom import PathAccessError, assign, glom
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -103,8 +110,12 @@ class CredentialSource(BaseModel):
         return None
 
 
-class _OAuthFields(BaseModel):
-    """Fields common to all OAuthSource subclasses."""
+class AuthFields(BaseModel):
+    """Fields common to every credential source.
+
+    Just the target header for now. Pydantic config (extra="ignore") allows
+    YAML carrying obsolete keys to load without error during the rename.
+    """
 
     model_config = ConfigDict(extra="ignore")
 
@@ -114,98 +125,282 @@ class _OAuthFields(BaseModel):
     ``Authorization: Bearer {token}``."""
 
 
-class CommandOAuthSource(_OAuthFields):
-    """OAuth token resolved by running a shell command."""
+class CommandAuthSource(AuthFields):
+    """Token resolved by running a shell command."""
 
     type: Literal["command"] = "command"
     command: str
 
-    def resolve(self, label: str = "OAuth") -> str | None:
+    def resolve(self, label: str = "Auth") -> str | None:
         return _run_credential_command(self.command, label)
 
 
-class FileOAuthSource(_OAuthFields):
-    """OAuth token read directly from a file (already-resolved access_token)."""
+class FileAuthSource(AuthFields):
+    """Token read directly from a file (already-resolved access_token)."""
 
     type: Literal["file"] = "file"
     file: str
 
-    def resolve(self, label: str = "OAuth") -> str | None:
+    def resolve(self, label: str = "Auth") -> str | None:
         return _read_credential_file(self.file, label)
 
 
-class AnthropicOAuthSource(_OAuthFields):
-    """OAuth source that refreshes Anthropic tokens in-process via claude.ai/v1/oauth/token.
+_REFRESH_TIMEOUT_SEC = 15.0
 
-    Reads ``refresh_token_file`` (JSON containing ``refresh_token`` +
-    ``access_token`` + ``expires_at``). When the cached access_token is
-    within 60s of expiry, POSTs ``grant_type=refresh_token`` to ``endpoint``,
-    atomically writes the new tokens back, and returns the new access_token.
+
+class AuthSource(AuthFields):
+    """Base for OAuth refresh sources.
+
+    Subclasses set defaults for ``type`` (Literal discriminator), ``file_path``,
+    ``endpoint``, ``client_id``, optional ``client_secret``, and may override
+    the default access/refresh/expiry glom paths to match a host CLI's
+    credential schema.
     """
 
-    type: Literal["anthropic_oauth"]
-    refresh_token_file: str = "~/.config/ccproxy/oauth/anthropic.json"  # noqa: S105 (filename, not a secret)
-    client_id: str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-    endpoint: str = "https://claude.ai/v1/oauth/token"
+    type: str
+    """Discriminator for the union. Subclasses narrow to a Literal."""
 
-    def resolve(self, label: str = "AnthropicOAuth") -> str | None:
-        from ccproxy.oauth.anthropic import resolve_anthropic_token
-        return resolve_anthropic_token(self, label=label)
+    file_path: str
+    """Path to the JSON credential file (read on every resolve, atomically
+    rewritten after refresh). Subclasses set the platform-conventional default
+    (``~/.claude/.credentials.json`` for Anthropic shared with Claude Code CLI,
+    ``~/.gemini/oauth_creds.json`` for gemini-cli)."""
 
+    endpoint: str
+    """OAuth token endpoint URL."""
 
-class GoogleOAuthSource(_OAuthFields):
-    """OAuth source that refreshes Google/Gemini tokens in-process via oauth2.googleapis.com.
-
-    Reads ``refresh_token_file`` (JSON written by gemini-cli into
-    ``~/.gemini/oauth_creds.json``). When the cached access_token is within
-    60s of expiry (per ``expiry_field``, expressed in milliseconds), POSTs
-    ``grant_type=refresh_token`` to ``endpoint``. The refresh response may
-    omit ``refresh_token`` (gemini-cli #21691 upstream bug); this resolver
-    preserves the existing on-disk ``refresh_token`` in that case so the
-    next refresh still succeeds.
-    """
-
-    type: Literal["google_oauth"]
-    refresh_token_file: str = "~/.gemini/oauth_creds.json"  # noqa: S105 (filename, not a secret)
     client_id: str
-    client_secret: str
+
+    client_secret: str | None = None
+    """Required by Google's OAuth flow; absent on Anthropic's installed-app flow."""
+
+    access_path: str = "access_token"
+    """glom path to the access_token in the credential JSON."""
+
+    refresh_path: str = "refresh_token"
+    """glom path to the refresh_token."""
+
+    expiry_path: str = "expires_at"
+    """glom path to the expiry timestamp (ms-since-epoch)."""
+
+    default_expires_in_seconds: int = 3600
+    """Fallback when the refresh response omits ``expires_in``. Subclasses
+    override (Anthropic: 36000 = 10h; Google: 3600 = 1h)."""
+
+    def resolve(self, label: str = "Auth") -> str | None:
+        """Read cached tokens; refresh if near expiry; return access_token.
+
+        Atomic write-back of the merged response to ``file_path``. ``None``
+        on any failure (file missing, parse error, refresh HTTP error,
+        response missing access_token).
+        """
+        path = Path(self.file_path).expanduser()
+        if not path.is_file():
+            logger.error("%s credential file not found: %s", label, path)
+            return None
+
+        try:
+            creds: dict[str, Any] = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.error("%s could not read %s: %s", label, path, exc)
+            return None
+
+        access, refresh, expiry = self._read_credentials(creds)
+
+        if not isinstance(refresh, str) or not refresh:
+            logger.error(
+                "%s missing refresh_token at %r in %s",
+                label,
+                self.refresh_path,
+                path,
+            )
+            return None
+
+        if isinstance(access, str) and access and isinstance(expiry, int | float) and not needs_refresh(float(expiry)):
+            return access
+
+        logger.info("%s refreshing access_token", label)
+        payload = self._refresh_token(refresh)
+        if payload is None:
+            return None
+
+        new_access = payload.get("access_token")
+        # gemini-cli #21691 workaround: keep the on-disk refresh_token if the
+        # response omits it. Applies generally — the fallback is harmless even
+        # for providers that always send a fresh refresh_token.
+        new_refresh = payload.get("refresh_token") or refresh
+        expires_in = int(payload.get("expires_in", self.default_expires_in_seconds))
+        new_expiry = int(time.time() * 1000) + expires_in * 1000
+
+        if not isinstance(new_access, str) or not new_access:
+            logger.error("%s refresh response missing access_token: %r", label, payload)
+            return None
+
+        merged = self._write_credentials(creds, new_access, new_refresh, new_expiry)
+        atomic_write_back(path, merged)
+        return new_access
+
+    def _read_credentials(self, creds: dict[str, Any]) -> tuple[Any, Any, Any]:
+        """Read access_token, refresh_token, expiry via this source's glom paths.
+
+        Returns ``(None, None, None)`` on any path that doesn't resolve.
+        """
+
+        def _get(path: str) -> Any:
+            try:
+                return glom(creds, path)
+            except PathAccessError:
+                return None
+
+        return _get(self.access_path), _get(self.refresh_path), _get(self.expiry_path)
+
+    def _write_credentials(
+        self,
+        creds: dict[str, Any],
+        new_access: str,
+        new_refresh: str,
+        new_expiry: int,
+    ) -> dict[str, Any]:
+        """Deep-copy ``creds`` and assign new tokens at the configured glom paths.
+
+        ``glom.assign(..., missing=dict)`` creates intermediate dicts for
+        nested paths like ``claudeAiOauth.accessToken``. Existing sibling
+        fields (``scopes``, ``subscriptionType``, anything else the host CLI
+        wrote) survive verbatim because we deep-copy the input first.
+        """
+        merged = copy.deepcopy(creds)
+        assign(merged, self.access_path, new_access, missing=dict)
+        assign(merged, self.refresh_path, new_refresh, missing=dict)
+        assign(merged, self.expiry_path, new_expiry, missing=dict)
+        return merged
+
+    def _refresh_token(
+        self,
+        refresh_token: str,
+        *,
+        transport: httpx.BaseTransport | None = None,
+    ) -> dict[str, Any] | None:
+        """POST to ``endpoint`` with the body from ``_build_refresh_body``."""
+        body = self._build_refresh_body(refresh_token)
+        try:
+            client_kwargs: dict[str, Any] = {"timeout": _REFRESH_TIMEOUT_SEC}
+            if transport is not None:
+                client_kwargs["transport"] = transport
+            with httpx.Client(**client_kwargs) as client:
+                resp = client.post(
+                    self.endpoint,
+                    data=body,
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                )
+        except httpx.HTTPError as exc:
+            logger.error("OAuth refresh failed: %s", exc)
+            return None
+
+        if resp.status_code != 200:
+            logger.error(
+                "OAuth refresh returned %d: %s",
+                resp.status_code,
+                resp.text[:500],
+            )
+            return None
+
+        try:
+            payload = resp.json()
+        except (json.JSONDecodeError, ValueError) as exc:
+            logger.error("OAuth refresh returned non-JSON: %s", exc)
+            return None
+
+        if not isinstance(payload, dict) or "access_token" not in payload:
+            logger.error("OAuth refresh response missing access_token: %r", payload)
+            return None
+
+        return payload
+
+    def _build_refresh_body(self, refresh_token: str) -> dict[str, str]:
+        """Per-provider POST body. Subclasses override."""
+        raise NotImplementedError
+
+
+class AnthropicAuthSource(AuthSource):
+    """Refreshes Anthropic tokens in-process via claude.ai/v1/oauth/token.
+
+    Default ``file_path`` matches ccproxy's own location; point at
+    ``~/.claude/.credentials.json`` (with the ``claudeAiOauth.*`` glom paths)
+    to share state with the Claude Code CLI.
+    """
+
+    type: Literal["anthropic_oauth"] = "anthropic_oauth"
+    file_path: str = "~/.config/ccproxy/oauth/anthropic.json"
+    endpoint: str = "https://claude.ai/v1/oauth/token"
+    client_id: str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+    default_expires_in_seconds: int = 36000  # 10 hours
+
+    def _build_refresh_body(self, refresh_token: str) -> dict[str, str]:
+        return {
+            "grant_type": "refresh_token",
+            "client_id": self.client_id,
+            "refresh_token": refresh_token,
+        }
+
+
+class GoogleAuthSource(AuthSource):
+    """Refreshes Google/Gemini tokens in-process via oauth2.googleapis.com.
+
+    Defaults match gemini-cli's on-disk credential layout
+    (``~/.gemini/oauth_creds.json`` with ``expiry_date`` for the expiry
+    timestamp). ``client_id`` and ``client_secret`` are user-supplied —
+    gemini-cli's are public installed-app credentials embedded in its
+    distribution; ccproxy does NOT vendor them.
+    """
+
+    type: Literal["google_oauth"] = "google_oauth"
+    file_path: str = "~/.gemini/oauth_creds.json"
     endpoint: str = "https://oauth2.googleapis.com/token"
-    expiry_field: str = "expiry_date"
-    """Name of the expiry field in the refresh-token JSON. gemini-cli writes ``expiry_date`` (ms-since-epoch)."""
+    expiry_path: str = "expiry_date"  # gemini-cli's field name
+    default_expires_in_seconds: int = 3600
 
-    def resolve(self, label: str = "GoogleOAuth") -> str | None:
-        from ccproxy.oauth.google import resolve_google_token
-        return resolve_google_token(self, label=label)
+    def _build_refresh_body(self, refresh_token: str) -> dict[str, str]:
+        if not self.client_secret:
+            raise ValueError("GoogleAuthSource requires client_secret")
+        return {
+            "grant_type": "refresh_token",
+            "client_id": self.client_id,
+            "client_secret": self.client_secret,
+            "refresh_token": refresh_token,
+        }
 
 
-OAuthSource = CommandOAuthSource | FileOAuthSource | AnthropicOAuthSource | GoogleOAuthSource
+AnyAuthSource = Annotated[
+    CommandAuthSource | FileAuthSource | AnthropicAuthSource | GoogleAuthSource,
+    Field(discriminator="type"),
+]
 
 
-def parse_oauth_source(raw: str | dict[str, Any] | OAuthSource) -> OAuthSource:
-    """Resolve a raw ``Provider.auth`` value into a typed OAuthSource subclass.
+def parse_auth_source(raw: str | dict[str, Any] | AuthFields) -> AuthFields:
+    """Resolve a raw ``Provider.auth`` value into a typed AuthFields subclass.
 
     Accepts:
-    - bare string → ``CommandOAuthSource(command=raw)``
+    - bare string → ``CommandAuthSource(command=raw)``
     - dict with ``type`` field → discriminated dispatch
     - dict with only ``command``/``file`` keys (no ``type``) → inferred
-    - already-typed OAuthSource → passthrough
+    - already-typed AuthFields → passthrough
     """
     if isinstance(raw, str):
-        return CommandOAuthSource(command=raw)
-    if isinstance(raw, _OAuthFields):
-        return raw  # already typed
+        return CommandAuthSource(command=raw)
+    if isinstance(raw, AuthFields):
+        return raw
     if isinstance(raw, dict):
         type_ = raw.get("type")
         if type_ == "anthropic_oauth":
-            return AnthropicOAuthSource(**raw)
+            return AnthropicAuthSource(**raw)
         if type_ == "google_oauth":
-            return GoogleOAuthSource(**raw)
+            return GoogleAuthSource(**raw)
         if type_ == "file" or ("file" in raw and "type" not in raw):
-            return FileOAuthSource(**raw)
+            return FileAuthSource(**raw)
         if type_ == "command" or ("command" in raw and "type" not in raw):
-            return CommandOAuthSource(**raw)
+            return CommandAuthSource(**raw)
         raise ValueError(
-            f"Cannot infer OAuthSource type from keys {list(raw.keys())!r}; "
+            f"Cannot infer AuthSource type from keys {list(raw.keys())!r}; "
             f"specify 'type: command|file|anthropic_oauth|google_oauth'",
         )
     raise TypeError(f"Unsupported auth entry: {type(raw).__name__}")
@@ -217,7 +412,6 @@ def atomic_write_back(path: Path, data: dict[str, Any]) -> None:
     Writes to a tempfile in the same directory (so ``rename`` is atomic
     on the same filesystem), fsyncs, renames, then chmods.
     """
-    import json
     import os
     import stat
     import tempfile

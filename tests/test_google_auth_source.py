@@ -1,5 +1,10 @@
 # ruff: noqa: S105, S106
-"""Tests for ccproxy.oauth.google in-process Google/Gemini OAuth refresh.
+"""Tests for GoogleAuthSource end-to-end resolve behavior.
+
+Covers the Google-specific ``_build_refresh_body`` (requires client_secret),
+the ``expiry_path = "expiry_date"`` default override matching gemini-cli,
+and the inherited ``AuthSource.resolve()`` template against
+``httpx.MockTransport``.
 
 All "tokens" in this file are synthetic fixture values, not real secrets.
 """
@@ -16,8 +21,7 @@ from typing import Any
 import httpx
 import pytest
 
-from ccproxy.oauth.google import refresh_google_token, resolve_google_token
-from ccproxy.oauth.sources import GoogleOAuthSource
+from ccproxy.oauth.sources import GoogleAuthSource
 
 _TEST_CLIENT_ID = "681255809395-test.apps.googleusercontent.com"
 _TEST_CLIENT_SECRET = "GOCSPX-test"
@@ -33,6 +37,65 @@ def _mock_transport(responses: list[httpx.Response]) -> httpx.MockTransport:
     return httpx.MockTransport(handler)
 
 
+def test_default_expiry_path_matches_gemini_cli() -> None:
+    """gemini-cli writes ``expiry_date`` (ms since epoch); our default matches."""
+    assert GoogleAuthSource.model_fields["expiry_path"].default == "expiry_date"
+
+
+def test_default_file_path_matches_gemini_cli() -> None:
+    """gemini-cli writes ``~/.gemini/oauth_creds.json``; our default matches."""
+    assert GoogleAuthSource.model_fields["file_path"].default == "~/.gemini/oauth_creds.json"
+
+
+def test_build_refresh_body_includes_client_secret() -> None:
+    """Google's OAuth requires client_secret in the refresh request."""
+    source = GoogleAuthSource(
+        client_id="cid",
+        client_secret="csecret",
+        endpoint=_TEST_ENDPOINT,
+    )
+    body = source._build_refresh_body("rt")
+    assert body == {
+        "grant_type": "refresh_token",
+        "client_id": "cid",
+        "client_secret": "csecret",
+        "refresh_token": "rt",
+    }
+
+
+def test_build_refresh_body_without_client_secret_raises() -> None:
+    """Constructing a GoogleAuthSource without client_secret is allowed
+    (matches AuthSource.client_secret optional default), but actually
+    issuing a refresh body must raise — the upstream POST would 400."""
+    source = GoogleAuthSource(
+        client_id="cid",
+        endpoint=_TEST_ENDPOINT,
+    )
+    with pytest.raises(ValueError, match="GoogleAuthSource requires client_secret"):
+        source._build_refresh_body("rt")
+
+
+def test_refresh_token_form_includes_client_secret() -> None:
+    """The HTTP refresh wire body includes client_secret."""
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = request.content.decode()
+        return httpx.Response(200, json={"access_token": "x", "expires_in": 100})
+
+    source = GoogleAuthSource(
+        client_id="cid",
+        client_secret="csecret",
+        endpoint=_TEST_ENDPOINT,
+    )
+    source._refresh_token("rt", transport=httpx.MockTransport(handler))
+
+    assert "grant_type=refresh_token" in captured["body"]
+    assert "client_id=cid" in captured["body"]
+    assert "client_secret=csecret" in captured["body"]
+    assert "refresh_token=rt" in captured["body"]
+
+
 @dataclass
 class RefreshCase:
     name: str
@@ -42,7 +105,7 @@ class RefreshCase:
     """httpx.Response to return from the mock transport."""
 
     expected_payload: dict[str, Any] | None
-    """Expected return value from refresh_google_token."""
+    """Expected return value from _refresh_token."""
 
 
 REFRESH_CASES: list[RefreshCase] = [
@@ -92,54 +155,30 @@ REFRESH_CASES: list[RefreshCase] = [
     "case",
     [pytest.param(c, id=c.name) for c in REFRESH_CASES],
 )
-def test_refresh_google_token(case: RefreshCase) -> None:
-    """refresh_google_token returns the parsed payload or None on error."""
-    transport = _mock_transport([case.response])
-    payload = refresh_google_token(
-        "old-refresh",
+def test_refresh_token_returns_payload_or_none(case: RefreshCase) -> None:
+    """_refresh_token returns the parsed payload or None on error."""
+    source = GoogleAuthSource(
         client_id=_TEST_CLIENT_ID,
         client_secret=_TEST_CLIENT_SECRET,
         endpoint=_TEST_ENDPOINT,
-        transport=transport,
     )
+    transport = _mock_transport([case.response])
+    payload = source._refresh_token("old-refresh", transport=transport)
     assert payload == case.expected_payload
 
 
-def test_refresh_google_token_posts_form_with_client_secret() -> None:
-    """The refresh request includes client_secret (Google's OAuth requires it)."""
-    captured: dict[str, Any] = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["body"] = request.content.decode()
-        return httpx.Response(200, json={"access_token": "x", "expires_in": 100})
-
-    refresh_google_token(
-        "rt",
-        client_id="cid",
-        client_secret="csecret",
-        endpoint=_TEST_ENDPOINT,
-        transport=httpx.MockTransport(handler),
-    )
-    assert "grant_type=refresh_token" in captured["body"]
-    assert "client_id=cid" in captured["body"]
-    assert "client_secret=csecret" in captured["body"]
-    assert "refresh_token=rt" in captured["body"]
-
-
-def test_refresh_google_token_network_error_returns_none() -> None:
+def test_refresh_token_network_error_returns_none() -> None:
     """Network failures surface as None."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("connection refused")
 
-    transport = httpx.MockTransport(handler)
-    result = refresh_google_token(
-        "old-refresh",
+    source = GoogleAuthSource(
         client_id=_TEST_CLIENT_ID,
         client_secret=_TEST_CLIENT_SECRET,
         endpoint=_TEST_ENDPOINT,
-        transport=transport,
     )
+    result = source._refresh_token("old-refresh", transport=httpx.MockTransport(handler))
     assert result is None
 
 
@@ -149,13 +188,13 @@ class ResolveCase:
     """Descriptive name for the test scenario."""
 
     initial_creds: dict[str, Any]
-    """Contents written to refresh_token_file before resolve()."""
+    """Contents written to file_path before resolve()."""
 
     response: httpx.Response | None
     """Response from the mock transport (None means resolve should not call HTTP)."""
 
     expected_token: str | None
-    """Expected access_token returned by resolve_google_token."""
+    """Expected access_token returned by resolve()."""
 
     expected_disk_refresh: str | None = None
     """If set, disk file should contain this refresh_token after resolve()."""
@@ -232,22 +271,27 @@ RESOLVE_CASES: list[ResolveCase] = [
     "case",
     [pytest.param(c, id=c.name) for c in RESOLVE_CASES],
 )
-def test_resolve_google_token(case: ResolveCase, tmp_path: Path) -> None:
-    """End-to-end resolver: read disk, refresh if needed, write back atomically."""
+def test_resolve_end_to_end(case: ResolveCase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """End-to-end resolve: read disk, refresh if needed, write back atomically."""
     creds_path = tmp_path / "oauth_creds.json"
     creds_path.write_text(json.dumps(case.initial_creds))
 
-    source = GoogleOAuthSource(
-        type="google_oauth",
-        refresh_token_file=str(creds_path),
+    source = GoogleAuthSource(
+        file_path=str(creds_path),
         client_id=_TEST_CLIENT_ID,
         client_secret=_TEST_CLIENT_SECRET,
         endpoint=_TEST_ENDPOINT,
     )
 
-    transport = _mock_transport([case.response]) if case.response is not None else None
-    token = resolve_google_token(source, transport=transport)
+    if case.response is not None:
+        transport = _mock_transport([case.response])
+        monkeypatch.setattr(
+            source,
+            "_refresh_token",
+            lambda rt: GoogleAuthSource._refresh_token(source, rt, transport=transport),
+        )
 
+    token = source.resolve()
     assert token == case.expected_token
 
     if case.expected_disk_refresh is not None or case.expected_disk_access is not None:
@@ -261,18 +305,17 @@ def test_resolve_google_token(case: ResolveCase, tmp_path: Path) -> None:
 
 
 def test_resolve_missing_file_returns_none(tmp_path: Path) -> None:
-    """No refresh-token file → resolve returns None."""
-    source = GoogleOAuthSource(
-        type="google_oauth",
-        refresh_token_file=str(tmp_path / "missing.json"),
+    """No credential file → resolve returns None."""
+    source = GoogleAuthSource(
+        file_path=str(tmp_path / "missing.json"),
         client_id=_TEST_CLIENT_ID,
         client_secret=_TEST_CLIENT_SECRET,
     )
-    assert resolve_google_token(source) is None
+    assert source.resolve() is None
 
 
-def test_custom_expiry_field_supported(tmp_path: Path) -> None:
-    """``expiry_field`` lets non-gemini-cli JSON layouts work without renaming keys on disk."""
+def test_custom_expiry_path_supported(tmp_path: Path) -> None:
+    """``expiry_path`` lets non-gemini-cli JSON layouts work without renaming keys."""
     creds_path = tmp_path / "creds.json"
     creds_path.write_text(
         json.dumps(
@@ -284,11 +327,10 @@ def test_custom_expiry_field_supported(tmp_path: Path) -> None:
         )
     )
 
-    source = GoogleOAuthSource(
-        type="google_oauth",
-        refresh_token_file=str(creds_path),
+    source = GoogleAuthSource(
+        file_path=str(creds_path),
         client_id=_TEST_CLIENT_ID,
         client_secret=_TEST_CLIENT_SECRET,
-        expiry_field="expires_at_ms",
+        expiry_path="expires_at_ms",
     )
-    assert resolve_google_token(source) == "tok"
+    assert source.resolve() == "tok"

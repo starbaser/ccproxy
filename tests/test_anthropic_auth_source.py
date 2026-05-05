@@ -1,5 +1,8 @@
 # ruff: noqa: S106
-"""Tests for ccproxy.oauth.anthropic in-process OAuth refresh.
+"""Tests for AnthropicAuthSource end-to-end resolve behavior.
+
+Covers ``_build_refresh_body`` shape and the inherited
+``AuthSource.resolve()`` template method against ``httpx.MockTransport``.
 
 All "tokens" in this file are synthetic fixture values, not real secrets.
 """
@@ -16,8 +19,7 @@ from typing import Any
 import httpx
 import pytest
 
-from ccproxy.oauth.anthropic import refresh_anthropic_token, resolve_anthropic_token
-from ccproxy.oauth.sources import AnthropicOAuthSource
+from ccproxy.oauth.sources import AnthropicAuthSource
 
 _TEST_CLIENT_ID = "test-client-id"
 _TEST_ENDPOINT = "https://oauth.test.example/v1/oauth/token"
@@ -33,6 +35,50 @@ def _mock_transport(responses: list[httpx.Response]) -> httpx.MockTransport:
     return httpx.MockTransport(handler)
 
 
+def test_build_refresh_body_shape() -> None:
+    """Anthropic body has grant_type, client_id, refresh_token. No client_secret."""
+    source = AnthropicAuthSource(
+        file_path="/dev/null",
+        client_id="cid",
+        endpoint=_TEST_ENDPOINT,
+    )
+    body = source._build_refresh_body("rt")
+    assert body == {
+        "grant_type": "refresh_token",
+        "client_id": "cid",
+        "refresh_token": "rt",
+    }
+
+
+def test_default_expires_in_is_ten_hours() -> None:
+    """Anthropic refresh responses sometimes omit expires_in; default is 10h."""
+    assert AnthropicAuthSource.model_fields["default_expires_in_seconds"].default == 36_000
+
+
+def test_refresh_token_posts_form_encoded() -> None:
+    """The HTTP refresh uses application/x-www-form-urlencoded with the right fields."""
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["headers"] = dict(request.headers)
+        captured["body"] = request.content.decode()
+        return httpx.Response(200, json={"access_token": "x", "expires_in": 100})
+
+    source = AnthropicAuthSource(
+        file_path="/dev/null",
+        client_id="cid",
+        endpoint=_TEST_ENDPOINT,
+    )
+    source._refresh_token("rt", transport=httpx.MockTransport(handler))
+
+    assert captured["url"] == _TEST_ENDPOINT
+    assert captured["headers"]["content-type"] == "application/x-www-form-urlencoded"
+    assert "grant_type=refresh_token" in captured["body"]
+    assert "client_id=cid" in captured["body"]
+    assert "refresh_token=rt" in captured["body"]
+
+
 @dataclass
 class RefreshCase:
     name: str
@@ -42,7 +88,7 @@ class RefreshCase:
     """httpx.Response to return from the mock transport."""
 
     expected_payload: dict[str, Any] | None
-    """Expected return value from refresh_anthropic_token."""
+    """Expected return value from _refresh_token."""
 
 
 REFRESH_CASES: list[RefreshCase] = [
@@ -92,55 +138,31 @@ REFRESH_CASES: list[RefreshCase] = [
     "case",
     [pytest.param(c, id=c.name) for c in REFRESH_CASES],
 )
-def test_refresh_anthropic_token(case: RefreshCase) -> None:
-    """refresh_anthropic_token returns the parsed payload or None on error."""
-    transport = _mock_transport([case.response])
-    payload = refresh_anthropic_token(
-        "old-refresh",
+def test_refresh_token_returns_payload_or_none(case: RefreshCase) -> None:
+    """_refresh_token returns the parsed payload or None on error."""
+    source = AnthropicAuthSource(
+        file_path="/dev/null",
         client_id=_TEST_CLIENT_ID,
         endpoint=_TEST_ENDPOINT,
-        transport=transport,
     )
+    transport = _mock_transport([case.response])
+    payload = source._refresh_token("old-refresh", transport=transport)
     assert payload == case.expected_payload
 
 
-def test_refresh_anthropic_token_network_error_returns_none() -> None:
+def test_refresh_token_network_error_returns_none() -> None:
     """Network failures surface as None (caller logs and falls back)."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("connection refused")
 
-    transport = httpx.MockTransport(handler)
-    result = refresh_anthropic_token(
-        "old-refresh",
+    source = AnthropicAuthSource(
+        file_path="/dev/null",
         client_id=_TEST_CLIENT_ID,
         endpoint=_TEST_ENDPOINT,
-        transport=transport,
     )
+    result = source._refresh_token("old-refresh", transport=httpx.MockTransport(handler))
     assert result is None
-
-
-def test_refresh_anthropic_token_posts_form_encoded(tmp_path: Path) -> None:
-    """The refresh request uses application/x-www-form-urlencoded with the right fields."""
-    captured: dict[str, Any] = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["url"] = str(request.url)
-        captured["headers"] = dict(request.headers)
-        captured["body"] = request.content.decode()
-        return httpx.Response(200, json={"access_token": "x", "expires_in": 100})
-
-    refresh_anthropic_token(
-        "rt",
-        client_id="cid",
-        endpoint=_TEST_ENDPOINT,
-        transport=httpx.MockTransport(handler),
-    )
-    assert captured["url"] == _TEST_ENDPOINT
-    assert captured["headers"]["content-type"] == "application/x-www-form-urlencoded"
-    assert "grant_type=refresh_token" in captured["body"]
-    assert "client_id=cid" in captured["body"]
-    assert "refresh_token=rt" in captured["body"]
 
 
 @dataclass
@@ -149,13 +171,13 @@ class ResolveCase:
     """Descriptive name for the test scenario."""
 
     initial_creds: dict[str, Any]
-    """Contents written to refresh_token_file before resolve()."""
+    """Contents written to file_path before resolve()."""
 
     response: httpx.Response | None
     """Response from the mock transport (None means resolve should not call HTTP)."""
 
     expected_token: str | None
-    """Expected access_token returned by resolve_anthropic_token."""
+    """Expected access_token returned by resolve()."""
 
     expected_disk_refresh: str | None = None
     """If set, disk file should contain this refresh_token after resolve()."""
@@ -174,7 +196,7 @@ RESOLVE_CASES: list[ResolveCase] = [
         initial_creds={
             "access_token": "cached",
             "refresh_token": "rt",
-            "expires_at": _now_ms() + 600_000,  # 10 min from now
+            "expires_at": _now_ms() + 600_000,
         },
         response=None,
         expected_token="cached",
@@ -184,7 +206,7 @@ RESOLVE_CASES: list[ResolveCase] = [
         initial_creds={
             "access_token": "stale",
             "refresh_token": "rt",
-            "expires_at": _now_ms() + 30_000,  # 30s — within 60s headroom
+            "expires_at": _now_ms() + 30_000,
         },
         response=httpx.Response(
             200,
@@ -199,11 +221,11 @@ RESOLVE_CASES: list[ResolveCase] = [
         initial_creds={
             "access_token": "stale",
             "refresh_token": "rt-keep",
-            "expires_at": _now_ms() - 1000,  # already expired
+            "expires_at": _now_ms() - 1000,
         },
         response=httpx.Response(
             200,
-            json={"access_token": "fresh", "expires_in": 3600},  # no refresh_token
+            json={"access_token": "fresh", "expires_in": 3600},
         ),
         expected_token="fresh",
         expected_disk_refresh="rt-keep",
@@ -232,21 +254,26 @@ RESOLVE_CASES: list[ResolveCase] = [
     "case",
     [pytest.param(c, id=c.name) for c in RESOLVE_CASES],
 )
-def test_resolve_anthropic_token(case: ResolveCase, tmp_path: Path) -> None:
-    """End-to-end resolver: read disk, refresh if needed, write back."""
+def test_resolve_end_to_end(case: ResolveCase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """End-to-end resolve: read disk, refresh if needed, write back."""
     creds_path = tmp_path / "anthropic.json"
     creds_path.write_text(json.dumps(case.initial_creds))
 
-    source = AnthropicOAuthSource(
-        type="anthropic_oauth",
-        refresh_token_file=str(creds_path),
+    source = AnthropicAuthSource(
+        file_path=str(creds_path),
         client_id=_TEST_CLIENT_ID,
         endpoint=_TEST_ENDPOINT,
     )
 
-    transport = _mock_transport([case.response]) if case.response is not None else None
-    token = resolve_anthropic_token(source, transport=transport)
+    if case.response is not None:
+        transport = _mock_transport([case.response])
+        monkeypatch.setattr(
+            source,
+            "_refresh_token",
+            lambda rt: AnthropicAuthSource._refresh_token(source, rt, transport=transport),
+        )
 
+    token = source.resolve()
     assert token == case.expected_token
 
     if case.expected_disk_refresh is not None or case.expected_disk_access is not None:
@@ -255,17 +282,27 @@ def test_resolve_anthropic_token(case: ResolveCase, tmp_path: Path) -> None:
             assert on_disk["refresh_token"] == case.expected_disk_refresh
         if case.expected_disk_access is not None:
             assert on_disk["access_token"] == case.expected_disk_access
-        # After atomic_write_back, the file should be mode 0o600.
         mode = creds_path.stat().st_mode & 0o777
         assert mode == stat.S_IRUSR | stat.S_IWUSR
 
 
 def test_resolve_missing_file_returns_none(tmp_path: Path) -> None:
-    """No refresh-token file → resolve returns None."""
-    source = AnthropicOAuthSource(
-        type="anthropic_oauth",
-        refresh_token_file=str(tmp_path / "missing.json"),
+    """No credential file → resolve returns None."""
+    source = AnthropicAuthSource(
+        file_path=str(tmp_path / "missing.json"),
         client_id=_TEST_CLIENT_ID,
         endpoint=_TEST_ENDPOINT,
     )
-    assert resolve_anthropic_token(source) is None
+    assert source.resolve() is None
+
+
+def test_resolve_corrupt_json_returns_none(tmp_path: Path) -> None:
+    """Malformed credential JSON → resolve returns None."""
+    creds_path = tmp_path / "bad.json"
+    creds_path.write_text("{not json")
+    source = AnthropicAuthSource(
+        file_path=str(creds_path),
+        client_id=_TEST_CLIENT_ID,
+        endpoint=_TEST_ENDPOINT,
+    )
+    assert source.resolve() is None

@@ -14,7 +14,7 @@ from ccproxy.hooks.forward_oauth import (
     forward_oauth,
     forward_oauth_guard,
 )
-from ccproxy.oauth.sources import CommandOAuthSource
+from ccproxy.oauth.sources import CommandAuthSource
 from ccproxy.pipeline.context import Context
 
 
@@ -29,9 +29,9 @@ def _make_ctx(headers: dict[str, str] | None = None) -> Context:
 
 
 def _make_provider(*, command: str = "echo tok", header: str | None = None) -> Provider:
-    """Build a Provider with a CommandOAuthSource for tests."""
+    """Build a Provider with a CommandAuthSource for tests."""
     return Provider(
-        auth=CommandOAuthSource(command=command, header=header),
+        auth=CommandAuthSource(command=command, header=header),
         host="api.example.com",
         path="/v1/messages",
         provider="anthropic",
@@ -111,7 +111,8 @@ class TestForwardOAuthSentinelPath:
         assert ctx.flow.metadata["ccproxy.oauth_provider"] == "anthropic"
 
     def test_sentinel_via_authorization_bearer_with_custom_target(
-        self, clean_config: CCProxyConfig,
+        self,
+        clean_config: CCProxyConfig,
     ) -> None:
         """Inbound Authorization can route to a different outbound header."""
         clean_config.providers = {"deepseek": _make_provider(header="x-api-key")}

@@ -21,7 +21,7 @@ from ccproxy.inspector.routes.transform import (
     _resolve_transform_target,
     register_transform_routes,
 )
-from ccproxy.oauth.sources import CommandOAuthSource
+from ccproxy.oauth.sources import CommandAuthSource
 
 
 def _make_flow(
@@ -79,9 +79,9 @@ def _make_provider(
     path: str = "/v1/messages",
     provider: str = "anthropic",
 ) -> Provider:
-    """Build a Provider with a CommandOAuthSource for tests."""
+    """Build a Provider with a CommandAuthSource for tests."""
     return Provider(
-        auth=CommandOAuthSource(command=command, header=header) if command else None,
+        auth=CommandAuthSource(command=command, header=header) if command else None,
         host=host,
         path=path,
         provider=provider,
@@ -631,7 +631,7 @@ class TestHandleRedirect:
             ),
             providers={
                 "anthropic": Provider(
-                    auth=CommandOAuthSource(command="echo tok"),
+                    auth=CommandAuthSource(command="echo tok"),
                     host="api.anthropic.com",
                     path="/v1/messages",
                     provider="anthropic",

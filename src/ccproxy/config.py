@@ -22,19 +22,19 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, PrivateAttr,
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from ccproxy.oauth.sources import (
+    AnyAuthSource,
     CredentialSource,
-    OAuthSource,
-    parse_oauth_source,
+    parse_auth_source,
 )
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "AnthropicShapingConfig",
+    "AnyAuthSource",
     "BillingConfig",
     "CCProxyConfig",
     "CredentialSource",
-    "OAuthSource",
     "Provider",
     "ProviderShapingConfig",
     "ShapingConfig",
@@ -128,8 +128,13 @@ class ProviderShapingConfig(BaseModel):
 
     strip_headers: list[str] = Field(
         default_factory=lambda: [
-            "authorization", "x-api-key", "x-goog-api-key",
-            "content-length", "host", "transfer-encoding", "connection",
+            "authorization",
+            "x-api-key",
+            "x-goog-api-key",
+            "content-length",
+            "host",
+            "transfer-encoding",
+            "connection",
         ]
     )
     """Headers stripped from the shape working copy before stamping.
@@ -198,7 +203,6 @@ class ShapingConfig(BaseModel):
             target_cls = _PROVIDER_SHAPING_CLASSES.get(name, ProviderShapingConfig)
             result[name] = target_cls(**raw)
         return result
-
 
 
 class FlowsConfig(BaseModel):
@@ -285,8 +289,8 @@ class Provider(BaseModel):
 
     model_config = ConfigDict(extra="ignore", frozen=True)
 
-    auth: OAuthSource | None = None
-    """Discriminated OAuth source (Command/File/AnthropicOAuth/GoogleOAuth).
+    auth: AnyAuthSource | None = None
+    """Discriminated auth source (Command/File/Anthropic/Google).
     ``None`` means no managed auth — the request must already carry
     credentials."""
 
@@ -307,11 +311,11 @@ class Provider(BaseModel):
     @field_validator("auth", mode="before")
     @classmethod
     def _parse_auth(cls, value: Any) -> Any:
-        """Dispatch raw dict / bare-string YAML through ``parse_oauth_source``
-        so the discriminated union resolves to the right OAuthSource subclass."""
+        """Dispatch raw dict / bare-string YAML through ``parse_auth_source``
+        so the discriminated union resolves to the right AuthSource subclass."""
         if value is None:
             return None
-        return parse_oauth_source(value)
+        return parse_auth_source(value)
 
 
 class TransformOverride(BaseModel):
@@ -363,7 +367,9 @@ class TransformOverride(BaseModel):
 
     match_host_re: re.Pattern[str] | None = Field(default=None, exclude=True, repr=False)
     match_path_re: re.Pattern[str] = Field(
-        default_factory=lambda: re.compile(r".*"), exclude=True, repr=False,
+        default_factory=lambda: re.compile(r".*"),
+        exclude=True,
+        repr=False,
     )
     match_model_re: re.Pattern[str] | None = Field(default=None, exclude=True, repr=False)
 
@@ -613,7 +619,8 @@ class CCProxyConfig(BaseSettings):
         if errors and loaded:
             logger.warning(
                 "Loaded auth tokens for %d provider(s), but %d provider(s) failed to load",
-                len(loaded), len(errors),
+                len(loaded),
+                len(errors),
             )
 
         if errors and not loaded:
