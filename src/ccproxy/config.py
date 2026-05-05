@@ -545,20 +545,38 @@ class CCProxyConfig(BaseSettings):
     def refresh_oauth_token(self, provider: str) -> tuple[str | None, bool]:
         """Re-resolve auth token for a provider and update cache if changed.
 
-        Thread-safe. Returns ``(new_token, changed)`` — ``changed`` is True
-        only when the freshly resolved token differs from the cached value.
+        Thread-safe single-flight refresh. The per-provider lock serializes
+        concurrent callers; the global ``_config_lock`` is only held around
+        the cache write. HTTP I/O happens outside any global lock so other
+        config-touching paths never stall on a slow upstream OAuth refresh.
+
+        When N callers race in (e.g. a token-expiry burst of 401 retries)
+        only the first thread fires the HTTP refresh — the followers detect
+        that the cached token has already been replaced and return it
+        without re-hitting the upstream OAuth endpoint.
+
+        Returns ``(new_token, changed)`` — ``changed`` is True only when
+        the freshly resolved token differs from the value that was cached
+        when the caller entered.
         """
-        with _config_lock:
+        pre_lock_token = self._cached_auth_tokens.get(provider)
+        provider_lock = _get_provider_lock(provider)
+        with provider_lock:
+            cached = self._cached_auth_tokens.get(provider)
+            if cached is not None and cached != pre_lock_token:
+                # Another thread refreshed while we waited on the lock.
+                return cached, True
+
             token = self._resolve_oauth_token(provider)
             if token is None:
                 return None, False
 
-            old_token = self._cached_auth_tokens.get(provider)
-            changed = token != old_token
-            self._cached_auth_tokens[provider] = token
-            if changed:
-                logger.info("Auth token changed for provider '%s'", provider)
-            return token, changed
+            changed = token != pre_lock_token
+            with _config_lock:
+                self._cached_auth_tokens[provider] = token
+        if changed:
+            logger.info("Auth token changed for provider '%s'", provider)
+        return token, changed
 
     def get_auth_header(self, provider: str) -> str | None:
         """Get target auth header name for a specific provider.
@@ -661,6 +679,20 @@ class CCProxyConfig(BaseSettings):
 
 _config_instance: CCProxyConfig | None = None
 _config_lock = threading.Lock()
+
+_provider_locks: dict[str, threading.Lock] = {}
+_provider_locks_meta_lock = threading.Lock()
+
+
+def _get_provider_lock(provider: str) -> threading.Lock:
+    """Lazy per-provider lock, double-checked under a meta lock."""
+    lock = _provider_locks.get(provider)
+    if lock is not None:
+        return lock
+    with _provider_locks_meta_lock:
+        if provider not in _provider_locks:
+            _provider_locks[provider] = threading.Lock()
+        return _provider_locks[provider]
 
 
 def get_config_dir() -> Path:

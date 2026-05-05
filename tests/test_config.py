@@ -1,7 +1,10 @@
 """Tests for configuration management."""
 
+import concurrent.futures
 import subprocess
 import tempfile
+import threading
+import time
 from pathlib import Path
 from unittest import mock
 
@@ -522,3 +525,103 @@ class TestLoadCredentials:
 
         assert config._cached_auth_tokens == {}
         assert "Failed to load auth tokens for all 2 provider(s)" in caplog.text
+
+
+class TestRefreshOAuthTokenConcurrency:
+    """Concurrent-refresh single-flight tests for the per-provider lock."""
+
+    def test_concurrent_refresh_dedups_to_single_subprocess_call(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """20 threads simultaneously calling refresh_oauth_token must produce
+        exactly ONE underlying credential resolution. Per-provider lock plus
+        the in-lock cache re-check make the 19 followers a no-op once the
+        first thread finishes."""
+        provider_name = "anthropic"
+        config = CCProxyConfig(providers={provider_name: _make_provider(command="echo tok-fresh")})
+
+        call_count = 0
+        call_count_lock = threading.Lock()
+        # Barrier ensures all 20 threads reach refresh_oauth_token before any
+        # of them is allowed to acquire the per-provider lock.
+        barrier = threading.Barrier(20)
+
+        def counting_run(*args: object, **kwargs: object) -> mock.MagicMock:
+            nonlocal call_count
+            with call_count_lock:
+                call_count += 1
+            # Simulate a slow upstream so the followers definitely queue on
+            # the per-provider lock while this call is in flight.
+            time.sleep(0.05)
+            return mock.MagicMock(returncode=0, stdout="tok-fresh")
+
+        monkeypatch.setattr(subprocess, "run", counting_run)
+
+        results: list[tuple[str | None, bool]] = []
+        results_lock = threading.Lock()
+
+        def call_refresh() -> None:
+            barrier.wait()
+            result = config.refresh_oauth_token(provider_name)
+            with results_lock:
+                results.append(result)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as pool:
+            futures = [pool.submit(call_refresh) for _ in range(20)]
+            concurrent.futures.wait(futures)
+
+        assert call_count == 1, f"expected exactly one upstream credential call, got {call_count}"
+        assert len(results) == 20
+        for token, _changed in results:
+            assert token == "tok-fresh"  # noqa: S105
+        assert config._cached_auth_tokens[provider_name] == "tok-fresh"
+
+    def test_cross_provider_refreshes_do_not_block_each_other(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A slow refresh on provider-A must NOT delay a concurrent refresh
+        on provider-B. Per-provider locks gate independently."""
+        slow_provider = "slow"
+        fast_provider = "fast"
+        config = CCProxyConfig(
+            providers={
+                slow_provider: _make_provider(command="echo slow-tok"),
+                fast_provider: _make_provider(command="echo fast-tok"),
+            }
+        )
+
+        slow_started = threading.Event()
+        slow_release = threading.Event()
+
+        def routed_run(cmd: str, **kwargs: object) -> mock.MagicMock:
+            if "slow-tok" in cmd:
+                slow_started.set()
+                # Block here until the test signals release. Long enough that
+                # if cross-provider serialization were happening the fast
+                # call would clearly time out.
+                slow_release.wait(timeout=5.0)
+                return mock.MagicMock(returncode=0, stdout="slow-tok")
+            return mock.MagicMock(returncode=0, stdout="fast-tok")
+
+        monkeypatch.setattr(subprocess, "run", routed_run)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            slow_future = pool.submit(config.refresh_oauth_token, slow_provider)
+
+            assert slow_started.wait(timeout=2.0), "slow provider refresh did not start in time"
+
+            fast_start = time.monotonic()
+            fast_future = pool.submit(config.refresh_oauth_token, fast_provider)
+
+            fast_token, fast_changed = fast_future.result(timeout=2.0)
+            fast_elapsed = time.monotonic() - fast_start
+
+            slow_release.set()
+            slow_token, slow_changed = slow_future.result(timeout=5.0)
+
+        assert fast_token == "fast-tok"  # noqa: S105
+        assert fast_changed is True
+        assert slow_token == "slow-tok"  # noqa: S105
+        assert slow_changed is True
+        # Fast provider must complete promptly while slow provider is still
+        # blocked; allow generous slack but require sub-second.
+        assert fast_elapsed < 1.0, (
+            f"fast provider refresh took {fast_elapsed:.3f}s — per-provider locks are not isolating providers"
+        )
+
