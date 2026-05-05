@@ -129,9 +129,14 @@ def _make_transform_router() -> Any:
 def _build_addons(
     wg_cli_port: int,
 ) -> list[Any]:
-    """Addon order: InspectorAddon (OTel, flow records) → inbound pipeline (OAuth,
-    session extraction) → transform (lightllm) → outbound pipeline
-    (beta headers, identity injection).
+    """Addon order: OAuthAddon (response-side 401 retry) → InspectorAddon (OTel,
+    flow records) → inbound pipeline (OAuth, session extraction) → transform
+    (lightllm) → outbound pipeline (beta headers, identity injection).
+
+    OAuthAddon precedes InspectorAddon so the 401-retry runs before
+    InspectorAddon's still-resident capacity-fallback and envelope-unwrap
+    branches see the response. Wave 6 will move those branches into
+    GeminiAddon, after which the addon chain becomes more linear.
     """
     # deferred: heavy mitmproxy addon chain
     from mitmproxy import contentviews
@@ -139,6 +144,7 @@ def _build_addons(
     from ccproxy.inspector.addon import InspectorAddon
     from ccproxy.inspector.contentview import ClientRequestContentview, ProviderResponseContentview
     from ccproxy.inspector.multi_har_saver import MultiHARSaver
+    from ccproxy.inspector.oauth_addon import OAuthAddon
     from ccproxy.inspector.shape_capturer import ShapeCapturer
 
     contentviews.add(ClientRequestContentview())
@@ -184,7 +190,7 @@ def _build_addons(
     inbound_hooks = hooks_cfg.get("inbound", []) if isinstance(hooks_cfg, dict) else hooks_cfg
     outbound_hooks = hooks_cfg.get("outbound", []) if isinstance(hooks_cfg, dict) else []
 
-    addons: list[Any] = [addon, MultiHARSaver(), ShapeCapturer()]
+    addons: list[Any] = [OAuthAddon(), addon, MultiHARSaver(), ShapeCapturer()]
 
     if inbound_hooks:
         addons.append(_make_pipeline_router("ccproxy_inbound", inbound_hooks))

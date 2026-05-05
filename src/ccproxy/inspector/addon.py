@@ -14,11 +14,9 @@ import logging
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-import httpx
 from mitmproxy import command, flow, http
 from mitmproxy.proxy.mode_specs import ReverseMode, WireGuardMode
 
-from ccproxy.config import get_config
 from ccproxy.flows.store import (
     FLOW_ID_HEADER,
     HttpSnapshot,
@@ -252,11 +250,6 @@ class InspectorAddon:
                         status_code=response.status_code,
                     )
 
-            if response.status_code == 401 and flow.metadata.get("ccproxy.oauth_injected"):
-                retried = await self._retry_with_refreshed_token(flow)
-                if retried:
-                    response = flow.response
-
             if response and flow.metadata.get("ccproxy.oauth_provider") == "gemini":
                 from ccproxy.hooks.gemini_capacity_fallback import (
                     _CAPACITY_STATUS_CODES,
@@ -302,50 +295,6 @@ class InspectorAddon:
                 response.content = json.dumps(inner).encode()
         except (ValueError, TypeError):
             pass
-
-    async def _retry_with_refreshed_token(self, flow: http.HTTPFlow) -> bool:
-        provider = flow.metadata.get("ccproxy.oauth_provider", "")
-        if not provider:
-            return False
-
-        config = get_config()
-        new_token, changed = config.refresh_oauth_token(provider)
-        if not changed or not new_token:
-            logger.warning("OAuth 401 for provider '%s' — token unchanged, not retrying", provider)
-            return False
-
-        logger.info("OAuth 401 for provider '%s' — token refreshed, retrying request", provider)
-
-        headers = dict(flow.request.headers)
-        target_header = config.get_auth_header(provider)
-        if target_header:
-            headers[target_header] = new_token
-        else:
-            headers["authorization"] = f"Bearer {new_token}"
-
-        headers.pop("x-ccproxy-oauth-injected", None)  # strip if somehow present from old flows
-
-        client_kwargs: dict[str, Any] = {}
-        if config.provider_timeout is not None:
-            client_kwargs["timeout"] = httpx.Timeout(config.provider_timeout)
-        else:
-            client_kwargs["timeout"] = None  # Portkey parity: no wrapper, no budget
-
-        async with httpx.AsyncClient(**client_kwargs) as client:
-            retry_resp = await client.request(
-                method=flow.request.method,
-                url=flow.request.pretty_url,
-                headers=headers,
-                content=flow.request.content,
-            )
-
-        assert flow.response is not None
-        flow.response.status_code = retry_resp.status_code
-        flow.response.headers.clear()
-        for key, value in retry_resp.headers.multi_items():
-            flow.response.headers.add(key, value)
-        flow.response.content = retry_resp.content
-        return True
 
     async def error(self, flow: http.HTTPFlow) -> None:
         try:
