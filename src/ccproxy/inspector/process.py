@@ -130,19 +130,27 @@ def _build_addons(
     wg_cli_port: int,
 ) -> list[Any]:
     """Addon order: OAuthAddon (response-side 401 retry) → InspectorAddon (OTel,
-    flow records) → inbound pipeline (OAuth, session extraction) → transform
-    (lightllm) → outbound pipeline (beta headers, identity injection).
+    flow records, capacity-fallback dispatch) → inbound pipeline (OAuth, session
+    extraction) → transform (lightllm) → outbound pipeline (beta headers, identity
+    injection) → GeminiAddon (envelope unwrap).
 
     OAuthAddon precedes InspectorAddon so the 401-retry runs before
-    InspectorAddon's still-resident capacity-fallback and envelope-unwrap
-    branches see the response. Wave 6 will move those branches into
-    GeminiAddon, after which the addon chain becomes more linear.
+    InspectorAddon's still-resident capacity-fallback branch sees the response.
+    GeminiAddon is appended last so its ``responseheaders`` runs after
+    InspectorAddon's; mitmproxy dispatches addons in registration order, so
+    later addons see the modified flow state. This lets GeminiAddon install
+    :class:`~ccproxy.hooks.gemini_envelope.EnvelopeUnwrapStream` on streaming
+    Gemini redirect flows that InspectorAddon left untouched. Phase E.2
+    transitional layout — Wave 6 moves the capacity-fallback defer branch out
+    of InspectorAddon into GeminiAddon, at which point the chain becomes more
+    linear.
     """
     # deferred: heavy mitmproxy addon chain
     from mitmproxy import contentviews
 
     from ccproxy.inspector.addon import InspectorAddon
     from ccproxy.inspector.contentview import ClientRequestContentview, ProviderResponseContentview
+    from ccproxy.inspector.gemini_addon import GeminiAddon
     from ccproxy.inspector.multi_har_saver import MultiHARSaver
     from ccproxy.inspector.oauth_addon import OAuthAddon
     from ccproxy.inspector.shape_capturer import ShapeCapturer
@@ -199,6 +207,8 @@ def _build_addons(
 
     if outbound_hooks:
         addons.append(_make_pipeline_router("ccproxy_outbound", outbound_hooks))
+
+    addons.append(GeminiAddon())
 
     return addons
 

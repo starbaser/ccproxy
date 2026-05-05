@@ -170,8 +170,11 @@ class InspectorAddon:
         """Enable SSE streaming for all event-stream responses.
 
         For cross-provider transformed flows, wraps the stream with an SSE
-        chunk transformer. For same-provider or unmatched flows, passes bytes
-        through unchanged.
+        chunk transformer. For Gemini redirect-mode streaming flows this
+        returns without touching ``flow.response.stream`` so the downstream
+        :class:`~ccproxy.inspector.gemini_addon.GeminiAddon` can install its
+        envelope-unwrap stream (or skip it during a capacity-fallback retry).
+        For same-provider or unmatched flows, passes bytes through unchanged.
         """
         if not flow.response:
             return
@@ -203,27 +206,21 @@ class InspectorAddon:
                 )
                 flow.response.stream = True
         elif transform is not None and transform.is_streaming and transform.provider == "gemini":
+            # Capacity-fallback defer branch (Wave 6 absorbs this into GeminiAddon).
+            # GeminiAddon.responseheaders installs EnvelopeUnwrapStream when this
+            # branch returns without setting the stream — see its docstring.
             from ccproxy.hooks.gemini_capacity_fallback import (
                 _CAPACITY_STATUS_CODES,
                 has_fallback_configured,
             )
 
             if flow.response.status_code in _CAPACITY_STATUS_CODES and has_fallback_configured():
-                # Defer stream setup so mitmproxy buffers the error body.
-                # response() will then have a full body to inspect and can
-                # transparently retry with a fallback model.
                 logger.info(
                     "Deferring stream setup for %d to allow capacity fallback retry (flow=%s)",
                     flow.response.status_code,
                     flow.id,
                 )
-                return
-
-            from ccproxy.hooks.gemini_cli import EnvelopeUnwrapStream
-
-            unwrap_stream = EnvelopeUnwrapStream()
-            flow.response.stream = unwrap_stream
-            flow.metadata["ccproxy.sse_transformer"] = unwrap_stream
+            return
         else:
             flow.response.stream = True
 
@@ -259,10 +256,6 @@ class InspectorAddon:
                 if response.status_code in _CAPACITY_STATUS_CODES and await try_fallback_models(flow):
                     response = flow.response
 
-            # Unwrap cloudcode-pa response envelope for Gemini redirect flows
-            if response and response.status_code < 400:
-                self._unwrap_gemini_response(flow, response)
-
             started = flow.request.timestamp_start
             ended = response.timestamp_end if response else None
             duration_ms = (ended - started) * 1000 if started and ended else None
@@ -280,21 +273,6 @@ class InspectorAddon:
 
         except Exception as e:
             logger.error("Error capturing response: %s", e, exc_info=True)
-
-    @staticmethod
-    def _unwrap_gemini_response(flow: http.HTTPFlow, response: http.Response) -> None:
-        """Strip cloudcode-pa's {response: {...}} envelope so the genai SDK sees standard format."""
-        record = flow.metadata.get(InspectorMeta.RECORD)
-        transform = getattr(record, "transform", None) if record else None
-        if not transform or transform.provider != "gemini" or transform.is_streaming:
-            return
-        try:
-            body = json.loads(response.content or b"{}")
-            inner = body.get("response")
-            if isinstance(inner, dict):
-                response.content = json.dumps(inner).encode()
-        except (ValueError, TypeError):
-            pass
 
     async def error(self, flow: http.HTTPFlow) -> None:
         try:
