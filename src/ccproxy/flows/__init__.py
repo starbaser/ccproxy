@@ -390,12 +390,12 @@ def _git_diff(text_a: str, text_b: str, label_a: str, label_b: str) -> None:
         fb.write(text_b)
         fb.flush()
         subprocess.run(  # noqa: S603
-            [
+            [  # noqa: S607
                 "git",
                 "--no-pager",
                 "diff",
                 "--no-index",
-                "--color=auto",  # noqa: S607
+                "--color=auto",
                 f"--src-prefix={label_a}/",
                 f"--dst-prefix={label_b}/",
                 "--",
