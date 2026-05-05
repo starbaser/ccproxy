@@ -135,7 +135,17 @@ ReadySignal → InspectorAddon → MultiHARSaver → ShapeCapturer
   | `caching.strip` | shape inner-DAG | Deletes values at glom dot-paths via `glom.delete()`. Accepts `StripParams(paths: list[str])`. |
   | `caching.insert` | shape inner-DAG | Sets a value at a glom dot-path via `glom.assign()`. Accepts `InsertParams(path: str, value: Any)`. Default value: `{"type": "ephemeral"}`. |
 
-- **`shaping/`** — Request shaping framework. A *shape* is a captured `mitmproxy.http.HTTPFlow` (real Claude CLI request) persisted as a `{provider}.mflow`. At runtime, the working copy is configured via `http.Request.from_state()`, configured headers are stripped, `content_fields` from the provider's profile are injected from the incoming request, shape inner-DAG hooks run, then `apply_shape()` stamps headers + query params + body onto the outbound flow. The shape is the proven foundation — everything not in `content_fields` persists from the shape.
+- **`shaping/`** — Request shaping framework.
+
+  **IMPERATIVE**: Shape replay is load-bearing for Anthropic identity. After
+  commit `416229f` dropped the `inject_claude_code_identity` hook, the captured
+  shape is the only source of the Claude Code identity headers (user-agent,
+  anthropic-beta, etc.) and the billing-header block. If a shape is missing or
+  stale for the `anthropic` provider, requests will fail with 401/400 from
+  Anthropic with no fallback. Capture a fresh shape via `ccproxy flows shape
+  --provider anthropic` whenever the Claude CLI version changes.
+
+  A *shape* is a captured `mitmproxy.http.HTTPFlow` (real Claude CLI request) persisted as a `{provider}.mflow`. At runtime, the working copy is configured via `http.Request.from_state()`, configured headers are stripped, `content_fields` from the provider's profile are injected from the incoming request, shape inner-DAG hooks run, then `apply_shape()` stamps headers + query params + body onto the outbound flow. The shape is the proven foundation — everything not in `content_fields` persists from the shape.
   - `caching/` — Composable glom-based cache control hooks for the shape inner DAG: `strip` (deletes via `glom.delete`) and `insert` (sets via `glom.assign`). Separate modules ensure DAG priority ordering.
   - `regenerate.py` — Shape inner-DAG hooks: `regenerate_user_prompt_id`, `regenerate_session_id`, `regenerate_billing_header` (re-signs `x-anthropic-billing-header`; SHA-256 cc_version suffix in `_body`, xxhash64 cch over the serialized wire bytes; reads salt from `config.billing_salt`).
   - `gemini.py` — Gemini-specific shape hook.

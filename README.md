@@ -187,6 +187,20 @@ Per-request overrides via header: `x-ccproxy-hooks: +hook_name,-other_hook`.
 | `shape` | outbound | Replays a captured shape and stamps content fields from the incoming request |
 | `commitbee_compat` | outbound | Last-mile compatibility shim for commitbee |
 
+## Shape Replay (Anthropic)
+
+Anthropic traffic depends on a captured shape. The shape is the only source of
+the Claude Code identity headers (user-agent, anthropic-beta, etc.) and the
+billing-header block — there is no synthetic-identity fallback hook anymore. If
+no shape exists for the `anthropic` provider, or if the captured shape is from
+an outdated Claude CLI release, Anthropic will reject the request with 401/400.
+
+Capture (and re-capture) a shape any time the Claude CLI version changes:
+
+```bash
+ccproxy flows shape --provider anthropic
+```
+
 ## CLI Reference
 
 ```bash
