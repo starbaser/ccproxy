@@ -160,6 +160,57 @@ Three actions: `redirect` (default — rewrite destination, preserve body),
 `transform` (cross-format via lightllm), `passthrough` (forward unchanged).
 Auth resolves through `dest_provider` → `providers[name]`.
 
+### Auth source types
+
+`Provider.auth` dispatches on `type:`. Two static loaders return whatever the
+underlying source holds; two OAuth loaders own the refresh lifecycle in-process.
+
+| `type` | What it is | When to use |
+| --- | --- | --- |
+| `command` | Run a shell command, return stdout | Static API keys, opnix/SOPS secret commands, env-var injection |
+| `file` | Read a file, return contents | Static API keys stored in a managed secret file |
+| `anthropic_oauth` | In-process Anthropic OAuth refresh | Share `~/.claude/.credentials.json` with Claude Code CLI |
+| `google_oauth` | In-process Google/Gemini OAuth refresh | Share `~/.gemini/oauth_creds.json` with gemini-cli |
+
+`command` and `file` are not OAuth — they have no expiry awareness and never
+call out to a refresh endpoint. ccproxy reads them on every resolve; rotation
+happens out-of-band through whichever secret manager produced the value.
+
+`anthropic_oauth` and `google_oauth` extend the same `AuthSource` base. ccproxy
+owns refresh end-to-end: when the cached access token is within 60 seconds of
+expiry, ccproxy POSTs to the OAuth endpoint and atomically writes the new
+tokens back to `file_path`. Three glom-configurable paths (`access_path`,
+`refresh_path`, `expiry_path`) declare the credential JSON's schema, and
+`copy.deepcopy` + `glom.assign(..., missing=dict)` keep sibling fields
+(`scopes`, `subscriptionType`, etc.) intact.
+
+A static API key for DeepSeek alongside an OAuth-refresh entry for Anthropic:
+
+```yaml
+ccproxy:
+  providers:
+    anthropic:
+      auth:
+        type: anthropic_oauth
+        file_path: ~/.claude/.credentials.json
+        access_path: claudeAiOauth.accessToken
+        refresh_path: claudeAiOauth.refreshToken
+        expiry_path: claudeAiOauth.expiresAt
+        header: authorization
+      host: api.anthropic.com
+      path: /v1/messages
+      provider: anthropic
+
+    deepseek:
+      auth:
+        type: command
+        command: "printenv DEEPSEEK_API_KEY"
+        header: x-api-key
+      host: api.deepseek.com
+      path: /anthropic/v1/messages
+      provider: anthropic
+```
+
 **Hook config**: hooks in each stage list are topologically sorted by
 `@hook(reads=..., writes=...)` dependency declarations and executed in parallel
 DAG order. Hooks can be parameterized:

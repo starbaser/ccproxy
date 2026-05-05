@@ -142,10 +142,32 @@ ccproxy:
 |---|---|---|
 | `command` | `command` | Shell command whose stdout is the token. Bare strings under `auth:` coerce to this. |
 | `file` | `file` | File path; contents stripped of whitespace are the token. |
-| `anthropic_oauth` | `refresh_token_file` (default `~/.config/ccproxy/oauth/anthropic.json`) | Refreshes Anthropic OAuth tokens in-process via `claude.ai/v1/oauth/token`. Atomically writes refreshed tokens back to disk. |
-| `google_oauth` | `client_id`, `client_secret`, `refresh_token_file` (default `~/.gemini/oauth_creds.json`) | Refreshes Google/Gemini OAuth tokens in-process via `oauth2.googleapis.com`. Preserves on-disk `refresh_token` when the refresh response omits it (gemini-cli #21691). |
+| `anthropic_oauth` | `file_path` (default `~/.config/ccproxy/oauth/anthropic.json`) | Refreshes Anthropic OAuth tokens in-process via `claude.ai/v1/oauth/token`. Atomically writes refreshed tokens back to `file_path`. |
+| `google_oauth` | `client_id`, `client_secret`, `file_path` (default `~/.gemini/oauth_creds.json`) | Refreshes Google/Gemini OAuth tokens in-process via `oauth2.googleapis.com`. Preserves on-disk `refresh_token` when the refresh response omits it (gemini-cli #21691). |
 
 The `auth.header` field (inside any `auth:` block) overrides the default `Authorization: Bearer {token}` injection. Set it to a custom header name (e.g. `x-api-key`) when the destination expects the raw token in a non-Bearer header.
+
+#### Auth source class hierarchy
+
+Configuration values dispatch through a small Pydantic class hierarchy:
+
+```
+AuthFields                                  # base — only `header`
+├── CommandAuthSource    type: command          → run a shell command, return stdout
+├── FileAuthSource       type: file             → read a file, return contents
+└── AuthSource                              # OAuth refresh-capable base
+    ├── AnthropicAuthSource   type: anthropic_oauth
+    └── GoogleAuthSource      type: google_oauth
+```
+
+`AuthFields` carries only the optional target-header override. `CommandAuthSource` and `FileAuthSource` extend it as static credential value loaders — they have no expiry awareness and never POST to a refresh endpoint. They suit any long-lived API key (DeepSeek, Z.AI, OpenRouter) wired through opnix/SOPS, `printenv`, or a managed secret file; rotation happens out-of-band through whichever secret manager produced the value.
+
+`AuthSource` is the OAuth refresh-capable base. It owns the `read → check expiry → refresh-if-near-expiry → atomic write-back` template method. Subclasses provide only:
+
+- defaults for `type` (the `Literal` discriminator), `file_path`, `endpoint`, `client_id`, optional `client_secret`, and `default_expires_in_seconds`;
+- a `_build_refresh_body(refresh_token) -> dict[str, str]` that returns the per-provider POST body (Anthropic uses `grant_type=refresh_token` + `client_id`; Google adds `client_secret`).
+
+The discriminator literal mirrors the distinction in YAML: bare `command` / `file` for the static loaders, `*_oauth` for the refresh sources. Pick the right one for the credential's lifecycle, not for the brand of the destination — pointing a Gemini destination at `type: command` is legal, but ccproxy will not refresh anything in that case (see "Why Gemini wants `google_oauth`" below).
 
 **Iteration order is load-bearing.** `forward_oauth` walks `providers` in insertion order to pick a fallback when no sentinel key is present on the request — the first provider with a cached token wins. Keep the highest-priority provider (typically `anthropic`) first.
 
@@ -162,6 +184,61 @@ When ccproxy sees a key matching `sk-ant-oat-ccproxy-{name}`, it substitutes the
 ### Token Refresh
 
 Tokens are loaded at startup and cached in memory. On a 401 response from the provider, ccproxy re-resolves the credential source (re-reads the file or re-runs the command). If the new token differs from the cached value, the request is retried with the fresh token. If the token is unchanged, the 401 is returned to the client.
+
+### OAuth refresh lifecycle
+
+`AuthSource.resolve()` implements the in-process refresh template method shared by `anthropic_oauth` and `google_oauth`:
+
+1. **Read.** Open `file_path`, parse JSON, pull `(access_token, refresh_token, expiry)` via the configured glom paths (`access_path`, `refresh_path`, `expiry_path`).
+2. **Check expiry.** A 60-second headroom (`_REFRESH_HEADROOM_MS = 60_000`) — if the cached access token is more than 60 seconds away from expiry, return it unchanged.
+3. **Refresh.** Otherwise POST `_build_refresh_body(refresh_token)` to `endpoint` (form-encoded). On HTTP error or non-JSON response, give up and return `None`.
+4. **Merge.** `copy.deepcopy(creds)` so the original dict is untouched, then `glom.assign(merged, access_path, new_access, missing=dict)` for each of the three paths. `missing=dict` creates intermediate dicts when the credential file uses a nested envelope like `claudeAiOauth.accessToken`. Sibling fields the host CLI maintains — `scopes`, `subscriptionType`, anything else under that envelope or at the top level — survive verbatim.
+5. **Write back atomically.** `atomic_write_back(path, merged)`: `tempfile.NamedTemporaryFile` in the same directory, `tf.flush()`, `os.fsync(tf.fileno())`, `tmp.chmod(0o600)`, `tmp.replace(path)`. The rename is atomic on the same filesystem, so a concurrent reader (the host CLI, another ccproxy instance) sees either the old file or the new file, never a partial write.
+
+The `gemini-cli #21691` workaround lives at the merge step: `new_refresh = payload.get("refresh_token") or refresh`. Google's OAuth response sometimes omits `refresh_token`; the fallback keeps the on-disk value so the next refresh still has a valid grant.
+
+#### Startup sequence
+
+`from_yaml()` calls `_load_credentials()` before the inspector listeners come up. `_load_credentials()` iterates every `providers[name]` whose `auth` is set and calls `auth.resolve(label=name)`, populating `_cached_auth_tokens[name]`. For `anthropic_oauth` / `google_oauth` entries, that single call performs the full read → expiry-check → refresh → write-back dance, so the cached token is guaranteed fresh by the time mitmweb starts accepting traffic.
+
+This ordering matters most for Gemini. The `prewarm_project()` hook in `ccproxy.hooks.gemini_cli` runs once after readiness, POSTs to `https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist` with the cached `gemini` token, and stashes the resulting `cloudaicompanionProject` for the process lifetime:
+
+```
+from_yaml()
+ └── _load_credentials()                        # iterates providers, calls auth.resolve() for each
+      └── GoogleAuthSource.resolve()            # refresh-if-near-expiry, atomic write-back
+           └── _cached_auth_tokens["gemini"] = <fresh token>
+
+[mitmweb starts, addons register, ready signal]
+
+prewarm_project()
+ └── token = config.get_oauth_token("gemini")   # reads the fresh cached token
+ └── POST cloudcode-pa.../v1internal:loadCodeAssist with Bearer <fresh>
+ └── _cached_project = response["cloudaicompanionProject"]
+```
+
+#### Why Gemini wants `google_oauth`
+
+`prewarm_project()` requires a valid bearer token. With `type: google_oauth`, `_load_credentials()` rotates an expired Gemini token before `prewarm_project()` runs, so the `loadCodeAssist` POST succeeds and the `cloudaicompanionProject` is cached for every subsequent Gemini request.
+
+With `type: command` (e.g. `jq -r '.access_token' ~/.gemini/oauth_creds.json`), `CommandAuthSource.resolve()` just runs `jq` and returns whatever's in the file — no refresh. If the file holds an expired token at startup, `prewarm_project()` silently fails (`loadCodeAssist returned 401; project field will be omitted`) and every subsequent Gemini request lacks the `project` field.
+
+For Gemini the recommended setup is therefore `type: google_oauth` with `file_path: ~/.gemini/oauth_creds.json` and gemini-cli's installed-app credentials. The `client_id` and `client_secret` are public installed-app values embedded in the gemini-cli npm distribution — ccproxy does not vendor them; supply them in your config:
+
+```yaml
+ccproxy:
+  providers:
+    gemini:
+      auth:
+        type: google_oauth
+        file_path: ~/.gemini/oauth_creds.json
+        client_id: <gemini-cli installed-app client_id>
+        client_secret: <gemini-cli installed-app client_secret>
+        header: authorization
+      host: cloudcode-pa.googleapis.com
+      path: "/v1internal:{action}"
+      provider: gemini
+```
 
 ### Sharing the Claude Code CLI credential file
 
