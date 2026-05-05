@@ -714,42 +714,9 @@ class CCProxyConfig(BaseSettings):
                 if gemini_capacity_data:
                     instance.gemini_capacity = GeminiCapacityFallbackConfig(**gemini_capacity_data)
 
-        _reject_legacy_capacity_fallback_hook(instance.hooks)
-
         instance._load_credentials()
 
         return instance
-
-
-_LEGACY_CAPACITY_FALLBACK_HOOK = "ccproxy.hooks.gemini_capacity_fallback"
-
-
-def _reject_legacy_capacity_fallback_hook(hooks: Any) -> None:
-    """Raise on stale ``ccproxy.hooks.gemini_capacity_fallback`` hook entries.
-
-    The capacity-fallback retry orchestration moved onto
-    :class:`~ccproxy.inspector.gemini_addon.GeminiAddon` and its Pydantic
-    params graduated to :attr:`CCProxyConfig.gemini_capacity`. The legacy
-    hook entry is a hard error at config load — no backwards-compat shim.
-    """
-    if isinstance(hooks, dict):
-        outbound = hooks.get("outbound", [])
-    elif isinstance(hooks, list):
-        outbound = hooks
-    else:
-        return
-    for entry in outbound:
-        name = entry.get("hook") if isinstance(entry, dict) else entry
-        if name == _LEGACY_CAPACITY_FALLBACK_HOOK:
-            raise RuntimeError(
-                "ccproxy.hooks.gemini_capacity_fallback is no longer a hook. "
-                "Move its params to the `gemini_capacity:` config block. "
-                "Example:\n"
-                "  ccproxy:\n"
-                "    gemini_capacity:\n"
-                "      enabled: true\n"
-                "      fallback_models: [gemini-3-flash-preview, gemini-2.5-pro]\n"
-            )
 
 
 _config_instance: CCProxyConfig | None = None

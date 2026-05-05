@@ -676,32 +676,3 @@ class TestGeminiCapacityConfig:
 
         with pytest.raises(pydantic.ValidationError):
             GeminiCapacityFallbackConfig(sticky_retry_max_delay_seconds=0)
-
-
-class TestLegacyCapacityFallbackHookEntry:
-    """Stale ``ccproxy.hooks.gemini_capacity_fallback`` entries are a load-time error."""
-
-    def test_legacy_dict_entry_raises(self, tmp_path: Path) -> None:
-        yaml_path = tmp_path / "ccproxy.yaml"
-        yaml_path.write_text(
-            "ccproxy:\n"
-            "  hooks:\n"
-            "    outbound:\n"
-            "      - hook: ccproxy.hooks.gemini_capacity_fallback\n"
-            "        params:\n"
-            "          fallback_models: [gemini-2.5-pro]\n"
-        )
-        with pytest.raises(RuntimeError, match="gemini_capacity_fallback is no longer a hook"):
-            CCProxyConfig.from_yaml(yaml_path)
-
-    def test_legacy_string_entry_raises(self, tmp_path: Path) -> None:
-        yaml_path = tmp_path / "ccproxy.yaml"
-        yaml_path.write_text("ccproxy:\n  hooks:\n    outbound:\n      - ccproxy.hooks.gemini_capacity_fallback\n")
-        with pytest.raises(RuntimeError, match="Move its params to the `gemini_capacity:` config block"):
-            CCProxyConfig.from_yaml(yaml_path)
-
-    def test_no_legacy_entry_loads_clean(self, tmp_path: Path) -> None:
-        yaml_path = tmp_path / "ccproxy.yaml"
-        yaml_path.write_text("ccproxy:\n  hooks:\n    outbound:\n      - ccproxy.hooks.gemini_cli\n")
-        config = CCProxyConfig.from_yaml(yaml_path)
-        assert config.hooks["outbound"] == ["ccproxy.hooks.gemini_cli"]
