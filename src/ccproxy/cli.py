@@ -508,7 +508,7 @@ async def _run_inspect(
     loop = asyncio.get_running_loop()
     loop.add_signal_handler(signal.SIGTERM, master.shutdown)
 
-    if get_config().verify_readiness_on_startup:
+    if get_config().inspector.readiness.url is not None:
         # deferred: conditional readiness check path
         import contextlib as _contextlib
 

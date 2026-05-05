@@ -46,33 +46,33 @@ async def verify_outbound_reachability(config: CCProxyConfig) -> None:
 
     Raises ``ReadinessError`` on any failure.
     """
-    url = config.readiness_probe_url
-    timeout = httpx.Timeout(config.readiness_probe_timeout_seconds)
+    probe = config.inspector.readiness
+    timeout = httpx.Timeout(probe.timeout_seconds)
 
     async with httpx.AsyncClient(timeout=timeout) as client:
         try:
-            resp = await client.head(url, follow_redirects=False)
+            resp = await client.head(probe.url, follow_redirects=False)
         except httpx.ConnectError as e:
             raise ReadinessError(
-                f"Outbound reachability probe failed: connect error to {url}: {e}",
+                f"Outbound reachability probe failed: connect error to {probe.url}: {e}",
             ) from e
         except httpx.ConnectTimeout as e:
             raise ReadinessError(
-                f"Outbound reachability probe failed: connect timeout to {url} "
-                f"(after {config.readiness_probe_timeout_seconds}s)",
+                f"Outbound reachability probe failed: connect timeout to {probe.url} "
+                f"(after {probe.timeout_seconds}s)",
             ) from e
         except httpx.ReadTimeout as e:
             raise ReadinessError(
-                f"Outbound reachability probe failed: read timeout from {url} "
-                f"(after {config.readiness_probe_timeout_seconds}s) — "
+                f"Outbound reachability probe failed: read timeout from {probe.url} "
+                f"(after {probe.timeout_seconds}s) — "
                 f"TCP/TLS connected but no HTTP response received",
             ) from e
         except httpx.HTTPError as e:
             raise ReadinessError(
-                f"Outbound reachability probe failed: {type(e).__name__} for {url}: {e}",
+                f"Outbound reachability probe failed: {type(e).__name__} for {probe.url}: {e}",
             ) from e
 
-    logger.info("Outbound readiness OK: %s → HTTP %d", url, resp.status_code)
+    logger.info("Outbound readiness OK: %s → HTTP %d", probe.url, resp.status_code)
 
 
 async def verify_or_shutdown(

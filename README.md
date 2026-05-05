@@ -135,7 +135,6 @@ ccproxy:
       - ccproxy.hooks.extract_session_id
     outbound:
       - ccproxy.hooks.gemini_cli
-      - ccproxy.hooks.gemini_capacity_fallback
       - ccproxy.hooks.inject_mcp_notifications
       - ccproxy.hooks.verbose_mode
       - ccproxy.hooks.shape
@@ -261,7 +260,6 @@ even if both tools refresh concurrently.
 | `forward_oauth` | inbound | Sentinel key (`sk-ant-oat-ccproxy-{provider}`) substitution from `providers` |
 | `extract_session_id` | inbound | Parses `metadata.user_id` → stores session_id on `flow.metadata` |
 | `gemini_cli` | outbound | Single hook for Gemini sentinel-key traffic: `v1internal` envelope wrap, conditional UA masquerade, path rewrite to `cloudcode-pa`, and unwrap on the way back |
-| `gemini_capacity_fallback` | outbound | Retries Gemini requests against a fallback model chain on 429 / 503 RESOURCE_EXHAUSTED |
 | `inject_mcp_notifications` | outbound | Injects buffered MCP terminal events as synthetic tool_use/tool_result |
 | `verbose_mode` | outbound | Strips `redact-thinking-*` from `anthropic-beta` header |
 | `shape` | outbound | Replays a captured shape and stamps content fields from the incoming request |

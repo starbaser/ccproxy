@@ -124,7 +124,6 @@ ReadySignal → InspectorAddon → MultiHARSaver → ShapeCapturer
   | `forward_oauth` | inbound | Sentinel-key (`sk-ant-oat-ccproxy-{provider}`) substitution from `providers`. Header-only. |
   | `extract_session_id` | inbound | Reads `metadata.user_id` via `glom(ctx._body, 'metadata.user_id')` → stores session_id on `flow.metadata` (NOT body metadata). |
   | `gemini_cli` | outbound | Single hook for all Gemini sentinel-key traffic: wraps standard Gemini bodies in the `v1internal` envelope, conditionally masquerades `google-genai-sdk/*` UAs as Gemini CLI (preserves urllib clients in their own rate-limit bucket), rewrites paths to `cloudcode-pa`, and unwraps the `{response: {...}}` envelope on the way back via `EnvelopeUnwrapStream`. The `cloudaicompanionProject` is resolved once at startup via `prewarm_project` in `cli.py`. |
-  | `gemini_capacity_fallback` | outbound | Retries Gemini requests against a fallback model chain on 429 / 503 RESOURCE_EXHAUSTED. Sticky same-model retries honor `RetryInfo.retryDelay`, then walks the configured chain. 120s wall-clock budget. Streaming flows are supported via deferred stream setup in `responseheaders`. Default chain: `[gemini-3-flash-preview, gemini-2.5-pro, gemini-2.5-flash]`. |
   | `inject_mcp_notifications` | outbound | Injects buffered MCP terminal events as synthetic ToolCallPart/ToolReturnPart pairs (typed layer). |
   | `verbose_mode` | outbound | Strips `redact-thinking-*` from `anthropic-beta` header. Header-only. |
   | `shape` | outbound | Picks a per-provider captured shape, injects content fields from the incoming request per the provider's shaping profile, applies to the outbound flow. |
@@ -177,10 +176,8 @@ ReadySignal → InspectorAddon → MultiHARSaver → ShapeCapturer
 hooks:
   outbound:
     - ccproxy.hooks.gemini_cli
-    - hook: ccproxy.hooks.gemini_capacity_fallback
-      params:
-        fallback_models: [gemini-3-flash-preview, gemini-2.5-pro, gemini-2.5-flash]
-    - ccproxy.hooks.shape
+    - hook: ccproxy.hooks.shape
+    - ccproxy.hooks.verbose_mode
 ```
 
 **Transform matching** — `inspector.transforms` is a list of `TransformOverride` rules layered on top of sentinel-driven Provider routing. Default is empty. Match fields are regexes: `match_host` (checked against `pretty_host` + Host + X-Forwarded-Host), `match_path`, `match_model` (matched against `glom(body, "model")`). First match wins. Three actions: `redirect` (default), `transform`, `passthrough`. Auth resolves through `dest_provider` → `config.providers[name]`; `dest_host`/`dest_path` are raw overrides that bypass the Provider lookup. Vertex AI fields: `dest_vertex_project`, `dest_vertex_location`.

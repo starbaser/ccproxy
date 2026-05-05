@@ -31,7 +31,11 @@ This writes `~/.config/ccproxy/ccproxy.yaml` with defaults. Use `--force` to ove
 ccproxy:
   host: 127.0.0.1           # Listen address
   port: 4000                 # Reverse proxy listener port
-  debug: false               # Debug logging
+  log_level: INFO            # Root logger level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+
+  # Daemon log file path. Relative to config dir, or absolute.
+  # Set to null to disable file logging. Only `ccproxy start` writes here.
+  # log_file: ccproxy.log
 
   providers:                 # Provider entries keyed by sentinel suffix
     anthropic:
@@ -48,11 +52,17 @@ ccproxy:
       - ccproxy.hooks.extract_session_id
     outbound:
       - ccproxy.hooks.gemini_cli
-      - ccproxy.hooks.gemini_capacity_fallback
       - ccproxy.hooks.inject_mcp_notifications
       - ccproxy.hooks.verbose_mode
-      - ccproxy.hooks.shape
       - ccproxy.hooks.commitbee_compat
+      - ccproxy.hooks.shape
+
+  gemini_capacity:
+    enabled: true
+    fallback_models:
+      - gemini-3-flash-preview
+      - gemini-2.5-pro
+      - gemini-2.5-flash
 
   inspector:
     port: 8083               # mitmweb UI port
@@ -72,11 +82,70 @@ ccproxy:
 |---|---|---|---|
 | `host` | string | `127.0.0.1` | Reverse proxy listen address |
 | `port` | int | `4000` | Reverse proxy listen port |
-| `debug` | bool | `false` | Enable debug logging |
+| `log_level` | string | `INFO` | Root logger level: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
+| `log_file` | path | `ccproxy.log` | Daemon log file path. Relative to config dir, or absolute. `null` disables. |
+| `use_journal` | bool | `false` | Route daemon logging to systemd journal (requires `journal` extra) |
+| `journal_identifier` | string | — | `SYSLOG_IDENTIFIER` for journal handler. Derived from config-dir basename when unset. |
+| `provider_timeout` | float | — | Timeout budget (seconds) for upstream httpx calls. `null` disables the timeout. |
 | `providers` | map | `{}` | Provider entries keyed by sentinel suffix (auth + destination + format) |
 | `hooks` | object | — | Two-stage hook pipeline (inbound/outbound) |
+| `gemini_capacity` | object | — | Sticky-retry + fallback chain for Gemini RESOURCE_EXHAUSTED (see below) |
 | `inspector` | object | — | mitmweb and transform settings |
 | `otel` | object | — | OpenTelemetry export settings |
+| `shaping` | object | — | Request shaping configuration (see [shaping.md](shaping.md)) |
+| `flows` | object | — | Flow CLI defaults (see below) |
+
+## Logging
+
+ccproxy writes to three potential sinks simultaneously: **stderr** (always), a **log file** (daemon mode), and the **systemd journal** (optional).
+
+```yaml
+ccproxy:
+  log_level: INFO
+  log_file: ccproxy.log
+  use_journal: false
+  journal_identifier: null
+```
+
+### `log_level`
+
+Root Python logger level, applied uniformly to all loggers (ccproxy, mitmproxy, httpx, httpcore). One of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. `DEBUG` emits library internals — noisy but useful for tracing request/response cycles through the pipeline.
+
+### `log_file`
+
+Daemon log file path. Relative paths resolve against the config file's directory (`ccproxy.yaml`'s parent); absolute paths pass through. Set to `null` to disable file logging entirely. Only `ccproxy start` writes here — one-shot CLI commands (`run`, `status`, `flows`) always write to stderr. The file is **truncated on each daemon restart**. Access the resolved path via `ccproxy logs`.
+
+### `use_journal` and `journal_identifier`
+
+When `use_journal: true`, ccproxy attaches a `systemd.journal.JournalHandler` to the root logger so daemon output is routed to the systemd journal. Requires the `journal` optional extra (`pip install claude-ccproxy[journal]`). Falls back to stderr with a warning when `systemd-python` is unavailable or the host lacks systemd. Only applies to `ccproxy start`.
+
+`journal_identifier` sets the `SYSLOG_IDENTIFIER` field in journal entries. When unset (default), it derives from the config-dir basename:
+
+| Config dir | Derived identifier |
+|---|---|
+| `~/.config/ccproxy/` | `ccproxy` |
+| `~/dev/projects/foo/.ccproxy/` | `ccproxy-foo` |
+| `~/.config/myapp/` | `ccproxy-myapp` |
+
+Override via this field or the `CCPROXY_JOURNAL_IDENTIFIER` env var. View journal output with:
+
+```bash
+journalctl --user -t ccproxy           # default
+journalctl --user -t ccproxy-myproject # custom identifier
+```
+
+## Upstream Timeout
+
+```yaml
+ccproxy:
+  provider_timeout: null
+```
+
+`provider_timeout` sets a timeout budget (seconds) for httpx-based upstream HTTP calls inside ccproxy — specifically OAuth token refresh and the 401-retry path. It applies uniformly across connect, read, write, and pool phases.
+
+When `null` (default), there is **no enforced timeout**. This matches mitmproxy's default main-forward path and Portkey AI's upstream behavior — requests can take as long as the upstream needs (important for long-running streaming inference). Set to a positive float to opt into a bounded timeout for internal calls.
+
+This does NOT affect the main request/response forwarding path (mitmproxy handles that independently). It only gates ccproxy's own outbound HTTP calls.
 
 ## Providers
 
@@ -321,7 +390,6 @@ ccproxy:
 | `ccproxy.hooks.forward_oauth` | inbound | Substitutes sentinel keys (`sk-ant-oat-ccproxy-{name}`) with the cached auth token from `providers[name].auth`; injects `Authorization: Bearer …` (or the custom `auth.header` when set) and stamps `flow.metadata["ccproxy.oauth_provider"]` for downstream routing |
 | `ccproxy.hooks.extract_session_id` | inbound | Reads `metadata.user_id` via `glom(ctx._body, 'metadata.user_id')` and stores session_id on `flow.metadata` for downstream use |
 | `ccproxy.hooks.gemini_cli` | outbound | Single hook for all Gemini sentinel-key traffic. Wraps standard Gemini bodies in the `v1internal` envelope, conditionally masquerades `google-genai-sdk/*` UAs as Gemini CLI, rewrites paths to `cloudcode-pa`, and unwraps the `{response: {...}}` envelope on the way back. |
-| `ccproxy.hooks.gemini_capacity_fallback` | outbound | Retries Gemini requests against a fallback model chain when cloudcode-pa returns 429 / 503 RESOURCE_EXHAUSTED. Sticky same-model retries honor `RetryInfo.retryDelay`, then walks the configured chain. |
 | `ccproxy.hooks.inject_mcp_notifications` | outbound | Injects buffered MCP terminal events as synthetic tool_use/tool_result blocks |
 | `ccproxy.hooks.verbose_mode` | outbound | Strips `redact-thinking-*` flags from the `anthropic-beta` header |
 | `ccproxy.hooks.shape` | outbound | Picks a per-provider captured shape, injects content fields from the incoming request, applies it to the outbound flow. The shape carries the captured Claude client's identity verbatim — no separate identity-injection hook is needed. |
@@ -361,6 +429,39 @@ Force-run or force-skip hooks via header:
 ```
 x-ccproxy-hooks: +inject_mcp_notifications,-verbose_mode
 ```
+
+## Gemini Capacity Fallback
+
+The `gemini_capacity` block configures sticky-retry + fallback chain behavior for Gemini `RESOURCE_EXHAUSTED` (429/503) responses. This is managed by `GeminiAddon` internally — there is no separate hook to configure.
+
+```yaml
+ccproxy:
+  gemini_capacity:
+    enabled: true
+    fallback_models:
+      - gemini-3-flash-preview
+      - gemini-2.5-pro
+      - gemini-2.5-flash
+    sticky_retry_attempts: 3
+    sticky_retry_max_delay_seconds: 60
+    terminal_delay_threshold_seconds: 300
+    total_retry_budget_seconds: 120
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | bool | `false` | Master switch. When false, capacity errors pass through unchanged. |
+| `fallback_models` | list | `[]` | Models tried in order after sticky retries on the original are exhausted. |
+| `sticky_retry_attempts` | int | `3` | Same-model retries on the original model before falling through. Range 0–10. |
+| `sticky_retry_max_delay_seconds` | float | `60.0` | Per-attempt cap on `retryDelay`. If the server asks for longer, skip remaining sticky attempts and move to next candidate. |
+| `terminal_delay_threshold_seconds` | float | `300.0` | Hard ceiling. `retryDelay` above this halts the entire chain — the server is signaling sustained outage. |
+| `total_retry_budget_seconds` | float | `120.0` | Wall-clock budget for the entire retry chain across all candidates. |
+
+### Retry behavior
+
+1. **Sticky phase**: On 429/503, retry the same model up to `sticky_retry_attempts` times, honoring `RetryInfo.retryDelay` (capped by `sticky_retry_max_delay_seconds`).
+2. **Fallback phase**: If sticky retries are exhausted, walk `fallback_models` in order, trying each once.
+3. **Terminal**: If any `retryDelay` exceeds `terminal_delay_threshold_seconds`, or the wall clock exceeds `total_retry_budget_seconds`, stop and return the error to the client.
 
 ## Transform Overrides
 
@@ -414,18 +515,69 @@ ccproxy:
 ccproxy:
   inspector:
     port: 8083
+    cert_dir: ~/.config/ccproxy
     transforms: []
     provider_map:
       api.anthropic.com: anthropic
       api.openai.com: openai
       generativelanguage.googleapis.com: google_ai_studio
+    readiness:
+      url: "https://1.1.1.1/"   # null to skip
+      timeout_seconds: 5.0
+    mitmproxy:
+      ssl_insecure: true
+      web_host: 127.0.0.1
+      web_password: null
+      web_open_browser: false
+      ignore_hosts: []
+      allow_hosts: []
+      stream_large_bodies: null
+      body_size_limit: null
+      termlog_verbosity: warn
+      flow_detail: 0
 ```
 
-| Field | Type | Description |
-|---|---|---|
-| `port` | int | mitmweb UI listen port (default `8083`) |
-| `transforms` | list | Transform rules (see above) |
-| `provider_map` | map | Hostname → `gen_ai.system` value for OTel span attributes |
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `port` | int | `8083` | mitmweb UI listen port |
+| `cert_dir` | path | — | mitmproxy CA certificate store directory. Populates `mitmproxy.confdir`. |
+| `transforms` | list | `[]` | Transform override rules (see above) |
+| `provider_map` | map | — | Hostname → `gen_ai.system` value for OTel span attributes |
+
+### mitmproxy Options
+
+The `inspector.mitmproxy` block passes options directly to mitmproxy's `OptManager` via `--set` flags:
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `ssl_insecure` | bool | `true` | Skip upstream TLS certificate verification |
+| `web_host` | string | `127.0.0.1` | mitmweb browser UI bind address |
+| `web_password` | string | — | mitmweb UI password. Plain string, or a `file`/`command` credential source dict. `null` generates a random token on each startup. |
+| `web_open_browser` | bool | `false` | Auto-open browser when mitmweb starts |
+| `ignore_hosts` | list | `[]` | Regex patterns for hosts to bypass (no TLS interception) |
+| `allow_hosts` | list | `[]` | Regex patterns for hosts to intercept (exclusive allowlist) |
+| `stream_large_bodies` | string | — | Stream bodies larger than this threshold. `null` disables streaming so the transform handler can inspect and rewrite all bodies. |
+| `body_size_limit` | string | — | Hard limit on buffered body size. Bodies exceeding this are dropped. `null` means unlimited. |
+| `termlog_verbosity` | string | `warn` | mitmproxy terminal log level: `debug`, `info`, `warn`, `error` |
+| `flow_detail` | int | `0` | Flow output verbosity: 0=none, 1=url+status, 2=headers, 3=truncated body, 4=full body |
+
+### Startup Readiness Probe
+
+Before ccproxy accepts traffic, it verifies it can reach the open internet. This catches broken routes, DNS failures, missing CA bundles, or namespace egress problems at startup — before any real requests are accepted. Set `url` to `null` to skip (e.g. air-gapped environments).
+
+```yaml
+inspector:
+  readiness:
+    url: "https://1.1.1.1/"   # null to skip
+    timeout_seconds: 5.0
+```
+
+At startup, ccproxy issues `HEAD <url>` via httpx. Any HTTP response (200, 301, 404) proves the full network stack works. Any exception is a **hard failure**: ccproxy refuses to start.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `url` | string | `https://1.1.1.1/` | Canary URL. `null` skips the probe. Defaults to Cloudflare's 1.1.1.1 DNS (direct IP, globally reliable). |
+| `timeout_seconds` | float | `5.0` | Total timeout budget. Short by design — the probe is trivial. |
 
 ## Shaping Configuration
 
@@ -438,6 +590,9 @@ ccproxy:
     shapes_dir: ~/.config/ccproxy/shaping/shapes
     providers:
       anthropic:
+        billing:
+          salt: "${CCPROXY_BILLING_SALT}"
+          seed: "${CCPROXY_BILLING_SEED}"
         content_fields:
           - model
           - messages
@@ -482,6 +637,26 @@ ccproxy:
 
 `shape_hooks` entries are either bare module path strings or `{hook, params}` dicts for parameterized hooks. See [shaping.md](shaping.md) for the full shape hooks reference including the cache breakpoint hooks.
 
+### Anthropic Billing Header
+
+The Anthropic shaping profile includes a `billing` sub-block for the `regenerate_billing_header` shape hook. Both fields accept either literal values or `${VAR}` environment variable references. When either resolves to `None`, the billing header regeneration silently no-ops.
+
+```yaml
+shaping:
+  providers:
+    anthropic:
+      billing:
+        salt: "${CCPROXY_BILLING_SALT}"    # Hex salt for SHA-256 cc_version suffix
+        seed: "${CCPROXY_BILLING_SEED}"    # xxhash64 seed for the 5-hex cch field
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `billing.salt` | string | Hex salt for the SHA-256 `cc_version` 3-hex suffix. Supports `${VAR}` expansion. |
+| `billing.seed` | string | xxhash64 seed for the 5-hex `cch` field (hex, with or without `0x` prefix). Supports `${VAR}` expansion. |
+
+The salt is a static reverse-engineered constant (it does not rotate per release). It is **never committed** — supply via `ccproxy.yaml` or the `CCPROXY_BILLING_SALT` / `CCPROXY_BILLING_SEED` environment variables.
+
 | Field | Type | Description |
 |---|---|---|
 | `enabled` | bool | Enable/disable shaping globally (default `true`) |
@@ -503,7 +678,16 @@ ccproxy:
 
 ## Environment Variables
 
+All `CCPROXY_` prefixed environment variables override their corresponding YAML field. For example, `CCPROXY_PORT=4001` overrides `ccproxy.port`.
+
 | Variable | Description |
 |---|---|
 | `CCPROXY_CONFIG_DIR` | Override the config directory (takes precedence over `~/.config/ccproxy`) |
-| `CCPROXY_PORT` | Override the listen port (takes precedence over `ccproxy.port` in the config file) |
+| `CCPROXY_HOST` | Override the listen address |
+| `CCPROXY_PORT` | Override the listen port |
+| `CCPROXY_LOG_LEVEL` | Override `log_level` |
+| `CCPROXY_LOG_FILE` | Override `log_file` |
+| `CCPROXY_JOURNAL_IDENTIFIER` | Override `journal_identifier` |
+| `CCPROXY_BILLING_SALT` | Hex salt for Anthropic billing header `cc_version` suffix |
+| `CCPROXY_BILLING_SEED` | xxhash64 seed for Anthropic billing header `cch` field |
+| `MITMPROXY_SSLKEYLOGFILE` | Path for TLS keylog (auto-exported by `ccproxy start` to `{config_dir}/tls.keylog`) |
