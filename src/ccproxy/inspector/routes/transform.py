@@ -53,18 +53,22 @@ _FORMAT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 """URL-prefix patterns ccproxy recognises as a known wire format."""
 
-_GEMINI_FORMATS: frozenset[str] = frozenset({
-    LlmProviders.GEMINI.value,
-    LlmProviders.VERTEX_AI.value,
-    LlmProviders.VERTEX_AI_BETA.value,
-})
+_GEMINI_FORMATS: frozenset[str] = frozenset(
+    {
+        LlmProviders.GEMINI.value,
+        LlmProviders.VERTEX_AI.value,
+        LlmProviders.VERTEX_AI_BETA.value,
+    }
+)
 
 
 def _openai_error(message: str, *, error_type: str, code: int) -> bytes:
     """Serialize an OpenAI-shape error envelope for synthetic responses."""
-    return json.dumps({
-        "error": {"message": message, "type": error_type, "code": code},
-    }).encode()
+    return json.dumps(
+        {
+            "error": {"message": message, "type": error_type, "code": code},
+        }
+    ).encode()
 
 
 def _detect_incoming_format(path: str) -> str | None:
@@ -116,7 +120,8 @@ def _apply_path_template(template: str, *, model: str, action: str | None) -> st
 
 
 def _resolve_transform_target(
-    flow: HTTPFlow, body: dict[str, object] | None = None,
+    flow: HTTPFlow,
+    body: dict[str, object] | None = None,
 ) -> Provider | TransformOverride | None:
     """Pick the routing target. First match wins; None means no signal."""
     config = get_config()
@@ -170,7 +175,9 @@ def _apply_destination(flow: HTTPFlow, host: str, path: str) -> None:
 def _handle_passthrough(flow: HTTPFlow) -> None:
     logger.info(
         "transform passthrough: → %s:%d%s",
-        flow.request.host, flow.request.port, flow.request.path,
+        flow.request.host,
+        flow.request.port,
+        flow.request.path,
     )
 
 
@@ -212,8 +219,12 @@ def _handle_redirect(
         api_key = config.get_oauth_token(target.dest_provider) if target.dest_provider else None
 
     _record_transform_meta(
-        flow, provider=provider_str, model=model, body=body,
-        is_streaming=is_streaming, mode="redirect",
+        flow,
+        provider=provider_str,
+        model=model,
+        body=body,
+        is_streaming=is_streaming,
+        mode="redirect",
     )
 
     _apply_destination(flow, host, path)
@@ -268,6 +279,7 @@ def _handle_transform(
 
     if provider_str in _GEMINI_FORMATS:
         from ccproxy.lightllm.context_cache import resolve_cached_content
+
         try:
             messages, optional_params, cached_content = resolve_cached_content(
                 messages=messages,  # type: ignore[arg-type]
@@ -292,8 +304,12 @@ def _handle_transform(
     )
 
     _record_transform_meta(
-        flow, provider=provider_str, model=model, body=body,
-        is_streaming=is_streaming, mode="transform",
+        flow,
+        provider=provider_str,
+        model=model,
+        body=body,
+        is_streaming=is_streaming,
+        mode="transform",
     )
 
     parsed = urlparse(url)
@@ -312,7 +328,9 @@ def _handle_transform(
     flow.comment = f"{incoming_model} → {provider_str}/{model}"
     logger.info(
         "transform: %s → %s %s",
-        incoming_model, provider_str, url.split("?")[0],
+        incoming_model,
+        provider_str,
+        url.split("?")[0],
     )
 
 
@@ -341,7 +359,8 @@ def register_transform_routes(router: InspectorRouter) -> None:
                     501,
                     _openai_error(
                         "no provider or transform rule matched this request",
-                        error_type="not_implemented_error", code=501,
+                        error_type="not_implemented_error",
+                        code=501,
                     ),
                     {"Content-Type": "application/json"},
                 )
@@ -365,19 +384,15 @@ def register_transform_routes(router: InspectorRouter) -> None:
         else:  # action == "transform"
             _handle_transform(flow, target, body)
 
-        if (
-            is_reverse
-            and flow.response is None
-            and flow.request.host == "localhost"
-            and flow.request.port == 1
-        ):
+        if is_reverse and flow.response is None and flow.request.host == "localhost" and flow.request.port == 1:
             from mitmproxy.http import Response
 
             flow.response = Response.make(
                 502,
                 _openai_error(
                     f"transform failed to rewrite destination (path={flow.request.path})",
-                    error_type="api_error", code=502,
+                    error_type="api_error",
+                    code=502,
                 ),
                 {"Content-Type": "application/json"},
             )
@@ -422,7 +437,8 @@ def register_transform_routes(router: InspectorRouter) -> None:
 
             logger.info(
                 "lightllm response transform: %s %s → OpenAI format",
-                meta.provider, meta.model,
+                meta.provider,
+                meta.model,
             )
         except Exception:
             logger.warning("Response transform failed, passing through raw response", exc_info=True)

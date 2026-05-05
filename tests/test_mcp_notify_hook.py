@@ -201,7 +201,7 @@ def test_insertion_before_final_user_message():
     # First 3 are original prior messages, then 2 injected, then final
     assert len(result.messages) == 6
     assert isinstance(result.messages[3], ModelResponse)  # injected assistant
-    assert isinstance(result.messages[4], ModelRequest)    # injected user
+    assert isinstance(result.messages[4], ModelRequest)  # injected user
     final_msg = result.messages[-1]
     assert isinstance(final_msg, ModelRequest)
     assert isinstance(final_msg.parts[0], UserPromptPart)

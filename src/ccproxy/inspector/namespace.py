@@ -485,14 +485,18 @@ def _warmup_ignore_hosts(ns_pid: int, env: dict[str, str]) -> None:
     if not domains:
         return
 
-    warmup_script = "; ".join(
-        f"curl -sf --max-time 2 -o /dev/null https://{d}/ 2>/dev/null"
-        for d in domains
-    )
+    warmup_script = "; ".join(f"curl -sf --max-time 2 -o /dev/null https://{d}/ 2>/dev/null" for d in domains)
     nsenter_cmd = [
-        "nsenter", "-t", str(ns_pid),
-        "--net", "--user", "--preserve-credentials",
-        "--", "sh", "-c", warmup_script,
+        "nsenter",
+        "-t",
+        str(ns_pid),
+        "--net",
+        "--user",
+        "--preserve-credentials",
+        "--",
+        "sh",
+        "-c",
+        warmup_script,
     ]
     subprocess.run(nsenter_cmd, env=env, capture_output=True, timeout=10)  # noqa: S603
     logger.debug("Warmed up ignore_hosts TLS passthrough for %s", domains)

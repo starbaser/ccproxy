@@ -128,9 +128,17 @@ class TestBodyProperties:
         assert ctx.system == []
 
     def test_tools_getter_and_setter(self):
-        ctx = Context.from_flow(_make_flow(body={"model": "m", "messages": [], "tools": [
-            {"name": "read_file", "description": "Read", "input_schema": {"type": "object"}},
-        ]}))
+        ctx = Context.from_flow(
+            _make_flow(
+                body={
+                    "model": "m",
+                    "messages": [],
+                    "tools": [
+                        {"name": "read_file", "description": "Read", "input_schema": {"type": "object"}},
+                    ],
+                }
+            )
+        )
         assert len(ctx.tools) == 1
         assert ctx.tools[0].name == "read_file"
 
@@ -227,10 +235,15 @@ class TestCommit:
         assert written["system"] == "Be helpful."
 
     def test_commit_round_trips_messages(self):
-        flow = _make_flow(body={"model": "m", "messages": [
-            {"role": "user", "content": [{"type": "text", "text": "hello"}]},
-            {"role": "assistant", "content": [{"type": "text", "text": "hi"}]},
-        ]})
+        flow = _make_flow(
+            body={
+                "model": "m",
+                "messages": [
+                    {"role": "user", "content": [{"type": "text", "text": "hello"}]},
+                    {"role": "assistant", "content": [{"type": "text", "text": "hi"}]},
+                ],
+            }
+        )
         ctx = Context.from_flow(flow)
         # Access typed messages (triggers parse)
         msgs = ctx.messages

@@ -128,6 +128,7 @@ def test_streaming_text_request(client) -> None:
     A regression in EnvelopeUnwrapStream or in the cloudcode-pa response
     schema would surface here as empty/malformed chunks.
     """
+
     def _stream():
         chunks: list[str] = []
         count = 0

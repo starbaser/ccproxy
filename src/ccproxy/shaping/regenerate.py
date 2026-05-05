@@ -153,11 +153,7 @@ def regenerate_billing_header(ctx: Context, params: dict[str, Any]) -> Context:
     salt = get_billing_salt()
     seed = get_billing_cch_seed()
     if salt is None or seed is None:
-        missing = ", ".join(
-            name
-            for name, value in (("salt", salt), ("seed", seed))
-            if value is None
-        )
+        missing = ", ".join(name for name, value in (("salt", salt), ("seed", seed)) if value is None)
         logger.warning(
             "shaping.providers.anthropic.billing.%s unset; skipping billing-header regeneration",
             missing,
@@ -168,9 +164,7 @@ def regenerate_billing_header(ctx: Context, params: dict[str, Any]) -> Context:
     suffix = _compute_suffix(text, salt, version)
 
     # Phase 1: stamp cc_version suffix + cch=00000 placeholder into _body.
-    placeholder_text = _VERSION_SUFFIX_RE.sub(
-        f"cc_version={version}.{suffix}", original_text, count=1
-    )
+    placeholder_text = _VERSION_SUFFIX_RE.sub(f"cc_version={version}.{suffix}", original_text, count=1)
     placeholder_text = _CCH_RE.sub(f"cch={_CCH_PLACEHOLDER}", placeholder_text, count=1)
     new_block = {**system[idx], "text": placeholder_text}
     new_system = list(system)

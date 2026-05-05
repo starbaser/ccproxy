@@ -138,10 +138,7 @@ def _user_text_body(text: str = "hello") -> dict[str, Any]:
 def _shape_billing_block(version: str, entrypoint: str, *, suffix: str = "abc", cch: str = "00000") -> dict[str, str]:
     return {
         "type": "text",
-        "text": (
-            f"x-anthropic-billing-header: cc_version={version}.{suffix}; "
-            f"cc_entrypoint={entrypoint}; cch={cch};"
-        ),
+        "text": (f"x-anthropic-billing-header: cc_version={version}.{suffix}; cc_entrypoint={entrypoint}; cch={cch};"),
     }
 
 

@@ -44,11 +44,13 @@ class TestContentInjection:
         assert shape._body["messages"] == [{"role": "user", "content": "hi"}]
 
     def test_unlisted_fields_persist_from_shape(self) -> None:
-        shape = _shape_ctx({
-            "model": "shape-model",
-            "thinking": {"budget_tokens": 31999, "type": "enabled"},
-            "context_management": {"edits": []},
-        })
+        shape = _shape_ctx(
+            {
+                "model": "shape-model",
+                "thinking": {"budget_tokens": 31999, "type": "enabled"},
+                "context_management": {"edits": []},
+            }
+        )
         incoming = _incoming_ctx({"model": "incoming-model"})
         profile = ProviderShapingConfig(content_fields=["model"])
 
@@ -68,13 +70,17 @@ class TestContentInjection:
         assert shape._body["thinking"] == {"type": "enabled"}
 
     def test_prepend_shape_strategy(self) -> None:
-        shape = _shape_ctx({
-            "system": [{"type": "text", "text": "shape-system"}],
-            "messages": [],
-        })
-        incoming = _incoming_ctx({
-            "system": [{"type": "text", "text": "user-system"}],
-        })
+        shape = _shape_ctx(
+            {
+                "system": [{"type": "text", "text": "shape-system"}],
+                "messages": [],
+            }
+        )
+        incoming = _incoming_ctx(
+            {
+                "system": [{"type": "text", "text": "user-system"}],
+            }
+        )
         profile = ProviderShapingConfig(
             content_fields=["system"],
             merge_strategies={"system": "prepend_shape"},
@@ -99,12 +105,16 @@ class TestContentInjection:
         assert shape._body["system"][1] == {"type": "text", "text": "user-prompt"}
 
     def test_append_shape_strategy(self) -> None:
-        shape = _shape_ctx({
-            "system": [{"type": "text", "text": "shape-suffix"}],
-        })
-        incoming = _incoming_ctx({
-            "system": [{"type": "text", "text": "user-system"}],
-        })
+        shape = _shape_ctx(
+            {
+                "system": [{"type": "text", "text": "shape-suffix"}],
+            }
+        )
+        incoming = _incoming_ctx(
+            {
+                "system": [{"type": "text", "text": "user-system"}],
+            }
+        )
         profile = ProviderShapingConfig(
             content_fields=["system"],
             merge_strategies={"system": "append_shape"},
@@ -128,12 +138,14 @@ class TestContentInjection:
 
     def test_generation_params_flow_through(self) -> None:
         shape = _shape_ctx({"max_tokens": 50, "model": "shape"})
-        incoming = _incoming_ctx({
-            "model": "incoming",
-            "max_tokens": 8192,
-            "temperature": 0.3,
-            "top_p": 0.9,
-        })
+        incoming = _incoming_ctx(
+            {
+                "model": "incoming",
+                "max_tokens": 8192,
+                "temperature": 0.3,
+                "top_p": 0.9,
+            }
+        )
         profile = ProviderShapingConfig(
             content_fields=["model", "max_tokens", "temperature", "top_p"],
         )

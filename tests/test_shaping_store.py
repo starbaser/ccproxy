@@ -104,9 +104,7 @@ class TestGetStoreSingleton:
         assert (explicit_dir / "anthropic.mflow").exists()
         clear_store_instance()
 
-    def test_get_store_falls_back_to_config_dir(
-        self, tmp_path: Path, monkeypatch: Any
-    ) -> None:
+    def test_get_store_falls_back_to_config_dir(self, tmp_path: Path, monkeypatch: Any) -> None:
         from ccproxy.config import CCProxyConfig, set_config_instance
         from ccproxy.shaping.store import clear_store_instance, get_store
 

@@ -76,21 +76,25 @@ def inject_mcp_notifications(ctx: Context, params: dict[str, Any]) -> Context:
     for task_id, events in drained.items():
         tool_call_id = f"toolu_notify_{uuid.uuid4().hex[:8]}"
 
-        assistant_msg = ModelResponse(parts=[
-            ToolCallPart(
-                tool_name="tasks_get",
-                args={"taskId": task_id},
-                tool_call_id=tool_call_id,
-            ),
-        ])
+        assistant_msg = ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name="tasks_get",
+                    args={"taskId": task_id},
+                    tool_call_id=tool_call_id,
+                ),
+            ]
+        )
 
-        user_msg = ModelRequest(parts=[
-            ToolReturnPart(
-                tool_name="tasks_get",
-                content=json.dumps(events),
-                tool_call_id=tool_call_id,
-            ),
-        ])
+        user_msg = ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name="tasks_get",
+                    content=json.dumps(events),
+                    tool_call_id=tool_call_id,
+                ),
+            ]
+        )
 
         injected.append(assistant_msg)
         injected.append(user_msg)

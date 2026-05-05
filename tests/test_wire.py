@@ -187,10 +187,15 @@ class TestParseMessages:
         assert result[0].parts[0].content == "hello"
 
     def test_user_content_blocks(self):
-        msgs = [{"role": "user", "content": [
-            {"type": "text", "text": "one"},
-            {"type": "text", "text": "two"},
-        ]}]
+        msgs = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "one"},
+                    {"type": "text", "text": "two"},
+                ],
+            }
+        ]
         result = parse_messages(msgs)
         req = result[0]
         assert isinstance(req, ModelRequest)
@@ -201,10 +206,15 @@ class TestParseMessages:
         assert up.content[1] == "two"
 
     def test_cache_control_on_text_block(self):
-        msgs = [{"role": "user", "content": [
-            {"type": "text", "text": "cached", "cache_control": {"type": "ephemeral"}},
-            {"type": "text", "text": "plain"},
-        ]}]
+        msgs = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "cached", "cache_control": {"type": "ephemeral"}},
+                    {"type": "text", "text": "plain"},
+                ],
+            }
+        ]
         result = parse_messages(msgs)
         up = result[0].parts[0]
         assert isinstance(up, UserPromptPart)
@@ -227,9 +237,14 @@ class TestParseMessages:
         assert result[0].parts[0].content == "hi"
 
     def test_tool_use(self):
-        msgs = [{"role": "assistant", "content": [
-            {"type": "tool_use", "id": "call_1", "name": "read_file", "input": {"path": "/etc/example"}},
-        ]}]
+        msgs = [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "call_1", "name": "read_file", "input": {"path": "/etc/example"}},
+                ],
+            }
+        ]
         result = parse_messages(msgs)
         tc = result[0].parts[0]
         assert isinstance(tc, ToolCallPart)
@@ -238,9 +253,14 @@ class TestParseMessages:
         assert tc.tool_call_id == "call_1"
 
     def test_thinking(self):
-        msgs = [{"role": "assistant", "content": [
-            {"type": "thinking", "thinking": "Let me think...", "signature": "sig"},
-        ]}]
+        msgs = [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "Let me think...", "signature": "sig"},
+                ],
+            }
+        ]
         result = parse_messages(msgs)
         tp = result[0].parts[0]
         assert isinstance(tp, ThinkingPart)
@@ -248,9 +268,14 @@ class TestParseMessages:
         assert tp.signature == "sig"
 
     def test_redacted_thinking(self):
-        msgs = [{"role": "assistant", "content": [
-            {"type": "redacted_thinking", "data": "encrypted"},
-        ]}]
+        msgs = [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "redacted_thinking", "data": "encrypted"},
+                ],
+            }
+        ]
         result = parse_messages(msgs)
         tp = result[0].parts[0]
         assert isinstance(tp, ThinkingPart)
@@ -259,9 +284,14 @@ class TestParseMessages:
         assert tp.signature == "encrypted"
 
     def test_tool_result(self):
-        msgs = [{"role": "user", "content": [
-            {"type": "tool_result", "tool_use_id": "call_1", "content": "file contents"},
-        ]}]
+        msgs = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "call_1", "content": "file contents"},
+                ],
+            }
+        ]
         result = parse_messages(msgs)
         tr = result[0].parts[0]
         assert isinstance(tr, ToolReturnPart)
@@ -280,14 +310,20 @@ class TestParseMessages:
     def test_full_conversation(self):
         msgs = [
             {"role": "user", "content": [{"type": "text", "text": "hello"}]},
-            {"role": "assistant", "content": [
-                {"type": "thinking", "thinking": "hmm", "signature": "s"},
-                {"type": "text", "text": "hi"},
-                {"type": "tool_use", "id": "c1", "name": "read", "input": {}},
-            ]},
-            {"role": "user", "content": [
-                {"type": "tool_result", "tool_use_id": "c1", "content": "data"},
-            ]},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "hmm", "signature": "s"},
+                    {"type": "text", "text": "hi"},
+                    {"type": "tool_use", "id": "c1", "name": "read", "input": {}},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "c1", "content": "data"},
+                ],
+            },
             {"role": "assistant", "content": [{"type": "text", "text": "done"}]},
         ]
         result = parse_messages(msgs)
@@ -375,17 +411,27 @@ class TestEdgeCases:
         assert result[0].parts == []
 
     def test_image_block(self):
-        msgs = [{"role": "user", "content": [
-            {"type": "image", "source": {"data": "base64data"}},
-        ]}]
+        msgs = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {"data": "base64data"}},
+                ],
+            }
+        ]
         result = parse_messages(msgs)
         up = result[0].parts[0]
         assert isinstance(up, UserPromptPart)
 
     def test_image_block_with_cache_control(self):
-        msgs = [{"role": "user", "content": [
-            {"type": "image", "source": {"data": "img"}, "cache_control": {"type": "ephemeral"}},
-        ]}]
+        msgs = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {"data": "img"}, "cache_control": {"type": "ephemeral"}},
+                ],
+            }
+        ]
         result = parse_messages(msgs)
         up = result[0].parts[0]
         assert isinstance(up, UserPromptPart)
@@ -393,30 +439,49 @@ class TestEdgeCases:
         assert isinstance(up.content[1], CachePoint)
 
     def test_unknown_block_type(self):
-        msgs = [{"role": "user", "content": [
-            {"type": "custom_block", "data": "something"},
-        ]}]
+        msgs = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "custom_block", "data": "something"},
+                ],
+            }
+        ]
         result = parse_messages(msgs)
         up = result[0].parts[0]
         assert isinstance(up, UserPromptPart)
 
     def test_tool_result_with_list_content(self):
-        msgs = [{"role": "user", "content": [
-            {"type": "tool_result", "tool_use_id": "c1", "content": [
-                {"type": "text", "text": "line 1"},
-                {"type": "text", "text": "line 2"},
-            ]},
-        ]}]
+        msgs = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "c1",
+                        "content": [
+                            {"type": "text", "text": "line 1"},
+                            {"type": "text", "text": "line 2"},
+                        ],
+                    },
+                ],
+            }
+        ]
         result = parse_messages(msgs)
         tr = result[0].parts[0]
         assert isinstance(tr, ToolReturnPart)
         assert tr.content == "line 1\nline 2"
 
     def test_tool_result_flushed_after_text(self):
-        msgs = [{"role": "user", "content": [
-            {"type": "text", "text": "before"},
-            {"type": "tool_result", "tool_use_id": "c1", "content": "result"},
-        ]}]
+        msgs = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "before"},
+                    {"type": "tool_result", "tool_use_id": "c1", "content": "result"},
+                ],
+            }
+        ]
         result = parse_messages(msgs)
         req = result[0]
         assert len(req.parts) == 2
@@ -424,9 +489,14 @@ class TestEdgeCases:
         assert isinstance(req.parts[1], ToolReturnPart)
 
     def test_unknown_assistant_block(self):
-        msgs = [{"role": "assistant", "content": [
-            {"type": "custom", "data": "x"},
-        ]}]
+        msgs = [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "custom", "data": "x"},
+                ],
+            }
+        ]
         result = parse_messages(msgs)
         assert isinstance(result[0].parts[0], TextPart)
 
@@ -439,6 +509,7 @@ class TestEdgeCases:
 
     def test_invalid_ttl_defaults_to_5m(self):
         from ccproxy.pipeline.wire import _cache_control_to_cache_point
+
         cp = _cache_control_to_cache_point({"type": "ephemeral", "ttl": "99h"})
         assert cp.ttl == "5m"
 
@@ -455,10 +526,14 @@ class TestEdgeCases:
         assert result[0]["content"][0]["type"] == "tool_result"
 
     def test_serialize_tool_return_appended_to_user(self):
-        msgs = [ModelRequest(parts=[
-            UserPromptPart(content="hi"),
-            ToolReturnPart(tool_name="t", content="r", tool_call_id="c1"),
-        ])]
+        msgs = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content="hi"),
+                    ToolReturnPart(tool_name="t", content="r", tool_call_id="c1"),
+                ]
+            )
+        ]
         result = serialize_messages(msgs)
         assert len(result) == 1
         assert result[0]["role"] == "user"
@@ -466,6 +541,7 @@ class TestEdgeCases:
 
     def test_serialize_text_content_object(self):
         from pydantic_ai.messages import TextContent
+
         msgs = [ModelRequest(parts=[UserPromptPart(content=[TextContent(content="tagged")])])]
         result = serialize_messages(msgs)
         assert result[0]["content"][0]["text"] == "tagged"
@@ -477,6 +553,7 @@ class TestEdgeCases:
 
     def test_serialize_unknown_response_part(self):
         from pydantic_ai.messages import CompactionPart
+
         msgs = [ModelResponse(parts=[CompactionPart(content="compacted")])]
         result = serialize_messages(msgs)
         assert result[0]["content"][0]["type"] == "text"
@@ -510,12 +587,18 @@ class TestRoundTrip:
 
     def test_tool_use_round_trip(self):
         original = [
-            {"role": "assistant", "content": [
-                {"type": "tool_use", "id": "c1", "name": "read_file", "input": {"path": "/etc/example/test"}},
-            ]},
-            {"role": "user", "content": [
-                {"type": "tool_result", "tool_use_id": "c1", "content": "file data"},
-            ]},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "c1", "name": "read_file", "input": {"path": "/etc/example/test"}},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "c1", "content": "file data"},
+                ],
+            },
         ]
         parsed = parse_messages(original)
         serialized = serialize_messages(parsed)
@@ -524,20 +607,30 @@ class TestRoundTrip:
         assert serialized[1]["content"][0]["tool_use_id"] == "c1"
 
     def test_cache_control_round_trip(self):
-        original = [{"role": "user", "content": [
-            {"type": "text", "text": "cached", "cache_control": {"type": "ephemeral"}},
-            {"type": "text", "text": "plain"},
-        ]}]
+        original = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "cached", "cache_control": {"type": "ephemeral"}},
+                    {"type": "text", "text": "plain"},
+                ],
+            }
+        ]
         parsed = parse_messages(original)
         serialized = serialize_messages(parsed)
         assert serialized[0]["content"][0]["cache_control"] == {"type": "ephemeral"}
         assert "cache_control" not in serialized[0]["content"][1]
 
     def test_thinking_round_trip(self):
-        original = [{"role": "assistant", "content": [
-            {"type": "thinking", "thinking": "Let me think", "signature": "sig123"},
-            {"type": "text", "text": "answer"},
-        ]}]
+        original = [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "Let me think", "signature": "sig123"},
+                    {"type": "text", "text": "answer"},
+                ],
+            }
+        ]
         parsed = parse_messages(original)
         serialized = serialize_messages(parsed)
         assert serialized[0]["content"][0]["type"] == "thinking"

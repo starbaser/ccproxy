@@ -31,10 +31,7 @@ def commitbee_compat_guard(ctx: Context) -> bool:
     if isinstance(system, str):
         return _COMMITBEE_SIGNATURE in system
     if isinstance(system, list):
-        return any(
-            isinstance(b, dict) and _COMMITBEE_SIGNATURE in b.get("text", "")
-            for b in system
-        )
+        return any(isinstance(b, dict) and _COMMITBEE_SIGNATURE in b.get("text", "") for b in system)
     return False
 
 

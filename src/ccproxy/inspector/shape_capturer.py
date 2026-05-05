@@ -90,14 +90,16 @@ def _validate_flow(
     if flow.request.method != "POST":
         logger.warning(
             "ccproxy.shape: flow %s is %s not POST, skipping",
-            flow.id, flow.request.method,
+            flow.id,
+            flow.request.method,
         )
         return False
     ct = flow.request.headers.get("content-type", "")
     if not ct.startswith("application/json"):
         logger.warning(
             "ccproxy.shape: flow %s content-type %r not JSON, skipping",
-            flow.id, ct,
+            flow.id,
+            ct,
         )
         return False
     if (
@@ -107,7 +109,9 @@ def _validate_flow(
     ):
         logger.warning(
             "ccproxy.shape: flow %s path %s doesn't match %s, skipping",
-            flow.id, flow.request.path, profile.capture.path_pattern,
+            flow.id,
+            flow.request.path,
+            profile.capture.path_pattern,
         )
         return False
     return True
@@ -121,11 +125,7 @@ def _strip_runtime_metadata(flow: http.HTTPFlow) -> http.HTTPFlow:
     cannot serialize.
     """
     clone: http.HTTPFlow = flow.copy()  # type: ignore[no-untyped-call]
-    keys_to_remove = [
-        k
-        for k in clone.metadata
-        if not isinstance(k, str) or k.startswith(_CCPROXY_META_PREFIX)
-    ]
+    keys_to_remove = [k for k in clone.metadata if not isinstance(k, str) or k.startswith(_CCPROXY_META_PREFIX)]
     for k in keys_to_remove:
         del clone.metadata[k]
     return clone

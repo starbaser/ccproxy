@@ -34,12 +34,7 @@ is matched against its bare token after stripping a ``Bearer `` prefix."""
 
 def forward_oauth_guard(ctx: Context) -> bool:
     """Guard: run if any inbound auth header carries a value."""
-    return bool(
-        ctx.x_api_key
-        or ctx.authorization
-        or ctx.get_header("x-goog-api-key")
-        or ctx.get_header("api-key")
-    )
+    return bool(ctx.x_api_key or ctx.authorization or ctx.get_header("x-goog-api-key") or ctx.get_header("api-key"))
 
 
 def _bearer_token(value: str) -> str:
@@ -67,7 +62,7 @@ def forward_oauth(ctx: Context, _: dict[str, Any]) -> Context:
     """Forward an auth token to the provider, substituting a sentinel key."""
     sentinel = _extract_sentinel(ctx)
     if sentinel is not None:
-        provider = sentinel[len(OAUTH_SENTINEL_PREFIX):]
+        provider = sentinel[len(OAUTH_SENTINEL_PREFIX) :]
         token = _get_oauth_token(provider)
 
         if not token:

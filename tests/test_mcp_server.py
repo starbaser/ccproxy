@@ -149,9 +149,7 @@ def test_compare_flow_raises_for_missing_flow(mock_client: Any) -> None:
         _registered_tool_fn("compare_flow")(flow_id="missing")
 
 
-def test_clear_flows_with_filter_calls_delete_per_match(
-    mock_client: Any, fake_flows: list[dict[str, Any]]
-) -> None:
+def test_clear_flows_with_filter_calls_delete_per_match(mock_client: Any, fake_flows: list[dict[str, Any]]) -> None:
     with _patch_make_client(mock_client):
         count = _registered_tool_fn("clear_flows")(
             jq_filter='map(select(.request.host == "api.anthropic.com"))',
@@ -198,8 +196,10 @@ def test_list_models_returns_static_floor() -> None:
 
 def test_resource_status_when_mitmweb_unreachable() -> None:
     """``proxy://status`` reports connected=False rather than raising."""
-    with patch("ccproxy.mcp.server._make_client", side_effect=ConnectionError("nope")), \
-         patch("ccproxy.mcp.server.get_store") as get_store_mock:
+    with (
+        patch("ccproxy.mcp.server._make_client", side_effect=ConnectionError("nope")),
+        patch("ccproxy.mcp.server.get_store") as get_store_mock,
+    ):
         get_store_mock.return_value.list_providers.return_value = []
         # Resource handlers store the function on the resource object.
         resource = server.mcp._resource_manager._resources["proxy://status"]  # type: ignore[attr-defined]

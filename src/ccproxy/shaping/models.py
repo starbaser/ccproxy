@@ -31,11 +31,7 @@ def apply_shape(shape: Shape, ctx: Context, preserve_headers: Sequence[str]) -> 
     assert ctx.flow is not None
     target = ctx.flow.request
 
-    preserved = {
-        name: target.headers[name]
-        for name in preserve_headers
-        if name in target.headers
-    }
+    preserved = {name: target.headers[name] for name in preserve_headers if name in target.headers}
 
     target.headers.clear()
     for name, value in shape.headers.items():  # type: ignore[no-untyped-call]

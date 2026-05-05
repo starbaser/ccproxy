@@ -38,18 +38,22 @@ def store(tmp_path: Path) -> Any:
     from ccproxy.config import CCProxyConfig, set_config_instance
     from ccproxy.shaping.store import _store_lock
 
-    set_config_instance(CCProxyConfig(
-        shaping={"providers": {
-            "anthropic": {
-                "content_fields": ["model", "messages", "tools", "system", "thinking", "stream", "max_tokens"],
-                "merge_strategies": {"system": "prepend_shape"},
-                "shape_hooks": [
-                    "ccproxy.shaping.regenerate",
-                ],
-                "capture": {"path_pattern": "^/v1/messages"},
+    set_config_instance(
+        CCProxyConfig(
+            shaping={
+                "providers": {
+                    "anthropic": {
+                        "content_fields": ["model", "messages", "tools", "system", "thinking", "stream", "max_tokens"],
+                        "merge_strategies": {"system": "prepend_shape"},
+                        "shape_hooks": [
+                            "ccproxy.shaping.regenerate",
+                        ],
+                        "capture": {"path_pattern": "^/v1/messages"},
+                    },
+                }
             },
-        }},
-    ))
+        )
+    )
     shape_store = ShapeStore(tmp_path / "seeds")
 
     import ccproxy.shaping.store as store_mod
@@ -228,35 +232,43 @@ class TestMergeStrategySlice:
     """Tests for the :N slice parameter on prepend_shape / append_shape."""
 
     def _store_with_strategy(
-        self, store: ShapeStore, strategy: str,
+        self,
+        store: ShapeStore,
+        strategy: str,
     ) -> ShapeStore:
         """Re-seat the config singleton with the given system merge strategy."""
         from ccproxy.config import CCProxyConfig, set_config_instance
 
-        set_config_instance(CCProxyConfig(
-            shaping={"providers": {
-                "anthropic": {
-                    "content_fields": ["model", "messages", "system"],
-                    "merge_strategies": {"system": strategy},
-                    "shape_hooks": [],
-                    "capture": {"path_pattern": "^/v1/messages"},
+        set_config_instance(
+            CCProxyConfig(
+                shaping={
+                    "providers": {
+                        "anthropic": {
+                            "content_fields": ["model", "messages", "system"],
+                            "merge_strategies": {"system": strategy},
+                            "shape_hooks": [],
+                            "capture": {"path_pattern": "^/v1/messages"},
+                        },
+                    }
                 },
-            }},
-        ))
+            )
+        )
         return store
 
     def test_prepend_shape_slice_keeps_first_n(self, store: ShapeStore) -> None:
         self._store_with_strategy(store, "prepend_shape:2")
         store.add(
             "anthropic",
-            _seed_flow(body={
-                "messages": [],
-                "system": [
-                    {"type": "text", "text": "block-0"},
-                    {"type": "text", "text": "block-1"},
-                    {"type": "text", "text": "block-2-large"},
-                ],
-            }),
+            _seed_flow(
+                body={
+                    "messages": [],
+                    "system": [
+                        {"type": "text", "text": "block-0"},
+                        {"type": "text", "text": "block-1"},
+                        {"type": "text", "text": "block-2-large"},
+                    ],
+                }
+            ),
         )
         flow = _make_flow(
             reverse=True,
@@ -275,13 +287,15 @@ class TestMergeStrategySlice:
         self._store_with_strategy(store, "append_shape:1")
         store.add(
             "anthropic",
-            _seed_flow(body={
-                "messages": [],
-                "system": [
-                    {"type": "text", "text": "keep"},
-                    {"type": "text", "text": "drop"},
-                ],
-            }),
+            _seed_flow(
+                body={
+                    "messages": [],
+                    "system": [
+                        {"type": "text", "text": "keep"},
+                        {"type": "text", "text": "drop"},
+                    ],
+                }
+            ),
         )
         flow = _make_flow(
             reverse=True,
@@ -299,10 +313,12 @@ class TestMergeStrategySlice:
         self._store_with_strategy(store, "prepend_shape:100")
         store.add(
             "anthropic",
-            _seed_flow(body={
-                "messages": [],
-                "system": [{"type": "text", "text": "only"}],
-            }),
+            _seed_flow(
+                body={
+                    "messages": [],
+                    "system": [{"type": "text", "text": "only"}],
+                }
+            ),
         )
         flow = _make_flow(
             reverse=True,
@@ -320,10 +336,12 @@ class TestMergeStrategySlice:
         self._store_with_strategy(store, "prepend_shape:0")
         store.add(
             "anthropic",
-            _seed_flow(body={
-                "messages": [],
-                "system": [{"type": "text", "text": "dropped"}],
-            }),
+            _seed_flow(
+                body={
+                    "messages": [],
+                    "system": [{"type": "text", "text": "dropped"}],
+                }
+            ),
         )
         flow = _make_flow(
             reverse=True,
@@ -340,14 +358,16 @@ class TestMergeStrategySlice:
         self._store_with_strategy(store, "prepend_shape")
         store.add(
             "anthropic",
-            _seed_flow(body={
-                "messages": [],
-                "system": [
-                    {"type": "text", "text": "a"},
-                    {"type": "text", "text": "b"},
-                    {"type": "text", "text": "c"},
-                ],
-            }),
+            _seed_flow(
+                body={
+                    "messages": [],
+                    "system": [
+                        {"type": "text", "text": "a"},
+                        {"type": "text", "text": "b"},
+                        {"type": "text", "text": "c"},
+                    ],
+                }
+            ),
         )
         flow = _make_flow(
             reverse=True,

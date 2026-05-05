@@ -2,8 +2,7 @@
 
 
 class OAuthConfigError(ValueError):
-    """Raised when OAuth configuration is missing or invalid.
-    """
+    """Raised when OAuth configuration is missing or invalid."""
 
 
 # Sentinel API key prefix that triggers OAuth token substitution from ccproxy config.

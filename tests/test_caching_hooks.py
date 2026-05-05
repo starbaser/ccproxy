@@ -144,9 +144,11 @@ def test_strip_invalid_path_no_crash() -> None:
 
 def test_strip_preserves_other_keys() -> None:
     """Strip removes cache_control but leaves type and text intact."""
-    body = {"system": [
-        {"type": "text", "text": "hello", "cache_control": {"type": "ephemeral"}},
-    ]}
+    body = {
+        "system": [
+            {"type": "text", "text": "hello", "cache_control": {"type": "ephemeral"}},
+        ]
+    }
     ctx = _make_ctx(body)
     spec = get_registry().get_spec("strip")
     assert spec is not None
@@ -182,39 +184,47 @@ class InsertTestCase:
 INSERT_TEST_CASES: list[InsertTestCase] = [
     InsertTestCase(
         name="insert_last_system_block",
-        body={"system": [
-            {"type": "text", "text": "a"},
-            {"type": "text", "text": "b"},
-        ]},
+        body={
+            "system": [
+                {"type": "text", "text": "a"},
+                {"type": "text", "text": "b"},
+            ]
+        },
         path="system.-1.cache_control",
         value={"type": "ephemeral"},
         check_path=("system", -1),
     ),
     InsertTestCase(
         name="insert_last_tool",
-        body={"tools": [
-            {"name": "t1", "input_schema": {}},
-            {"name": "t2", "input_schema": {}},
-        ]},
+        body={
+            "tools": [
+                {"name": "t1", "input_schema": {}},
+                {"name": "t2", "input_schema": {}},
+            ]
+        },
         path="tools.-1.cache_control",
         value={"type": "ephemeral"},
         check_path=("tools", -1),
     ),
     InsertTestCase(
         name="insert_first_system_block",
-        body={"system": [
-            {"type": "text", "text": "a"},
-            {"type": "text", "text": "b"},
-        ]},
+        body={
+            "system": [
+                {"type": "text", "text": "a"},
+                {"type": "text", "text": "b"},
+            ]
+        },
         path="system.0.cache_control",
         value={"type": "ephemeral"},
         check_path=("system", 0),
     ),
     InsertTestCase(
         name="insert_with_custom_ttl",
-        body={"system": [
-            {"type": "text", "text": "a"},
-        ]},
+        body={
+            "system": [
+                {"type": "text", "text": "a"},
+            ]
+        },
         path="system.-1.cache_control",
         value={"type": "ephemeral", "ttl": "1h"},
         check_path=("system", -1),
@@ -276,10 +286,13 @@ def test_strip_then_insert_normalizes_breakpoints() -> None:
     assert insert_spec is not None
 
     strip_spec.execute(ctx, extra_params={"paths": ["system.*.cache_control"]})
-    insert_spec.execute(ctx, extra_params={
-        "path": "system.-1.cache_control",
-        "value": {"type": "ephemeral"},
-    })
+    insert_spec.execute(
+        ctx,
+        extra_params={
+            "path": "system.-1.cache_control",
+            "value": {"type": "ephemeral"},
+        },
+    )
 
     system = ctx._body["system"]
     for i, block in enumerate(system[:-1]):

@@ -80,9 +80,14 @@ def parse_tools(raw_tools: list[dict[str, Any]]) -> list[ToolDefinition]:
             cc = tool.get("cache_control")
 
         if cc:
-            result.append(CachedToolDefinition(
-                name=name, description=desc, parameters_json_schema=schema, cache_control=cc,
-            ))
+            result.append(
+                CachedToolDefinition(
+                    name=name,
+                    description=desc,
+                    parameters_json_schema=schema,
+                    cache_control=cc,
+                )
+            )
         else:
             result.append(ToolDefinition(name=name, description=desc, parameters_json_schema=schema))
     return result
@@ -217,22 +222,28 @@ def _parse_assistant_message(content: str | list[dict[str, Any]]) -> ModelRespon
         if block_type == "text":
             parts.append(TextPart(content=block.get("text", "")))
         elif block_type == "tool_use":
-            parts.append(ToolCallPart(
-                tool_name=block.get("name", ""),
-                args=block.get("input"),
-                tool_call_id=block.get("id", ""),
-            ))
+            parts.append(
+                ToolCallPart(
+                    tool_name=block.get("name", ""),
+                    args=block.get("input"),
+                    tool_call_id=block.get("id", ""),
+                )
+            )
         elif block_type == "thinking":
-            parts.append(ThinkingPart(
-                content=block.get("thinking", ""),
-                signature=block.get("signature"),
-            ))
+            parts.append(
+                ThinkingPart(
+                    content=block.get("thinking", ""),
+                    signature=block.get("signature"),
+                )
+            )
         elif block_type == "redacted_thinking":
-            parts.append(ThinkingPart(
-                content="",
-                id="redacted_thinking",
-                signature=block.get("data"),
-            ))
+            parts.append(
+                ThinkingPart(
+                    content="",
+                    id="redacted_thinking",
+                    signature=block.get("data"),
+                )
+            )
         else:
             # Unknown block — store as text
             parts.append(TextPart(content=str(block)))
