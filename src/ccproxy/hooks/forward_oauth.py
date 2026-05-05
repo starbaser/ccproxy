@@ -1,11 +1,15 @@
 """Forward OAuth hook — sentinel key substitution and token injection.
 
-Detects ``sk-ant-oat-ccproxy-{provider}`` sentinel keys in ``x-api-key``,
+Detects ``sk-ant-oat-ccproxy-{provider}`` sentinel keys on any inbound
+auth header (``x-api-key``, ``x-goog-api-key``, or ``Authorization: Bearer``),
 resolves the real auth token from ``CCProxyConfig.providers[provider]``,
 and injects it via the header named on that Provider's ``auth.header``
-(defaulting to ``Authorization: Bearer``). Falls back to walking
-``config.providers`` in insertion order when no auth header is present —
-the first cached token wins, so YAML order is load-bearing.
+(defaulting to ``Authorization: Bearer`` when unset). All non-target inbound
+auth headers are cleared so the sentinel never leaks upstream.
+
+Falls back to walking ``config.providers`` in insertion order when no
+inbound auth header is present — the first cached token wins, so YAML
+order is load-bearing.
 """
 
 from __future__ import annotations
@@ -23,22 +27,47 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+_INBOUND_AUTH_HEADERS: tuple[str, ...] = ("x-api-key", "x-goog-api-key", "authorization")
+"""Headers checked inbound for a sentinel key, in priority order. ``authorization``
+is matched against its bare token after stripping a ``Bearer `` prefix."""
+
+
 def forward_oauth_guard(ctx: Context) -> bool:
-    """Guard: run if there's an auth header with a potential sentinel key."""
-    return bool(ctx.x_api_key or ctx.authorization or ctx.get_header("x-goog-api-key") or ctx.get_header("api-key"))
+    """Guard: run if any inbound auth header carries a value."""
+    return bool(
+        ctx.x_api_key
+        or ctx.authorization
+        or ctx.get_header("x-goog-api-key")
+        or ctx.get_header("api-key")
+    )
+
+
+def _bearer_token(value: str) -> str:
+    """Strip a leading ``Bearer `` (case-insensitive) from an Authorization value."""
+    if value.lower().startswith("bearer "):
+        return value[7:].strip()
+    return value
+
+
+def _extract_sentinel(ctx: Context) -> str | None:
+    """Return the sentinel-key value from any inbound auth header, or None."""
+    for header in _INBOUND_AUTH_HEADERS:
+        raw = ctx.get_header(header, "")
+        candidate = _bearer_token(raw) if header == "authorization" else raw
+        if candidate.startswith(OAUTH_SENTINEL_PREFIX):
+            return candidate
+    return None
 
 
 @hook(
-    reads=["authorization", "x-api-key"],
-    writes=["authorization", "x-api-key"],
+    reads=["authorization", "x-api-key", "x-goog-api-key"],
+    writes=["authorization", "x-api-key", "x-goog-api-key"],
 )
 def forward_oauth(ctx: Context, _: dict[str, Any]) -> Context:
-    """Forward OAuth Bearer token to provider."""
-    api_key = ctx.x_api_key or ctx.get_header("x-goog-api-key")
-    auth = ctx.authorization
-
-    if api_key.startswith(OAUTH_SENTINEL_PREFIX):
-        provider = api_key[len(OAUTH_SENTINEL_PREFIX) :]
+    """Forward an auth token to the provider, substituting a sentinel key."""
+    sentinel = _extract_sentinel(ctx)
+    if sentinel is not None:
+        provider = sentinel[len(OAUTH_SENTINEL_PREFIX):]
         token = _get_oauth_token(provider)
 
         if not token:
@@ -53,7 +82,8 @@ def forward_oauth(ctx: Context, _: dict[str, Any]) -> Context:
         logger.info("OAuth token injected for provider '%s' (sentinel)", provider)
         return ctx
 
-    if not api_key and not auth:
+    has_inbound_auth = any(ctx.get_header(h, "") for h in _INBOUND_AUTH_HEADERS)
+    if not has_inbound_auth:
         cached_provider, cached_token = _try_cached_token()
         if cached_provider and cached_token:
             _inject_token(ctx, cached_provider, cached_token)
@@ -90,19 +120,23 @@ def _try_cached_token() -> tuple[str | None, str | None]:
 
 
 def _inject_token(ctx: Context, provider: str, token: str) -> None:
-    """Inject OAuth token into the appropriate flow header."""
+    """Inject ``token`` into the configured outbound auth header.
+
+    The provider's ``auth.header`` (None defaults to ``authorization``) wins.
+    All other inbound auth headers are cleared so the sentinel never leaks
+    upstream alongside the real token.
+    """
     config = get_config()
-    target_header = config.get_auth_header(provider)
+    target_header = (config.get_auth_header(provider) or "authorization").lower()
 
-    if target_header:
-        ctx.set_header(target_header, token)
-    else:
+    if target_header == "authorization":
         ctx.set_header("authorization", f"Bearer {token}")
+    else:
+        ctx.set_header(target_header, token)
 
-    # Clear sentinel headers that are NOT the auth target
-    for sentinel in ("x-goog-api-key", "x-api-key"):
-        if sentinel != target_header:
-            ctx.set_header(sentinel, "")
+    for header in _INBOUND_AUTH_HEADERS:
+        if header != target_header:
+            ctx.set_header(header, "")
 
     assert ctx.flow is not None
     ctx.flow.metadata["ccproxy.oauth_injected"] = True

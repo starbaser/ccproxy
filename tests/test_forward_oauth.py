@@ -98,6 +98,33 @@ class TestForwardOAuthSentinelPath:
         assert ctx.get_header("authorization") == "Bearer goog-token"
         assert ctx.flow.metadata["ccproxy.oauth_provider"] == "google"
 
+    def test_sentinel_via_authorization_bearer(self, clean_config: CCProxyConfig) -> None:
+        """OpenAI clients send the sentinel as ``Authorization: Bearer <key>``."""
+        clean_config._cached_auth_tokens["anthropic"] = "real-bearer-token"
+        ctx = _make_ctx({"authorization": f"Bearer {OAUTH_SENTINEL_PREFIX}anthropic"})
+
+        result = forward_oauth(ctx, {})
+
+        assert result is ctx
+        # The Bearer-token sentinel was peeled, the real token re-injected with Bearer
+        assert ctx.get_header("authorization") == "Bearer real-bearer-token"
+        assert ctx.flow.metadata["ccproxy.oauth_provider"] == "anthropic"
+
+    def test_sentinel_via_authorization_bearer_with_custom_target(
+        self, clean_config: CCProxyConfig,
+    ) -> None:
+        """Inbound Authorization can route to a different outbound header."""
+        clean_config.providers = {"deepseek": _make_provider(header="x-api-key")}
+        clean_config._cached_auth_tokens["deepseek"] = "ds-token"
+        ctx = _make_ctx({"authorization": f"Bearer {OAUTH_SENTINEL_PREFIX}deepseek"})
+
+        forward_oauth(ctx, {})
+
+        assert ctx.get_header("x-api-key") == "ds-token"
+        # Source authorization header cleared so the sentinel doesn't leak.
+        assert ctx.get_header("authorization") == ""
+        assert ctx.flow.metadata["ccproxy.oauth_provider"] == "deepseek"
+
     def test_sentinel_no_token_raises_oauth_config_error(self, clean_config: CCProxyConfig) -> None:
         ctx = _make_ctx({"x-api-key": f"{OAUTH_SENTINEL_PREFIX}missing-provider"})
 
