@@ -45,6 +45,10 @@ otel = [
 journal = [
   "systemd-python>=235",
 ]
+sdk = [
+  "google-genai>=1.0.0",
+  "openai>=1.0.0",
+]
 dev = [
   "pytest>=8.4.1",
   "pytest-asyncio>=1.1.0",

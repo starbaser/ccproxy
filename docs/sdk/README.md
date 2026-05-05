@@ -6,6 +6,12 @@ This directory contains examples demonstrating how to use various Python SDKs wi
 
 These examples show how to route SDK requests through ccproxy to leverage intelligent model routing, request classification, and observability features. All examples assume ccproxy is running locally on the default port (4000).
 
+To install all SDK dependencies needed by these examples:
+
+```bash
+uv add claude-ccproxy[sdk]
+```
+
 ## OAuth Sentinel Key
 
 ccproxy supports a **sentinel API key** that triggers automatic OAuth token substitution. This allows SDK clients to use ccproxy's cached OAuth credentials without needing a real API key.
@@ -38,46 +44,6 @@ ccproxy start
 
 ## Examples
 
-### agent_sdk_caching_example.py
-
-Demonstrates Claude Agent SDK integration with ccproxy for prompt caching monitoring.
-
-**Purpose:**
-- Monitor prompt caching effectiveness via usage statistics
-- Show cache creation and hit metrics through ccproxy
-- Demonstrate Agent SDK `query()` with tool permissions
-
-**Prerequisites:**
-```bash
-# Install claude-agent-sdk
-uv add claude-agent-sdk
-
-# Start ccproxy
-ccproxy start
-ccproxy logs -f
-```
-
-**Usage:**
-```bash
-# Run the example
-uv run python docs/sdk/agent_sdk_caching_example.py
-
-# Run multiple times to observe cache behavior
-uv run python docs/sdk/agent_sdk_caching_example.py
-```
-
-**Expected Cache Behavior:**
-- **First run**: Creates cache with substantial context (>1024 tokens)
-  - Look for `cache_creation_input_tokens` in usage stats
-- **Subsequent runs**: Hit existing cache, reducing input token costs
-  - Look for `cache_read_input_tokens` > 0 in usage stats
-
-**Environment Variables:**
-- `ANTHROPIC_BASE_URL`: Points to ccproxy (default: `http://localhost:4000`)
-- `ANTHROPIC_API_KEY`: Use sentinel key `sk-ant-oat-ccproxy-anthropic` for OAuth
-
----
-
 ### anthropic_sdk.py
 
 Direct usage of the Anthropic SDK with ccproxy using OAuth credential forwarding.
@@ -89,8 +55,7 @@ Direct usage of the Anthropic SDK with ccproxy using OAuth credential forwarding
 
 **Prerequisites:**
 ```bash
-# Install anthropic SDK
-uv add anthropic
+# anthropic is a core dep of ccproxy — no extra install needed
 
 # Configure OAuth credentials in ~/.config/ccproxy/ccproxy.yaml
 # Start ccproxy
@@ -122,8 +87,7 @@ Using LiteLLM's Python SDK with async completion API.
 
 **Prerequisites:**
 ```bash
-# Install litellm
-uv add litellm
+# litellm is a core dep of ccproxy — no extra install needed
 
 # Configure credentials in ~/.config/ccproxy/ccproxy.yaml
 # Start ccproxy
@@ -172,6 +136,108 @@ uv run python docs/sdk/zai_anthropic_sdk.py
 - Routes through ccproxy at `http://127.0.0.1:4000`
 - Model: `glm-4.7` (defined in ~/.config/ccproxy/config.yaml)
 - Dummy API key - ccproxy handles real authentication
+
+---
+
+### gemini_sdk.py
+
+google-genai SDK through ccproxy using the Gemini sentinel key.
+
+**Purpose:**
+- Demonstrate non-streaming and streaming content generation via google-genai SDK
+- Show proxy-based OAuth authentication using the Gemini sentinel key
+- The `gemini_cli` outbound hook wraps standard Gemini bodies in the v1internal envelope
+
+**Prerequisites:**
+```bash
+# Install google-genai (included in ccproxy[sdk])
+uv add claude-ccproxy[sdk]
+
+# Ensure Gemini OAuth credentials exist
+gemini -p ""
+
+# Start ccproxy
+ccproxy start
+```
+
+**Usage:**
+```bash
+uv run python docs/sdk/gemini_sdk.py
+```
+
+**Features:**
+- Uses sentinel key `sk-ant-oat-ccproxy-gemini` — proxy substitutes real OAuth token
+- Base URL: `http://127.0.0.1:4000/gemini`
+- Demonstrates both `generate_content()` and `generate_content_stream()` patterns
+- Same-format redirect — no body transformation needed
+
+---
+
+### deepseek_sdk.py
+
+Anthropic SDK through ccproxy to DeepSeek using the sentinel key.
+
+**Purpose:**
+- Demonstrate using the Anthropic SDK with DeepSeek models
+- DeepSeek exposes an Anthropic-compatible API — same wire format, same SDK
+- ccproxy handles `x-api-key` header injection via `forward_oauth` hook
+
+**Prerequisites:**
+```bash
+# anthropic is a core dep of ccproxy — no extra install needed
+
+# Configure providers.deepseek in ccproxy.yaml
+# Start ccproxy
+ccproxy start
+```
+
+**Usage:**
+```bash
+uv run python docs/sdk/deepseek_sdk.py
+```
+
+**Features:**
+- Uses sentinel key `sk-ant-oat-ccproxy-deepseek`
+- Same SDK as `anthropic_sdk.py` — just a different sentinel key
+- Same-format redirect — no body transformation needed
+- Demonstrates both `messages.create()` and `messages.stream()` patterns
+
+---
+
+### lightllm_transform.py
+
+Demonstrates ccproxy's lightllm cross-format transformation by using the OpenAI SDK
+to call Anthropic and Gemini models through the transform pipeline.
+
+**Purpose:**
+- Show how ccproxy rewrites OpenAI-format requests into provider-native format
+- Demonstrate the full lightllm pipeline: ``validate_environment → get_complete_url →
+  transform_request → sign_request → transform_response``
+- For Gemini: show the custom ``_transform_gemini`` code path that bypasses ``BaseConfig``
+- Prove the same OpenAI SDK code can reach any provider ccproxy knows about
+
+**Prerequisites:**
+```bash
+# Install openai (included in ccproxy[sdk])
+uv add claude-ccproxy[sdk]
+
+# Start ccproxy
+ccproxy start
+```
+
+**Usage:**
+```bash
+uv run python docs/sdk/lightllm_transform.py
+```
+
+**Features:**
+- Uses OpenAI SDK (`openai.OpenAI`) — single client, multiple backends
+- Sentinel keys: `sk-ant-oat-ccproxy-anthropic` and `sk-ant-oat-ccproxy-gemini`
+- ccproxy auto-detects OpenAI format from `/v1/chat/completions` path
+- Format mismatch triggers transform automatically (no config needed)
+- ``SseTransformer`` handles cross-provider streaming: parses provider-native SSE
+  chunks, transforms each via ``ModelResponseIterator``, re-serializes as OpenAI SSE
+- Demonstrates both non-streaming and streaming for each provider direction
 
 ## Common Setup
 
@@ -224,10 +290,12 @@ If examples fail:
 - **"This credential is only authorized for use with Claude Code"**: OAuth pipeline hooks not configured. Verify `forward_oauth` and `shape` hooks are enabled, and that you have a captured shape for the provider.
 - **"invalid x-api-key"**: OAuth headers not being set correctly. Check `forward_oauth` hook configuration and logs.
 - **Connection refused**: ccproxy not running. Check `ccproxy status`.
+- **Transform returning unexpected format**: Verify the sentinel key resolves to a provider with a different wire format. Check `ccproxy flows compare` to see the pre-transform client request and post-transform forwarded request side-by-side.
 
 ## Additional Resources
 
 - [ccproxy Documentation](../../README.md)
 - [Anthropic SDK Documentation](https://github.com/anthropics/anthropic-sdk-python)
+- [OpenAI SDK Documentation](https://github.com/openai/openai-python)
+- [google-genai SDK Documentation](https://github.com/googleapis/python-genai)
 - [LiteLLM Documentation](https://docs.litellm.ai/)
-- [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python)

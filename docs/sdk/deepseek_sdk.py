@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-"""Example using Anthropic SDK with ccproxy (dummy-key pattern).
+"""Anthropic SDK through ccproxy to DeepSeek using the sentinel key.
 
-Prefer ``docs/sdk/anthropic_sdk.py`` for the recommended OAuth sentinel key pattern
-(``sk-ant-oat-ccproxy-anthropic``). This script uses a dummy API key instead —
-the proxy handles real auth via its credentials configuration.
+DeepSeek exposes an Anthropic-compatible API — same wire format, same SDK.
+ccproxy handles auth header injection via ``forward_oauth`` (``x-api-key``
+header) and routes to the configured DeepSeek host. This is a same-format
+redirect — no body transformation is needed.
 
-This is a minimal example when OAuth isn't configured in ccproxy.yaml.
-Note: We use a dummy API key because the SDK requires it for validation,
-but the actual authentication is handled by the proxy's credentials config.
+Requirements:
+- ccproxy running: ``ccproxy start``
+- ``providers.deepseek`` configured in ``ccproxy.yaml``
 """
+
+from __future__ import annotations
 
 import anthropic
 from rich.console import Console
@@ -17,29 +20,27 @@ from rich.panel import Panel
 console = Console()
 err_console = Console(stderr=True)
 
+SENTINEL_KEY = "sk-ant-oat-ccproxy-deepseek"
+
 
 def create_client() -> anthropic.Anthropic:
-    """Create Anthropic client configured for ccproxy.
-
-    The dummy API key satisfies SDK validation, but the proxy
-    handles actual authentication via credentials configuration.
-    """
+    """Create Anthropic client configured for ccproxy with DeepSeek sentinel key."""
     return anthropic.Anthropic(
-        api_key="sk-proxy-dummy",  # Dummy key - proxy handles real auth
+        api_key=SENTINEL_KEY,
         base_url="http://127.0.0.1:4000",
     )
 
 
 def simple_request() -> None:
     """Simple non-streaming request."""
-    console.print(Panel("[cyan]Simple Request Example[/cyan]", border_style="blue"))
+    console.print(Panel("[cyan]Simple Request[/cyan]", border_style="blue"))
 
     client = create_client()
 
     try:
         response = client.messages.create(
             messages=[{"role": "user", "content": "Hello, can you tell me a short joke?"}],
-            model="claude-sonnet-4-5-20250929",
+            model="deepseek-chat",
             max_tokens=100,
         )
 
@@ -54,7 +55,7 @@ def simple_request() -> None:
 
 def streaming_request() -> None:
     """Streaming request example."""
-    console.print(Panel("[cyan]Streaming Request Example[/cyan]", border_style="blue"))
+    console.print(Panel("[cyan]Streaming Request[/cyan]", border_style="blue"))
 
     client = create_client()
 
@@ -63,7 +64,7 @@ def streaming_request() -> None:
 
         with client.messages.stream(
             messages=[{"role": "user", "content": "Count from 1 to 5."}],
-            model="claude-sonnet-4-5-20250929",
+            model="deepseek-chat",
             max_tokens=100,
         ) as stream:
             for text in stream.text_stream:
@@ -79,22 +80,18 @@ def streaming_request() -> None:
 def main() -> None:
     """Run examples."""
     try:
-        # Check if running
-        console.print("[yellow]Note:[/yellow] This script requires ccproxy running with credentials configuration.\n")
+        console.print("[yellow]Note:[/yellow] This script requires ccproxy running: [cyan]ccproxy start[/cyan]\n")
 
-        # Simple request
         simple_request()
         console.print()
-
-        # Streaming request
         streaming_request()
 
     except Exception:
         console.print(
             "\n[yellow]Troubleshooting:[/yellow]",
             "1. Start ccproxy: [cyan]ccproxy start[/cyan]",
-            "2. Verify credentials in ~/.ccproxy/ccproxy.yaml",
-            "3. Check proxy logs: [cyan]ccproxy logs[/cyan]",
+            "2. Verify providers.deepseek in ccproxy.yaml",
+            "3. Check logs: [cyan]ccproxy logs -f[/cyan]",
             sep="\n",
         )
         raise
