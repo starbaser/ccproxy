@@ -10,6 +10,10 @@ Requirements:
 - OAuth credentials configured in ~/.config/ccproxy/ccproxy.yaml under providers
 """
 
+from __future__ import annotations
+
+import os
+
 import anthropic
 from rich.console import Console
 from rich.panel import Panel
@@ -17,8 +21,8 @@ from rich.panel import Panel
 console = Console()
 err_console = Console(stderr=True)
 
-# OAuth sentinel key - ccproxy substitutes this with real OAuth token
 SENTINEL_KEY = "sk-ant-oat-ccproxy-anthropic"
+BASE_URL = os.environ.get("CCPROXY_BASE_URL", "http://127.0.0.1:4000")
 
 
 def create_client() -> anthropic.Anthropic:
@@ -29,7 +33,7 @@ def create_client() -> anthropic.Anthropic:
     """
     return anthropic.Anthropic(
         api_key=SENTINEL_KEY,
-        base_url="http://127.0.0.1:4000",
+        base_url=BASE_URL,
     )
 
 

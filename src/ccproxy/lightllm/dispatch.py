@@ -298,6 +298,7 @@ class SseTransformer:
 
     def __init__(self, provider: str, model: str, optional_params: dict[str, Any]) -> None:
         self._iterator = _make_response_iterator(provider, model, optional_params)
+        self._provider = provider
         self._buf = b""
         self._raw_chunks: list[bytes] = []
 
@@ -313,8 +314,17 @@ class SseTransformer:
         self._buf += data
         out = bytearray()
 
-        while b"\n\n" in self._buf:
-            event, self._buf = self._buf.split(b"\n\n", 1)
+        while True:
+            # SSE separator is \r\n\r\n on the wire; some servers emit \n\n.
+            # Pick whichever boundary appears first in the buffer.
+            crlf = self._buf.find(b"\r\n\r\n")
+            lf = self._buf.find(b"\n\n")
+            if crlf == -1 and lf == -1:
+                break
+            if crlf != -1 and (lf == -1 or crlf < lf):
+                event, self._buf = self._buf[:crlf], self._buf[crlf + 4 :]
+            else:
+                event, self._buf = self._buf[:lf], self._buf[lf + 2 :]
             out += self._process_event(event)
 
         return bytes(out)
@@ -339,6 +349,12 @@ class SseTransformer:
         except json.JSONDecodeError:
             logger.debug("SSE transform: skipping unparseable chunk")
             return b""
+        # cloudcode-pa wraps each Gemini SSE event in {response: {...}};
+        # the GeminiIterator expects the raw chunk shape.
+        if self._provider in _GEMINI_PROVIDERS and isinstance(chunk_dict, dict):
+            inner = chunk_dict.get("response")
+            if isinstance(inner, dict):
+                chunk_dict = inner
         try:
             model_chunk = self._iterator.chunk_parser(chunk_dict)
         except Exception:

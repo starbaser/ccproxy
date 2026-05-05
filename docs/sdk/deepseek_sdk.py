@@ -13,6 +13,8 @@ Requirements:
 
 from __future__ import annotations
 
+import os
+
 import anthropic
 from rich.console import Console
 from rich.panel import Panel
@@ -21,13 +23,14 @@ console = Console()
 err_console = Console(stderr=True)
 
 SENTINEL_KEY = "sk-ant-oat-ccproxy-deepseek"
+BASE_URL = os.environ.get("CCPROXY_BASE_URL", "http://127.0.0.1:4000")
 
 
 def create_client() -> anthropic.Anthropic:
     """Create Anthropic client configured for ccproxy with DeepSeek sentinel key."""
     return anthropic.Anthropic(
         api_key=SENTINEL_KEY,
-        base_url="http://127.0.0.1:4000",
+        base_url=BASE_URL,
     )
 
 

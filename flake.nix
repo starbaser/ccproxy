@@ -156,10 +156,11 @@
 
             shellHook = ''
               ${devConfig.shellHook}
+              export CCPROXY_BASE_URL="http://127.0.0.1:4001"
               export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [
                 pkgs.stdenv.cc.cc.lib
               ]}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-              uv sync --quiet 2>/dev/null || true
+              uv sync --extra sdk --quiet 2>/dev/null || true
               export VIRTUAL_ENV="$PWD/.venv"
               export PATH="$PWD/.venv/bin:$PATH"
             '';

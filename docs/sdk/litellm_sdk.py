@@ -10,6 +10,7 @@ the standard litellm.acompletion() interface instead.
 """
 
 import asyncio
+import os
 
 import litellm
 from rich.console import Console
@@ -18,6 +19,8 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 
 console = Console()
 err_console = Console(stderr=True)
+
+BASE_URL = os.environ.get("CCPROXY_BASE_URL", "http://127.0.0.1:4000")
 
 
 async def simple_request() -> None:
@@ -38,8 +41,8 @@ async def simple_request() -> None:
             messages=[{"role": "user", "content": "Hello, can you tell me a short joke?"}],
             model="claude-haiku-4-5-20251001",  # Use model defined in proxy config
             max_tokens=100,
-            api_base="http://127.0.0.1:4000",
-            api_key="sk-proxy-dummy",  # Dummy key - proxy handles real auth
+            api_base=BASE_URL,
+            api_key="sk-ant-oat-ccproxy-anthropic",  # Sentinel key resolves to providers.anthropic
         )
 
     console.print("[green]Response:[/green]")
@@ -59,8 +62,8 @@ async def streaming_request() -> None:
         model="claude-haiku-4-5-20251001",  # Use model defined in proxy config
         max_tokens=200,
         stream=True,
-        api_base="http://127.0.0.1:4000",
-        api_key="sk-proxy-dummy",  # Dummy key - proxy handles real auth
+        api_base=BASE_URL,
+        api_key="sk-ant-oat-ccproxy-anthropic",  # Sentinel key resolves to providers.anthropic
     )
 
     async for chunk in response:

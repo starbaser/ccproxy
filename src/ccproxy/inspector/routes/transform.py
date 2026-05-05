@@ -48,7 +48,8 @@ _MODEL_FROM_PATH_RE = re.compile(r"/models/([^/:]+)")
 _FORMAT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^/v1/chat/completions(?:/|$)"), "openai"),
     (re.compile(r"^/(?:anthropic/)?v1/messages(?:/|$)"), "anthropic"),
-    (re.compile(r"^/v1beta/models/[^/]+:"), "gemini"),
+    (re.compile(r"^/(?:gemini/)?v1beta/models/[^/]+:"), "gemini"),
+    (re.compile(r"^/(?:gemini/)?v1alpha/models/[^/]+:"), "gemini"),
     (re.compile(r"^/v1internal:"), "gemini"),
 )
 """URL-prefix patterns ccproxy recognises as a known wire format."""
@@ -418,6 +419,15 @@ def register_transform_routes(router: InspectorRouter) -> None:
         try:
             # deferred: heavy LiteLLM transform chain
             from ccproxy.lightllm import MitmResponseShim, transform_to_openai
+
+            # GeminiAddon.response (which strips cloudcode-pa's {response: {...}}
+            # envelope) runs AFTER this handler in the addon chain, so the body
+            # is still wrapped at this point. Unwrap inline for Gemini-family
+            # providers; unwrap_buffered is idempotent.
+            if meta.provider in _GEMINI_FORMATS:
+                from ccproxy.hooks.gemini_envelope import unwrap_buffered
+
+                flow.response.content = unwrap_buffered(flow.response.content or b"")
 
             shim = MitmResponseShim(flow.response)
             messages = meta.request_data.get("messages", [])

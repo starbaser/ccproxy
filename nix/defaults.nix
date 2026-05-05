@@ -7,7 +7,7 @@
       anthropic = {
         auth = {
           type = "command";
-          command = "printenv CLAUDE_CODE_OAUTH_TOKEN";
+          command = "jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json";
         };
         host = "api.anthropic.com";
         path = "/v1/messages";
@@ -15,8 +15,9 @@
       };
       gemini = {
         auth = {
-          type = "command";
-          command = "jq -r '.access_token' ~/.gemini/oauth_creds.json";
+          type = "google_oauth";
+          client_id = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com";
+          client_secret = "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";
         };
         host = "cloudcode-pa.googleapis.com";
         path = "/v1internal:{action}";

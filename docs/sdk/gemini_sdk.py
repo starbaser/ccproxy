@@ -14,6 +14,8 @@ Requirements:
 
 from __future__ import annotations
 
+import os
+
 from google import genai
 from google.genai import types
 from rich.console import Console
@@ -23,14 +25,14 @@ console = Console()
 err_console = Console(stderr=True)
 
 SENTINEL_KEY = "sk-ant-oat-ccproxy-gemini"
-BASE_URL = "http://127.0.0.1:4000/gemini"
+BASE_URL = os.environ.get("CCPROXY_BASE_URL", "http://127.0.0.1:4000")
 
 
 def make_client() -> genai.Client:
     """Build a Gemini client pointed at ccproxy with the sentinel key."""
     return genai.Client(
         api_key=SENTINEL_KEY,
-        http_options=types.HttpOptions(base_url=BASE_URL),
+        http_options=types.HttpOptions(base_url=f"{BASE_URL}/gemini"),
     )
 
 

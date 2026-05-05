@@ -19,6 +19,8 @@ Requirements:
 
 from __future__ import annotations
 
+import os
+
 from openai import OpenAI
 from rich.console import Console
 from rich.panel import Panel
@@ -26,7 +28,7 @@ from rich.panel import Panel
 console = Console()
 err_console = Console(stderr=True)
 
-BASE_URL = "http://127.0.0.1:4000/v1"
+BASE_URL = f"{os.environ.get('CCPROXY_BASE_URL', 'http://127.0.0.1:4000')}/v1"
 
 SENTINEL_ANTHROPIC = "sk-ant-oat-ccproxy-anthropic"
 SENTINEL_GEMINI = "sk-ant-oat-ccproxy-gemini"

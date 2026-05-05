@@ -134,6 +134,14 @@ def gemini_cli(ctx: Context, _: dict[str, Any]) -> Context:
         inner = body.get("request") if isinstance(body.get("request"), dict) else None
         model = str(body.get("model", "")) if inner is None else str(inner.get("model", ""))
 
+    if not model:
+        # Path was rewritten by _handle_redirect (e.g. ``/v1internal:{action}``)
+        # before this hook saw it. Fall back to the TransformMeta the route
+        # handler stamped earlier.
+        existing_transform = getattr(flow.metadata.get(InspectorMeta.RECORD), "transform", None)
+        if existing_transform:
+            model = existing_transform.model
+
     # UA masquerade is intentionally conditional. cloudcode-pa rate-limits per
     # (token, project, user-agent) bucket; forcing every Gemini-sentinel client
     # to look like the CLI puts third-party tools (e.g. Glass on urllib) into
@@ -179,7 +187,7 @@ def gemini_cli(ctx: Context, _: dict[str, Any]) -> Context:
         del flow.request.headers["x-goog-api-key"]
 
     record = flow.metadata.get(InspectorMeta.RECORD)
-    if record is not None:
+    if record is not None and getattr(record, "transform", None) is None:
         record.transform = TransformMeta(
             provider="gemini",
             model=model,

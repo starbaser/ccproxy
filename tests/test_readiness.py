@@ -18,12 +18,8 @@ from ccproxy.inspector.readiness import (
 
 def _config(**overrides: object) -> CCProxyConfig:
     defaults: dict[str, object] = {
-        "inspector": {
-            "readiness": {
-                "url": "https://canary.example.com/",
-                "timeout_seconds": 5.0,
-            },
-        },
+        "readiness_probe_url": "https://canary.example.com/",
+        "readiness_probe_timeout_seconds": 5.0,
     }
     defaults.update(overrides)
     return CCProxyConfig(**defaults)  # type: ignore[arg-type]
@@ -104,7 +100,10 @@ class TestVerifyOutboundReachability:
             await verify_outbound_reachability(config)
 
     async def test_uses_configured_url(self) -> None:
-        config = _config(inspector={"readiness": {"url": "https://custom.example.org/ping", "timeout_seconds": 5.0}})
+        config = _config(
+            readiness_probe_url="https://custom.example.org/ping",
+            readiness_probe_timeout_seconds=5.0,
+        )
         resp = MagicMock(spec=httpx.Response)
         resp.status_code = 200
         client = _mock_async_client_with(resp)
@@ -118,7 +117,7 @@ class TestVerifyOutboundReachability:
         )
 
     async def test_uses_configured_timeout(self) -> None:
-        config = _config(inspector={"readiness": {"url": "https://canary.example.com/", "timeout_seconds": 2.5}})
+        config = _config(readiness_probe_timeout_seconds=2.5)
         resp = MagicMock(spec=httpx.Response)
         resp.status_code = 200
         client = _mock_async_client_with(resp)
@@ -131,7 +130,7 @@ class TestVerifyOutboundReachability:
         assert timeout.read == 2.5
 
     async def test_error_message_includes_timeout_value(self) -> None:
-        config = _config(inspector={"readiness": {"url": "https://canary.example.com/", "timeout_seconds": 7.0}})
+        config = _config(readiness_probe_timeout_seconds=7.0)
         client = _mock_async_client_with(httpx.ReadTimeout("slow"))
 
         with (

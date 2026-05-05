@@ -38,7 +38,6 @@ __all__ = [
     "GeminiCapacityFallbackConfig",
     "Provider",
     "ProviderShapingConfig",
-    "ReadinessProbeConfig",
     "ShapingConfig",
     "TransformOverride",
     "clear_config_instance",
@@ -411,26 +410,6 @@ class TransformOverride(BaseModel):
         return self
 
 
-class ReadinessProbeConfig(BaseModel):
-    """Startup outbound-reachability canary probe.
-
-    Before ccproxy accepts traffic, it verifies it can reach the open internet.
-    This catches broken routes, DNS failures, missing CA bundles, or namespace
-    egress problems at startup — before any real requests are accepted.
-
-    Set ``url`` to ``null`` to skip the probe entirely (e.g. air-gapped).
-    """
-
-    url: str | None = "https://1.1.1.1/"
-    """Canary URL. Any HTTP response (status code irrelevant) counts as success.
-    Cloudflare's 1.1.1.1 DNS server is chosen because it's reachable by direct IP
-    (no DNS resolution required) and globally reliable. ``None`` skips the probe."""
-
-    timeout_seconds: float = 5.0
-    """Total timeout budget for the probe. Short by design — the probe is trivial
-    and slow responses indicate a network problem."""
-
-
 class InspectorConfig(BaseModel):
     """Configuration for the inspector (traffic capture via mitmproxy)."""
 
@@ -461,9 +440,6 @@ class InspectorConfig(BaseModel):
 
     mitmproxy: MitmproxyOptions = Field(default_factory=MitmproxyOptions)
     """mitmproxy option overrides passed via --set flags."""
-
-    readiness: ReadinessProbeConfig = Field(default_factory=ReadinessProbeConfig)
-    """Startup outbound-reachability canary. Set ``url`` to ``null`` to skip."""
 
     @model_validator(mode="after")
     def _sync_cert_dir_to_confdir(self) -> "InspectorConfig":
@@ -509,6 +485,11 @@ class CCProxyConfig(BaseSettings):
     forward path. Set to a positive float to opt into a total request
     budget applied uniformly across connect/read/write/pool phases."""
 
+    verify_readiness_on_startup: bool = True
+    """Probe a well-known external host at startup and refuse to start if
+    it is unreachable. Catches broken routes, DNS, CA bundles, or namespace
+    egress problems before any real traffic is accepted."""
+
     use_journal: bool = False
     """Route daemon logging to the systemd journal via JournalHandler.
 
@@ -519,6 +500,17 @@ class CCProxyConfig(BaseSettings):
 
     When enabled without ``systemd-python`` installed (or on a host without
     systemd), ccproxy falls back to stderr with a warning log."""
+
+    readiness_probe_url: str = "https://1.1.1.1/"
+    """Canary URL for the startup outbound-reachability probe. Any HTTP
+    response (status code irrelevant) counts as success. Cloudflare's
+    1.1.1.1 DNS server is chosen because it's reachable by direct IP
+    (no DNS resolution required) and globally reliable; override if you
+    need a different canary."""
+
+    readiness_probe_timeout_seconds: float = 5.0
+    """Total timeout budget for the startup readiness probe. Short by
+    design — the probe is trivial and slow responses indicate a problem."""
 
     inspector: InspectorConfig = Field(default_factory=InspectorConfig)
 
