@@ -148,7 +148,7 @@ def build_catalog(
 
         config = get_config()
         for provider, endpoint in _PROVIDER_ENDPOINTS.items():
-            token = config.get_oauth_token(provider)
+            token = config.resolve_oauth_token(provider)
             live = _fetch_provider_models(provider, endpoint, token=token, transport=transport)
             if live is None:
                 continue

@@ -14,7 +14,7 @@ import socket
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ccproxy.config import CredentialSource, MitmproxyOptions, get_config
+from ccproxy.config import MitmproxyOptions, get_config
 
 if TYPE_CHECKING:
     from mitmproxy.proxy.mode_servers import ServerInstance
@@ -259,11 +259,7 @@ async def run_inspector(
     if isinstance(web_password_cfg, str):
         web_token = web_password_cfg
     elif web_password_cfg is not None:
-        if isinstance(web_password_cfg, CredentialSource):
-            source = web_password_cfg
-        else:
-            source = CredentialSource(**web_password_cfg)
-        web_token = source.resolve("mitmweb web_password") or secrets.token_hex(16)
+        web_token = web_password_cfg.resolve("mitmweb web_password") or secrets.token_hex(16)
         logger.info("Resolved mitmweb web_password from credential source")
     else:
         web_token = secrets.token_hex(16)

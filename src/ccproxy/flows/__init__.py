@@ -235,25 +235,23 @@ Flows = Annotated[
 
 
 def _make_client() -> MitmwebClient:
-    from ccproxy.config import CredentialSource, get_config
+    from ccproxy.config import get_config
 
     cfg = get_config()
     inspector = cfg.inspector
     host = inspector.mitmproxy.web_host
     port = inspector.port
 
-    web_password_cfg = inspector.mitmproxy.web_password
-    if isinstance(web_password_cfg, str):
-        token = web_password_cfg
-    elif web_password_cfg is not None:
-        source = (
-            web_password_cfg if isinstance(web_password_cfg, CredentialSource) else CredentialSource(**web_password_cfg)
-        )
-        token = source.resolve("mitmweb web_password") or ""
-    else:
-        token = ""
-
+    token = _resolve_web_password(inspector.mitmproxy.web_password)
     return MitmwebClient(host=host, port=port, token=token)
+
+
+def _resolve_web_password(cfg: Any) -> str:
+    if cfg is None:
+        return ""
+    if isinstance(cfg, str):
+        return cfg
+    return cfg.resolve("mitmweb web_password") or ""
 
 
 def _header_value(headers: list[list[str]], name: str) -> str:

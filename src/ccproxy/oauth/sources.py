@@ -39,7 +39,7 @@ from typing import Annotated, Any, Literal
 
 import httpx
 from glom import PathAccessError, assign, glom
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger(__name__)
 
@@ -78,35 +78,6 @@ def _run_credential_command(cmd: str, label: str) -> str | None:
         return None
     except Exception as e:
         logger.error("Failed to execute %s command: %s", label, e)
-        return None
-
-
-class CredentialSource(BaseModel):
-    """Generic credential source for non-OAuth use cases (mitmweb password, etc.).
-
-    Exactly one of ``command`` or ``file`` must be provided.
-    """
-
-    command: str | None = None
-    """Shell command that outputs the credential value."""
-
-    file: str | None = None
-    """File path to read (contents stripped of whitespace)."""
-
-    @model_validator(mode="after")
-    def _validate_source(self) -> CredentialSource:
-        if self.command and self.file:
-            raise ValueError("Specify either 'command' or 'file', not both")
-        if not self.command and not self.file:
-            raise ValueError("Must specify either 'command' or 'file'")
-        return self
-
-    def resolve(self, label: str = "credential") -> str | None:
-        """Resolve the credential value. Returns None on failure."""
-        if self.file:
-            return _read_credential_file(self.file, label)
-        if self.command:
-            return _run_credential_command(self.command, label)
         return None
 
 

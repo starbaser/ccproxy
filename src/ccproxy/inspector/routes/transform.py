@@ -217,7 +217,7 @@ def _handle_redirect(
             path = _apply_path_template(bound.path, model=model, action=action)
         else:
             path = flow.request.path
-        api_key = config.get_oauth_token(target.dest_provider) if target.dest_provider else None
+        api_key = config.resolve_oauth_token(target.dest_provider) if target.dest_provider else None
 
     _record_transform_meta(
         flow,
@@ -253,7 +253,7 @@ def _handle_transform(
     if isinstance(target, Provider):
         provider_str = target.provider.value
         oauth_provider = flow.metadata.get("ccproxy.oauth_provider")
-        api_key = config.get_oauth_token(oauth_provider) if oauth_provider else None
+        api_key = config.resolve_oauth_token(oauth_provider) if oauth_provider else None
         model = _model_for_routing(body, flow.request.path)
         vertex_project: str | None = None
         vertex_location: str | None = None
@@ -269,7 +269,7 @@ def _handle_transform(
             )
             return
         provider_str = bound.provider.value
-        api_key = config.get_oauth_token(target.dest_provider)
+        api_key = config.resolve_oauth_token(target.dest_provider)
         model = target.dest_model or _model_for_routing(body, flow.request.path)
         vertex_project = target.dest_vertex_project
         vertex_location = target.dest_vertex_location

@@ -630,15 +630,14 @@ class TestHandleRedirect:
                 ]
             ),
             providers={
-                "anthropic": Provider(
-                    auth=CommandAuthSource(command="echo tok"),
+                "anthropic": _make_provider(
+                    command="printf '%s' injected-token",
                     host="api.anthropic.com",
                     path="/v1/messages",
                     provider="anthropic",
                 ),
             },
         )
-        config._cached_auth_tokens["anthropic"] = "injected-token"
         set_config_instance(config)
 
         router = InspectorRouter(name="test_redir", request_passthrough=True, response_passthrough=True)

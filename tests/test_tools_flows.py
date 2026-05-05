@@ -873,16 +873,20 @@ class TestHandleFlows:
             handle_flows(FlowsList(), Path("/tmp"))  # noqa: S108
 
 
-class TestMakeClientCredentialSource:
-    """Tests for _make_client with CredentialSource web_password."""
+class TestMakeClientWebPassword:
+    """Tests for _make_client with AnyAuthSource web_password."""
 
     def test_dict_form_web_password(self, tmp_path: Path) -> None:
+        from ccproxy.oauth.sources import parse_auth_source
+
         mock_config = MagicMock()
         mock_config.inspector.mitmproxy.web_host = "127.0.0.1"
         mock_config.inspector.port = 8084
         cred_file = tmp_path / "pass.txt"
         cred_file.write_text("file-password")
-        mock_config.inspector.mitmproxy.web_password = {"file": str(cred_file)}
+        mock_config.inspector.mitmproxy.web_password = parse_auth_source(
+            {"file": str(cred_file)},
+        )
 
         with patch("ccproxy.config.get_config", return_value=mock_config):
             client = _make_client()
@@ -890,12 +894,12 @@ class TestMakeClientCredentialSource:
         assert client._base == "http://127.0.0.1:8084"
 
     def test_credential_source_object(self) -> None:
-        from ccproxy.config import CredentialSource
+        from ccproxy.oauth.sources import CommandAuthSource
 
         mock_config = MagicMock()
         mock_config.inspector.mitmproxy.web_host = "127.0.0.1"
         mock_config.inspector.port = 8084
-        source = CredentialSource(command="echo pass123")
+        source = CommandAuthSource(command="echo pass123")
         mock_config.inspector.mitmproxy.web_password = source
 
         with (

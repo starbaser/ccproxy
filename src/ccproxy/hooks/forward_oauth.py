@@ -6,10 +6,6 @@ resolves the real auth token from ``CCProxyConfig.providers[provider]``,
 and injects it via the header named on that Provider's ``auth.header``
 (defaulting to ``Authorization: Bearer`` when unset). All non-target inbound
 auth headers are cleared so the sentinel never leaks upstream.
-
-Falls back to walking ``config.providers`` in insertion order when no
-inbound auth header is present — the first cached token wins, so YAML
-order is load-bearing.
 """
 
 from __future__ import annotations
@@ -61,57 +57,32 @@ def _extract_sentinel(ctx: Context) -> str | None:
 def forward_oauth(ctx: Context, _: dict[str, Any]) -> Context:
     """Forward an auth token to the provider, substituting a sentinel key."""
     sentinel = _extract_sentinel(ctx)
-    if sentinel is not None:
-        provider = sentinel[len(OAUTH_SENTINEL_PREFIX) :]
-        token = _get_oauth_token(provider)
-
-        if not token:
-            raise OAuthConfigError(
-                f"Sentinel key for provider '{provider}' but no matching providers entry. "
-                f"Add 'providers.{provider}' to ccproxy.yaml."
-            )
-
-        _inject_token(ctx, provider, token)
-        assert ctx.flow is not None
-        ctx.flow.metadata["ccproxy.oauth_provider"] = provider
-        logger.info("OAuth token injected for provider '%s' (sentinel)", provider)
+    if sentinel is None:
         return ctx
 
-    has_inbound_auth = any(ctx.get_header(h, "") for h in _INBOUND_AUTH_HEADERS)
-    if not has_inbound_auth:
-        cached_provider, cached_token = _try_cached_token()
-        if cached_provider and cached_token:
-            _inject_token(ctx, cached_provider, cached_token)
-            assert ctx.flow is not None
-            ctx.flow.metadata["ccproxy.oauth_provider"] = cached_provider
-            logger.info("OAuth token injected for provider '%s' (cached)", cached_provider)
+    provider = sentinel[len(OAUTH_SENTINEL_PREFIX) :]
+    token = _get_oauth_token(provider)
 
+    if not token:
+        raise OAuthConfigError(
+            f"Sentinel key for provider '{provider}' but no matching providers entry. "
+            f"Add 'providers.{provider}' to ccproxy.yaml."
+        )
+
+    _inject_token(ctx, provider, token)
+    assert ctx.flow is not None
+    ctx.flow.metadata["ccproxy.oauth_provider"] = provider
+    logger.info("OAuth token injected for provider '%s' (sentinel)", provider)
     return ctx
 
 
 def _get_oauth_token(provider: str) -> str | None:
-    """Look up cached auth token for a Provider entry."""
     try:
         config = get_config()
-        return config.get_oauth_token(provider)
+        return config.resolve_oauth_token(provider)
     except Exception:
         logger.exception("Failed to load OAuth config")
         return None
-
-
-def _try_cached_token() -> tuple[str | None, str | None]:
-    """Walk ``config.providers`` in insertion order, returning the first
-    provider that has a cached token. Insertion order is the user-facing
-    fallback priority — preserve it in YAML."""
-    try:
-        config = get_config()
-        for provider in config.providers:
-            token = config.get_oauth_token(provider)
-            if token:
-                return provider, token
-    except Exception:
-        logger.exception("Failed to load OAuth config")
-    return None, None
 
 
 def _inject_token(ctx: Context, provider: str, token: str) -> None:

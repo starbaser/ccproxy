@@ -12,7 +12,6 @@ import pytest
 
 from ccproxy.config import (
     CCProxyConfig,
-    CredentialSource,
     GeminiCapacityFallbackConfig,
     Provider,
     clear_config_instance,
@@ -21,6 +20,7 @@ from ccproxy.config import (
 )
 from ccproxy.oauth.sources import (
     CommandAuthSource,
+    FileAuthSource,
     _read_credential_file,
     _run_credential_command,
 )
@@ -398,56 +398,35 @@ class TestRunCredentialCommand:
         assert "Failed to execute TestCmd command" in caplog.text
 
 
-class TestCredentialSource:
-    def test_resolve_file(self, tmp_path: Path) -> None:
-        f = tmp_path / "cred.txt"
-        f.write_text("file-credential")
-        source = CredentialSource(file=str(f))
-        assert source.resolve() == "file-credential"
-
-    def test_resolve_command(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        mock_result = mock.MagicMock(returncode=0, stdout="cmd-credential")
-        monkeypatch.setattr(subprocess, "run", mock.Mock(return_value=mock_result))
-        source = CredentialSource(command="echo cmd")
-        assert source.resolve() == "cmd-credential"
-
-    def test_requires_exactly_one_source(self) -> None:
-        import pydantic
-
-        with pytest.raises(pydantic.ValidationError):
-            CredentialSource()  # neither file nor command
-
-
-class TestRefreshOAuthToken:
-    def test_token_changes_returns_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        config = CCProxyConfig(providers={"provider1": _make_provider(command="echo new-token")})
-        config._cached_auth_tokens["provider1"] = "old-token"
-        mock_result = mock.MagicMock(returncode=0, stdout="new-token")
+class TestResolveOAuthToken:
+    def test_resolves_via_provider_auth(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        config = CCProxyConfig(providers={"prov": _make_provider(command="echo fresh-tok")})
+        mock_result = mock.MagicMock(returncode=0, stdout="fresh-tok")
         monkeypatch.setattr(subprocess, "run", mock.Mock(return_value=mock_result))
 
-        token, changed = config.refresh_oauth_token("provider1")
-
-        assert token == "new-token"  # noqa: S105
-        assert changed is True
-        assert config._cached_auth_tokens["provider1"] == "new-token"
-
-    def test_token_unchanged_returns_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        config = CCProxyConfig(providers={"provider1": _make_provider(command="echo current-token")})
-        config._cached_auth_tokens["provider1"] = "current-token"
-        mock_result = mock.MagicMock(returncode=0, stdout="current-token")
-        monkeypatch.setattr(subprocess, "run", mock.Mock(return_value=mock_result))
-
-        token, changed = config.refresh_oauth_token("provider1")
-
-        assert token == "current-token"  # noqa: S105
-        assert changed is False
-
+        assert config.resolve_oauth_token("prov") == "fresh-tok"
     def test_provider_not_configured_returns_none(self) -> None:
         config = CCProxyConfig()
-        token, changed = config.refresh_oauth_token("missing-provider")
-        assert token is None
-        assert changed is False
+        assert config.resolve_oauth_token("missing-provider") is None
 
+    def test_provider_without_auth_returns_none(self) -> None:
+        config = CCProxyConfig(providers={"prov": _make_provider(command="")})
+        assert config.resolve_oauth_token("prov") is None
+
+    def test_resolves_through_file_source(self, tmp_path: Path) -> None:
+        f = tmp_path / "tok.txt"
+        f.write_text("file-tok")
+        config = CCProxyConfig(
+            providers={
+                "prov": Provider(
+                    auth=FileAuthSource(file=str(f)),
+                    host="api.example.com",
+                    path="/v1/messages",
+                    provider="anthropic",
+                ),
+            }
+        )
+        assert config.resolve_oauth_token("prov") == "file-tok"
 
 class TestGetAuthHeader:
     def test_provider_with_auth_header(self) -> None:
@@ -463,116 +442,11 @@ class TestGetAuthHeader:
         assert config.get_auth_header("unknown") is None
 
 
-class TestLoadCredentials:
-    def test_empty_providers_clears_cache(self) -> None:
-        config = CCProxyConfig()
-        config._cached_auth_tokens = {"stale": "data"}
-        config._load_credentials()
-        assert config._cached_auth_tokens == {}
+class TestResolveOAuthTokenConcurrency:
+    """Per-provider lock isolates concurrent resolves across providers."""
 
-    def test_single_provider_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        config = CCProxyConfig(providers={"prov1": _make_provider(command="echo tok1")})
-        mock_result = mock.MagicMock(returncode=0, stdout="tok1")
-        monkeypatch.setattr(subprocess, "run", mock.Mock(return_value=mock_result))
-
-        config._load_credentials()
-
-        assert config._cached_auth_tokens["prov1"] == "tok1"
-
-    def test_partial_failure_logs_warning(
-        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        config = CCProxyConfig(
-            providers={
-                "prov1": _make_provider(command="echo tok1"),
-                "prov2": _make_provider(command="fail"),
-            }
-        )
-
-        def mock_run(cmd: str, **kwargs: object) -> mock.MagicMock:
-            m = mock.MagicMock()
-            if "tok1" in cmd:
-                m.returncode = 0
-                m.stdout = "tok1"
-            else:
-                m.returncode = 1
-                m.stderr = "error"
-            return m
-
-        monkeypatch.setattr(subprocess, "run", mock_run)
-
-        config._load_credentials()
-
-        assert config._cached_auth_tokens == {"prov1": "tok1"}
-        assert "but 1 provider(s) failed to load" in caplog.text
-
-    def test_all_providers_fail_logs_error(
-        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        config = CCProxyConfig(
-            providers={
-                "prov1": _make_provider(command="fail1"),
-                "prov2": _make_provider(command="fail2"),
-            }
-        )
-        mock_result = mock.MagicMock(returncode=1, stderr="err")
-        monkeypatch.setattr(subprocess, "run", mock.Mock(return_value=mock_result))
-
-        config._load_credentials()
-
-        assert config._cached_auth_tokens == {}
-        assert "Failed to load auth tokens for all 2 provider(s)" in caplog.text
-
-
-class TestRefreshOAuthTokenConcurrency:
-    """Concurrent-refresh single-flight tests for the per-provider lock."""
-
-    def test_concurrent_refresh_dedups_to_single_subprocess_call(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """20 threads simultaneously calling refresh_oauth_token must produce
-        exactly ONE underlying credential resolution. Per-provider lock plus
-        the in-lock cache re-check make the 19 followers a no-op once the
-        first thread finishes."""
-        provider_name = "anthropic"
-        config = CCProxyConfig(providers={provider_name: _make_provider(command="echo tok-fresh")})
-
-        call_count = 0
-        call_count_lock = threading.Lock()
-        # Barrier ensures all 20 threads reach refresh_oauth_token before any
-        # of them is allowed to acquire the per-provider lock.
-        barrier = threading.Barrier(20)
-
-        def counting_run(*args: object, **kwargs: object) -> mock.MagicMock:
-            nonlocal call_count
-            with call_count_lock:
-                call_count += 1
-            # Simulate a slow upstream so the followers definitely queue on
-            # the per-provider lock while this call is in flight.
-            time.sleep(0.05)
-            return mock.MagicMock(returncode=0, stdout="tok-fresh")
-
-        monkeypatch.setattr(subprocess, "run", counting_run)
-
-        results: list[tuple[str | None, bool]] = []
-        results_lock = threading.Lock()
-
-        def call_refresh() -> None:
-            barrier.wait()
-            result = config.refresh_oauth_token(provider_name)
-            with results_lock:
-                results.append(result)
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as pool:
-            futures = [pool.submit(call_refresh) for _ in range(20)]
-            concurrent.futures.wait(futures)
-
-        assert call_count == 1, f"expected exactly one upstream credential call, got {call_count}"
-        assert len(results) == 20
-        for token, _changed in results:
-            assert token == "tok-fresh"  # noqa: S105
-        assert config._cached_auth_tokens[provider_name] == "tok-fresh"
-
-    def test_cross_provider_refreshes_do_not_block_each_other(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A slow refresh on provider-A must NOT delay a concurrent refresh
+    def test_cross_provider_resolves_do_not_block_each_other(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A slow resolve on provider-A must NOT delay a concurrent resolve
         on provider-B. Per-provider locks gate independently."""
         slow_provider = "slow"
         fast_provider = "fast"
@@ -589,9 +463,6 @@ class TestRefreshOAuthTokenConcurrency:
         def routed_run(cmd: str, **kwargs: object) -> mock.MagicMock:
             if "slow-tok" in cmd:
                 slow_started.set()
-                # Block here until the test signals release. Long enough that
-                # if cross-provider serialization were happening the fast
-                # call would clearly time out.
                 slow_release.wait(timeout=5.0)
                 return mock.MagicMock(returncode=0, stdout="slow-tok")
             return mock.MagicMock(returncode=0, stdout="fast-tok")
@@ -599,27 +470,23 @@ class TestRefreshOAuthTokenConcurrency:
         monkeypatch.setattr(subprocess, "run", routed_run)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-            slow_future = pool.submit(config.refresh_oauth_token, slow_provider)
+            slow_future = pool.submit(config.resolve_oauth_token, slow_provider)
 
-            assert slow_started.wait(timeout=2.0), "slow provider refresh did not start in time"
+            assert slow_started.wait(timeout=2.0), "slow provider resolve did not start in time"
 
             fast_start = time.monotonic()
-            fast_future = pool.submit(config.refresh_oauth_token, fast_provider)
+            fast_future = pool.submit(config.resolve_oauth_token, fast_provider)
 
-            fast_token, fast_changed = fast_future.result(timeout=2.0)
+            fast_token = fast_future.result(timeout=2.0)
             fast_elapsed = time.monotonic() - fast_start
 
             slow_release.set()
-            slow_token, slow_changed = slow_future.result(timeout=5.0)
+            slow_token = slow_future.result(timeout=5.0)
 
         assert fast_token == "fast-tok"  # noqa: S105
-        assert fast_changed is True
         assert slow_token == "slow-tok"  # noqa: S105
-        assert slow_changed is True
-        # Fast provider must complete promptly while slow provider is still
-        # blocked; allow generous slack but require sub-second.
         assert fast_elapsed < 1.0, (
-            f"fast provider refresh took {fast_elapsed:.3f}s — per-provider locks are not isolating providers"
+            f"fast provider resolve took {fast_elapsed:.3f}s — per-provider locks are not isolating providers"
         )
 
 

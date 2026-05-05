@@ -18,12 +18,12 @@ from typing import Annotated, Any, Literal, cast
 
 import yaml
 from litellm.types.utils import LlmProviders
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, PrivateAttr, field_validator, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from ccproxy.oauth.sources import (
     AnyAuthSource,
-    CredentialSource,
+    AuthFields,
     parse_auth_source,
 )
 
@@ -34,7 +34,6 @@ __all__ = [
     "AnyAuthSource",
     "BillingConfig",
     "CCProxyConfig",
-    "CredentialSource",
     "GeminiCapacityFallbackConfig",
     "Provider",
     "ProviderShapingConfig",
@@ -285,10 +284,17 @@ class MitmproxyOptions(BaseModel):
     web_host: str = "127.0.0.1"
     """mitmweb browser UI bind address."""
 
-    web_password: str | CredentialSource | dict[str, str] | None = None
-    """mitmweb UI password. Accepts a plain string, or a ``file``/``command``
-    credential source (same format as a Provider's ``auth`` block). None
-    generates a random token on each startup."""
+    web_password: AnyAuthSource | str | None = None
+    """mitmweb UI password. Accepts a plain string (literal password), or a
+    ``file``/``command`` source in the same format as a Provider's ``auth``
+    block. None generates a random token on each startup."""
+
+    @field_validator("web_password", mode="before")
+    @classmethod
+    def _coerce_web_password(cls, v: Any) -> Any:
+        if v is None or isinstance(v, str | AuthFields):
+            return v
+        return parse_auth_source(v)
 
     web_open_browser: bool = False
     """Auto-open browser when mitmweb starts."""
@@ -532,10 +538,6 @@ class CCProxyConfig(BaseSettings):
     header is present. ``nix/defaults.nix`` and ``ccproxy.yaml`` should
     preserve the intended priority (anthropic, gemini, deepseek, …)."""
 
-    _cached_auth_tokens: dict[str, str] = PrivateAttr(default_factory=dict)
-    """Resolved auth token cache, keyed by provider name. Populated by
-    ``_load_credentials`` at startup and refreshed on 401 retry."""
-
     # Hook configurations — either a flat list (all inbound) or a dict
     # with ``inbound`` and ``outbound`` keys for two-stage pipeline.
     hooks: dict[str, list[str | dict[str, Any]]] = Field(
@@ -567,53 +569,23 @@ class CCProxyConfig(BaseSettings):
             return self.log_file
         return self.ccproxy_config_path.parent / self.log_file
 
-    def get_oauth_token(self, provider: str) -> str | None:
-        """Get cached auth token for a specific provider."""
-        return self._cached_auth_tokens.get(provider)
+    def resolve_oauth_token(self, provider: str) -> str | None:
+        """Resolve auth token for a provider via its ``Provider.auth`` source.
 
-    def _resolve_oauth_token(self, provider: str) -> str | None:
-        """Resolve auth token for a provider via its ``Provider.auth`` source."""
+        Disk-as-truth: every call goes through ``Provider.auth.resolve()``,
+        which reads the on-disk credential file and (for OAuth refresh
+        sources) fires an HTTP refresh when the token is within the
+        expiry headroom. Concurrent callers serialize on the per-provider
+        lock — the first thread fires the refresh, followers read the
+        now-fresh credential file from disk without re-hitting the upstream
+        OAuth endpoint.
+        """
         provider_entry = self.providers.get(provider)
         if provider_entry is None or provider_entry.auth is None:
             logger.warning("No auth configured for provider '%s'", provider)
             return None
-        return provider_entry.auth.resolve(f"OAuth/{provider}")
-
-    def refresh_oauth_token(self, provider: str) -> tuple[str | None, bool]:
-        """Re-resolve auth token for a provider and update cache if changed.
-
-        Thread-safe single-flight refresh. The per-provider lock serializes
-        concurrent callers; the global ``_config_lock`` is only held around
-        the cache write. HTTP I/O happens outside any global lock so other
-        config-touching paths never stall on a slow upstream OAuth refresh.
-
-        When N callers race in (e.g. a token-expiry burst of 401 retries)
-        only the first thread fires the HTTP refresh — the followers detect
-        that the cached token has already been replaced and return it
-        without re-hitting the upstream OAuth endpoint.
-
-        Returns ``(new_token, changed)`` — ``changed`` is True only when
-        the freshly resolved token differs from the value that was cached
-        when the caller entered.
-        """
-        pre_lock_token = self._cached_auth_tokens.get(provider)
-        provider_lock = _get_provider_lock(provider)
-        with provider_lock:
-            cached = self._cached_auth_tokens.get(provider)
-            if cached is not None and cached != pre_lock_token:
-                # Another thread refreshed while we waited on the lock.
-                return cached, True
-
-            token = self._resolve_oauth_token(provider)
-            if token is None:
-                return None, False
-
-            changed = token != pre_lock_token
-            with _config_lock:
-                self._cached_auth_tokens[provider] = token
-        if changed:
-            logger.info("Auth token changed for provider '%s'", provider)
-        return token, changed
+        with _get_provider_lock(provider):
+            return provider_entry.auth.resolve(f"OAuth/{provider}")
 
     def get_auth_header(self, provider: str) -> str | None:
         """Get target auth header name for a specific provider.
@@ -626,41 +598,6 @@ class CCProxyConfig(BaseSettings):
         if provider_entry is None or provider_entry.auth is None:
             return None
         return provider_entry.auth.header
-
-    def _load_credentials(self) -> None:
-        """Resolve auth tokens for every Provider entry that declares one."""
-        eligible = [name for name, p in self.providers.items() if p.auth is not None]
-        if not eligible:
-            self._cached_auth_tokens = {}
-            return
-
-        loaded: dict[str, str] = {}
-        errors: list[str] = []
-
-        for provider in eligible:
-            token = self._resolve_oauth_token(provider)
-            if token is None:
-                errors.append(f"Failed to load auth token for provider '{provider}'")
-                continue
-            loaded[provider] = token
-            logger.debug("Successfully loaded auth token for provider '%s'", provider)
-
-        self._cached_auth_tokens = loaded
-
-        if errors and loaded:
-            logger.warning(
-                "Loaded auth tokens for %d provider(s), but %d provider(s) failed to load",
-                len(loaded),
-                len(errors),
-            )
-
-        if errors and not loaded:
-            logger.error(
-                "Failed to load auth tokens for all %d provider(s). "
-                "Requests requiring OAuth will fail until tokens are available:\n%s",
-                len(eligible),
-                "\n".join(f"  - {err}" for err in errors),
-            )
 
     @classmethod
     def from_yaml(cls, yaml_path: Path, **kwargs: Any) -> "CCProxyConfig":
@@ -713,8 +650,6 @@ class CCProxyConfig(BaseSettings):
                 gemini_capacity_data = ccproxy_data.get("gemini_capacity")
                 if gemini_capacity_data:
                     instance.gemini_capacity = GeminiCapacityFallbackConfig(**gemini_capacity_data)
-
-        instance._load_credentials()
 
         return instance
 

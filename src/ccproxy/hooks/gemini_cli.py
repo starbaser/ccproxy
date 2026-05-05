@@ -67,7 +67,7 @@ def prewarm_project() -> None:
     if "gemini" not in config.providers:
         return
 
-    token = config.get_oauth_token("gemini")
+    token = config.resolve_oauth_token("gemini")
     if not token:
         logger.warning("gemini_cli: providers.gemini configured but token is empty; project resolution skipped")
         return

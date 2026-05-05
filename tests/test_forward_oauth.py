@@ -28,10 +28,10 @@ def _make_ctx(headers: dict[str, str] | None = None) -> Context:
     return Context.from_flow(flow)
 
 
-def _make_provider(*, command: str = "echo tok", header: str | None = None) -> Provider:
-    """Build a Provider with a CommandAuthSource for tests."""
+def _make_provider(*, value: str = "tok", header: str | None = None) -> Provider:
+    """Build a Provider whose auth.resolve() returns ``value`` via shell echo."""
     return Provider(
-        auth=CommandAuthSource(command=command, header=header),
+        auth=CommandAuthSource(command=f"printf '%s' {value}", header=header),
         host="api.example.com",
         path="/v1/messages",
         provider="anthropic",
@@ -69,7 +69,7 @@ class TestForwardOAuthGuard:
 
 class TestForwardOAuthSentinelPath:
     def test_sentinel_injects_bearer_and_sets_metadata(self, clean_config: CCProxyConfig) -> None:
-        clean_config._cached_auth_tokens["anthropic"] = "real-token-xyz"
+        clean_config.providers = {"anthropic": _make_provider(value="real-token-xyz")}
         ctx = _make_ctx({"x-api-key": f"{OAUTH_SENTINEL_PREFIX}anthropic"})
 
         result = forward_oauth(ctx, {})
@@ -80,7 +80,7 @@ class TestForwardOAuthSentinelPath:
         assert ctx.flow.metadata["ccproxy.oauth_provider"] == "anthropic"
 
     def test_sentinel_clears_x_api_key(self, clean_config: CCProxyConfig) -> None:
-        clean_config._cached_auth_tokens["anthropic"] = "real-token"
+        clean_config.providers = {"anthropic": _make_provider(value="real-token")}
         ctx = _make_ctx({"x-api-key": f"{OAUTH_SENTINEL_PREFIX}anthropic"})
 
         forward_oauth(ctx, {})
@@ -89,7 +89,7 @@ class TestForwardOAuthSentinelPath:
         assert ctx.get_header("x-api-key") == ""
 
     def test_sentinel_via_goog_api_key_header(self, clean_config: CCProxyConfig) -> None:
-        clean_config._cached_auth_tokens["google"] = "goog-token"
+        clean_config.providers = {"google": _make_provider(value="goog-token")}
         ctx = _make_ctx({"x-goog-api-key": f"{OAUTH_SENTINEL_PREFIX}google"})
 
         result = forward_oauth(ctx, {})
@@ -100,7 +100,7 @@ class TestForwardOAuthSentinelPath:
 
     def test_sentinel_via_authorization_bearer(self, clean_config: CCProxyConfig) -> None:
         """OpenAI clients send the sentinel as ``Authorization: Bearer <key>``."""
-        clean_config._cached_auth_tokens["anthropic"] = "real-bearer-token"
+        clean_config.providers = {"anthropic": _make_provider(value="real-bearer-token")}
         ctx = _make_ctx({"authorization": f"Bearer {OAUTH_SENTINEL_PREFIX}anthropic"})
 
         result = forward_oauth(ctx, {})
@@ -115,8 +115,7 @@ class TestForwardOAuthSentinelPath:
         clean_config: CCProxyConfig,
     ) -> None:
         """Inbound Authorization can route to a different outbound header."""
-        clean_config.providers = {"deepseek": _make_provider(header="x-api-key")}
-        clean_config._cached_auth_tokens["deepseek"] = "ds-token"
+        clean_config.providers = {"deepseek": _make_provider(value="ds-token", header="x-api-key")}
         ctx = _make_ctx({"authorization": f"Bearer {OAUTH_SENTINEL_PREFIX}deepseek"})
 
         forward_oauth(ctx, {})
@@ -142,59 +141,6 @@ class TestForwardOAuthSentinelPath:
             forward_oauth(ctx, {})
 
 
-class TestForwardOAuthCachedPath:
-    def test_no_keys_cached_token_injects(self, clean_config: CCProxyConfig) -> None:
-        clean_config.providers = {"fallback": _make_provider()}
-        clean_config._cached_auth_tokens["fallback"] = "cached-tok"
-        ctx = _make_ctx()
-
-        result = forward_oauth(ctx, {})
-
-        assert result is ctx
-        assert ctx.get_header("authorization") == "Bearer cached-tok"
-        assert ctx.flow.metadata["ccproxy.oauth_injected"] is True
-        assert ctx.flow.metadata["ccproxy.oauth_provider"] == "fallback"
-
-    def test_first_provider_with_token_used(self, clean_config: CCProxyConfig) -> None:
-        # providers iteration order → first loaded token wins
-        clean_config.providers = {"p1": _make_provider(), "p2": _make_provider()}
-        clean_config._cached_auth_tokens["p1"] = "token-p1"
-        clean_config._cached_auth_tokens["p2"] = "token-p2"
-        ctx = _make_ctx()
-
-        forward_oauth(ctx, {})
-
-        assert ctx.flow.metadata["ccproxy.oauth_provider"] == "p1"
-
-    def test_no_keys_no_cached_token_noop(self, clean_config: CCProxyConfig) -> None:
-        clean_config.providers = {"empty": _make_provider()}
-        # _cached_auth_tokens intentionally empty
-        ctx = _make_ctx()
-
-        result = forward_oauth(ctx, {})
-
-        assert result is ctx
-        assert "ccproxy.oauth_injected" not in ctx.flow.metadata
-        assert "ccproxy.oauth_provider" not in ctx.flow.metadata
-
-    def test_no_providers_noop(self, clean_config: CCProxyConfig) -> None:
-        ctx = _make_ctx()
-
-        result = forward_oauth(ctx, {})
-
-        assert result is ctx
-        assert "ccproxy.oauth_injected" not in ctx.flow.metadata
-
-    def test_try_cached_token_config_exception_handled(self) -> None:
-        ctx = _make_ctx()
-
-        with patch("ccproxy.hooks.forward_oauth.get_config", side_effect=RuntimeError("oops")):
-            result = forward_oauth(ctx, {})
-
-        assert result is ctx
-        assert "ccproxy.oauth_injected" not in ctx.flow.metadata
-
-
 class TestForwardOAuthPassthrough:
     def test_non_sentinel_api_key_no_injection(self, clean_config: CCProxyConfig) -> None:
         ctx = _make_ctx({"x-api-key": "sk-real-key-not-a-sentinel"})
@@ -205,10 +151,8 @@ class TestForwardOAuthPassthrough:
         assert "ccproxy.oauth_injected" not in ctx.flow.metadata
         assert "ccproxy.oauth_provider" not in ctx.flow.metadata
 
-    def test_real_auth_header_no_cached_injection(self, clean_config: CCProxyConfig) -> None:
-        # Existing Bearer token → skip cached path
-        clean_config.providers = {"fallback": _make_provider()}
-        clean_config._cached_auth_tokens["fallback"] = "cached"
+    def test_real_auth_header_passes_through(self, clean_config: CCProxyConfig) -> None:
+        clean_config.providers = {"anthropic": _make_provider(value="some-tok")}
         ctx = _make_ctx({"authorization": "Bearer real-existing-token"})
 
         result = forward_oauth(ctx, {})

@@ -46,21 +46,19 @@ class OAuthAddon:
             return False
 
         config = get_config()
-        new_token, changed = config.refresh_oauth_token(provider)
-        if not changed or not new_token:
-            logger.warning("OAuth 401 for provider '%s' — token unchanged, not retrying", provider)
+        new_token = config.resolve_oauth_token(provider)
+        if not new_token:
+            logger.warning("OAuth 401 for provider '%s' — no token available, not retrying", provider)
             return False
+
+        target_header = (config.get_auth_header(provider) or "authorization").lower()
+        new_value = f"Bearer {new_token}" if target_header == "authorization" else new_token
+        flow.request.headers[target_header] = new_value
 
         logger.info("OAuth 401 for provider '%s' — token refreshed, retrying request", provider)
 
         headers = dict(flow.request.headers)
-        target_header = config.get_auth_header(provider)
-        if target_header:
-            headers[target_header] = new_token
-        else:
-            headers["authorization"] = f"Bearer {new_token}"
-
-        headers.pop("x-ccproxy-oauth-injected", None)  # strip if somehow present from old flows
+        headers.pop("x-ccproxy-oauth-injected", None)
 
         client_kwargs: dict[str, Any] = {}
         if config.provider_timeout is not None:
