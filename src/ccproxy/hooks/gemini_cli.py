@@ -38,7 +38,8 @@ logger = logging.getLogger(__name__)
 
 _CLOUDCODE_HOST = "cloudcode-pa.googleapis.com"
 _MODEL_RE = re.compile(r"/models/([^/:]+)")
-_ACTION_RE = re.compile(r":(\w+)$")
+_KNOWN_GEMINI_ACTIONS = ("generateContent", "streamGenerateContent", "countTokens")
+_ACTION_RE = re.compile(rf":({'|'.join(_KNOWN_GEMINI_ACTIONS)})$")
 _SDK_UA_RE = re.compile(r"google-genai-sdk/")
 
 _CLI_VERSION = "0.36.0"
@@ -112,7 +113,11 @@ def gemini_cli(ctx: Context, _: dict[str, Any]) -> Context:
 
     action_match = _ACTION_RE.search(path)
     if not action_match:
-        logger.debug("gemini_cli: no action in path %s, passing through", path)
+        logger.debug(
+            "gemini_cli: no known cloudcode-pa action %s in path %s, passing through",
+            _KNOWN_GEMINI_ACTIONS,
+            path,
+        )
         return ctx
     action = action_match.group(1)
     is_streaming = action == "streamGenerateContent"
@@ -137,9 +142,7 @@ def gemini_cli(ctx: Context, _: dict[str, Any]) -> Context:
     original_ua = ctx.get_header("user-agent", "")
     if _SDK_UA_RE.search(original_ua):
         cli_ua = (
-            f"GeminiCLI/{_CLI_VERSION}/{model} "
-            f"(linux; x64; terminal) "
-            f"google-api-nodejs-client/{_NODE_CLIENT_VERSION}"
+            f"GeminiCLI/{_CLI_VERSION}/{model} (linux; x64; terminal) google-api-nodejs-client/{_NODE_CLIENT_VERSION}"
         )
         ctx.set_header("user-agent", cli_ua)
         ctx.set_header("x-goog-api-client", f"gl-node/{_NODE_VERSION}")

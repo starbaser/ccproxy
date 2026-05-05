@@ -10,6 +10,8 @@ import pytest
 
 from ccproxy.flows.store import FlowRecord, InspectorMeta
 from ccproxy.hooks.gemini_cli import (
+    _ACTION_RE,
+    _KNOWN_GEMINI_ACTIONS,
     EnvelopeUnwrapStream,
     gemini_cli,
     gemini_cli_guard,
@@ -139,6 +141,29 @@ class TestPathRewriting:
 
         assert ctx.flow.request.path == original_path
 
+    @pytest.mark.parametrize("action", _KNOWN_GEMINI_ACTIONS)
+    def test_action_regex_matches_known_actions(self, action: str) -> None:
+        path = f"/v1beta/models/gemini-3.1-pro-preview:{action}"
+        match = _ACTION_RE.search(path)
+        assert match is not None
+        assert match.group(1) == action
+
+    def test_unknown_action_passes_through(self) -> None:
+        path = "/v1beta/models/gemini-3.1-pro-preview:unknownAction"
+        ctx = _make_ctx(path=path)
+
+        gemini_cli(ctx, {})
+
+        assert ctx.flow.request.path == path
+
+    def test_no_colon_action_passes_through(self) -> None:
+        path = "/v1beta/models/gemini-3.1-pro-preview"
+        ctx = _make_ctx(path=path)
+
+        gemini_cli(ctx, {})
+
+        assert ctx.flow.request.path == path
+
 
 class TestHostRewriting:
     def test_host_set_to_cloudcode_pa(self) -> None:
@@ -211,9 +236,7 @@ class TestTransformMetadata:
 class TestEnvelopeUnwrapStream:
     def test_buffered_response_unwraps_envelope(self) -> None:
         stream = EnvelopeUnwrapStream()
-        chunk = (
-            b'data: {"response": {"candidates": [{"content": {"parts": [{"text": "hi"}]}}]}}\n\n'
-        )
+        chunk = b'data: {"response": {"candidates": [{"content": {"parts": [{"text": "hi"}]}}]}}\n\n'
 
         out = stream(chunk)
 
@@ -247,7 +270,7 @@ class TestEnvelopeUnwrapStream:
     def test_partial_chunk_buffered_until_double_newline(self) -> None:
         stream = EnvelopeUnwrapStream()
         out1 = stream(b'data: {"response": {"x":')
-        out2 = stream(b' 1}}\n\n')
+        out2 = stream(b" 1}}\n\n")
 
         assert out1 == b""
         assert b'"x": 1' in out2
