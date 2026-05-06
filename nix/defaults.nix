@@ -49,6 +49,7 @@
     };
     gemini_capacity = {
       enabled = true;
+      retry_status_codes = [ 429 503 500 ];
       fallback_models = [ "gemini-3-flash-preview" "gemini-2.5-pro" "gemini-2.5-flash" ];
       sticky_retry_attempts = 3;
       sticky_retry_max_delay_seconds = 60;

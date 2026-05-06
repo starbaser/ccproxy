@@ -232,12 +232,15 @@ class OtelConfig(BaseModel):
 
 
 class GeminiCapacityFallbackConfig(BaseModel):
-    """Sticky-retry then fallback chain for Gemini RESOURCE_EXHAUSTED responses."""
+    """Sticky-retry then fallback chain for Gemini errors (capacity + backend)."""
 
     model_config = ConfigDict(extra="ignore")
 
     enabled: bool = False
-    """Master switch. When False, capacity errors pass through unchanged."""
+    """Master switch. When False, errors pass through unchanged."""
+
+    retry_status_codes: list[int] = Field(default=[429, 503, 500])
+    """HTTP status codes that trigger the fallback chain."""
 
     fallback_models: list[str] = Field(default_factory=list)
     """Models tried in order after sticky retries on the original are exhausted."""

@@ -38,8 +38,6 @@ from ccproxy.hooks.gemini_envelope import EnvelopeUnwrapStream, unwrap_buffered
 logger = logging.getLogger(__name__)
 
 
-_CAPACITY_STATUS_CODES: tuple[int, ...] = (429, 503)
-
 _DURATION_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(ms|s|m|h)?\s*$")
 _DURATION_FACTORS: dict[str, float] = {
     "ms": 0.001,
@@ -87,13 +85,15 @@ def _extract_retry_delay(body: Any) -> float | None:
     return None
 
 
-def _is_capacity_exhausted(body: Any) -> bool:
+def _is_capacity_exhausted(body: Any, retry_status_codes: list[int]) -> bool:
     if not isinstance(body, dict):
         return False
     err = body.get("error", {})
     if not isinstance(err, dict):
         return False
-    return err.get("code") in _CAPACITY_STATUS_CODES and err.get("status") == "RESOURCE_EXHAUSTED"
+    code = err.get("code")
+    status = err.get("status")
+    return code in retry_status_codes and status in ("RESOURCE_EXHAUSTED", "INTERNAL")
 
 
 class GeminiAddon:
@@ -136,10 +136,11 @@ class GeminiAddon:
         if not transform or transform.mode != "redirect" or not transform.is_streaming:
             return
 
-        if flow.response.status_code in _CAPACITY_STATUS_CODES and self._capacity_enabled():
+        retry_codes = get_config().gemini_capacity.retry_status_codes
+        if flow.response.status_code in retry_codes and self._capacity_enabled():
             # Defer stream setup so mitmproxy buffers the error body for retry.
             logger.info(
-                "Deferring stream setup for %d to allow capacity fallback retry (flow=%s)",
+                "Deferring stream setup for %d to allow fallback retry (flow=%s)",
                 flow.response.status_code,
                 flow.id,
             )
@@ -162,7 +163,8 @@ class GeminiAddon:
         if not flow.response or not self._is_gemini_flow(flow):
             return
 
-        if flow.response.status_code in _CAPACITY_STATUS_CODES and self._capacity_enabled():
+        retry_codes = get_config().gemini_capacity.retry_status_codes
+        if flow.response.status_code in retry_codes and self._capacity_enabled():
             await self._try_fallback_models(flow)
 
         response = flow.response
@@ -259,14 +261,14 @@ class GeminiAddon:
         params = get_config().gemini_capacity
         if not params.enabled or not params.fallback_models:
             return False
-        if flow.response is None or flow.response.status_code not in _CAPACITY_STATUS_CODES:
+        if flow.response is None or flow.response.status_code not in params.retry_status_codes:
             return False
 
         try:
             err_body = json.loads(flow.response.content or b"{}")
         except (ValueError, TypeError):
             return False
-        if not _is_capacity_exhausted(err_body):
+        if not _is_capacity_exhausted(err_body, params.retry_status_codes):
             return False
 
         try:
@@ -350,7 +352,7 @@ class GeminiAddon:
                     self._stamp_success_response(flow, resp)
                     return True
 
-                if resp.status_code not in _CAPACITY_STATUS_CODES:
+                if resp.status_code not in params.retry_status_codes:
                     logger.warning(
                         "gemini_capacity_fallback: %s returned %d, stopping retry chain",
                         model,
@@ -363,9 +365,9 @@ class GeminiAddon:
                 except (ValueError, TypeError):
                     last_capacity_body = {}
 
-                if not _is_capacity_exhausted(last_capacity_body):
+                if not _is_capacity_exhausted(last_capacity_body, params.retry_status_codes):
                     logger.warning(
-                        "gemini_capacity_fallback: %s capacity error not RESOURCE_EXHAUSTED, stopping",
+                        "gemini_capacity_fallback: %s error not retryable, stopping",
                         model,
                     )
                     return False

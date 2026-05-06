@@ -135,7 +135,7 @@ def render(s: dict[str, Any]) -> str:
     # ── gemini_capacity ──
 
     if "gemini_capacity" in s:
-        comment("Sticky-retry + fallback chain for Gemini RESOURCE_EXHAUSTED responses.")
+        comment("Sticky-retry + fallback chain for Gemini capacity / backend errors.")
         comment("Owned by GeminiAddon; no @hook entry. Disabled by default.")
         gc = s["gemini_capacity"]
         w("  gemini_capacity:")
@@ -144,6 +144,10 @@ def render(s: dict[str, Any]) -> str:
             w("    fallback_models:")
             for m in gc["fallback_models"]:
                 w(f"      - {m}")
+        if "retry_status_codes" in gc:
+            w("    retry_status_codes:")
+            for code in gc["retry_status_codes"]:
+                w(f"      - {code}")
         for key in (
             "sticky_retry_attempts",
             "sticky_retry_max_delay_seconds",

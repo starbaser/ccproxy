@@ -67,7 +67,7 @@ ccproxy:
       - ccproxy.hooks.commitbee_compat
       - ccproxy.hooks.shape
 
-  # Sticky-retry + fallback chain for Gemini RESOURCE_EXHAUSTED responses.
+  # Sticky-retry + fallback chain for Gemini capacity / backend errors.
   # Owned by GeminiAddon; no @hook entry. Disabled by default.
   gemini_capacity:
     enabled: true
@@ -75,6 +75,10 @@ ccproxy:
       - gemini-3-flash-preview
       - gemini-2.5-pro
       - gemini-2.5-flash
+    retry_status_codes:
+      - 429
+      - 503
+      - 500
     sticky_retry_attempts: 3
     sticky_retry_max_delay_seconds: 60
     terminal_delay_threshold_seconds: 300

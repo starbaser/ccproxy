@@ -159,9 +159,9 @@ class TestTryFallbackGuards:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_no_op_when_status_not_capacity(self) -> None:
+    async def test_no_op_when_status_not_retryable(self) -> None:
         _set_capacity(fallback_models=["gemini-2.5-pro"], sticky_retry_attempts=0)
-        flow = _make_flow(status=500)
+        flow = _make_flow(status=400)
         addon = GeminiAddon()
         result = await addon._try_fallback_models(flow)
         assert result is False
@@ -182,6 +182,30 @@ class TestTryFallbackGuards:
         """503 capacity errors should be retried just like 429."""
         _set_capacity(fallback_models=["gemini-2.5-pro"], sticky_retry_attempts=0)
         flow = _make_flow(status=503)
+        addon = GeminiAddon()
+
+        success = _success_response()
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.request = AsyncMock(return_value=success)
+            result = await addon._try_fallback_models(flow)
+
+        assert result is True
+        assert flow.response.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_500_internal_error_triggers_retry(self) -> None:
+        """500 INTERNAL errors should trigger fallback retry."""
+        _set_capacity(fallback_models=["gemini-2.5-pro"], sticky_retry_attempts=0)
+        flow = _make_flow(
+            status=500,
+            response_body={
+                "error": {
+                    "code": 500,
+                    "message": "Internal error encountered.",
+                    "status": "INTERNAL",
+                }
+            },
+        )
         addon = GeminiAddon()
 
         success = _success_response()
