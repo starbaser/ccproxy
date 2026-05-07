@@ -32,8 +32,7 @@
     }:
     let
       inherit (nixpkgs) lib;
-      supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
-      forAllSystems = f: lib.genAttrs supportedSystems f;
+      forAllSystems = lib.genAttrs [ "x86_64-linux" "aarch64-linux" ];
 
       workspace = uv2nix.lib.workspace.loadWorkspace { workspaceRoot = ./.; };
       overlay = workspace.mkPyprojectOverlay { sourcePreference = "wheel"; };
@@ -44,7 +43,7 @@
         python = pkgs.python313;
 
         # Rust/C extension wheels that need autoPatchelf fixes
-        wheelFixes = final: prev: {
+        pyprojectOverrides = final: prev: {
           tokenizers = prev.tokenizers.overrideAttrs (old: {
             buildInputs = (old.buildInputs or []) ++ [ pkgs.stdenv.cc.cc.lib ];
           });
@@ -72,7 +71,7 @@
               lib.composeManyExtensions [
                 pyproject-build-systems.overlays.default
                 overlay
-                wheelFixes
+                pyprojectOverrides
               ]
             );
 
@@ -160,6 +159,9 @@
               export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [
                 pkgs.stdenv.cc.cc.lib
               ]}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+              export UV_PYTHON_PREFERENCE="only-system"
+              export UV_PYTHON_DOWNLOADS="never"
+              export UV_PYTHON="${python}"
               uv sync --extra sdk --quiet 2>/dev/null || true
               export VIRTUAL_ENV="$PWD/.venv"
               export PATH="$PWD/.venv/bin:$PATH"
