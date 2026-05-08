@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -28,6 +29,7 @@ def _make_ctx(
     path: str = "/v1beta/models/gemini-3.1-pro-preview:generateContent",
     headers: dict[str, str] | None = None,
     oauth_provider: str | None = "gemini",
+    conversation_id: str | None = None,
 ) -> Context:
     flow = MagicMock()
     flow.id = "test-flow-id"
@@ -39,6 +41,8 @@ def _make_ctx(
     flow.metadata = {}
     if oauth_provider:
         flow.metadata["ccproxy.oauth_provider"] = oauth_provider
+    if conversation_id is not None:
+        flow.metadata["ccproxy.conversation_id"] = conversation_id
     flow.metadata[InspectorMeta.RECORD] = FlowRecord(direction="inbound")
     return Context.from_flow(flow)
 
@@ -78,22 +82,31 @@ class TestEnvelopeWrap:
         wrapped = ctx._body
         assert wrapped["model"] == "gemini-3.1-pro-preview"
         assert wrapped["project"] == "test-project"
-        assert wrapped["request"] == body
+        assert wrapped["request"]["contents"] == body["contents"]
+        assert wrapped["request"]["generationConfig"] == body["generationConfig"]
+        assert isinstance(wrapped["request"]["session_id"], str)
+        uuid.UUID(wrapped["request"]["session_id"])
         assert "user_prompt_id" in wrapped
         assert isinstance(wrapped["user_prompt_id"], str)
 
-    def test_glass_style_body_passes_through_unchanged(self) -> None:
+    def test_glass_style_body_preserved_except_for_session_id_injection(self) -> None:
         original = {
             "model": "gemini-2.5-pro",
             "project": "glass-project",
             "request": {"contents": [{"role": "user", "parts": [{"text": "hi"}]}]},
             "user_prompt_id": "preserved-id",
         }
-        ctx = _make_ctx(body=original, path="/v1internal:generateContent")
+        ctx = _make_ctx(body=dict(original), path="/v1internal:generateContent")
 
         gemini_cli(ctx, {})
 
-        assert ctx._body == original
+        assert ctx._body["model"] == original["model"]
+        assert ctx._body["project"] == original["project"]
+        assert ctx._body["request"]["contents"] == original["request"]["contents"]
+        assert ctx._body["user_prompt_id"] == "preserved-id"
+        # session_id is injected even on already-wrapped bodies
+        assert isinstance(ctx._body["request"]["session_id"], str)
+        uuid.UUID(ctx._body["request"]["session_id"])  # raises if not a valid UUID
 
     def test_strips_metadata_field_before_wrapping(self) -> None:
         body = {
@@ -230,6 +243,121 @@ class TestTransformMetadata:
 
         record = ctx.flow.metadata[InspectorMeta.RECORD]
         assert record.transform.is_streaming is True
+
+
+class TestSessionIdInjection:
+    """Verify request.session_id is stamped for cloudcode-pa implicit prefix cache."""
+
+    @staticmethod
+    def _expected_session_id(model: str, project: str, conv_id: str) -> str:
+        seed = f"ccproxy:{model}:{project}:{conv_id}"
+        return str(uuid.uuid5(uuid.NAMESPACE_OID, seed))
+
+    def test_fresh_wrap_uses_conversation_id_when_present(self) -> None:
+        ctx = _make_ctx(
+            body={"contents": [{"role": "user", "parts": [{"text": "hi"}]}]},
+            conversation_id="abc123def456",
+        )
+        gemini_cli_module._cached_project = "myproject"
+
+        gemini_cli(ctx, {})
+
+        expected = self._expected_session_id("gemini-3.1-pro-preview", "myproject", "abc123def456")
+        assert ctx._body["request"]["session_id"] == expected
+
+    def test_fresh_wrap_falls_back_to_flow_id_when_no_conversation_id(self) -> None:
+        ctx = _make_ctx(body={"contents": []})
+
+        gemini_cli(ctx, {})
+
+        expected = self._expected_session_id("gemini-3.1-pro-preview", "default", "flow:test-flow-id")
+        assert ctx._body["request"]["session_id"] == expected
+
+    def test_default_project_when_cached_project_unset(self) -> None:
+        ctx = _make_ctx(body={"contents": []}, conversation_id="conv-xyz")
+
+        gemini_cli(ctx, {})
+
+        expected = self._expected_session_id("gemini-3.1-pro-preview", "default", "conv-xyz")
+        assert ctx._body["request"]["session_id"] == expected
+
+    def test_already_wrapped_body_gets_session_id_injected(self) -> None:
+        ctx = _make_ctx(
+            body={
+                "model": "gemini-2.5-pro",
+                "project": "glass",
+                "request": {"contents": [{"role": "user", "parts": [{"text": "hi"}]}]},
+            },
+            path="/v1internal:generateContent",
+            conversation_id="conv-abc",
+        )
+
+        gemini_cli(ctx, {})
+
+        expected = self._expected_session_id("gemini-2.5-pro", "default", "conv-abc")
+        assert ctx._body["request"]["session_id"] == expected
+
+    def test_already_wrapped_with_existing_session_id_is_overwritten(self) -> None:
+        ctx = _make_ctx(
+            body={
+                "model": "gemini-3.1-pro-preview",
+                "project": "p",
+                "request": {
+                    "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
+                    "session_id": "client-supplied-old-id",
+                },
+            },
+            path="/v1internal:generateContent",
+            conversation_id="conv-abc",
+        )
+
+        gemini_cli(ctx, {})
+
+        assert ctx._body["request"]["session_id"] != "client-supplied-old-id"
+        uuid.UUID(ctx._body["request"]["session_id"])
+
+    def test_pathological_request_value_does_not_raise(self) -> None:
+        ctx = _make_ctx(
+            body={"model": "gemini-3.1-pro-preview", "request": "not-a-dict"},
+            path="/v1internal:generateContent",
+            conversation_id="conv-abc",
+        )
+
+        gemini_cli(ctx, {})  # must not raise
+        # No session_id injected because inner is not a dict
+        assert ctx._body["request"] == "not-a-dict"
+
+    def test_same_conversation_produces_same_session_id_across_calls(self) -> None:
+        ctx_a = _make_ctx(body={"contents": []}, conversation_id="conv-shared")
+        gemini_cli(ctx_a, {})
+        sid_a = ctx_a._body["request"]["session_id"]
+
+        ctx_b = _make_ctx(body={"contents": []}, conversation_id="conv-shared")
+        gemini_cli(ctx_b, {})
+        sid_b = ctx_b._body["request"]["session_id"]
+
+        assert sid_a == sid_b
+
+    def test_different_conversations_produce_different_session_ids(self) -> None:
+        ctx_a = _make_ctx(body={"contents": []}, conversation_id="conv-one")
+        gemini_cli(ctx_a, {})
+        sid_a = ctx_a._body["request"]["session_id"]
+
+        ctx_b = _make_ctx(body={"contents": []}, conversation_id="conv-two")
+        gemini_cli(ctx_b, {})
+        sid_b = ctx_b._body["request"]["session_id"]
+
+        assert sid_a != sid_b
+
+    def test_session_id_is_uuid_shaped(self) -> None:
+        ctx = _make_ctx(body={"contents": []}, conversation_id="conv-abc")
+
+        gemini_cli(ctx, {})
+
+        sid = ctx._body["request"]["session_id"]
+        # str(uuid.uuid5(...)) → "8-4-4-4-12 hex" canonical form
+        parsed = uuid.UUID(sid)
+        assert str(parsed) == sid
 
 
 class TestPrewarmProject:

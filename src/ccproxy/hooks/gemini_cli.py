@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 from glom import delete as glom_delete
+from mitmproxy import http
 from mitmproxy.connection import Server
 
 from ccproxy.config import get_config
@@ -96,6 +97,20 @@ def reset_cache() -> None:
     _cached_project = None
 
 
+def _build_session_id(flow: http.HTTPFlow, model: str) -> str:
+    """Build the cloudcode-pa cache key for the implicit prefix cache.
+
+    Returns a deterministic UUID5 derived from (model, project, conversation),
+    so multi-turn conversations reuse the same key and hit the server-side
+    cache, including across daemon restarts. Format matches what real
+    Gemini CLI traffic emits — a UUID-shaped string in `request.session_id`.
+    """
+    conv_id = str(flow.metadata.get("ccproxy.conversation_id") or f"flow:{flow.id}")
+    project = _cached_project or "default"
+    seed = f"ccproxy:{model}:{project}:{conv_id}"
+    return str(uuid.uuid5(uuid.NAMESPACE_OID, seed))
+
+
 def gemini_cli_guard(ctx: Context) -> bool:
     """Run when forward_oauth resolved the Gemini sentinel key."""
     assert ctx.flow is not None
@@ -156,12 +171,18 @@ def gemini_cli(ctx: Context, _: dict[str, Any]) -> Context:
         ctx.set_header("user-agent", cli_ua)
         ctx.set_header("x-goog-api-client", f"gl-node/{_NODE_VERSION}")
 
+    session_id = _build_session_id(flow, model)
+
     already_wrapped = "request" in body and "contents" not in body
     if already_wrapped:
-        logger.debug("gemini_cli: body already wrapped (Glass-style), skipping envelope")
+        inner = body.get("request")
+        if isinstance(inner, dict):
+            inner["session_id"] = session_id
+        logger.debug("gemini_cli: injected session_id into already-wrapped body")
     else:
         request_body = dict(body)
         glom_delete(request_body, "metadata", ignore_missing=True)
+        request_body["session_id"] = session_id
 
         envelope: dict[str, Any] = {
             "model": model,
@@ -195,12 +216,13 @@ def gemini_cli(ctx: Context, _: dict[str, Any]) -> Context:
             is_streaming=is_streaming,
         )
 
-    flow.comment = f"gemini_cli → {_CLOUDCODE_HOST} ({model})"
+    flow.comment = f"gemini_cli → {_CLOUDCODE_HOST} ({model}, sid={session_id[:8]})"
     logger.info(
-        "gemini_cli: %s → %s%s (wrapped=%s)",
+        "gemini_cli: %s → %s%s (wrapped=%s, sid=%s)",
         model,
         _CLOUDCODE_HOST,
         new_path,
         not already_wrapped,
+        session_id[:8],
     )
     return ctx

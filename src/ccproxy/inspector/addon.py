@@ -24,7 +24,12 @@ from ccproxy.flows.store import (
     create_flow_record,
     get_flow_record,
 )
-from ccproxy.utils import extract_first_user_text, parse_session_id
+from ccproxy.utils import (
+    extract_first_user_text,
+    extract_first_user_text_gemini,
+    gemini_contents,
+    parse_session_id,
+)
 
 if TYPE_CHECKING:
     from ccproxy.inspector.telemetry import InspectorTracer
@@ -96,8 +101,15 @@ class InspectorAddon:
             return
 
         messages = body.get("messages")
+        contents = gemini_contents(body)
         if isinstance(messages, list):
             text = extract_first_user_text(messages=messages)
+        elif contents is not None:
+            text = extract_first_user_text_gemini(contents=contents)
+        else:
+            text = None
+
+        if text is not None:
             # Empty first-text-block messages all collide on the same SHA otherwise;
             # fall back to flow.id so distinct requests stay distinguishable.
             seed = text or f"flow:{flow.id}"

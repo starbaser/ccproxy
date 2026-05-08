@@ -31,6 +31,8 @@ Coverage threshold is 90% (`--cov-fail-under=90`). `-m "not e2e"` and `--ignore=
 
 The `process-compose` socket is `/tmp/process-compose-ccproxy.sock` (set via `PC_SOCKET_PATH` in the devShell). Never run `ccproxy start` with `&`/`disown` — use `just up`/`just down` so process-compose supervises it.
 
+`just up` is idempotent — it does NOT restart an already-running dev daemon, so source changes won't be picked up. After editing ccproxy code, run `just restart` to load the new code. Production's systemd unit reloads automatically via `X-Restart-Triggers` only when the generated YAML changes — code-only changes there require `systemctl --user restart ccproxy`.
+
 ### CLI
 
 ```bash

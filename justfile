@@ -19,6 +19,10 @@ up:
 down:
     process-compose down
 
+restart:
+    process-compose down
+    process-compose up --detached
+
 logs *ARGS:
     process-compose process logs ccproxy {{ARGS}}
 

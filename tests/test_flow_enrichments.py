@@ -75,8 +75,23 @@ ENRICHMENT_CASES: list[EnrichmentCase] = [
         expected_system="string system",
     ),
     EnrichmentCase(
-        name="no_messages_no_system",
+        name="gemini_native_contents_derives_conv_id",
         body={"contents": [{"role": "user", "parts": [{"text": "gemini-shape"}]}]},
+        expected_conv_id_text="gemini-shape",
+        expected_system=None,
+    ),
+    EnrichmentCase(
+        name="gemini_v1internal_wrapped_contents_derives_conv_id",
+        body={
+            "model": "gemini-3.1-pro-preview",
+            "request": {"contents": [{"role": "user", "parts": [{"text": "wrapped-text"}]}]},
+        },
+        expected_conv_id_text="wrapped-text",
+        expected_system=None,
+    ),
+    EnrichmentCase(
+        name="empty_body_no_messages_no_contents",
+        body={"random_key": "random_value"},
         expected_conv_id_text=None,
         expected_system=None,
     ),

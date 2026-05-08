@@ -73,6 +73,48 @@ def extract_first_user_text(messages: list[dict[str, Any]]) -> str:
     return ""
 
 
+def gemini_contents(body: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Return the Gemini-shape ``contents`` list from a request body.
+
+    Handles both native shape (``body["contents"]``) and v1internal-wrapped
+    shape (``body["request"]["contents"]``). Returns ``None`` when the body
+    isn't Gemini-shape (e.g., Anthropic ``messages``).
+    """
+    contents = body.get("contents")
+    if isinstance(contents, list):
+        return contents
+    request = body.get("request")
+    if isinstance(request, dict):
+        nested = request.get("contents")
+        if isinstance(nested, list):
+            return nested
+    return None
+
+
+def extract_first_user_text_gemini(contents: list[dict[str, Any]]) -> str:
+    """Return the text of the first user message's first text part (Gemini shape).
+
+    Gemini wire format: ``contents = [{"role": "user", "parts": [{"text": "..."}]}]``.
+    Returns ``""`` when no text part is found in the first user message.
+    """
+    user_content = next(
+        (c for c in contents if isinstance(c, dict) and c.get("role") == "user"),
+        None,
+    )
+    if user_content is None:
+        return ""
+    parts = user_content.get("parts")
+    if not isinstance(parts, list):
+        return ""
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        text = part.get("text")
+        if isinstance(text, str) and text:
+            return text
+    return ""
+
+
 def get_templates_dir() -> Path:
     """Get the path to the templates directory.
 
