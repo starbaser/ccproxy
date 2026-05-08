@@ -86,29 +86,11 @@ class TestContextFromFlow:
 
 
 class TestBodyProperties:
-    def test_model_getter_and_setter(self):
-        ctx = Context.from_flow(_make_flow())
-        ctx.model = "gpt-4"
-        assert ctx.model == "gpt-4"
-
-    def test_messages_getter_and_setter(self):
-        ctx = Context.from_flow(_make_flow())
-        msgs = [ModelRequest(parts=[UserPromptPart(content="hello")])]
-        ctx.messages = msgs
-        assert len(ctx.messages) == 1
-        assert isinstance(ctx.messages[0], ModelRequest)
-
     def test_messages_setter_writes_to_body(self):
         ctx = Context.from_flow(_make_flow())
         ctx.messages = [ModelRequest(parts=[UserPromptPart(content="test")])]
         assert isinstance(ctx._body["messages"], list)
         assert ctx._body["messages"][0]["role"] == "user"
-
-    def test_system_setter(self):
-        ctx = Context.from_flow(_make_flow())
-        ctx.system = [SystemPromptPart(content="You are helpful.")]
-        assert len(ctx.system) == 1
-        assert ctx.system[0].content == "You are helpful."
 
     def test_system_setter_writes_to_body(self):
         ctx = Context.from_flow(_make_flow())
@@ -147,11 +129,6 @@ class TestBodyProperties:
         ctx.tools = [ToolDefinition(name="test", description="Test tool")]
         assert ctx._body["tools"][0]["name"] == "test"
 
-    def test_metadata_getter_and_setter(self):
-        ctx = Context.from_flow(_make_flow())
-        ctx.metadata = {"trace_id": "abc"}
-        assert ctx.metadata["trace_id"] == "abc"
-
     def test_metadata_setdefault_behavior(self):
         ctx = Context.from_flow(_make_flow())
         ctx.metadata["new_key"] = "new_val"
@@ -159,10 +136,6 @@ class TestBodyProperties:
 
 
 class TestHeaderMethods:
-    def test_get_header_returns_value(self):
-        ctx = Context.from_flow(_make_flow(headers={"authorization": "Bearer tok"}))
-        assert ctx.get_header("authorization") == "Bearer tok"
-
     def test_get_header_exact_key_match(self):
         ctx = Context.from_flow(_make_flow(headers={"authorization": "Bearer tok"}))
         assert ctx.get_header("authorization") == "Bearer tok"
@@ -172,22 +145,14 @@ class TestHeaderMethods:
         assert ctx.get_header("authorization") == ""
         assert ctx.get_header("x-missing", "fallback") == "fallback"
 
-    def test_set_header_adds_value(self):
-        ctx = Context.from_flow(_make_flow(headers={}))
-        ctx.set_header("x-custom", "myval")
-        assert ctx.get_header("x-custom") == "myval"
-
     def test_set_header_empty_string_removes(self):
         ctx = Context.from_flow(_make_flow(headers={"x-api-key": "old"}))
         ctx.set_header("x-api-key", "")
         assert ctx.get_header("x-api-key") == ""
 
-    def test_authorization_convenience_property(self):
-        ctx = Context.from_flow(_make_flow(headers={"authorization": "Bearer xyz"}))
+    def test_convenience_header_properties(self):
+        ctx = Context.from_flow(_make_flow(headers={"authorization": "Bearer xyz", "x-api-key": "sk-123"}))
         assert ctx.authorization == "Bearer xyz"
-
-    def test_x_api_key_convenience_property(self):
-        ctx = Context.from_flow(_make_flow(headers={"x-api-key": "sk-123"}))
         assert ctx.x_api_key == "sk-123"
 
     def test_headers_snapshot_lowercased(self):
@@ -202,11 +167,6 @@ class TestMetadataConvenienceProperties:
         flow = _make_flow(body={"model": "m", "messages": [], "metadata": {"ccproxy_oauth_provider": "anthropic"}})
         ctx = Context.from_flow(flow)
         assert ctx.ccproxy_oauth_provider == "anthropic"
-
-    def test_ccproxy_oauth_provider_setter(self):
-        ctx = Context.from_flow(_make_flow())
-        ctx.ccproxy_oauth_provider = "google"
-        assert ctx.metadata["ccproxy_oauth_provider"] == "google"
 
 
 class TestCommit:

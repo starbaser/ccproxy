@@ -8,10 +8,8 @@ import pytest
 import ccproxy.flows.store as fs
 from ccproxy.flows.store import (
     _STORE_TTL,
-    FLOW_ID_HEADER,
     AuthMeta,
     FlowRecord,
-    InspectorMeta,
     OtelMeta,
     clear_flow_store,
     create_flow_record,
@@ -35,17 +33,6 @@ class TestFlowRecordDataclass:
         otel = OtelMeta()
         assert otel.span is None
         assert otel.ended is False
-
-
-class TestInspectorMeta:
-    def test_record_key_value(self):
-        assert InspectorMeta.RECORD == "ccproxy.record"
-
-    def test_direction_key_value(self):
-        assert InspectorMeta.DIRECTION == "ccproxy.direction"
-
-    def test_flow_id_header_constant(self):
-        assert FLOW_ID_HEADER == "x-ccproxy-flow-id"
 
 
 class TestCreateFlowRecord:

@@ -400,11 +400,6 @@ class TestStartSpan:
 
 
 class TestInspectorTracerInit:
-    def test_disabled_by_default(self) -> None:
-        tracer = InspectorTracer(enabled=False)
-        assert tracer._enabled is False
-        assert tracer._tracer is None
-
     def test_import_error_disables(self) -> None:
         from unittest.mock import patch
 

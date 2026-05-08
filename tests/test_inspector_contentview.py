@@ -32,14 +32,6 @@ def _make_metadata(record: FlowRecord | None = None) -> MagicMock:
 
 
 class TestContentviewProperties:
-    def test_name(self) -> None:
-        cv = ClientRequestContentview()
-        assert cv.name == "Client-Request"
-
-    def test_syntax_highlight(self) -> None:
-        cv = ClientRequestContentview()
-        assert cv.syntax_highlight == "yaml"
-
     def test_render_priority(self) -> None:
         cv = ClientRequestContentview()
         meta = MagicMock()

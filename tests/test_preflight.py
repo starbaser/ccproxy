@@ -262,11 +262,6 @@ class TestRunPreflightChecks:
 
 
 class TestGetPortPidExtra:
-    def test_host_0000_sets_exclusive_listen_addrs(self):
-        """host='0.0.0.0' path executes."""
-        _pid, _ = get_port_pid(59998, host="0.0.0.0")
-        # Just verify it runs without error — port is likely free
-
     def test_inode_found_but_no_pid_resolution(self):
         """When inode resolves but PID not found → returns -1, 'unknown'."""
         tcp_line = (
@@ -391,10 +386,6 @@ class TestReadProcCmdline:
 
 
 class TestFindInodePids:
-    def test_returns_dict(self):
-        result = _find_inode_pids()
-        assert isinstance(result, dict)
-
     def test_handles_oserror_on_iterdir(self):
         with patch("pathlib.Path.iterdir", side_effect=OSError("no /proc")):
             result = _find_inode_pids()

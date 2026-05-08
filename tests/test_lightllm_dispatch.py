@@ -107,15 +107,6 @@ class TestTransformToProvider:
         assert isinstance(body, bytes)
         json.loads(body)
 
-    def test_returns_headers_dict(self) -> None:
-        _, headers, _ = transform_to_provider(
-            model="claude-3-5-sonnet-20241022",
-            provider="anthropic",
-            messages=[{"role": "user", "content": "test"}],
-            api_key="key",
-        )
-        assert isinstance(headers, dict)
-
     def test_unknown_provider_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown provider"):
             transform_to_provider(

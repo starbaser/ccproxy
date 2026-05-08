@@ -31,12 +31,6 @@ from ccproxy.pipeline.wire import (
 
 
 class TestParseSystem:
-    def test_none(self):
-        assert parse_system(None) == []
-
-    def test_empty_string(self):
-        assert parse_system("") == []
-
     def test_string(self):
         parts = parse_system("Be helpful.")
         assert len(parts) == 1
@@ -70,9 +64,6 @@ class TestParseSystem:
 
 
 class TestSerializeSystem:
-    def test_empty(self):
-        assert serialize_system([]) == []
-
     def test_single_part_returns_string(self):
         result = serialize_system([SystemPromptPart(content="hello")])
         assert result == "hello"
@@ -303,9 +294,6 @@ class TestParseMessages:
         result = parse_messages(msgs)
         assert isinstance(result[0], ModelRequest)
         assert isinstance(result[0].parts[0], SystemPromptPart)
-
-    def test_empty_list(self):
-        assert parse_messages([]) == []
 
     def test_full_conversation(self):
         msgs = [

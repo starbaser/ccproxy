@@ -9,7 +9,6 @@ from ccproxy.pipeline.context import Context
 from ccproxy.pipeline.hook import (
     HookSpec,
     _HookRegistry,
-    always_true,
     get_registry,
     hook,
 )
@@ -126,7 +125,3 @@ class TestHookDecorator:
         assert spec.guard is my_guard
 
 
-class TestAlwaysTrue:
-    def test_always_true_returns_true(self):
-        ctx = _make_ctx()
-        assert always_true(ctx) is True

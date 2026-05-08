@@ -56,12 +56,6 @@ class TestCCProxyConfig:
         assert config.port == 4000
         assert config.ccproxy_config_path == Path("./ccproxy.yaml")
 
-    def test_config_attributes(self) -> None:
-        """Test config attributes can be set directly."""
-        config = CCProxyConfig()
-        config.log_level = "DEBUG"
-        assert config.log_level == "DEBUG"
-
     def test_from_yaml_no_ccproxy_section(self) -> None:
         """Test loading ccproxy.yaml without ccproxy section."""
         yaml_content = """

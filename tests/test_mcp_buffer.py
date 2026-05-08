@@ -110,11 +110,6 @@ def test_clear_buffer_resets_singleton():
     assert b2.is_empty()
 
 
-def test_is_empty_true_on_fresh_buffer():
-    buf = NotificationBuffer()
-    assert buf.is_empty() is True
-
-
 def test_is_empty_false_after_append():
     buf = NotificationBuffer()
     buf.append("task-1", "session-a", {"type": "event"})

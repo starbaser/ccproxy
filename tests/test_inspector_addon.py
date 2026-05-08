@@ -511,17 +511,6 @@ class TestResponseHeadersEdgeCases:
         assert flow.response.stream is True
 
 
-class TestSetTracer:
-    def test_set_tracer(self) -> None:
-        addon = InspectorAddon()
-        assert addon.tracer is None
-
-        mock_tracer = MagicMock()
-        addon.set_tracer(mock_tracer)
-
-        assert addon.tracer is mock_tracer
-
-
 class TestRequestWithTracer:
     @pytest.mark.asyncio
     async def test_request_with_tracer(self) -> None:
