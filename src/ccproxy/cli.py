@@ -209,6 +209,8 @@ def setup_logging(
         level = max(level, logging.WARNING)
     root.setLevel(level)
 
+    logging.getLogger("mitmproxy.proxy.server").setLevel(logging.WARNING)
+
     fmt = logging.Formatter(
         "%(asctime)s %(name)-30s %(levelname)-8s %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
