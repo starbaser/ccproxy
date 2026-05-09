@@ -29,6 +29,7 @@ dependencies = [
   "glom>=24.1.0",
   "mcp>=1.0.0",
   "xxhash>=3.0.0",
+  "curl-cffi>=0.15.0",
 ]
 
 [project.scripts]
