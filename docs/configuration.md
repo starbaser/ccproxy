@@ -252,7 +252,9 @@ When ccproxy sees a key matching `sk-ant-oat-ccproxy-{name}`, it substitutes the
 
 ### Token Refresh
 
-Tokens are loaded at startup and cached in memory. On a 401 response from the provider, ccproxy re-resolves the credential source (re-reads the file or re-runs the command). If the new token differs from the cached value, the request is retried with the fresh token. If the token is unchanged, the 401 is returned to the client.
+Tokens are loaded at startup via `_load_credentials()` and cached in memory. For OAuth-source providers (`anthropic_oauth`, `google_oauth`), `AuthSource.resolve()` rotates the cached access token in-process whenever its expiry is within 60 seconds (atomic write-back to `file_path` preserves sibling fields).
+
+On a 401 response from upstream, `OAuthAddon.response()` calls `config.resolve_oauth_token(provider)` to re-resolve the credential source — for OAuth sources this triggers another refresh attempt; for static `command` / `file` loaders it just re-reads. The request is then replayed with whatever token the resolver returns; if the resolver returns nothing (empty token, refresh failed), the 401 propagates to the client.
 
 ### OAuth refresh lifecycle
 

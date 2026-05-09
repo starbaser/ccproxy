@@ -124,7 +124,7 @@ The following tools must be in PATH: `slirp4netns`, `unshare`, `nsenter`, `ip`,
 
 ## 3. The Pipeline
 
-Every request passes through a fixed five-stage addon chain:
+Every request passes through a fixed addon chain:
 
 ```
 ┌────────────────┐
@@ -136,6 +136,14 @@ Every request passes through a fixed five-stage addon chain:
 └───────┬────────┘
         │
 ┌───────▼────────┐
+│ MultiHARSaver  │  ccproxy.dump command (multi-page HAR export)
+└───────┬────────┘
+        │
+┌───────▼────────┐
+│ ShapeCapturer  │  ccproxy.shape command (validate + persist .mflow)
+└───────┬────────┘
+        │
+┌───────▼────────┐
 │ Inbound Hooks  │  OAuth token injection, session ID extraction
 └───────┬────────┘
         │
@@ -144,8 +152,16 @@ Every request passes through a fixed five-stage addon chain:
 └───────┬────────┘
         │
 ┌───────▼────────┐
-│ Outbound Hooks │  MCP notification injection, verbose mode, shaping application
-└───────┘────────┘
+│ Outbound Hooks │  Gemini envelope wrap, MCP notification injection, verbose mode, shape replay, commitbee compat
+└───────┬────────┘
+        │
+┌───────▼────────┐
+│  OAuthAddon    │  401-detect → refresh → replay (for oauth-injected flows)
+└───────┬────────┘
+        │
+┌───────▼────────┐
+│  GeminiAddon   │  Gemini capacity fallback + cloudcode-pa envelope unwrap
+└───────┬────────┘
         │
         ▼
    Provider API
@@ -191,14 +207,28 @@ See [Transform Rules](#4-transform-rules).
 Run after the transform stage.
 Default hooks:
 
+- **`gemini_cli`** — For Gemini sentinel-key traffic, wraps the body in the
+  `v1internal` envelope, conditionally masquerades `google-genai-sdk/*` UAs as
+  the Gemini CLI, and rewrites the path to `cloudcode-pa.googleapis.com`.
 - **`inject_mcp_notifications`** — Drains buffered MCP terminal events for the
   current session and injects them as synthetic tool_use/tool_result message
-  pairs.
+  pairs before the final user message.
 - **`verbose_mode`** — Strips `redact-thinking-*` from the `anthropic-beta`
   header to enable full thinking block output from Anthropic models.
-- **`apply_shaping`** — Stamps the learned shaping profile onto reverse
-  proxy flows (headers, body envelope, system prompt).
-  Only fires on flows that matched a transform rule.
+- **`shape`** — Replays a captured shape (`{provider}.mflow`) onto reverse
+  proxy and OAuth-injected flows: strips configured headers, injects
+  `content_fields` from the incoming request, runs shape inner-DAG hooks
+  (UUID regeneration, billing-header re-signing, cache breakpoint
+  normalization), stamps the result onto the outbound flow. Only fires on
+  flows that matched a transform/redirect rule.
+- **`commitbee_compat`** — Last-mile compatibility shim for the commitbee
+  tool — appends a raw-JSON instruction to its system prompt.
+
+`OAuthAddon` and `GeminiAddon` run after this stage as full mitmproxy addons
+(not pipeline hooks): `OAuthAddon` handles 401 detection / refresh / replay,
+and `GeminiAddon` handles Gemini capacity fallback (sticky retry on 429/503
+plus walking `gemini_capacity.fallback_models`) and cloudcode-pa envelope
+unwrapping for streaming and buffered responses.
 
 ### Hook execution
 
@@ -359,79 +389,46 @@ Optional `auth.header` overrides the target header name (default:
 
 ### 401 retry
 
-When a response returns 401 and the request used an OAuth-injected token,
-ccproxy automatically re-resolves the credential source.
-If the token has changed (e.g. refreshed externally), the request is retried
-with the new token. If unchanged, the failure propagates — the credential is
-genuinely stale.
+When a response returns 401 and the request used an OAuth-injected token
+(`flow.metadata["ccproxy.oauth_injected"]`), `OAuthAddon.response()` calls
+`config.resolve_oauth_token(provider)` to re-resolve the credential source.
+For OAuth-source providers (`anthropic_oauth`, `google_oauth`) this triggers
+another in-process refresh attempt; for static `command` / `file` loaders it
+just re-reads the source. The request is then replayed with whatever token
+the resolver returns; if the resolver yields nothing (empty token, refresh
+failed), the 401 propagates to the client.
 
 * * *
 
-## 6. Shaping Profiles
+## 6. Shape Replay
 
-The shaping system passively learns the exact request shape that a reference
-client (observed via WireGuard) sends to each provider, then stamps that shape
-onto SDK requests arriving through the reverse proxy.
+Some providers (Anthropic in particular) enforce client identity via headers,
+beta flags, system prompt prefixes, and signed billing headers. When ccproxy
+receives an SDK call lacking those markers, the request is structurally valid
+but will be rejected with 401/400.
 
-### Why
+A *shape* is a captured `mitmproxy.http.HTTPFlow` (a real, known-good request
+from the target SDK) persisted as a `{provider}.mflow` file. At runtime, the
+`shape` outbound hook replays the shape: configured headers are stripped,
+`content_fields` from the incoming request are injected per the provider's
+`merge_strategies`, shape inner-DAG hooks run (regenerating UUIDs, signing
+the Anthropic billing header, normalizing cache_control breakpoints), and the
+final shape is stamped onto the outbound flow.
 
-LLM providers increasingly enforce client identity.
-Requests from Claude Code, for example, carry specific beta headers, system
-prompt prefixes, body envelope fields, and session metadata.
-When routing SDK traffic through ccproxy, these details are missing.
-The shaping system observes what the real client sends, learns a stable
-profile, and applies it to proxied requests so they are indistinguishable from
-direct client traffic.
+### Capturing a shape
 
-### How it works
+Capture or refresh a shape any time the target CLI version changes:
 
-1. **Observation** — WireGuard flows (and flows matching
-   `shaping.reference_user_agents`) are analyzed.
-   Headers, body fields, system prompts, and body wrapper structure are
-   extracted.
-
-2. **Accumulation** — Per `(provider, user_agent)` pair, features are collected
-   across multiple observations (default: 3). Values that vary between
-   observations (timestamps, session IDs) are automatically excluded.
-
-3. **Finalization** — Once enough observations are collected, only features with
-   identical values across all observations become stable profile features.
-
-4. **Application** — The `apply_shaping` outbound hook applies the profile to
-   reverse proxy flows.
-   Five operations run in order:
-   - **Headers**: add missing headers, union list-valued headers (e.g.
-     `anthropic-beta`).
-   - **Session metadata**: synthesize `device_id`/`account_uuid` from the
-     profile.
-   - **Body wrapping**: move the body into the correct wrapper field if the
-     provider expects it.
-   - **Body envelope fields**: add missing top-level fields (e.g.
-     `user_prompt_id`).
-   - **System prompt**: inject the profile's system prompt blocks.
-
-### Initial shape
-
-On first startup (when `shaping.seed_anthropic` is true), a hardcoded
-Anthropic shape is created with the known beta headers and Claude Code system
-prompt prefix. Learned profiles supersede it when they have a newer
-timestamp.
-
-### Profile storage
-
-Profiles persist to `{config_dir}/shaping_profiles.json`. This file is
-managed automatically — profiles are versioned and written atomically.
-
-### Customizing the merger
-
-The five application operations are implemented as methods on
-`ShapingMerger`. To customize, subclass it and set `shaping.merger_class`
-in config:
-
-```yaml
-shaping:
-  merger_class: mypackage.custom_merger.MyMerger
+```bash
+ccproxy run --inspect -- claude -p "shape capture"
+ccproxy flows shape --provider anthropic
 ```
+
+### Where to learn more
+
+[`docs/shaping.md`](docs/shaping.md) is the full reference: capture workflow,
+storage layout, the inject/strip/shape-hooks pipeline, the cache breakpoint
+hooks, the Anthropic billing salt configuration, custom shape hooks.
 
 * * *
 
@@ -671,13 +668,15 @@ prefixed environment variables.
 | --- | --- | --- |
 | `host` | `127.0.0.1` | Bind address |
 | `port` | `4000` | Reverse proxy listener port |
-| `log_level` | `INFO` | Root logger level (`LOG_LEVEL` env var overrides) |
+| `log_level` | `INFO` | Root logger level (`CCPROXY_LOG_LEVEL` env var overrides) |
 | `log_file` | `ccproxy.log` | Daemon log file (relative to config dir; `null` disables) |
-| `provider_timeout` | `null` | Timeout (seconds) for OAuth retry requests |
-| `verify_readiness_on_startup` | `true` | Probe external host at startup |
-| `readiness_probe_url` | `https://1.1.1.1/` | Canary URL for startup probe |
-| `readiness_probe_timeout_seconds` | `5.0` | Timeout for startup probe |
+| `provider_timeout` | `null` | Timeout (seconds) for ccproxy's own outbound httpx calls (OAuth refresh, 401 retry). `null` = no enforced timeout. |
 | `use_journal` | `false` | Route daemon logs to systemd journal |
+| `journal_identifier` | derived from config-dir basename | `SYSLOG_IDENTIFIER` for the journal handler |
+
+The startup readiness probe is configured at `inspector.readiness.url`
+(default `https://1.1.1.1/`) and `inspector.readiness.timeout_seconds`
+(default `5.0`). Set `inspector.readiness.url` to `null` to skip the probe.
 
 ### `inspector`
 
@@ -702,17 +701,19 @@ provider_map:
 
 | Field | Default | Description |
 | --- | --- | --- |
-| `confdir` | `null` | CA certificate store directory |
 | `ssl_insecure` | `true` | Skip upstream TLS verification |
-| `stream_large_bodies` | `1m` | Stream threshold (`512k`, `1m`, `10m`) |
+| `stream_large_bodies` | `null` | Stream threshold (`null` disables; otherwise `512k`, `1m`, `10m`) |
 | `body_size_limit` | `null` | Hard body size limit (`null` = unlimited) |
 | `web_host` | `127.0.0.1` | mitmweb UI bind address |
-| `web_password` | `null` | UI password (string, or `{command:}` / `{file:}` source) |
+| `web_password` | `null` | UI password (string, or `{command:}` / `{file:}` source). `null` generates a random token on each startup. |
 | `web_open_browser` | `false` | Auto-open browser on start |
 | `ignore_hosts` | `[]` | Regex patterns for hosts to bypass |
 | `allow_hosts` | `[]` | Regex patterns for hosts to intercept (exclusive) |
 | `termlog_verbosity` | `warn` | mitmproxy terminal log level |
 | `flow_detail` | `0` | Flow output verbosity (0-4) |
+
+The CA certificate store directory is set at `inspector.cert_dir` (a sibling
+of `inspector.mitmproxy`), not inside this block.
 
 ### `providers`
 
@@ -754,9 +755,11 @@ hooks:
     - ccproxy.hooks.forward_oauth
     - ccproxy.hooks.extract_session_id
   outbound:
+    - ccproxy.hooks.gemini_cli
     - ccproxy.hooks.inject_mcp_notifications
     - ccproxy.hooks.verbose_mode
-    - ccproxy.hooks.apply_shaping
+    - ccproxy.hooks.shape
+    - ccproxy.hooks.commitbee_compat
 ```
 
 Hooks can also be specified with parameters:
@@ -781,13 +784,9 @@ hooks:
 
 | Field | Default | Description |
 | --- | --- | --- |
-| `enabled` | `true` | Enable shaping observation and application |
-| `min_observations` | `3` | Observations before profile finalization |
-| `reference_user_agents` | `[]` | Additional UA patterns that trigger observation |
-| `seed_anthropic` | `true` | Seed a hardcoded Anthropic shape on first run |
-| `additional_header_exclusions` | `[]` | Extra headers to exclude from profiling |
-| `additional_body_content_fields` | `[]` | Extra body fields to treat as content |
-| `merger_class` | `ccproxy.shaping.merger.ShapingMerger` | Merger class path |
+| `enabled` | `true` | Master switch for shape storage and application |
+| `shapes_dir` | `{config_dir}/shaping/shapes` | Directory holding per-provider `{provider}.mflow` shape files |
+| `providers` | `{}` | Per-provider shaping profiles (`content_fields`, `merge_strategies`, `shape_hooks`, `preserve_headers`, `strip_headers`, `capture.path_pattern`, optional `billing` for Anthropic) — see [docs/shaping.md](docs/shaping.md) |
 
 ### `flows`
 

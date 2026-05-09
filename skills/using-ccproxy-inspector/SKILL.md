@@ -63,7 +63,7 @@ Injects a combined CA bundle (mitmproxy CA + system CAs) via `SSL_CERT_FILE`, `N
 |----------|------|
 | SDK client with configurable base_url | `ccproxy run` |
 | Tool that hardcodes API endpoints | `ccproxy run --inspect` |
-| Capturing shaping profiles | `ccproxy run --inspect` (WireGuard flows are always observed) |
+| Capturing shapes (`ccproxy flows shape`) | `ccproxy run --inspect` (a real CLI run through the WireGuard jail produces the flow you'll capture) |
 | Quick debugging of SDK integration | `ccproxy run` |
 | Full traffic audit | `ccproxy run --inspect` |
 
@@ -77,7 +77,7 @@ Every flow has two views:
 
 **Forwarded request** -- what was sent to the upstream provider after the full pipeline ran. May have a different host, different headers (OAuth token injected, beta headers added, shaping headers stamped), different body format (OpenAI -> Anthropic), wrapped body envelope, and injected system prompt.
 
-### The three-stage pipeline
+### The pipeline
 
 ```
 Client request (captured as ClientRequest snapshot)
@@ -95,9 +95,17 @@ Transform (first matching rule wins)
   │
   ▼
 Outbound hooks (DAG order)
+  gemini_cli:               wrap Gemini bodies in v1internal envelope, rewrite to cloudcode-pa
   inject_mcp_notifications: buffer MCP events into messages
   verbose_mode:             strip redact-thinking from beta header
-  apply_shaping:            stamp learned headers/body/system
+  shape:                    replay captured {provider}.mflow (identity headers, billing, system prefix)
+  commitbee_compat:         last-mile compatibility shim
+  │
+  ▼
+OAuthAddon  (response side: 401-detect -> resolve_oauth_token -> replay)
+  │
+  ▼
+GeminiAddon (response side: capacity fallback + cloudcode-pa envelope unwrap)
   │
   ▼
 Forwarded request -> Provider API
@@ -107,117 +115,125 @@ Forwarded request -> Provider API
 
 | Indicator | Meaning |
 |-----------|---------|
-| `x-ccproxy-oauth-injected: 1` header | OAuth token was injected by forward_oauth |
+| `flow.metadata["ccproxy.oauth_injected"]` (or `x-ccproxy-oauth-injected: 1` request header) | OAuth token was injected by `forward_oauth` |
+| `flow.metadata["ccproxy.oauth_provider"] == "X"` | Sentinel key resolved to provider X |
 | Host changed (client vs forwarded) | Transform or redirect rewrote the destination |
-| Body has `system` field not in client request | Shaping injected system prompt |
-| Body wrapped in `request` field | Shaping applied body_wrapper (cloudcode-pa) |
-| Different body keys (messages vs contents) | Cross-provider format transformation |
+| Body identity headers present on forwarded but not client | `shape` hook replayed a captured shape |
+| Body wrapped in `{model, project, request}` envelope | `gemini_cli` hook wrapped the body for cloudcode-pa |
+| Different body keys (messages vs contents) | Cross-provider format transformation via lightllm |
+| `flow.response` replaced after a 429/503 | `GeminiAddon._try_fallback_models` succeeded |
 
 ## Inspecting flows
 
 ### CLI commands
 
+All `ccproxy flows` subcommands operate on a resolved flow set. The `--jq` flag is repeatable; each filter consumes and produces a JSON array. Default filters from `flows.default_jq_filters` config apply first.
+
 ```bash
-ccproxy flows list                        # Table of all flows
-ccproxy flows list --filter "anthropic"   # Filter by host+path regex
+ccproxy flows list                        # Rich table of recent flows
 ccproxy flows list --json                 # Raw JSON array
+ccproxy flows list --jq 'map(select(.request.pretty_host == "api.anthropic.com"))'
 
-# `dump` emits a 1-page / 2-entry HAR 1.2 file for a single flow:
-#   entries[0] = [fwdreq, fwdres]  real flow (forwarded request + upstream response)
-#   entries[1] = [clireq, fwdres]  clone with .request from ClientRequest snapshot
-ccproxy flows dump a1b2c3d4                                 # Write HAR to stdout
-ccproxy flows dump a1b2c3d4 | jq '.log.entries[0].request.url'   # Forwarded URL
-ccproxy flows dump a1b2c3d4 | jq '.log.entries[1].request.url'   # Pre-pipeline URL
-ccproxy flows dump a1b2c3d4 | jq '.log.entries[0].response.status'
-ccproxy flows dump a1b2c3d4 > /tmp/flow.har                 # Open in Chrome DevTools
+# Multi-page HAR export (entries[2i] = forwarded+response, entries[2i+1] = client request+response)
+ccproxy flows dump > all.har                       # Open in Chrome DevTools / Charles / Fiddler
+ccproxy flows dump --jq 'map(.[-1])' > latest.har  # Just the most recent flow
 
-ccproxy flows diff a1b2c3d4 e5f6a7b8     # Unified diff of two request bodies
+# Sliding-window unified diff across consecutive request bodies in the set
+ccproxy flows diff
 
-ccproxy flows clear                       # Clear all captured flows
+# Per-flow client-vs-forwarded diff (URL changes + body diff)
+ccproxy flows compare
+ccproxy flows compare --jq 'map(.[-1])'   # Just the latest flow
+
+# Clear (respects --jq filters; --all bypasses them)
+ccproxy flows clear --jq 'map(select(.response.status_code >= 400))'
+ccproxy flows clear --all
+
+# Capture a shape from a flow (must match the provider's capture.path_pattern)
+ccproxy flows shape --provider anthropic
 ```
 
-### Helper scripts
+### MCP server
 
-The `scripts/` directory contains Python scripts that import ccproxy's `MitmwebClient` directly for richer, machine-readable output.
+For programmatic access from MCP-aware clients (Claude Code with the
+`ccproxy_mcp` server configured), the same surface is exposed as MCP tools:
+`list_flows`, `get_flow`, `dump_har`, `get_request_body`, `get_response_body`,
+`diff_flows`, `compare_flow`, `clear_flows`, `capture_shape`, `list_shapes`,
+`list_conversations`, `list_models`. Plus resources `proxy://requests` and
+`proxy://status`. Launch via the `ccproxy_mcp` console script.
 
-**List flows with filtering:**
-```bash
-uv run python scripts/list_flows.py                          # JSON output (default)
-uv run python scripts/list_flows.py --table                  # Rich table
-uv run python scripts/list_flows.py --provider anthropic     # Filter by provider
-uv run python scripts/list_flows.py --model claude --latest 5  # Filter by model
-uv run python scripts/list_flows.py --status 401             # Find auth failures
-```
-
-**Inspect a single flow (client vs forwarded diff):**
-```bash
-uv run python scripts/inspect_flow.py a1b2c3d4               # Rich panels + change summary
-uv run python scripts/inspect_flow.py a1b2c3d4 --json        # Structured JSON with diff
-uv run python scripts/inspect_flow.py a1b2c3d4 --with-response  # Include response body
-```
-
-The `inspect_flow.py` output includes a change summary: URL rewrites, headers added/removed, body format transforms, system prompt injection, OAuth injection, body wrapping.
-
-**Check shaping status:**
-```bash
-uv run python scripts/shaping_status.py                   # Profile + accumulator tables
-uv run python scripts/shaping_status.py --provider anthropic  # Detailed profile contents
-uv run python scripts/shaping_status.py --shape-status    # Is the v0 shape active?
-uv run python scripts/shaping_status.py --json            # Structured JSON
-```
-
-All scripts run from the ccproxy project root using `uv run python scripts/...` and resolve the mitmweb auth token from config automatically. They exit with actionable error messages when ccproxy is not running.
-
-## The shaping system
+## The shape replay system
 
 ### What it does
 
-The shaping system passively learns the "shaping contract" from legitimate CLI traffic (WireGuard-observed) and stamps it onto non-compliant SDK requests (reverse proxy). It bridges the gap between a bare SDK call and what the provider API requires.
+The shape system replays a captured `mitmproxy.http.HTTPFlow` (a real, known-good request from the target SDK) onto outbound flows that lack the provider's identity envelope. It bridges the gap between a bare SDK call and what the provider API requires for identity verification.
 
 **What gets stamped:**
-- Missing headers (e.g. `anthropic-beta`, `anthropic-version`, `user-agent`)
-- Body envelope fields (e.g. `metadata`, `user_prompt_id`)
-- System prompt (prepended as content blocks, only if absent or a plain string)
-- Body wrapping (e.g. cloudcode-pa's `{model: X, request: {<body>}}` pattern)
-- Session metadata (synthesized `device_id` + `account_uuid` + fresh `session_id`)
 
-### Capturing a shaping profile
+- Identity headers (e.g. `anthropic-beta`, `anthropic-version`, `user-agent`, `x-stainless-*`)
+- Anthropic billing header (re-signed per request via the `regenerate_billing_header` shape inner-DAG hook)
+- Body envelope fields (e.g. `metadata`, `user_prompt_id`) — regenerated per request
+- System prompt (per `merge_strategies.system`, e.g. `prepend_shape:2` keeps the first 2 shape blocks then appends incoming)
+- Cache breakpoint normalization (caching hooks strip excess `cache_control` and re-insert one at the optimal position)
+
+For Gemini, the cloudcode-pa body wrapping (`{model, project, request: {...}}`) is applied by the separate `gemini_cli` outbound hook, not by shape replay.
+
+### Capturing a shape
 
 1. Start ccproxy: `just up` (or `ccproxy start`)
-2. Run a CLI tool through WireGuard:
+2. Run the target CLI through WireGuard so a real, valid flow is captured:
+
    ```bash
-   ccproxy run --inspect -- claude
+   ccproxy run --inspect -- claude -p "shape capture"
    ```
-3. Make at least 3 requests (configurable via `shaping.min_observations`)
-4. Check progress:
+
+3. Capture the most recent matching flow as the provider's shape:
+
    ```bash
-   uv run python scripts/shaping_status.py --shape-status
+   ccproxy flows shape --provider anthropic
    ```
-5. Once finalized, the profile is persisted to `{config_dir}/shaping_profiles.json` and immediately active for reverse proxy flows
+
+4. The shape is persisted as `~/.config/ccproxy/shaping/shapes/anthropic.mflow` and immediately active for reverse proxy and OAuth-injected flows.
+
+Re-capture whenever the target CLI version changes — Anthropic identity headers and the system prompt prefix evolve with releases.
 
 ### How it fires
 
-The `apply_shaping` outbound hook only fires when:
-1. The flow came through the **reverse proxy** (not WireGuard)
-2. The flow has a `TransformMeta` (matched a transform/redirect rule)
+The `shape` outbound hook only fires when:
 
-WireGuard flows are reference traffic (observed, not modified). Reverse proxy flows are consumers (modified, not observed).
-
-### Anthropic v0 shape
-
-On first startup, an initial shape is created from hardcoded constants (`anthropic-beta` headers, system prompt prefix). It provides baseline shaping before any real observations. It is superseded once a learned profile finalizes (the store returns the most recently updated profile).
-
-Check shape status: `uv run python scripts/shaping_status.py --shape-status`
+1. The flow came through the **reverse proxy** OR has the `ccproxy.oauth_injected` flag (so WireGuard passthrough flows aren't reshaped)
+2. The flow has a `TransformMeta` (matched a transform/redirect rule, or sentinel-key resolved to a Provider)
 
 ### Configuration
 
 ```yaml
 shaping:
-  enabled: true           # master switch
-  min_observations: 3     # observations before finalization
-  reference_user_agents: []  # extra UA patterns for observation
-  seed_anthropic: true    # bootstrap Anthropic v0 shape
+  enabled: true                                       # master switch
+  shapes_dir: ~/.config/ccproxy/shaping/shapes        # where .mflow files live
+  providers:
+    anthropic:
+      content_fields: [model, messages, tools, system, max_tokens, ...]
+      merge_strategies:
+        system: "prepend_shape:2"                     # keep first 2 shape system blocks
+      shape_hooks:
+        - ccproxy.shaping.regenerate                  # re-roll user_prompt_id, session_id, billing
+        - hook: ccproxy.shaping.caching.strip
+          params:
+            paths: ["system.*.cache_control"]
+        - hook: ccproxy.shaping.caching.insert
+          params:
+            path: "system.-1.cache_control"
+            value: {type: ephemeral}
+      preserve_headers: [authorization, x-api-key, x-goog-api-key, host]
+      strip_headers: [authorization, x-api-key, x-goog-api-key, content-length, host, transfer-encoding, connection]
+      capture:
+        path_pattern: "^/v1/messages"
+      billing:
+        salt: "${CCPROXY_BILLING_SALT}"               # required for Anthropic
+        seed: "${CCPROXY_BILLING_SEED}"
 ```
+
+See [`docs/shaping.md`](../../docs/shaping.md) for the canonical reference.
 
 ## Diagnosing flow issues
 
@@ -225,31 +241,33 @@ shaping:
 Problem?
 │
 ├─ Provider returns auth errors (401/403)
-│  ▶ Check: ccproxy flows dump <id> | jq '.log.entries[0].request.headers' — is Authorization header present?
-│  ▶ Check: x-ccproxy-oauth-injected header — did forward_oauth run?
-│  ▶ Check: providers[name].auth — is the token source valid?
-│  ▶ Check: sentinel key format — sk-ant-oat-ccproxy-{provider}
+│  ▶ Check: ccproxy flows compare --jq 'map(.[-1])' — what auth header reached upstream?
+│  ▶ Check: ccproxy.oauth_injected metadata / x-ccproxy-oauth-injected — did forward_oauth run?
+│  ▶ Check: providers[name].auth — does the token source resolve manually?
+│  ▶ Check: sentinel key format — sk-ant-oat-ccproxy-{provider} matches a providers entry
+│  ▶ Check: ccproxy logs -f | grep -E 'OAuth|refresh' — did OAuthAddon attempt a refresh+replay?
 │
 ├─ Request not being transformed
 │  ▶ Check: ccproxy flows list — is the flow captured?
-│  ▶ Check: transform rules — does match_host/match_path/match_model match?
-│  ▶ Check: ccproxy flows dump <id> | jq '.log.entries[1].request.url' — what did the client send (pre-pipeline)?
+│  ▶ Check: inspector.transforms rules — does match_host/match_path/match_model match?
+│  ▶ Check: ccproxy flows compare --jq 'map(.[-1])' — what URL changes were applied?
 │
-├─ Shaping not applying
-│  ▶ Check: shaping_status.py — is a profile finalized?
-│  ▶ Check: flow mode — is it a reverse proxy flow? (not WireGuard)
-│  ▶ Check: TransformMeta — did the flow match a transform rule?
-│  ▶ Check: ua_hint — does the gemini_cli hook's hardcoded UA match the profile? See ccproxy/hooks/gemini_cli.py for the literal value.
+├─ Shape not applying (Anthropic 401/400)
+│  ▶ Check: ls ~/.config/ccproxy/shaping/shapes/anthropic.mflow — does the shape file exist?
+│  ▶ Check: ccproxy logs -f | grep -E 'shape|Applied' — did the shape hook fire?
+│  ▶ Check: flow mode — reverse proxy or oauth-injected? (shape_guard skips raw WireGuard)
+│  ▶ Check: TransformMeta — did the flow match a transform/redirect rule (or sentinel-key resolve)?
+│  ▶ Check: ccproxy.yaml — is the `shape` hook in `hooks.outbound`?
 │
 ├─ Body format wrong / API rejection
-│  ▶ Run: inspect_flow.py <id> --json — compare client vs forwarded body
-│  ▶ Check: transform mode — is it "transform" (full rewrite) or "redirect" (passthrough body)?
-│  ▶ Check: body_wrapper — is shaping wrapping when it shouldn't (or not wrapping when it should)?
+│  ▶ Run: ccproxy flows compare --jq 'map(.[-1])' — see client vs forwarded body diff
+│  ▶ Check: transform mode — "transform" (full rewrite via lightllm) vs "redirect" (preserve body)
+│  ▶ Check: gemini_cli hook — for cloudcode-pa flows, did the body get wrapped in {model, project, request}?
 │
 └─ System prompt issues
-   ▶ Check: inspect_flow.py <id> — was system prompt injected?
-   ▶ Check: client system format — list (skip) vs string (prepend) vs absent (set)
-   ▶ Check: shaping_status.py --provider X — what system prompt is in the profile?
+   ▶ Run: ccproxy flows compare --jq 'map(.[-1])' — was the shape's system block prepended?
+   ▶ Check: merge_strategies.system in shaping config — usually `prepend_shape:N`
+   ▶ Check: client system format — list of blocks vs string vs absent (affects merging)
 ```
 
 ## Reference files

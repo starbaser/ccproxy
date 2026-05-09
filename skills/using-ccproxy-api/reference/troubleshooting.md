@@ -26,91 +26,80 @@ ccproxy logs -f
 # 3. Verify config
 cat $CCPROXY_CONFIG_DIR/ccproxy.yaml   # or: cat ~/.config/ccproxy/ccproxy.yaml
 
-# 4. Test OAuth command manually
+# 4. Test the providers[name].auth source manually (example for command-typed Anthropic)
 jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json
-# Should output a token starting with "sk-ant-oat"
+# Should output a token
 
-# 5. Check shaping profile status
-uv run python scripts/shaping_status.py  # from ccproxy project root
+# 5. Inspect the most recent flow's pipeline-applied transformations
+ccproxy flows list
+ccproxy flows compare --jq 'map(.[-1])'   # client-vs-forwarded for the latest flow
 ```
 
 ---
 
 ## Error: "This credential is only authorized for use with Claude Code"
 
-**Cause**: Anthropic's API validates that OAuth tokens are only used by Claude Code. It checks that the system message starts with "You are Claude Code, Anthropic's official CLI for Claude."
+**Cause**: Anthropic's API checks that the system message starts with the Claude Code preamble. ccproxy supplies that preamble through shape replay — if there's no captured shape (or the shape is from an outdated CLI release), the preamble is missing and Anthropic rejects the request.
 
 **Resolution**:
 
-1. Check shaping profile status — the system prompt should be learned and stamped:
+1. Confirm a shape file exists:
+
    ```bash
-   uv run python scripts/shaping_status.py --provider anthropic
-   # Verify has_system: true
+   ls -la ~/.config/ccproxy/shaping/shapes/anthropic.mflow
    ```
 
-2. If no learned profile exists yet, check if the v0 shape is active:
+2. Capture (or refresh) a shape from a real Claude CLI run:
+
    ```bash
-   uv run python scripts/shaping_status.py --shape-status
+   ccproxy run --inspect -- claude -p "shape capture"
+   ccproxy flows shape --provider anthropic
    ```
-   The shape provides the system prompt prefix. If it's missing, verify `shaping.seed_anthropic: true` in config.
 
-3. If a profile exists but the system prompt isn't being stamped, check the `apply_shaping` hook:
-   - Is it in the `outbound` hooks list?
-   - Does the flow have a `TransformMeta`? (requires a matching transform rule)
-   - Is the flow coming through reverse proxy? (shaping only fires on reverse proxy, not WireGuard)
+3. Verify the `shape` hook is in `hooks.outbound` in your `ccproxy.yaml`. Without it the shape is never replayed.
 
-4. If the client sends a `list`-type system prompt (structured content blocks), shaping **skips** system injection — it assumes the client manages its own identity. Send `system` as a string or omit it.
+4. Verify the flow has a `TransformMeta` (i.e. matched a transform/redirect rule or resolved via sentinel-key). The `shape_guard` skips flows without a transform.
 
-5. To capture a fresh profile from real CLI traffic:
-   ```bash
-   ccproxy run --inspect -- claude
-   # Make 3+ requests, then check:
-   uv run python scripts/shaping_status.py --shape-status
-   ```
+5. If the client sends a `list`-typed system prompt with its own content blocks, your `merge_strategies.system` controls how the shape's preamble is combined (`prepend_shape:N` is the canonical setting — see [`docs/shaping.md`](../../../docs/shaping.md)).
 
 ---
 
 ## Error: "OAuth is not supported" or "invalid x-api-key"
 
-**Cause**: Anthropic's API requires `anthropic-beta: oauth-2025-04-20` to accept OAuth Bearer tokens. Without it, the API rejects the OAuth token.
+**Cause**: Anthropic's API requires `anthropic-beta: oauth-2025-04-20` to accept OAuth Bearer tokens. That header is supplied by the captured Anthropic shape — if the shape is missing or stale, the header isn't stamped.
 
 **Resolution**:
 
-1. Check shaping profile headers:
-   ```bash
-   uv run python scripts/shaping_status.py --provider anthropic
-   # Verify anthropic-beta header is in the profile
-   ```
+1. Verify a shape exists and is recent — see steps under the previous error.
+2. Inspect the forwarded request to see what headers actually went upstream:
 
-2. The v0 shape includes `anthropic-beta` with all required values. If it's not applying:
-   - Verify `apply_shaping` is in `hooks.outbound`
-   - Verify `shaping.enabled: true`
-   - Verify `shaping.seed_anthropic: true`
-
-3. Inspect the forwarded request to see what headers are actually being sent:
    ```bash
    ccproxy flows list
-   ccproxy flows dump <flow-id> | jq '.log.entries[0].request.headers'    # Check for anthropic-beta header
+   ccproxy flows dump --jq 'map(.[-1])' | jq '.log.entries[0].request.headers'
    ```
 
-4. Compare client vs forwarded to see if shaping stamped headers:
+3. Compare client-vs-forwarded to confirm the shape ran:
+
    ```bash
-   uv run python scripts/inspect_flow.py <flow-id>
+   ccproxy flows compare --jq 'map(.[-1])'
    ```
+
+   The "Body diff" section should show identity headers added on the forwarded side that the client never sent.
 
 ---
 
 ## Error: 401 Unauthorized / token errors
 
-Multiple causes — work through in order:
+Multiple causes — work through in order.
 
 ### Token expired
 
-OAuth tokens from `~/.claude/.credentials.json` expire.
+OAuth tokens from `~/.claude/.credentials.json` expire. With `type: anthropic_oauth` (recommended), ccproxy refreshes them automatically. With `type: command`, it just reads whatever's on disk.
 
 ```bash
-# Check token age — is Claude Code signed in?
-ls -la ~/.claude/.credentials.json
+# Check token freshness
+jq -r '.claudeAiOauth.expiresAt' ~/.claude/.credentials.json   # millis since epoch
+# Compare with: date +%s%3N
 
 # Test the providers[name].auth command manually
 jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json
@@ -120,7 +109,7 @@ jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json
 claude
 ```
 
-ccproxy auto-refreshes on 401: `InspectorAddon.response()` detects HTTP 401 with `x-ccproxy-oauth-injected: 1`, calls `refresh_oauth_token(provider)`, and retries with the new token if it changed.
+ccproxy auto-retries on 401: `OAuthAddon.response()` detects HTTP 401 on flows where `forward_oauth` injected an OAuth token (`flow.metadata["ccproxy.oauth_injected"]`), calls `config.resolve_oauth_token(provider)`, and replays the request with whatever the resolver returns.
 
 ### Wrong sentinel key provider name
 
@@ -141,11 +130,12 @@ providers:
 ```
 
 Using `sk-ant-oat-ccproxy-claude` when the providers entry is named `anthropic` raises a fatal `OAuthConfigError`:
+
 ```
 OAuthConfigError: Sentinel key for provider 'claude' but no matching providers entry. Add 'providers.claude' to ccproxy.yaml.
 ```
 
-### providers[name].auth command failing
+### providers[name].auth source failing
 
 ```bash
 # Copy your providers[name].auth.command from ccproxy.yaml and run it directly:
@@ -159,15 +149,24 @@ jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json
 # - Command returns empty string or null
 ```
 
+For OAuth sources (`anthropic_oauth`, `google_oauth`), the refresh round-trip is logged. Tail logs while reproducing:
+
+```bash
+ccproxy logs -f | grep -E 'OAuth|refresh'
+```
+
 ### Auth header injection
 
 `forward_oauth` injects auth via the configured header:
+
 - Default: `Authorization: Bearer {token}`
 - If `providers.{provider}.auth.header` is set: uses that header name with raw token value (e.g. `x-api-key: {token}`)
 
 Check the forwarded request headers:
+
 ```bash
-ccproxy flows dump <flow-id> | jq '.log.entries[0].request.headers'
+ccproxy flows list
+ccproxy flows dump --jq 'map(.[-1])' | jq '.log.entries[0].request.headers'
 # Verify Authorization or x-api-key header is present and non-empty
 ```
 
@@ -192,27 +191,31 @@ ccproxy logs -n 30
 ```
 
 Common causes:
+
 - ccproxy not started
 - Port already in use (check for another ccproxy instance or stale process)
 - Startup failure in mitmproxy (check logs for import errors or port conflicts)
+- Startup readiness probe failed (`inspector.readiness.url` defaults to `https://1.1.1.1/`; set to `null` to skip in air-gapped environments)
 
 ---
 
 ## General diagnostics
 
-With `debug: true` in `ccproxy.yaml`, logs show each hook's execution:
+With `log_level: DEBUG` in `ccproxy.yaml`, logs show each hook's execution and the OAuth/Gemini addon decisions:
 
 ```
 ccproxy.pipeline:DEBUG: Executing hook forward_oauth
-ccproxy.hooks:INFO: Forwarding request with OAuth for provider 'anthropic'
-ccproxy.pipeline:DEBUG: Executing hook apply_shaping
-ccproxy.shaping:INFO: Shaping: added header anthropic-beta
+ccproxy.hooks.forward_oauth:INFO: OAuth token injected for provider 'anthropic' (sentinel)
+ccproxy.pipeline:DEBUG: Executing hook shape
+ccproxy.hooks.shape:INFO: Applied shape from <shape-id> for provider anthropic
+ccproxy.inspector.oauth_addon:INFO: OAuth 401 for provider 'anthropic' — token refreshed, retrying request
 ```
 
 If a hook is not firing:
-- Check that it's in the `hooks.inbound` or `hooks.outbound` list
-- Check the guard condition (e.g. `apply_shaping` requires `ReverseMode` + `TransformMeta`)
-- Check per-request overrides via `x-ccproxy-hooks` header
+
+- Check that it's in the `hooks.inbound` or `hooks.outbound` list in `ccproxy.yaml`
+- Check the guard condition — e.g. `shape_guard` requires `ReverseMode` *or* `ccproxy.oauth_injected`, plus a `TransformMeta` on the record
+- Check per-request overrides via the `x-ccproxy-hooks` header (`+hook,-other`)
 
 ### Verify transform routing
 
@@ -220,15 +223,15 @@ If a hook is not firing:
 # List recent flows to see if they're being matched
 ccproxy flows list
 
-# Check if a flow was transformed
-ccproxy flows dump <id> | jq '.log.entries[1].request.url'   # Pre-pipeline URL
-ccproxy flows dump <id> | jq '.log.entries[0].request.url'   # Post-pipeline URL (should differ if transformed)
+# Compare client vs forwarded for the latest flow
+ccproxy flows compare --jq 'map(.[-1])'
 ```
 
 If transforms are configured but not matching, check:
-- `match_host` — matches against `pretty_host`, `Host` header, `X-Forwarded-Host`
-- `match_path` — prefix match (must start with the same path)
-- `match_model` — substring match on the `model` field in the JSON body
+
+- `match_host` — regex matched against `pretty_host`, `Host` header, `X-Forwarded-Host`
+- `match_path` — regex matched against the request path (default `.*`)
+- `match_model` — regex matched against `glom(body, "model")`
 - Rule order — first match wins
 
 ### Inspect the mitmweb UI
@@ -236,7 +239,8 @@ If transforms are configured but not matching, check:
 The inspector UI runs at `http://127.0.0.1:{inspector.port}/?token={web_token}`. The URL with token is printed to logs on startup.
 
 - Select a flow to see full request/response headers and body
-- Switch to "Client-Request" content view to see the pre-pipeline snapshot
+- Switch to the "Client-Request" content view to see the pre-pipeline snapshot
+- Switch to the "Provider-Response" content view to see the raw upstream response (pre-unwrap for Gemini)
 - Filter flows by host, path, or response code
 
 ---
@@ -245,20 +249,23 @@ The inspector UI runs at `http://127.0.0.1:{inspector.port}/?token={web_token}`.
 
 ### api.anthropic.com
 
-- Requires `anthropic-beta` headers including `oauth-2025-04-20` for OAuth
-- Requires "You are Claude Code" system prompt prefix for OAuth tokens
-- Both are handled automatically by the shaping system (initial shape or learned profile)
+- Requires `anthropic-beta` headers including `oauth-2025-04-20` for OAuth — supplied via shape replay
+- Requires the "You are Claude Code" system prompt prefix for OAuth tokens — supplied via shape replay (`merge_strategies.system: prepend_shape:N`)
+- Requires a fresh, signed `x-anthropic-billing-header` — re-signed per-request by the `regenerate_billing_header` shape inner-DAG hook (needs the salt + seed configured under `shaping.providers.anthropic.billing`)
+- Both the shape itself and the billing constants must be set up — see [`docs/shaping.md`](../../../docs/shaping.md)
 - OAuth tokens have `sk-ant-oat` prefix
-- On 401: ccproxy auto-refreshes and retries once
+- On 401: `OAuthAddon` re-resolves and retries automatically
 
 ### Google (Gemini / cloudcode-pa)
 
-- cloudcode-pa flows use a body wrapper: `{model: X, request: {<body>}}` — handled by shaping `body_wrapper`
+- cloudcode-pa flows are wrapped in the `v1internal` envelope by the `gemini_cli` outbound hook (not by shaping)
+- Recommended auth is `type: google_oauth` so ccproxy owns refresh — `prewarm_project()` (which resolves the `cloudaicompanionProject`) needs a fresh token at startup; with `type: command` an expired token at startup means every Gemini request omits the `project` field
 - Gemini OAuth tokens (`ya29.*`) flow as `Authorization: Bearer`; raw API keys (`AIza*`) can override via `providers.gemini.auth.header: "x-goog-api-key"`
-- `providers.gemini.host` is a single destination (e.g. `cloudcode-pa.googleapis.com`); register a separate provider entry for `generativelanguage.googleapis.com` if you need to route both
+- On 429/503 with `RESOURCE_EXHAUSTED` or `INTERNAL`, `GeminiAddon` runs the capacity-fallback chain — sticky retry on the original model, then walk `gemini_capacity.fallback_models`. See `gemini_capacity` in `ccproxy.yaml`.
+- See [`docs/gemini.md`](../../../docs/gemini.md) for the full Gemini routing reference
 
 ### Other providers
 
-- Shaping profiles are per-provider — each provider's contract is learned independently
-- Provider resolution is sentinel-driven: `forward_oauth` parses the `sk-ant-oat-ccproxy-{name}` suffix and looks up `providers[name]`; with no sentinel it walks `config.providers` in dict order and falls back to the first entry with a cached token. The route handler then chooses `redirect` vs `transform` based on whether the incoming format matches the destination's `provider` field. `inspector.provider_map` is unrelated — it maps hostnames to OTel `gen_ai.system` attributes.
-- Transform rules handle cross-provider format conversion via lightllm
+- Each provider entry binds an auth source, a single destination (`host` + `path`), and a LiteLLM `provider` identifier (drives format dispatch)
+- Provider resolution is sentinel-driven: `forward_oauth` parses the `sk-ant-oat-ccproxy-{name}` suffix and looks up `providers[name]`. With no sentinel it walks `config.providers` in dict insertion order and falls back to the first entry with a cached token. The transform handler then chooses `redirect` vs `transform` based on whether the incoming format matches the destination's `provider` field. (`inspector.provider_map` is unrelated — it maps hostnames to OTel `gen_ai.system` attributes for span attribution only.)
+- Cross-provider format conversion happens via `lightllm` when `inspector.transforms` rule matches (or when sentinel-resolved Provider's `provider` field differs from the incoming format)

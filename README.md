@@ -89,7 +89,12 @@ flowchart TD
 ```
 
 **Addon chain** (fixed order):
-`ReadySignal → InspectorAddon → inbound DAG → transform → outbound DAG`
+`ReadySignal → InspectorAddon → MultiHARSaver → ShapeCapturer → inbound DAG → transform → outbound DAG → OAuthAddon → GeminiAddon`
+
+`OAuthAddon` and `GeminiAddon` sit after the outbound pipeline so they see
+ccproxy-finalized requests/responses. `OAuthAddon` owns 401-detect → refresh →
+replay. `GeminiAddon` owns Gemini capacity fallback (sticky retry + fallback
+chain on 429/503) and cloudcode-pa envelope unwrapping.
 
 **lightllm** invokes LiteLLM’s `BaseConfig` transformation pipeline directly —
 URL rewriting, auth signing, request/response format conversion — without the
@@ -492,9 +497,14 @@ Verify your token command works standalone:
 jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json
 ```
 
-Tokens are refreshed automatically (TTL-based every 30 min, immediate on 401).
-Fix your `providers` entries and restart `ccproxy start` if tokens were stale
-at startup.
+OAuth-source providers (`anthropic_oauth`, `google_oauth`) refresh in-process
+via `AuthSource.resolve()` whenever the cached access token is within 60s of
+expiry — this fires at startup (`_load_credentials()`) and on each header
+injection. On a 401 from upstream, `OAuthAddon` re-resolves the credential
+source and replays the request with the new token. Static `command` / `file`
+loaders have no refresh capability — they read whatever's on disk every time
+and rely on whichever secret manager owns rotation. Fix your `providers`
+entries and restart `ccproxy start` if static tokens were stale at startup.
 
 ### TLS certificate errors in `ccproxy run`
 

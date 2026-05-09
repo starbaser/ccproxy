@@ -239,8 +239,8 @@ See [reference/routing-and-config.md](reference/routing-and-config.md) for trans
 **OAuth mode** (subscription accounts -- Claude Max, Team, Enterprise):
 1. Client sends sentinel key `sk-ant-oat-ccproxy-{provider}` as API key
 2. `forward_oauth` hook detects sentinel prefix, looks up real token from `providers[name].auth`
-3. `apply_shaping` hook stamps learned headers (`anthropic-beta`, `anthropic-version`), system prompt, and body envelope fields from a shaping profile
-4. Request reaches provider API with valid OAuth Bearer token and full shaping contract
+3. `shape` hook replays a captured `{provider}.mflow` shape: strips configured headers, injects `content_fields` from the incoming request, runs shape inner-DAG hooks (UUID regeneration, Anthropic billing-header re-signing, cache breakpoint normalization), stamps the result onto the outbound flow
+4. Request reaches provider API with valid OAuth Bearer token and full identity envelope (user-agent, anthropic-beta, x-stainless-*, billing header, system prompt prefix)
 
 **API key mode** (direct API keys):
 1. Client sends real API key via `x-api-key` or `Authorization` header
@@ -264,24 +264,35 @@ hooks:
     - ccproxy.hooks.forward_oauth
     - ccproxy.hooks.extract_session_id
   outbound:
+    - ccproxy.hooks.gemini_cli
     - ccproxy.hooks.inject_mcp_notifications
     - ccproxy.hooks.verbose_mode
-    - ccproxy.hooks.apply_shaping
+    - ccproxy.hooks.shape
+    - ccproxy.hooks.commitbee_compat
 ```
 
-- `forward_oauth` -- substitutes sentinel key with real token, sets `Authorization: Bearer {token}`, clears `x-api-key`
+- `forward_oauth` -- substitutes sentinel key with real token, sets `Authorization: Bearer {token}` (or the custom `auth.header`), clears other auth headers
 - `extract_session_id` -- parses `metadata.user_id` for MCP notification routing
+- `gemini_cli` -- wraps Gemini sentinel-key bodies in the `v1internal` envelope, conditionally masquerades `google-genai-sdk/*` UAs, rewrites paths to `cloudcode-pa.googleapis.com`
 - `inject_mcp_notifications` -- injects buffered MCP terminal events as tool_use/tool_result pairs
 - `verbose_mode` -- strips `redact-thinking-*` from `anthropic-beta` to enable full thinking output
-- `apply_shaping` -- stamps learned shaping headers, body fields, and system prompt
+- `shape` -- replays a captured shape (`{provider}.mflow`) onto the outbound flow, stamping identity headers, billing header, and system prompt prefix
+- `commitbee_compat` -- last-mile compatibility shim for the commitbee tool
 
-### Shaping-based headers and identity
+`OAuthAddon` and `GeminiAddon` are full mitmproxy addons (not pipeline hooks) registered after the outbound stage: `OAuthAddon` handles 401 detection / refresh / replay; `GeminiAddon` handles capacity fallback + cloudcode-pa envelope unwrap.
 
-Instead of explicit hooks for beta headers and identity injection, ccproxy uses a **shaping learning system**. It passively observes legitimate CLI traffic (via WireGuard) and learns the exact headers, body fields, and system prompt that constitute a compliant request. This learned profile is then stamped onto SDK requests by `apply_shaping`.
+### Shape replay -- where identity comes from
 
-The shaping system automatically handles `anthropic-beta`, `anthropic-version`, system prompt injection, and body envelope fields. An Anthropic v0 shape provides baseline coverage on first startup before any real traffic is observed.
+ccproxy does **not** synthesize Claude Code identity headers in code. Anthropic-bound traffic depends on a captured shape: a real `mitmproxy.http.HTTPFlow` from the Claude CLI persisted as `~/.config/ccproxy/shaping/shapes/anthropic.mflow`. The `shape` hook replays it on every outbound flow, providing user-agent, anthropic-beta, x-stainless-*, the signed `x-anthropic-billing-header`, and the system prompt prefix.
 
-See the `using-ccproxy-inspector` skill for details on capturing and inspecting shaping profiles.
+If no shape exists for the `anthropic` provider -- or if the captured shape is from an outdated Claude CLI release -- Anthropic will reject the request with 401/400. Capture (or refresh) the shape with:
+
+```bash
+ccproxy run --inspect -- claude -p "shape capture"
+ccproxy flows shape --provider anthropic
+```
+
+See [`docs/shaping.md`](../../docs/shaping.md) for the canonical reference (capture workflow, shape inner-DAG hooks, billing salt configuration, custom hooks).
 
 ## Quick start
 
@@ -320,7 +331,7 @@ response = client.messages.create(
 )
 ```
 
-No extra headers needed -- the shaping system handles `anthropic-beta`, `anthropic-version`, and system prompt injection automatically.
+No extra headers needed -- the `shape` hook replays the captured Anthropic shape, supplying `anthropic-beta`, `anthropic-version`, the signed billing header, and the system prompt prefix automatically.
 
 Streaming:
 ```python
@@ -429,10 +440,10 @@ Authentication failures are the most common issue. Follow this decision tree:
 Error message?
 │
 ├─ "This credential is only authorized for use with Claude Code"
-│  ▶ See: Missing shaping profile (system prompt not injected)
+│  ▶ See: Missing or stale captured shape (system prompt prefix not stamped)
 │
 ├─ "OAuth is not supported" / "invalid x-api-key"
-│  ▶ See: Missing shaping headers (anthropic-beta not stamped)
+│  ▶ See: Missing or stale captured shape (anthropic-beta not stamped)
 │
 ├─ 401 Unauthorized / token errors
 │  ▶ See: Token issues
@@ -457,13 +468,9 @@ ccproxy logs -n 50          # Last 50 lines
 
 ## Known limitations (upstream flake issues)
 
-1. **`nix/defaults.nix` uses `min_observations: 1`** — permissive for dev; production configs should set `min_observations: 3`+.
-2. **`shaping.seed_anthropic` not in `defaults.nix`** — must be set explicitly in consumer configs; not inherited from defaults.
-3. **`devConfig` overwrites `inspector` atomically** — top-level `//` merge on `inspector` drops sub-keys not re-specified (e.g. `debug`). Deep merge each nested attrset explicitly: `defaults.inspector // { ... }`.
-4. **`supportedSystems` limited** — only `x86_64-linux` and `aarch64-linux`; `aarch64-darwin` not supported.
-5. ~~**`shellHook` doesn't quote `configDir`**~~ — fixed.
-6. ~~**`CCPROXY_PORT` env var duplicated YAML port**~~ — fixed.
-7. ~~**`defaultSettings` only accessible via per-system `lib`**~~ — fixed; now top-level at `ccproxy.defaultSettings`.
+1. **Captured shape required for Anthropic** — there is no synthetic-identity fallback. If `~/.config/ccproxy/shaping/shapes/anthropic.mflow` is missing or from an outdated Claude CLI release, requests fail with 401/400. Capture via `ccproxy flows shape --provider anthropic`.
+2. **`devConfig` overwrites `inspector` atomically** — top-level `//` merge on `inspector` drops sub-keys not re-specified. Deep merge each nested attrset explicitly: `defaults.inspector // { ... }`.
+3. **`supportedSystems` limited** — only `x86_64-linux` and `aarch64-linux`; `aarch64-darwin` not supported.
 
 ## Reference files
 

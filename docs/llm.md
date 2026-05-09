@@ -2,11 +2,9 @@
 
 Reference for surgically extracting LiteLLM's provider-to-provider request/response transformation system and importing it as a standalone layer inside ccproxy's inspector routing, leaving behind cost tracking, proxy server, router, callbacks, caching, budgets, and metadata bookkeeping.
 
-All source paths below are relative to:
-
-```
-/home/eigenmage/dev/projects/ccproxy/.kitstore/sources/litellm/litellm/
-```
+All source paths below are relative to LiteLLM's package root
+(`<litellm-source-root>/`). Provision a checkout via kitstore
+(`mcp__kitstore__add` for `litellm`) to browse the referenced files locally.
 
 ---
 

@@ -49,7 +49,7 @@ All configuration lives in a single file: `~/.config/ccproxy/ccproxy.yaml` (or `
 ccproxy:
   host: 127.0.0.1
   port: 4000
-  debug: true
+  log_level: INFO
 
   providers:
     anthropic:
@@ -193,7 +193,7 @@ Provider fields:
 
 ### Token refresh
 
-On HTTP 401 with `x-ccproxy-oauth-injected: 1`, the inspector addon calls `refresh_oauth_token(provider)` to re-resolve the credential source. If the token changed, the request is retried with the fresh token. If unchanged, the error propagates (credential is truly stale).
+OAuth-source providers (`anthropic_oauth`, `google_oauth`) refresh in-process via `AuthSource.resolve()` whenever the cached access token is within 60s of expiry — at startup (`_load_credentials()`) and on each header injection. On a 401 from upstream, `OAuthAddon.response()` calls `config.resolve_oauth_token(provider)` to re-resolve the credential source and replays the request with whatever token the resolver returns. Static `command` / `file` loaders have no refresh capability and rely on whichever secret manager owns rotation.
 
 ### Provider resolution
 

@@ -134,8 +134,8 @@ uv run python docs/sdk/zai_anthropic_sdk.py
 
 **Features:**
 - Routes through ccproxy at `http://127.0.0.1:4000`
-- Model: `glm-4.7` (defined in ~/.config/ccproxy/config.yaml)
-- Dummy API key - ccproxy handles real authentication
+- Model: `glm-4.7` (resolved via `providers.zai` in `~/.config/ccproxy/ccproxy.yaml`)
+- Sentinel API key — ccproxy substitutes the real auth token via `forward_oauth`
 
 ---
 

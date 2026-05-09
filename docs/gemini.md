@@ -67,19 +67,29 @@ key, no sentinel) is not touched.
 ### Project resolution
 
 The `project` field is the user's Cloud AI Companion project ID. Resolved once
-per process via `POST /v1internal:loadCodeAssist` and cached. On 401, refreshes
-the OAuth token and retries.
+per process by `prewarm_project()` via `POST /v1internal:loadCodeAssist` and
+cached. The hook itself does not retry on 401 — it just logs a warning and
+omits the `project` field from subsequent requests. Token freshness is the
+job of `_load_credentials()` at startup: when the Gemini provider uses
+`type: google_oauth`, the cached access token is refreshed (atomic write-back
+to `~/.gemini/oauth_creds.json`) before `prewarm_project()` runs. With
+`type: command`, no refresh happens — see configuration.md "Why Gemini wants
+google_oauth".
 
 ### Response unwrapping
 
 cloudcode-pa returns `{"response": {"candidates": [...]}}`. Standard Gemini SDK
-clients expect `{"candidates": [...]}` at the top level. The addon's response
-phase unwraps the envelope:
+clients expect `{"candidates": [...]}` at the top level. `GeminiAddon` owns the
+response-side unwrap:
 
-- **Buffered responses** — `_unwrap_gemini_response` in `inspector/addon.py` strips
-  the outer `response` field.
-- **Streaming responses** — `EnvelopeUnwrapStream` (in `hooks/gemini_cli.py`) is
-  installed as `flow.response.stream` and unwraps each SSE chunk.
+- **Buffered responses** — `unwrap_buffered()` in `hooks/gemini_envelope.py`
+  strips the outer `response` field. Called from `GeminiAddon.response`.
+- **Streaming responses** — `EnvelopeUnwrapStream` (also in
+  `hooks/gemini_envelope.py`) is installed as `flow.response.stream` by
+  `GeminiAddon.responseheaders` and unwraps each SSE chunk.
+
+Both surfaces share the same primitive — the file is the single source of
+truth for "strip the cloudcode-pa envelope."
 
 ## Three client scenarios
 
@@ -132,23 +142,54 @@ layers, each owning one transformation.
 
 ## Authentication
 
-`providers.gemini.auth` resolves the OAuth token from
-`~/.gemini/oauth_creds.json`:
+The recommended setup is `type: google_oauth` so ccproxy owns the in-process
+refresh lifecycle (60s expiry headroom + atomic write-back). `prewarm_project()`
+runs after `_load_credentials()` and depends on a fresh token to call
+`loadCodeAssist`; with a static `command`/`file` source, an expired token at
+startup means the `project` field is silently omitted from every Gemini request.
 
 ```yaml
 providers:
   gemini:
     auth:
-      type: command
-      command: "jq -r '.access_token' ~/.gemini/oauth_creds.json"
+      type: google_oauth
+      file_path: ~/.gemini/oauth_creds.json
+      client_id: <gemini-cli installed-app client_id>
+      client_secret: <gemini-cli installed-app client_secret>
+      header: authorization
     host: cloudcode-pa.googleapis.com
     path: "/v1internal:{action}"
     provider: gemini
 ```
 
+The `client_id` / `client_secret` are public installed-app values embedded in
+the gemini-cli npm distribution — ccproxy does not vendor them; supply them in
+your config.
+
 `forward_oauth` substitutes the sentinel key with the resolved token and stamps
 `flow.metadata["ccproxy.oauth_provider"] = "gemini"` so the `gemini_cli` hook
-fires. On 401, the addon retries once after refreshing the token.
+fires. On a 401 from upstream, `OAuthAddon` (not the gemini_cli hook itself)
+re-resolves the credential source via `config.resolve_oauth_token("gemini")`
+and replays the request.
+
+## Capacity fallback (GeminiAddon)
+
+`GeminiAddon` orchestrates Gemini-specific capacity handling for any flow
+flagged with `flow.metadata["ccproxy.oauth_provider"] == "gemini"`. On a
+429/503 carrying `RESOURCE_EXHAUSTED` or `INTERNAL` status, it sticky-retries
+the original model up to `sticky_retry_attempts` times (honouring
+`RetryInfo.retryDelay` per attempt, capped by
+`sticky_retry_max_delay_seconds`), then walks `gemini_capacity.fallback_models`
+in order. The whole chain is bounded by `total_retry_budget_seconds`.
+
+Streaming flows defer their `EnvelopeUnwrapStream` install when the response
+status is in `retry_status_codes` and fallback is enabled — that lets
+mitmproxy buffer the error body so `_try_fallback_models` can read it for the
+retry decision. Successful retry replaces `flow.response`; envelope unwrap
+then runs against the (possibly replaced) response.
+
+See [`configuration.md` § Gemini Capacity Fallback](configuration.md#gemini-capacity-fallback)
+for the full field reference.
 
 ## Configuration
 
@@ -160,8 +201,11 @@ both ride sentinel-key resolution, not transform overrides.
 ```nix
 providers.gemini = {
   auth = {
-    type = "command";
-    command = "jq -r '.access_token' ~/.gemini/oauth_creds.json";
+    type = "google_oauth";
+    file_path = "~/.gemini/oauth_creds.json";
+    client_id = "<gemini-cli installed-app client_id>";
+    client_secret = "<gemini-cli installed-app client_secret>";
+    header = "authorization";
   };
   host = "cloudcode-pa.googleapis.com";
   path = "/v1internal:{action}";
@@ -208,7 +252,11 @@ See `examples/gemini_sdk_via_ccproxy.py` (text) and
   the hook (shape hook config or another outbound hook).
 
 ### Streaming response shows `{"response": {...}}` envelope
-- The addon should install `EnvelopeUnwrapStream`. Check that `transform.provider == "gemini"` and `transform.is_streaming == True` are set on the flow record. If `transform` is `None`, the hook didn't fire — check `oauth_provider` metadata.
+- `GeminiAddon.responseheaders` should install `EnvelopeUnwrapStream`. Check
+  that `flow.metadata["ccproxy.oauth_provider"] == "gemini"`,
+  `transform.is_streaming == True`, and `transform.mode == "redirect"` are
+  all set on the flow record. If `transform` is `None`, the `gemini_cli` hook
+  didn't fire — check `oauth_provider` metadata.
 
 ### Inspecting flows
 
@@ -228,9 +276,11 @@ The `compare` view will show:
 
 | Component | Path |
 |-----------|------|
-| Unified hook | `src/ccproxy/hooks/gemini_cli.py` |
-| Project resolution | `src/ccproxy/hooks/_gemini_project.py` |
-| Buffered response unwrap | `src/ccproxy/inspector/addon.py:_unwrap_gemini_response` |
-| Streaming response unwrap | `src/ccproxy/hooks/gemini_cli.py:EnvelopeUnwrapStream` |
+| Unified outbound hook | `src/ccproxy/hooks/gemini_cli.py` |
+| Project resolution (`prewarm_project`) | `src/ccproxy/hooks/gemini_cli.py` |
+| Buffered response unwrap (`unwrap_buffered`) | `src/ccproxy/hooks/gemini_envelope.py` |
+| Streaming response unwrap (`EnvelopeUnwrapStream`) | `src/ccproxy/hooks/gemini_envelope.py` |
+| Capacity fallback + envelope unwrap orchestrator | `src/ccproxy/inspector/gemini_addon.py` |
+| 401 retry orchestrator | `src/ccproxy/inspector/oauth_addon.py` |
 | Provider routing | `nix/defaults.nix` `providers.gemini` |
-| Tests | `tests/test_gemini_cli.py` |
+| Tests | `tests/test_gemini_cli.py`, `tests/test_gemini_addon_capacity.py` |
