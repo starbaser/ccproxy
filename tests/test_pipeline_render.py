@@ -76,19 +76,21 @@ class TestRenderPipeline:
         spec = _spec("rate_limit", reads=[], writes=[], model=RateLimitParams)
         sig = _render_signature(spec)
         assert sig is not None
-        assert sig.plain == "(max_rpm: int, burst: int)"  # type: ignore[union-attr]
+        assert sig.plain == "max_rpm: int\nburst: int"  # type: ignore[union-attr]
 
         text = _render(spec)
-        assert "(max_rpm: int, burst: int)" in text
+        assert "max_rpm: int" in text
+        assert "burst: int" in text
 
     def test_render_signature_partial_params(self) -> None:
         spec = _spec("rate_limit", reads=[], writes=[], model=RateLimitParams, params={"max_rpm": 120})
         sig = _render_signature(spec)
         assert sig is not None
-        assert sig.plain == "(max_rpm=120, burst: int)"  # type: ignore[union-attr]
+        assert sig.plain == "max_rpm: 120\nburst: int"  # type: ignore[union-attr]
 
         text = _render(spec)
-        assert "(max_rpm=120, burst: int)" in text
+        assert "max_rpm: 120" in text
+        assert "burst: int" in text
 
     def test_render_signature_no_model_returns_none(self) -> None:
         spec = _spec("no_model_hook", reads=[], writes=[])

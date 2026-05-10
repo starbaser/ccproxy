@@ -75,13 +75,17 @@
             "ccproxy.shaping.regenerate"
             {
               hook = "ccproxy.shaping.caching.strip";
-              params = { paths = [ "system.*.cache_control" ]; };
+              params = {
+                paths = [ "system.*.cache_control" ];
+              };
             }
             {
               hook = "ccproxy.shaping.caching.insert";
               params = {
                 path = "system.-1.cache_control";
-                value = { type = "ephemeral"; };
+                value = {
+                  type = "ephemeral";
+                };
               };
             }
           ];

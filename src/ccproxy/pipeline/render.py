@@ -133,29 +133,42 @@ def _hook_panel(spec: HookSpec) -> Panel:
 def _render_signature(spec: HookSpec) -> RenderableType | None:
     """Render a hook's param signature, or None if the hook has no model.
 
-    List-of-dotted-path params render as side-by-side numbered columns;
-    scalar params render inline.
+    Scalar params render one-per-line as ``name: value`` (set values,
+    bright) or ``name: type`` (unset, dim). List-of-dotted-path params
+    render as side-by-side numbered columns.
     """
     if spec.model is None:
         return None
     sig = spec.model.__signature__
     list_params: dict[str, list[str]] = {}
-    scalar_parts: list[str] = []
+    scalar_lines: list[Text] = []
     for param in sig.parameters.values():
         if param.name in spec.params:
             val = spec.params[param.name]
             if isinstance(val, list) and all(isinstance(v, str) and "." in v for v in val):
                 list_params[param.name] = val
-            else:
-                scalar_parts.append(f"{param.name}={val!r}")
+                continue
+            scalar_lines.append(
+                Text.assemble(
+                    (param.name, "bold yellow"),
+                    (": ", "yellow"),
+                    (_yaml_format(val), "yellow"),
+                )
+            )
         else:
             ann = inspect.formatannotation(param.annotation)
-            scalar_parts.append(f"{param.name}: {ann}")
-    if not list_params and not scalar_parts:
+            scalar_lines.append(
+                Text.assemble(
+                    (param.name, "bold yellow dim"),
+                    (": ", "yellow dim"),
+                    (ann, "yellow dim italic"),
+                )
+            )
+    if not list_params and not scalar_lines:
         return None
     result: list[RenderableType] = []
-    if scalar_parts:
-        result.append(Text(f"({', '.join(scalar_parts)})", style="yellow"))
+    if scalar_lines:
+        result.append(Text("\n").join(scalar_lines))
     if list_params:
         cols: list[RenderableType] = []
         for name, paths in list_params.items():
@@ -168,6 +181,23 @@ def _render_signature(spec: HookSpec) -> RenderableType | None:
             cols.append(Text("\n").join(lines))
         result.append(Columns(cols, padding=(0, 3), expand=False))
     return Group(*result) if len(result) > 1 else result[0]
+
+
+def _yaml_format(val: object) -> str:
+    """Format a Python value as a compact YAML-flow scalar."""
+    if isinstance(val, str):
+        return val
+    if isinstance(val, bool):
+        return "true" if val else "false"
+    if val is None:
+        return "null"
+    if isinstance(val, dict):
+        items = ", ".join(f"{k}: {_yaml_format(v)}" for k, v in val.items())
+        return f"{{{items}}}"
+    if isinstance(val, (list, tuple)):
+        items = ", ".join(_yaml_format(v) for v in val)
+        return f"[{items}]"
+    return repr(val)
 
 
 def _common_prefix(paths: list[str]) -> str:
