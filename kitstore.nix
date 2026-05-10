@@ -245,6 +245,9 @@
         };
       };
     };
+    "pplx/perplexity-webui-scraper" = {
+      url = "https://github.com/henrique-coder/perplexity-webui-scraper";
+    };
     pydantic = {
       url = "https://github.com/pydantic/pydantic";
       kits = {
@@ -277,7 +280,6 @@
       url = "https://github.com/openai/openai-python";
     };
   };
-
   config = {
     auto_mount = true;
   };

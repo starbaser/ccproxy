@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, cast
 
 import yaml
-from litellm.types.utils import LlmProviders
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -337,12 +336,22 @@ class Provider(BaseModel):
     """Destination path. Supports ``{model}`` and ``{action}`` templating
     substituted from glom-read body fields and URL captures at routing time."""
 
-    provider: LlmProviders
-    """LiteLLM provider identifier (``anthropic``, ``gemini``, ``deepseek``,
-    ``openai``, …). Drives ``lightllm.transform_to_provider`` when the
-    incoming format differs from what the destination speaks. When the
-    incoming format matches, the routing handler just rewrites destination
-    and preserves the body."""
+    provider: str
+    """Provider identifier. Either a LiteLLM ``LlmProviders`` enum value
+    (``anthropic``, ``gemini``, ``deepseek``, ``openai``, …) or a
+    ccproxy-internal string registered in ``ccproxy.lightllm.registry``
+    (``perplexity_pro``). Drives ``lightllm.transform_to_provider`` when
+    the incoming format differs from what the destination speaks."""
+
+    @field_validator("provider", mode="before")
+    @classmethod
+    def _coerce_provider(cls, value: Any) -> Any:
+        """Accept either a LlmProviders enum or a bare string. The lightllm
+        registry validates it has a resolvable BaseConfig; routing only
+        needs the string form for comparisons."""
+        if hasattr(value, "value"):
+            return value.value
+        return value
 
     @field_validator("auth", mode="before")
     @classmethod

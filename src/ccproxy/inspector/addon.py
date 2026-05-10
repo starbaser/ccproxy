@@ -217,6 +217,11 @@ class InspectorAddon:
                     exc_info=True,
                 )
                 flow.response.stream = True
+        elif transform is not None and not transform.is_streaming and transform.mode == "transform":
+            # Non-streaming client + event-stream upstream (e.g. Perplexity always
+            # streams). Buffer so handle_transform_response can call
+            # transform_to_openai on the complete body.
+            flow.response.stream = False
         else:
             flow.response.stream = True
 

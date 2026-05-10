@@ -19,13 +19,21 @@ queried and unioned in (with provider failures falling back to the floor).
 
 from __future__ import annotations
 
+import json
 import logging
 import time
+from importlib.resources import files
 from typing import Any
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+
+def _perplexity_model_ids() -> list[str]:
+    """Read Perplexity model IDs from the vendored static catalog."""
+    raw: bytes = files("ccproxy.specs").joinpath("perplexity_models.json").read_bytes()  # type: ignore[arg-type]
+    return [m["id"] for m in json.loads(raw)]
 
 
 STATIC_MODEL_CATALOG: dict[str, list[str]] = {
@@ -44,6 +52,7 @@ STATIC_MODEL_CATALOG: dict[str, list[str]] = {
     "deepseek": [
         "deepseek-v4",
     ],
+    "perplexity": _perplexity_model_ids(),
 }
 """Provider → model IDs floor list. Updated alongside provider releases."""
 

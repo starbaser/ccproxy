@@ -23,6 +23,7 @@ from litellm.types.utils import LlmProviders, ModelResponse
 from litellm.utils import ProviderConfigManager
 
 from ccproxy.lightllm.noop_logging import NoopLogging
+from ccproxy.lightllm.perplexity import PERPLEXITY_PROVIDER_NAME, PerplexityProIterator
 from ccproxy.lightllm.registry import get_config
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,11 @@ logger = logging.getLogger(__name__)
 _noop = NoopLogging()
 
 _GEMINI_PROVIDERS = {"gemini", "vertex_ai", "vertex_ai_beta"}
+
+PERPLEXITY_PROVIDERS = frozenset({PERPLEXITY_PROVIDER_NAME})
+"""ccproxy-internal providers handled via the local registry, NOT LiteLLM
+upstream's ProviderConfigManager. Used by the inspector route layer to
+strip stale inbound auth headers (cookie auth replaces Authorization)."""
 """LiteLLM provider identifiers that share the Gemini code path (custom URL
 construction + custom transform_request bypass + Gemini SSE iterator)."""
 
@@ -276,6 +282,12 @@ def _make_response_iterator(provider: str, model: str, optional_params: dict[str
             sync_stream=True,
         )
 
+    if provider in PERPLEXITY_PROVIDERS:
+        return PerplexityProIterator(
+            streaming_response=iter([]),
+            sync_stream=True,
+        )
+
     # Generic path: use BaseConfig.get_model_response_iterator()
     config = get_config(provider, model)
     iterator = config.get_model_response_iterator(
@@ -306,7 +318,7 @@ class SseTransformer:
         self._raw_chunks.append(data)
 
         if self._iterator is None:
-            return data
+            return data if data else []
 
         if data == b"":
             return b"data: [DONE]\n\n"
@@ -327,7 +339,11 @@ class SseTransformer:
                 event, self._buf = self._buf[:lf], self._buf[lf + 2 :]
             out += self._process_event(event)
 
-        return bytes(out)
+        # Returning b"" gets encoded as ``0\r\n\r\n`` by mitmproxy's HTTP/1.1
+        # chunked encoder — that's the end-of-stream marker, which would
+        # truncate the response. Return an empty list when we have nothing
+        # to emit so mitmproxy emits no chunk frame at all.
+        return bytes(out) if out else []
 
     def _process_event(self, event: bytes) -> bytes:
         payloads: list[bytes] = []

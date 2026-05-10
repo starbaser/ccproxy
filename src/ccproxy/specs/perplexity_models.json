@@ -1,0 +1,137 @@
+[
+  {
+    "id": "perplexity/best",
+    "name": "Best",
+    "description": "Perplexity Best (Auto-select).",
+    "identifier": "default",
+    "tool_name": "pplx_best",
+    "min_tier": "pro",
+    "mode": "search"
+  },
+  {
+    "id": "perplexity/deep-research",
+    "name": "Deep research",
+    "description": "Perplexity Deep Research.",
+    "identifier": "pplx_alpha",
+    "tool_name": "pplx_deep_research",
+    "min_tier": "pro",
+    "mode": "research"
+  },
+  {
+    "id": "perplexity/sonar-2",
+    "name": "Sonar 2",
+    "description": "Perplexity Sonar 2.",
+    "identifier": "experimental",
+    "tool_name": "pplx_sonar",
+    "min_tier": "pro",
+    "mode": "copilot"
+  },
+  {
+    "id": "openai/gpt-5.4",
+    "name": "GPT-5.4",
+    "description": "OpenAI GPT-5.4.",
+    "identifier": "gpt54",
+    "tool_name": "pplx_gpt54",
+    "min_tier": "pro",
+    "mode": "copilot"
+  },
+  {
+    "id": "openai/gpt-5.4-thinking",
+    "name": "GPT-5.4 Thinking",
+    "description": "OpenAI GPT-5.4 (Thinking).",
+    "identifier": "gpt54_thinking",
+    "tool_name": "pplx_gpt54_thinking",
+    "min_tier": "pro",
+    "mode": "copilot"
+  },
+  {
+    "id": "openai/gpt-5.5-thinking",
+    "name": "GPT-5.5 Thinking",
+    "description": "OpenAI GPT-5.5 (Thinking).",
+    "identifier": "gpt55_thinking",
+    "tool_name": "pplx_gpt55_thinking",
+    "min_tier": "max",
+    "mode": "copilot"
+  },
+  {
+    "id": "google/gemini-3.1-pro-thinking-low",
+    "name": "Gemini 3.1 Pro Thinking Low",
+    "description": "Google Gemini 3.1 Pro (Thinking Low).",
+    "identifier": "gemini31pro_low",
+    "tool_name": "pplx_gemini31_pro_think_low",
+    "min_tier": "pro",
+    "mode": "copilot"
+  },
+  {
+    "id": "google/gemini-3.1-pro-thinking-high",
+    "name": "Gemini 3.1 Pro Thinking High",
+    "description": "Google Gemini 3.1 Pro (Thinking High).",
+    "identifier": "gemini31pro_high",
+    "tool_name": "pplx_gemini31_pro_think_high",
+    "min_tier": "pro",
+    "mode": "copilot"
+  },
+  {
+    "id": "anthropic/claude-sonnet-4.6",
+    "name": "Claude Sonnet 4.6",
+    "description": "Anthropic Claude Sonnet 4.6.",
+    "identifier": "claude46sonnet",
+    "tool_name": "pplx_claude_s46",
+    "min_tier": "pro",
+    "mode": "copilot"
+  },
+  {
+    "id": "anthropic/claude-sonnet-4.6-thinking",
+    "name": "Claude Sonnet 4.6 Thinking",
+    "description": "Anthropic Claude Sonnet 4.6 (Thinking).",
+    "identifier": "claude46sonnetthinking",
+    "tool_name": "pplx_claude_s46_think",
+    "min_tier": "pro",
+    "mode": "copilot"
+  },
+  {
+    "id": "anthropic/claude-opus-4.7",
+    "name": "Claude Opus 4.7",
+    "description": "Anthropic Claude Opus 4.7.",
+    "identifier": "claude47opus",
+    "tool_name": "pplx_claude_o47",
+    "min_tier": "max",
+    "mode": "copilot"
+  },
+  {
+    "id": "anthropic/claude-opus-4.7-thinking",
+    "name": "Claude Opus 4.7 Thinking",
+    "description": "Anthropic Claude Opus 4.7 (Thinking).",
+    "identifier": "claude47opusthinking",
+    "tool_name": "pplx_claude_o47_think",
+    "min_tier": "max",
+    "mode": "copilot"
+  },
+  {
+    "id": "moonshot/kimi-k2.6-instant",
+    "name": "Kimi K2.6 Instant",
+    "description": "Moonshot AI Kimi K2.6 Instant.",
+    "identifier": "kimik26instant",
+    "tool_name": "pplx_kimi_k26_instant",
+    "min_tier": "pro",
+    "mode": "copilot"
+  },
+  {
+    "id": "moonshot/kimi-k2.6-thinking",
+    "name": "Kimi K2.6 Thinking",
+    "description": "Moonshot AI Kimi K2.6 (Thinking).",
+    "identifier": "kimik26thinking",
+    "tool_name": "pplx_kimi_k26_thinking",
+    "min_tier": "pro",
+    "mode": "copilot"
+  },
+  {
+    "id": "nvidia/nemotron-3-super-thinking",
+    "name": "Nemotron 3 Super Thinking",
+    "description": "NVIDIA Nemotron 3 Super 120B (Thinking).",
+    "identifier": "nv_nemotron_3_super",
+    "tool_name": "pplx_nemotron3_super_think",
+    "min_tier": "pro",
+    "mode": "copilot"
+  }
+]

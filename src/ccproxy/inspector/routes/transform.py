@@ -195,7 +195,7 @@ def _handle_redirect(
     host: str
     path: str
     if isinstance(target, Provider):
-        provider_str = target.provider.value
+        provider_str = target.provider
         model = _model_for_routing(body, flow.request.path)
         host = target.host
         path = _apply_path_template(target.path, model=model, action=action)
@@ -209,7 +209,7 @@ def _handle_redirect(
             )
             return
         host = resolved_host
-        provider_str = (bound.provider.value if bound else target.dest_provider) or ""
+        provider_str = (bound.provider if bound else target.dest_provider) or ""
         model = target.dest_model or _model_for_routing(body, flow.request.path)
         if target.dest_path:
             path = _apply_path_template(target.dest_path, model=model, action=action)
@@ -251,7 +251,7 @@ def _handle_transform(
     config = get_config()
 
     if isinstance(target, Provider):
-        provider_str = target.provider.value
+        provider_str = target.provider
         oauth_provider = flow.metadata.get("ccproxy.oauth_provider")
         api_key = config.resolve_oauth_token(oauth_provider) if oauth_provider else None
         model = _model_for_routing(body, flow.request.path)
@@ -268,7 +268,7 @@ def _handle_transform(
                 target.dest_provider,
             )
             return
-        provider_str = bound.provider.value
+        provider_str = bound.provider
         api_key = config.resolve_oauth_token(target.dest_provider)
         model = target.dest_model or _model_for_routing(body, flow.request.path)
         vertex_project = target.dest_vertex_project
@@ -323,6 +323,13 @@ def _handle_transform(
     flow.server_conn = Server(address=(host, port))
     for k, v in headers.items():
         flow.request.headers[k] = v
+    # Cookie-auth providers (Perplexity Pro) ship without an Authorization
+    # header. forward_oauth has already stamped one with the real token —
+    # strip it so the upstream doesn't see two competing auth signals.
+    if any(k.lower() == "cookie" for k in headers) and not any(
+        k.lower() == "authorization" for k in headers
+    ):
+        flow.request.headers.pop("Authorization", None)
     flow.request.content = new_body
 
     incoming_model = str(glom(body, "model", default="?"))
@@ -376,7 +383,7 @@ def register_transform_routes(router: InspectorRouter) -> None:
             _handle_passthrough(flow)
         elif isinstance(target, Provider):
             incoming = _detect_incoming_format(flow.request.path)
-            if incoming == target.provider.value:
+            if incoming == target.provider:
                 _handle_redirect(flow, target, body)
             else:
                 _handle_transform(flow, target, body)

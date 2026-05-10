@@ -33,6 +33,15 @@
         path = "/anthropic/v1/messages";
         provider = "anthropic";
       };
+      perplexity_pro = {
+        auth = {
+          type = "file";
+          file = "~/.config/ccproxy/perplexity-session-token";
+        };
+        host = "www.perplexity.ai";
+        path = "/rest/sse/perplexity_ask";
+        provider = "perplexity_pro";
+      };
     };
     hooks = {
       inbound = [
