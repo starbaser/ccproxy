@@ -486,6 +486,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "glom" },
     { name = "httpx" },
+    { name = "httpx-curl-cffi" },
     { name = "humanize" },
     { name = "litellm" },
     { name = "mcp" },
@@ -552,6 +553,7 @@ requires-dist = [
     { name = "glom", specifier = ">=24.1.0" },
     { name = "google-genai", marker = "extra == 'sdk'", specifier = ">=1.0.0" },
     { name = "httpx", specifier = ">=0.27.0" },
+    { name = "httpx-curl-cffi", specifier = ">=0.1.5" },
     { name = "humanize", specifier = ">=4.0.0" },
     { name = "litellm", specifier = ">=1.83.0" },
     { name = "mcp", specifier = ">=1.0.0" },
@@ -1182,6 +1184,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/b1/df/48c586a5fe32a0f01324ee087459e112ebb7224f646c0b5023f5e79e9956/httpx-0.28.1.tar.gz", hash = "sha256:75e98c5f16b0f35b567856f597f06ff2270a374470a5c2392242528e3e3e42fc", size = 141406, upload-time = "2024-12-06T15:37:23.222Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2a/39/e50c7c3a983047577ee07d2a9e53faf5a69493943ec3f6a384bdc792deb2/httpx-0.28.1-py3-none-any.whl", hash = "sha256:d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad", size = 73517, upload-time = "2024-12-06T15:37:21.509Z" },
+]
+
+[[package]]
+name = "httpx-curl-cffi"
+version = "0.1.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "curl-cffi" },
+    { name = "httpx" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/64/1f/158975d2541effa30f0d7634542dce50e8280ab283e7efc8d221ebf8a949/httpx_curl_cffi-0.1.5.tar.gz", hash = "sha256:177ee9968e9da142407017816cc3fb08ab281b134f773a9359b6a4650a6c81f3", size = 7937, upload-time = "2025-12-02T08:59:13.656Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6e/13/82039e3df58e0d52a6f82cc73d958400a2777d78c6cd6378c937a707afd0/httpx_curl_cffi-0.1.5-py3-none-any.whl", hash = "sha256:be414a97ac1f627693f4c8a8631f2852bb1c09456e61ff8ad996ad050a11fb53", size = 8933, upload-time = "2025-12-02T08:59:12.447Z" },
 ]
 
 [[package]]

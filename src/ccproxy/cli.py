@@ -487,8 +487,13 @@ async def _run_inspect(
     # MITMPROXY_SSLKEYLOGFILE is imported. mitmproxy.net.tls evaluates
     # this env var at module import time (module-level global), triggered
     # by the WebMaster import inside run_inspector() below.
+    # SSLKEYLOGFILE (standard env, honored by libcurl/BoringSSL/OpenSSL)
+    # routes the sidecar's curl-cffi outbound keys into the same file, so
+    # Wireshark decrypts every leg — inbound, sidecar hop, and impersonated
+    # upstream — from one keylog.
     tls_keylog_path = config_dir / "tls.keylog"
     os.environ["MITMPROXY_SSLKEYLOGFILE"] = str(tls_keylog_path)
+    os.environ["SSLKEYLOGFILE"] = str(tls_keylog_path)
 
     pid = os.getpid()
     wg_cli_keypair_path = config_dir / f"wireguard-cli.{pid}.conf"
@@ -502,7 +507,7 @@ async def _run_inspect(
         inspector.port,
     )
 
-    master, master_task, web_token = await run_inspector(
+    master, master_task, web_token, sidecar = await run_inspector(
         wg_cli_conf_path=wg_cli_keypair_path,
         reverse_port=main_port,
     )
@@ -520,6 +525,12 @@ async def _run_inspect(
             master.shutdown()  # type: ignore[no-untyped-call]
             with _contextlib.suppress(Exception):
                 await master_task
+            with _contextlib.suppress(Exception):
+                await sidecar.stop()
+            with _contextlib.suppress(Exception):
+                from ccproxy import transport
+
+                await transport.aclose_all()
             loop.remove_signal_handler(signal.SIGTERM)
             wg_cli_keypair_path.unlink(missing_ok=True)
 
@@ -566,6 +577,12 @@ async def _run_inspect(
         master.shutdown()  # type: ignore[no-untyped-call]
         with contextlib.suppress(Exception):
             await master_task
+        with contextlib.suppress(Exception):
+            await sidecar.stop()
+        with contextlib.suppress(Exception):
+            from ccproxy import transport
+
+            await transport.aclose_all()
         loop.remove_signal_handler(signal.SIGTERM)
 
         wg_cli_keypair_path.unlink(missing_ok=True)

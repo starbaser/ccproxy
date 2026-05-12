@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from ccproxy import transport
 from ccproxy.inspector.oauth_addon import OAuthAddon
 
 
@@ -24,6 +25,7 @@ def _make_oauth_flow(
     flow.metadata = metadata
     flow.request.method = method
     flow.request.pretty_url = url
+    flow.request.pretty_host = "api.anthropic.com"
     flow.request.headers = {"authorization": "Bearer old-token"}
     flow.request.content = content
     flow.response = MagicMock()
@@ -35,13 +37,11 @@ def _make_oauth_flow(
     return flow
 
 
-def _patch_async_client(mock_response: MagicMock) -> tuple[AsyncMock, AsyncMock]:
-    """Build an AsyncMock chain matching httpx.AsyncClient's async-context-manager API."""
-    mock_async_client = AsyncMock()
-    mock_async_client.__aenter__ = AsyncMock(return_value=mock_async_client)
-    mock_async_client.__aexit__ = AsyncMock(return_value=None)
-    mock_async_client.request = AsyncMock(return_value=mock_response)
-    return mock_async_client, mock_async_client.request
+def _make_mock_client(mock_response: MagicMock) -> tuple[AsyncMock, AsyncMock]:
+    """Build a mock httpx.AsyncClient returned by transport.get_client."""
+    mock_client = AsyncMock()
+    mock_client.request = AsyncMock(return_value=mock_response)
+    return mock_client, mock_client.request
 
 
 class TestResponseEntryPoint:
@@ -154,11 +154,11 @@ class TestRetryWithRefreshedToken:
         mock_response.status_code = 200
         mock_response.headers.multi_items.return_value = [("content-type", "application/json")]
         mock_response.content = b'{"id": "msg-1"}'
-        mock_async_client, mock_request = _patch_async_client(mock_response)
+        mock_client, mock_request = _make_mock_client(mock_response)
 
         with (
             patch("ccproxy.inspector.oauth_addon.get_config", return_value=mock_config),
-            patch("ccproxy.inspector.oauth_addon.httpx.AsyncClient", return_value=mock_async_client),
+            patch("ccproxy.inspector.oauth_addon.transport.get_client", new=AsyncMock(return_value=mock_client)),
         ):
             addon = OAuthAddon()
             result = await addon._retry_with_refreshed_token(flow)
@@ -186,11 +186,11 @@ class TestRetryWithRefreshedToken:
         mock_response.status_code = 200
         mock_response.headers.multi_items.return_value = []
         mock_response.content = b"{}"
-        mock_async_client, mock_request = _patch_async_client(mock_response)
+        mock_client, mock_request = _make_mock_client(mock_response)
 
         with (
             patch("ccproxy.inspector.oauth_addon.get_config", return_value=mock_config),
-            patch("ccproxy.inspector.oauth_addon.httpx.AsyncClient", return_value=mock_async_client),
+            patch("ccproxy.inspector.oauth_addon.transport.get_client", new=AsyncMock(return_value=mock_client)),
         ):
             addon = OAuthAddon()
             await addon._retry_with_refreshed_token(flow)
@@ -203,6 +203,7 @@ class TestRetryWithRefreshedToken:
     async def test_retry_uses_custom_auth_header(self) -> None:
         """When get_auth_header returns a custom header name, it is used for the new token."""
         flow = _make_oauth_flow(provider="gemini")
+        flow.request.pretty_host = "gemini.googleapis.com"
         mock_config = MagicMock()
         mock_config.resolve_oauth_token.return_value = "new-gemini-token"
         mock_config.get_auth_header.return_value = "x-api-key"
@@ -212,11 +213,11 @@ class TestRetryWithRefreshedToken:
         mock_response.status_code = 200
         mock_response.headers.multi_items.return_value = []
         mock_response.content = b"{}"
-        mock_async_client, mock_request = _patch_async_client(mock_response)
+        mock_client, mock_request = _make_mock_client(mock_response)
 
         with (
             patch("ccproxy.inspector.oauth_addon.get_config", return_value=mock_config),
-            patch("ccproxy.inspector.oauth_addon.httpx.AsyncClient", return_value=mock_async_client),
+            patch("ccproxy.inspector.oauth_addon.transport.get_client", new=AsyncMock(return_value=mock_client)),
         ):
             addon = OAuthAddon()
             result = await addon._retry_with_refreshed_token(flow)
@@ -244,11 +245,11 @@ class TestRetryWithRefreshedToken:
         mock_response.status_code = 200
         mock_response.headers.multi_items.return_value = []
         mock_response.content = b"{}"
-        mock_async_client, mock_request = _patch_async_client(mock_response)
+        mock_client, mock_request = _make_mock_client(mock_response)
 
         with (
             patch("ccproxy.inspector.oauth_addon.get_config", return_value=mock_config),
-            patch("ccproxy.inspector.oauth_addon.httpx.AsyncClient", return_value=mock_async_client),
+            patch("ccproxy.inspector.oauth_addon.transport.get_client", new=AsyncMock(return_value=mock_client)),
         ):
             addon = OAuthAddon()
             await addon._retry_with_refreshed_token(flow)
@@ -269,11 +270,11 @@ class TestRetryWithRefreshedToken:
         mock_response.status_code = 200
         mock_response.headers.multi_items.return_value = [("content-type", "application/json")]
         mock_response.content = b'{"ok": true}'
-        mock_async_client, _ = _patch_async_client(mock_response)
+        mock_client, _ = _make_mock_client(mock_response)
 
         with (
             patch("ccproxy.inspector.oauth_addon.get_config", return_value=mock_config),
-            patch("ccproxy.inspector.oauth_addon.httpx.AsyncClient", return_value=mock_async_client),
+            patch("ccproxy.inspector.oauth_addon.transport.get_client", new=AsyncMock(return_value=mock_client)),
         ):
             addon = OAuthAddon()
             await addon._retry_with_refreshed_token(flow)
@@ -301,11 +302,11 @@ class TestRetryWithRefreshedToken:
         mock_response.status_code = 200
         mock_response.headers.multi_items.return_value = []
         mock_response.content = b"{}"
-        mock_async_client, _ = _patch_async_client(mock_response)
+        mock_client, _ = _make_mock_client(mock_response)
 
         with (
             patch("ccproxy.inspector.oauth_addon.get_config", return_value=mock_config),
-            patch("ccproxy.inspector.oauth_addon.httpx.AsyncClient", return_value=mock_async_client),
+            patch("ccproxy.inspector.oauth_addon.transport.get_client", new=AsyncMock(return_value=mock_client)),
         ):
             addon = OAuthAddon()
             await addon._retry_with_refreshed_token(flow)
@@ -326,11 +327,11 @@ class TestRetryWithRefreshedToken:
         mock_response.status_code = 200
         mock_response.headers.multi_items.return_value = []
         mock_response.content = b"{}"
-        mock_async_client, _ = _patch_async_client(mock_response)
+        mock_client, _ = _make_mock_client(mock_response)
 
         with (
             patch("ccproxy.inspector.oauth_addon.get_config", return_value=mock_config),
-            patch("ccproxy.inspector.oauth_addon.httpx.AsyncClient", return_value=mock_async_client),
+            patch("ccproxy.inspector.oauth_addon.transport.get_client", new=AsyncMock(return_value=mock_client)),
         ):
             addon = OAuthAddon()
             await addon._retry_with_refreshed_token(flow)
@@ -339,10 +340,7 @@ class TestRetryWithRefreshedToken:
 
     @pytest.mark.asyncio
     async def test_retry_uses_configured_provider_timeout(self) -> None:
-        """Opt-in path: setting provider_timeout builds an httpx.Timeout applied
-        uniformly across connect/read/write/pool phases."""
-        import httpx
-
+        """Opt-in path: provider_timeout is passed as timeout= to client.request()."""
         flow = _make_oauth_flow(provider="anthropic")
         mock_config = MagicMock()
         mock_config.resolve_oauth_token.return_value = "new-token"
@@ -353,27 +351,20 @@ class TestRetryWithRefreshedToken:
         mock_response.status_code = 200
         mock_response.headers.multi_items.return_value = []
         mock_response.content = b"{}"
-        mock_async_client, _ = _patch_async_client(mock_response)
+        mock_client, mock_request = _make_mock_client(mock_response)
 
         with (
             patch("ccproxy.inspector.oauth_addon.get_config", return_value=mock_config),
-            patch(
-                "ccproxy.inspector.oauth_addon.httpx.AsyncClient",
-                return_value=mock_async_client,
-            ) as client_cls,
+            patch("ccproxy.inspector.oauth_addon.transport.get_client", new=AsyncMock(return_value=mock_client)),
         ):
             addon = OAuthAddon()
             await addon._retry_with_refreshed_token(flow)
 
-        timeout = client_cls.call_args.kwargs["timeout"]
-        assert isinstance(timeout, httpx.Timeout)
-        assert timeout.read == 120.0
-        assert timeout.connect == 120.0
+        assert mock_request.call_args.kwargs["timeout"] == 120.0
 
     @pytest.mark.asyncio
     async def test_retry_honors_disabled_timeout(self) -> None:
-        """Default path: provider_timeout=None passes timeout=None to httpx.AsyncClient
-        directly (no wrapper, no budget), matching Portkey's fetch() path."""
+        """Default path: provider_timeout=None passes timeout=None to client.request()."""
         flow = _make_oauth_flow(provider="anthropic")
         mock_config = MagicMock()
         mock_config.resolve_oauth_token.return_value = "new-token"
@@ -384,19 +375,16 @@ class TestRetryWithRefreshedToken:
         mock_response.status_code = 200
         mock_response.headers.multi_items.return_value = []
         mock_response.content = b"{}"
-        mock_async_client, _ = _patch_async_client(mock_response)
+        mock_client, mock_request = _make_mock_client(mock_response)
 
         with (
             patch("ccproxy.inspector.oauth_addon.get_config", return_value=mock_config),
-            patch(
-                "ccproxy.inspector.oauth_addon.httpx.AsyncClient",
-                return_value=mock_async_client,
-            ) as client_cls,
+            patch("ccproxy.inspector.oauth_addon.transport.get_client", new=AsyncMock(return_value=mock_client)),
         ):
             addon = OAuthAddon()
             await addon._retry_with_refreshed_token(flow)
 
-        assert client_cls.call_args.kwargs["timeout"] is None
+        assert mock_request.call_args.kwargs["timeout"] is None
 
     @pytest.mark.asyncio
     async def test_httpx_error_propagates_from_helper(self) -> None:
@@ -411,15 +399,69 @@ class TestRetryWithRefreshedToken:
         mock_config.get_auth_header.return_value = None
         mock_config.provider_timeout = None
 
-        mock_async_client = AsyncMock()
-        mock_async_client.__aenter__ = AsyncMock(return_value=mock_async_client)
-        mock_async_client.__aexit__ = AsyncMock(return_value=None)
-        mock_async_client.request = AsyncMock(side_effect=httpx.ConnectError("network down"))
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(side_effect=httpx.ConnectError("network down"))
 
         with (
             patch("ccproxy.inspector.oauth_addon.get_config", return_value=mock_config),
-            patch("ccproxy.inspector.oauth_addon.httpx.AsyncClient", return_value=mock_async_client),
+            patch("ccproxy.inspector.oauth_addon.transport.get_client", new=AsyncMock(return_value=mock_client)),
         ):
             addon = OAuthAddon()
             # response() must swallow the exception and not propagate
             await addon.response(flow)
+
+
+class TestTransportDispatchIntegration:
+    """New assertions for the transport dispatcher swap."""
+
+    @pytest.mark.asyncio
+    async def test_retry_stamps_transport_and_profile_metadata(self) -> None:
+        """After a successful retry, flow.metadata records transport and profile used."""
+        flow = _make_oauth_flow(provider="anthropic")
+        mock_config = MagicMock()
+        mock_config.resolve_oauth_token.return_value = "new-token"
+        mock_config.get_auth_header.return_value = None
+        mock_config.provider_timeout = None
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers.multi_items.return_value = []
+        mock_response.content = b"{}"
+        mock_client, _ = _make_mock_client(mock_response)
+
+        with (
+            patch("ccproxy.inspector.oauth_addon.get_config", return_value=mock_config),
+            patch("ccproxy.inspector.oauth_addon.transport.get_client", new=AsyncMock(return_value=mock_client)),
+        ):
+            addon = OAuthAddon()
+            await addon._retry_with_refreshed_token(flow)
+
+        assert flow.metadata["ccproxy.retry_transport"] == "curl_cffi"
+        assert flow.metadata["ccproxy.retry_profile"] == transport.DEFAULT_PROFILE
+
+    @pytest.mark.asyncio
+    async def test_retry_uses_fingerprint_profile_from_flow_metadata(self) -> None:
+        """When flow.metadata carries a fingerprint_profile, get_client is called with it."""
+        flow = _make_oauth_flow(provider="anthropic")
+        flow.metadata["ccproxy.fingerprint_profile"] = "firefox133"
+        mock_config = MagicMock()
+        mock_config.resolve_oauth_token.return_value = "new-token"
+        mock_config.get_auth_header.return_value = None
+        mock_config.provider_timeout = None
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers.multi_items.return_value = []
+        mock_response.content = b"{}"
+        mock_client, _ = _make_mock_client(mock_response)
+
+        mock_get_client = AsyncMock(return_value=mock_client)
+        with (
+            patch("ccproxy.inspector.oauth_addon.get_config", return_value=mock_config),
+            patch("ccproxy.inspector.oauth_addon.transport.get_client", new=mock_get_client),
+        ):
+            addon = OAuthAddon()
+            await addon._retry_with_refreshed_token(flow)
+
+        mock_get_client.assert_awaited_once_with(host="api.anthropic.com", profile="firefox133")
+        assert flow.metadata["ccproxy.retry_profile"] == "firefox133"

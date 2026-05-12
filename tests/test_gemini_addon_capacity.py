@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from ccproxy import transport
 from ccproxy.config import (
     CCProxyConfig,
     GeminiCapacityFallbackConfig,
@@ -47,6 +48,7 @@ def _make_flow(
     flow.id = "test-flow"
     flow.request.method = "POST"
     flow.request.pretty_url = "https://cloudcode-pa.googleapis.com/v1internal:generateContent"
+    flow.request.pretty_host = "cloudcode-pa.googleapis.com"
     flow.request.headers = {"authorization": "Bearer test", "content-type": "application/json"}
     flow.request.content = json.dumps(
         {
@@ -98,6 +100,18 @@ def _success_response(content: bytes = b'{"candidates":[{}]}') -> MagicMock:
     resp.headers.get = MagicMock(return_value="application/json")
     resp.headers.multi_items = MagicMock(return_value=[("content-type", "application/json")])
     return resp
+
+
+def _make_transport_patch(request_mock: AsyncMock) -> AsyncMock:
+    """Return an AsyncMock for transport.get_client that yields a client backed by request_mock.
+
+    Use as ``new=`` in ``patch("...transport.get_client", new=_make_transport_patch(...))``.
+    The returned mock is called with ``await transport.get_client(...)``; its return value
+    is the cached client, and ``.request`` on that client is ``request_mock``.
+    """
+    mock_client = AsyncMock()
+    mock_client.request = request_mock
+    return AsyncMock(return_value=mock_client)
 
 
 class TestParseDuration:
@@ -185,8 +199,8 @@ class TestTryFallbackGuards:
         addon = GeminiAddon()
 
         success = _success_response()
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.request = AsyncMock(return_value=success)
+        mock_get_client = _make_transport_patch(AsyncMock(return_value=success))
+        with patch("ccproxy.inspector.gemini_addon.transport.get_client", new=mock_get_client):
             result = await addon._try_fallback_models(flow)
 
         assert result is True
@@ -209,8 +223,8 @@ class TestTryFallbackGuards:
         addon = GeminiAddon()
 
         success = _success_response()
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.request = AsyncMock(return_value=success)
+        mock_get_client = _make_transport_patch(AsyncMock(return_value=success))
+        with patch("ccproxy.inspector.gemini_addon.transport.get_client", new=mock_get_client):
             result = await addon._try_fallback_models(flow)
 
         assert result is True
@@ -239,8 +253,8 @@ class TestStickyRetry:
         addon = GeminiAddon()
 
         success = _success_response()
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.request = AsyncMock(return_value=success)
+        mock_get_client = _make_transport_patch(AsyncMock(return_value=success))
+        with patch("ccproxy.inspector.gemini_addon.transport.get_client", new=mock_get_client):
             result = await addon._try_fallback_models(flow)
 
         assert result is True
@@ -256,8 +270,8 @@ class TestStickyRetry:
         success = _success_response(b'{"candidates":[{"text":"ok"}]}')
         request_mock = AsyncMock(side_effect=[exhausted, success])
 
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.request = request_mock
+        mock_get_client = _make_transport_patch(request_mock)
+        with patch("ccproxy.inspector.gemini_addon.transport.get_client", new=mock_get_client):
             result = await addon._try_fallback_models(flow)
 
         assert result is True
@@ -279,8 +293,8 @@ class TestStickyRetry:
         success = _success_response()
         request_mock = AsyncMock(side_effect=[exhausted, exhausted, success])
 
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.request = request_mock
+        mock_get_client = _make_transport_patch(request_mock)
+        with patch("ccproxy.inspector.gemini_addon.transport.get_client", new=mock_get_client):
             result = await addon._try_fallback_models(flow)
 
         assert result is True
@@ -319,8 +333,8 @@ class TestDelayCaps:
         addon = GeminiAddon()
 
         request_mock = AsyncMock()
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.request = request_mock
+        mock_get_client = _make_transport_patch(request_mock)
+        with patch("ccproxy.inspector.gemini_addon.transport.get_client", new=mock_get_client):
             result = await addon._try_fallback_models(flow)
 
         assert result is False
@@ -354,8 +368,8 @@ class TestDelayCaps:
 
         success = _success_response()
         request_mock = AsyncMock(return_value=success)
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.request = request_mock
+        mock_get_client = _make_transport_patch(request_mock)
+        with patch("ccproxy.inspector.gemini_addon.transport.get_client", new=mock_get_client):
             result = await addon._try_fallback_models(flow)
 
         assert result is True
@@ -392,11 +406,11 @@ class TestDelayCaps:
             return clock[0]
 
         request_mock = AsyncMock()
+        mock_get_client = _make_transport_patch(request_mock)
         with (
             patch("ccproxy.inspector.gemini_addon.time.monotonic", side_effect=fake_monotonic),
-            patch("httpx.AsyncClient") as mock_client,
+            patch("ccproxy.inspector.gemini_addon.transport.get_client", new=mock_get_client),
         ):
-            mock_client.return_value.__aenter__.return_value.request = request_mock
             result = await addon._try_fallback_models(flow)
 
         assert result is False
@@ -417,8 +431,8 @@ class TestDelayCaps:
         exhausted = _capacity_response(429)
         success = _success_response()
         request_mock = AsyncMock(side_effect=[exhausted, exhausted, exhausted, success])
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.request = request_mock
+        mock_get_client = _make_transport_patch(request_mock)
+        with patch("ccproxy.inspector.gemini_addon.transport.get_client", new=mock_get_client):
             result = await addon._try_fallback_models(flow)
 
         assert result is True
@@ -437,14 +451,15 @@ class TestFallbackChainBehavior:
         addon = GeminiAddon()
 
         success = _success_response(b'{"candidates":[{"text":"ok"}]}')
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.request = AsyncMock(return_value=success)
+        request_mock = AsyncMock(return_value=success)
+        mock_get_client = _make_transport_patch(request_mock)
+        with patch("ccproxy.inspector.gemini_addon.transport.get_client", new=mock_get_client):
             result = await addon._try_fallback_models(flow)
 
         assert result is True
         assert flow.response.status_code == 200
         assert flow.response.content == b'{"candidates":[{"text":"ok"}]}'
-        assert mock_client.return_value.__aenter__.return_value.request.call_count == 1
+        assert request_mock.call_count == 1
 
     @pytest.mark.asyncio
     async def test_walks_chain_on_consecutive_capacity_errors(self, patch_sleep: AsyncMock) -> None:
@@ -458,8 +473,8 @@ class TestFallbackChainBehavior:
         exhausted = _capacity_response(429)
         success = _success_response()
         request_mock = AsyncMock(side_effect=[exhausted, success])
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.request = request_mock
+        mock_get_client = _make_transport_patch(request_mock)
+        with patch("ccproxy.inspector.gemini_addon.transport.get_client", new=mock_get_client):
             result = await addon._try_fallback_models(flow)
 
         assert result is True
@@ -481,8 +496,8 @@ class TestFallbackChainBehavior:
         server_err.content = b'{"error":"oops"}'
 
         request_mock = AsyncMock(return_value=server_err)
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.request = request_mock
+        mock_get_client = _make_transport_patch(request_mock)
+        with patch("ccproxy.inspector.gemini_addon.transport.get_client", new=mock_get_client):
             result = await addon._try_fallback_models(flow)
 
         assert result is False
@@ -499,8 +514,8 @@ class TestFallbackChainBehavior:
 
         success = _success_response()
         request_mock = AsyncMock(side_effect=[httpx.ConnectError("boom"), success])
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.request = request_mock
+        mock_get_client = _make_transport_patch(request_mock)
+        with patch("ccproxy.inspector.gemini_addon.transport.get_client", new=mock_get_client):
             result = await addon._try_fallback_models(flow)
 
         assert result is True
@@ -517,8 +532,8 @@ class TestFallbackChainBehavior:
 
         exhausted = _capacity_response(429)
         request_mock = AsyncMock(return_value=exhausted)
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.request = request_mock
+        mock_get_client = _make_transport_patch(request_mock)
+        with patch("ccproxy.inspector.gemini_addon.transport.get_client", new=mock_get_client):
             result = await addon._try_fallback_models(flow)
 
         assert result is False
@@ -534,12 +549,13 @@ class TestFallbackChainBehavior:
         addon = GeminiAddon()
 
         success = _success_response()
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.request = AsyncMock(return_value=success)
+        request_mock = AsyncMock(return_value=success)
+        mock_get_client = _make_transport_patch(request_mock)
+        with patch("ccproxy.inspector.gemini_addon.transport.get_client", new=mock_get_client):
             result = await addon._try_fallback_models(flow)
 
         assert result is True
-        sent_body = json.loads(mock_client.return_value.__aenter__.return_value.request.call_args.kwargs["content"])
+        sent_body = json.loads(request_mock.call_args.kwargs["content"])
         assert sent_body["model"] == "gemini-2.5-pro"
 
     @pytest.mark.asyncio
@@ -568,12 +584,12 @@ class TestFallbackChainBehavior:
         exhausted = _capacity_response(429)
         success = _success_response()
         request_mock = AsyncMock(side_effect=[exhausted, exhausted, exhausted, success])
+        mock_get_client = _make_transport_patch(request_mock)
 
         with (
             patch.object(GeminiAddon, "_attempt_request", side_effect=spy_attempt_request),
-            patch("httpx.AsyncClient") as mock_client,
+            patch("ccproxy.inspector.gemini_addon.transport.get_client", new=mock_get_client),
         ):
-            mock_client.return_value.__aenter__.return_value.request = request_mock
             result = await addon._try_fallback_models(flow)
 
         assert result is True
@@ -607,8 +623,9 @@ class TestFallbackChainBehavior:
         sse_resp.headers.get = MagicMock(return_value="text/event-stream")
         sse_resp.headers.multi_items = MagicMock(return_value=[("content-type", "text/event-stream")])
 
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.request = AsyncMock(return_value=sse_resp)
+        request_mock = AsyncMock(return_value=sse_resp)
+        mock_get_client = _make_transport_patch(request_mock)
+        with patch("ccproxy.inspector.gemini_addon.transport.get_client", new=mock_get_client):
             result = await addon._try_fallback_models(flow)
 
         assert result is True
@@ -627,9 +644,9 @@ class TestResponseEntrypointBypass:
         flow = _make_flow()
         addon = GeminiAddon()
 
-        with patch("httpx.AsyncClient") as mock_client:
-            request_mock = AsyncMock()
-            mock_client.return_value.__aenter__.return_value.request = request_mock
+        request_mock = AsyncMock()
+        mock_get_client = _make_transport_patch(request_mock)
+        with patch("ccproxy.inspector.gemini_addon.transport.get_client", new=mock_get_client):
             await addon.response(flow)
 
         assert request_mock.await_count == 0
@@ -642,9 +659,9 @@ class TestResponseEntrypointBypass:
         flow = _make_flow()
         addon = GeminiAddon()
 
-        with patch("httpx.AsyncClient") as mock_client:
-            request_mock = AsyncMock()
-            mock_client.return_value.__aenter__.return_value.request = request_mock
+        request_mock = AsyncMock()
+        mock_get_client = _make_transport_patch(request_mock)
+        with patch("ccproxy.inspector.gemini_addon.transport.get_client", new=mock_get_client):
             await addon.response(flow)
 
         assert request_mock.await_count == 0
@@ -662,8 +679,9 @@ class TestResponseEntrypointBypass:
         addon = GeminiAddon()
 
         success = _success_response(b'{"candidates":[{"text":"ok"}]}')
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.request = AsyncMock(return_value=success)
+        request_mock = AsyncMock(return_value=success)
+        mock_get_client = _make_transport_patch(request_mock)
+        with patch("ccproxy.inspector.gemini_addon.transport.get_client", new=mock_get_client):
             await addon.response(flow)
 
         assert flow.response.status_code == 200
@@ -696,3 +714,45 @@ class TestResponseHeadersDeferEntrypoint:
         await addon.responseheaders(flow)
 
         assert flow.response.stream is None
+
+
+class TestTransportDispatchIntegration:
+    """New assertions for the transport dispatcher swap in _attempt_request."""
+
+    @pytest.mark.asyncio
+    async def test_attempt_request_stamps_transport_and_profile_metadata(self) -> None:
+        """After a successful _attempt_request, flow.metadata records transport and profile."""
+        _set_capacity(fallback_models=["gemini-2.5-pro"], sticky_retry_attempts=0)
+        flow = _make_flow()
+        addon = GeminiAddon()
+
+        success = _success_response()
+        request_mock = AsyncMock(return_value=success)
+        mock_get_client = _make_transport_patch(request_mock)
+        with patch("ccproxy.inspector.gemini_addon.transport.get_client", new=mock_get_client):
+            result = await addon._try_fallback_models(flow)
+
+        assert result is True
+        assert flow.metadata["ccproxy.retry_transport"] == "curl_cffi"
+        assert flow.metadata["ccproxy.retry_profile"] == transport.DEFAULT_PROFILE
+
+    @pytest.mark.asyncio
+    async def test_attempt_request_uses_fingerprint_profile_from_flow_metadata(self) -> None:
+        """When flow.metadata carries a fingerprint_profile, get_client is called with it."""
+        _set_capacity(fallback_models=["gemini-2.5-pro"], sticky_retry_attempts=0)
+        flow = _make_flow()
+        flow.metadata["ccproxy.fingerprint_profile"] = "firefox133"
+        addon = GeminiAddon()
+
+        success = _success_response()
+        request_mock = AsyncMock(return_value=success)
+        mock_get_client = _make_transport_patch(request_mock)
+        with patch("ccproxy.inspector.gemini_addon.transport.get_client", new=mock_get_client):
+            result = await addon._try_fallback_models(flow)
+
+        assert result is True
+        mock_get_client.assert_awaited_with(
+            host="cloudcode-pa.googleapis.com",
+            profile="firefox133",
+        )
+        assert flow.metadata["ccproxy.retry_profile"] == "firefox133"

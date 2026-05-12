@@ -31,6 +31,7 @@ from typing import Any
 import httpx
 from mitmproxy import http
 
+from ccproxy import transport
 from ccproxy.config import get_config
 from ccproxy.flows.store import InspectorMeta
 from ccproxy.hooks.gemini_envelope import EnvelopeUnwrapStream, unwrap_buffered
@@ -193,16 +194,18 @@ class GeminiAddon:
             for k, v in flow.request.headers.items()  # type: ignore[no-untyped-call]
             if k.lower() not in {"content-length", "content-encoding", "transfer-encoding"}
         }
+        profile = flow.metadata.get("ccproxy.fingerprint_profile") or transport.DEFAULT_PROFILE
         try:
             # timeout=None: ccproxy does not enforce per-request timeouts on LLM
             # calls (slow inference is the norm). Matches OAuthAddon retry.
-            async with httpx.AsyncClient(timeout=None) as client:  # noqa: S113
-                return await client.request(
-                    method=flow.request.method,
-                    url=flow.request.pretty_url,
-                    headers=retry_headers,
-                    content=new_body,
-                )
+            client = await transport.get_client(host=flow.request.pretty_host, profile=profile)
+            response = await client.request(
+                method=flow.request.method,
+                url=flow.request.pretty_url,
+                headers=retry_headers,
+                content=new_body,
+                timeout=None,
+            )
         except httpx.HTTPError:
             logger.warning(
                 "gemini_capacity_fallback: %s network error",
@@ -210,6 +213,9 @@ class GeminiAddon:
                 exc_info=True,
             )
             return None
+        flow.metadata["ccproxy.retry_transport"] = "curl_cffi"
+        flow.metadata["ccproxy.retry_profile"] = profile
+        return response
 
     @staticmethod
     def _stamp_success_response(flow: http.HTTPFlow, resp: httpx.Response) -> None:

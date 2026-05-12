@@ -9,11 +9,10 @@ owns only the response-side detect/replay loop.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
-import httpx
 from mitmproxy import http
 
+from ccproxy import transport
 from ccproxy.config import get_config
 
 logger = logging.getLogger(__name__)
@@ -60,19 +59,17 @@ class OAuthAddon:
         headers = dict(flow.request.headers)
         headers.pop("x-ccproxy-oauth-injected", None)
 
-        client_kwargs: dict[str, Any] = {}
-        if config.provider_timeout is not None:
-            client_kwargs["timeout"] = httpx.Timeout(config.provider_timeout)
-        else:
-            client_kwargs["timeout"] = None  # Portkey parity: no wrapper, no budget
-
-        async with httpx.AsyncClient(**client_kwargs) as client:
-            retry_resp = await client.request(
-                method=flow.request.method,
-                url=flow.request.pretty_url,
-                headers=headers,
-                content=flow.request.content,
-            )
+        profile = flow.metadata.get("ccproxy.fingerprint_profile") or transport.DEFAULT_PROFILE
+        client = await transport.get_client(host=flow.request.pretty_host, profile=profile)
+        retry_resp = await client.request(
+            method=flow.request.method,
+            url=flow.request.pretty_url,
+            headers=headers,
+            content=flow.request.content,
+            timeout=config.provider_timeout,
+        )
+        flow.metadata["ccproxy.retry_transport"] = "curl_cffi"
+        flow.metadata["ccproxy.retry_profile"] = profile
 
         assert flow.response is not None
         flow.response.status_code = retry_resp.status_code

@@ -3,6 +3,11 @@
 ClientRequestContentview: the original request as sent by the client,
 before ccproxy's addon pipeline mutates it.
 
+ForwardedRequestContentview: the post-pipeline pre-rewrite request — what
+ccproxy intended to send upstream, captured just before the sidecar
+``TransportOverrideAddon`` rewrites the destination to localhost. For
+non-impersonated flows this falls back to a clear note.
+
 ProviderResponseContentview: the raw response from the upstream provider,
 before response transforms (Gemini unwrap, OpenAI normalization) mutate it.
 """
@@ -50,6 +55,46 @@ class ClientRequestContentview(Contentview):
                 lines.append(json.dumps(json.loads(cr.body), indent=2))
             except Exception:
                 lines.append(cr.body.decode("utf-8", errors="replace"))
+        return "\n".join(lines)
+
+    def render_priority(self, data: bytes, metadata: Metadata) -> float:
+        return -1
+
+
+class ForwardedRequestContentview(Contentview):
+    @property
+    def name(self) -> str:
+        return "Forwarded-Request"
+
+    @property
+    def syntax_highlight(self) -> SyntaxHighlight:
+        return "yaml"
+
+    def prettify(self, data: bytes, metadata: Metadata) -> str:
+        flow = metadata.flow
+        if flow is None:
+            return "(no flow context)"
+        record = flow.metadata.get(InspectorMeta.RECORD)
+        if record is None or record.forwarded_request is None:
+            return "(no forwarded-request snapshot — flow not rewritten)"
+
+        fr = record.forwarded_request
+        lines = [
+            f"{fr.method} {fr.url}",
+            "",
+            "--- Headers ---",
+        ]
+        for k, v in fr.headers.items():
+            lines.append(f"  {k}: {v}")
+        lines.append("")
+        lines.append("--- Body ---")
+        if not fr.body:
+            lines.append("(empty)")
+        else:
+            try:
+                lines.append(json.dumps(json.loads(fr.body), indent=2))
+            except Exception:
+                lines.append(fr.body.decode("utf-8", errors="replace"))
         return "\n".join(lines)
 
     def render_priority(self, data: bytes, metadata: Metadata) -> float:

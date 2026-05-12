@@ -68,7 +68,10 @@ class TestSseTransformer:
     def test_passthrough_end_of_stream(self) -> None:
         with patch("ccproxy.lightllm.dispatch._make_response_iterator", return_value=None):
             transformer = SseTransformer("openai", "gpt-4o", {})
-        assert transformer(b"") == b""
+        # Empty bytes would be encoded as ``0\r\n\r\n`` by mitmproxy's HTTP/1.1
+        # chunked encoder — the EOS marker, which truncates the response.
+        # Returning [] tells mitmproxy to emit no chunk frame at all.
+        assert transformer(b"") == []
 
     def test_transforms_single_event(self) -> None:
         mock_iterator = MagicMock()
@@ -117,7 +120,7 @@ class TestSseTransformer:
 
         # First chunk: incomplete event (no trailing \n\n)
         result1 = transformer(b'data: {"type":"part')
-        assert result1 == b""
+        assert result1 == []
 
         # Second chunk: completes the event
         result2 = transformer(b'ial"}\n\n')
@@ -131,7 +134,7 @@ class TestSseTransformer:
             transformer = SseTransformer("anthropic", "claude-3", {})
 
         result = transformer(b"data: [DONE]\n\n")
-        assert result == b""
+        assert result == []
 
         result_eos = transformer(b"")
         assert result_eos == b"data: [DONE]\n\n"
@@ -157,7 +160,7 @@ class TestSseTransformer:
             transformer = SseTransformer("anthropic", "claude-3", {})
 
         result = transformer(b"data: not-json\n\n")
-        assert result == b""
+        assert result == []
         mock_iterator.chunk_parser.assert_not_called()
 
     def test_multi_line_data_concatenation(self) -> None:
@@ -195,7 +198,7 @@ class TestSseTransformer:
             transformer = SseTransformer("anthropic", "claude-3", {})
 
         result = transformer(b'data: {"type":"ping"}\n\n')
-        assert result == b""
+        assert result == []
 
 
 class TestSseTransformerRawBody:

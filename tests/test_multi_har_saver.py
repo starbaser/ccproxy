@@ -188,6 +188,107 @@ class TestEntryOne:
         assert entries[0]["response"]["status"] == flow.response.status_code
 
 
+class TestProviderCloneForwardedRequest:
+    """_build_provider_clone uses forwarded_request when present (R4)."""
+
+    def _make_flow_with_forwarded_request(
+        self,
+        *,
+        forwarded_method: str = "POST",
+        forwarded_url: str = "https://real.example.com/v1/messages",
+        forwarded_headers: dict[str, str] | None = None,
+        forwarded_body: bytes = b'{"intent":"upstream"}',
+        live_url: str = "http://127.0.0.1:8080/",
+    ) -> http.HTTPFlow:
+        """Build an HTTPFlow whose forwarded_request differs from the live request."""
+        flow = tflow.tflow(resp=True)
+        flow.request.method = forwarded_method
+        flow.request.url = live_url
+        flow.request.content = b'{"mutated": true}'
+
+        record = FlowRecord(direction="inbound")
+        record.forwarded_request = HttpSnapshot(
+            headers=forwarded_headers or {"x-original": "yes"},
+            body=forwarded_body,
+            method=forwarded_method,
+            url=forwarded_url,
+        )
+        flow.metadata[InspectorMeta.RECORD] = record
+        return flow
+
+    def test_clone_request_method_from_forwarded(self) -> None:
+        flow = self._make_flow_with_forwarded_request(forwarded_method="POST")
+        saver = MultiHARSaver()
+        clone = saver._build_provider_clone(flow)
+        assert clone.request.method == "POST"
+
+    def test_clone_request_url_from_forwarded(self) -> None:
+        flow = self._make_flow_with_forwarded_request(
+            forwarded_url="https://real.example.com/v1/messages",
+            live_url="http://127.0.0.1:8080/",
+        )
+        saver = MultiHARSaver()
+        clone = saver._build_provider_clone(flow)
+        assert "real.example.com" in clone.request.url
+        assert "127.0.0.1" not in clone.request.url
+
+    def test_clone_request_host_reflects_forwarded_url(self) -> None:
+        flow = self._make_flow_with_forwarded_request(
+            forwarded_url="https://real.example.com/v1/messages",
+        )
+        saver = MultiHARSaver()
+        clone = saver._build_provider_clone(flow)
+        assert clone.request.host == "real.example.com"
+
+    def test_clone_request_headers_from_forwarded(self) -> None:
+        flow = self._make_flow_with_forwarded_request(
+            forwarded_headers={"x-original": "yes", "content-type": "application/json"},
+        )
+        saver = MultiHARSaver()
+        clone = saver._build_provider_clone(flow)
+        assert clone.request.headers.get("x-original") == "yes"
+        assert clone.request.headers.get("content-type") == "application/json"
+
+    def test_clone_request_body_from_forwarded(self) -> None:
+        body = b'{"intent":"upstream"}'
+        flow = self._make_flow_with_forwarded_request(forwarded_body=body)
+        saver = MultiHARSaver()
+        clone = saver._build_provider_clone(flow)
+        assert clone.request.content == body
+
+    def test_clone_timestamps_preserved(self) -> None:
+        flow = self._make_flow_with_forwarded_request()
+        ts_start = flow.request.timestamp_start
+        ts_end = flow.request.timestamp_end
+        saver = MultiHARSaver()
+        clone = saver._build_provider_clone(flow)
+        assert clone.request.timestamp_start == ts_start
+        assert clone.request.timestamp_end == ts_end
+
+    def test_fallback_to_live_request_when_forwarded_is_none(self) -> None:
+        """Record present but forwarded_request=None — keeps the live flow.request."""
+        flow = tflow.tflow(resp=True)
+        flow.request.url = "http://127.0.0.1:8080/"
+        record = FlowRecord(direction="inbound")
+        record.forwarded_request = None
+        flow.metadata[InspectorMeta.RECORD] = record
+
+        saver = MultiHARSaver()
+        clone = saver._build_provider_clone(flow)
+        assert clone.request.url == flow.request.url
+
+    def test_no_record_keeps_live_request(self) -> None:
+        """No record on flow — clone keeps the mutated flow.request (pre-R4 behaviour)."""
+        flow = tflow.tflow(resp=True)
+        live_url = flow.request.url
+        # No metadata record at all
+        assert InspectorMeta.RECORD not in flow.metadata
+
+        saver = MultiHARSaver()
+        clone = saver._build_provider_clone(flow)
+        assert clone.request.url == live_url
+
+
 class TestSnapshotMissingFallback:
     """If flow.metadata has no ClientRequest, entries[1] falls back to the mutated request."""
 

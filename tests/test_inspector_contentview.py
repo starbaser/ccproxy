@@ -6,7 +6,11 @@ import json
 from unittest.mock import MagicMock
 
 from ccproxy.flows.store import FlowRecord, HttpSnapshot, InspectorMeta
-from ccproxy.inspector.contentview import ClientRequestContentview, ProviderResponseContentview
+from ccproxy.inspector.contentview import (
+    ClientRequestContentview,
+    ForwardedRequestContentview,
+    ProviderResponseContentview,
+)
 
 
 def _make_cr(
@@ -108,6 +112,110 @@ class TestContentviewPrettify:
         cv = ClientRequestContentview()
         cr = _make_cr(headers={"h": "v"}, body=b'{"k": 1}')
         meta = _make_metadata(FlowRecord(direction="inbound", client_request=cr))
+        result = cv.prettify(b"", meta)
+        assert "--- Headers ---" in result
+        assert "--- Body ---" in result
+
+
+class TestForwardedRequestContentview:
+    """ForwardedRequestContentview (R4): renders forwarded_request snapshot."""
+
+    def _make_fr(
+        self,
+        method: str = "POST",
+        url: str = "https://api.upstream.example/v1/messages",
+        headers: dict[str, str] | None = None,
+        body: bytes = b"",
+    ) -> HttpSnapshot:
+        return HttpSnapshot(
+            headers=headers or {},
+            body=body,
+            method=method,
+            url=url,
+        )
+
+    def test_name(self) -> None:
+        cv = ForwardedRequestContentview()
+        assert cv.name == "Forwarded-Request"
+
+    def test_syntax_highlight(self) -> None:
+        cv = ForwardedRequestContentview()
+        assert cv.syntax_highlight == "yaml"
+
+    def test_render_priority(self) -> None:
+        cv = ForwardedRequestContentview()
+        meta = MagicMock()
+        assert cv.render_priority(b"", meta) == -1
+
+    def test_no_flow_returns_fallback(self) -> None:
+        cv = ForwardedRequestContentview()
+        meta = MagicMock()
+        meta.flow = None
+        assert cv.prettify(b"", meta) == "(no flow context)"
+
+    def test_no_record_returns_fallback(self) -> None:
+        cv = ForwardedRequestContentview()
+        meta = _make_metadata(record=None)
+        result = cv.prettify(b"", meta)
+        assert result == "(no forwarded-request snapshot — flow not rewritten)"
+
+    def test_record_with_no_forwarded_request_returns_fallback(self) -> None:
+        cv = ForwardedRequestContentview()
+        record = FlowRecord(direction="inbound", forwarded_request=None)
+        meta = _make_metadata(record=record)
+        result = cv.prettify(b"", meta)
+        assert result == "(no forwarded-request snapshot — flow not rewritten)"
+
+    def test_renders_method_and_url(self) -> None:
+        cv = ForwardedRequestContentview()
+        fr = self._make_fr(method="POST", url="https://api.upstream.example/v1/messages")
+        record = FlowRecord(direction="inbound", forwarded_request=fr)
+        meta = _make_metadata(record=record)
+        result = cv.prettify(b"", meta)
+        assert result.startswith("POST https://api.upstream.example/v1/messages")
+
+    def test_renders_headers(self) -> None:
+        cv = ForwardedRequestContentview()
+        fr = self._make_fr(
+            headers={"authorization": "Bearer tok123", "content-type": "application/json"},
+        )
+        record = FlowRecord(direction="inbound", forwarded_request=fr)
+        meta = _make_metadata(record=record)
+        result = cv.prettify(b"", meta)
+        assert "  authorization: Bearer tok123" in result
+        assert "  content-type: application/json" in result
+
+    def test_json_body_pretty_printed(self) -> None:
+        cv = ForwardedRequestContentview()
+        fr = self._make_fr(body=b'{"x":1}')
+        record = FlowRecord(direction="inbound", forwarded_request=fr)
+        meta = _make_metadata(record=record)
+        result = cv.prettify(b"", meta)
+        parsed = json.loads('{"x":1}')
+        assert json.dumps(parsed, indent=2) in result
+
+    def test_non_json_body_rendered_as_text(self) -> None:
+        cv = ForwardedRequestContentview()
+        fr = self._make_fr(body=b"not json")
+        record = FlowRecord(direction="inbound", forwarded_request=fr)
+        meta = _make_metadata(record=record)
+        result = cv.prettify(b"", meta)
+        assert "not json" in result
+
+    def test_empty_body_shows_empty_marker(self) -> None:
+        cv = ForwardedRequestContentview()
+        fr = self._make_fr(body=b"")
+        record = FlowRecord(direction="inbound", forwarded_request=fr)
+        meta = _make_metadata(record=record)
+        result = cv.prettify(b"", meta)
+        assert "--- Body ---" in result
+        assert "(empty)" in result
+
+    def test_sections_structure(self) -> None:
+        cv = ForwardedRequestContentview()
+        fr = self._make_fr(headers={"h": "v"}, body=b'{"k": 1}')
+        record = FlowRecord(direction="inbound", forwarded_request=fr)
+        meta = _make_metadata(record=record)
         result = cv.prettify(b"", meta)
         assert "--- Headers ---" in result
         assert "--- Body ---" in result

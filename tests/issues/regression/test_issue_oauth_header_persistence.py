@@ -27,13 +27,11 @@ import pytest
 from ccproxy.inspector.oauth_addon import OAuthAddon
 
 
-def _patch_async_client(mock_response: MagicMock) -> tuple[AsyncMock, AsyncMock]:
-    """Build an AsyncMock chain matching httpx.AsyncClient's async-context-manager API."""
-    mock_async_client = AsyncMock()
-    mock_async_client.__aenter__ = AsyncMock(return_value=mock_async_client)
-    mock_async_client.__aexit__ = AsyncMock(return_value=None)
-    mock_async_client.request = AsyncMock(return_value=mock_response)
-    return mock_async_client, mock_async_client.request
+def _make_mock_client(mock_response: MagicMock) -> AsyncMock:
+    """Return an AsyncMock for transport.get_client that serves mock_response."""
+    mock_client = AsyncMock()
+    mock_client.request = AsyncMock(return_value=mock_response)
+    return AsyncMock(return_value=mock_client)
 
 
 def _make_401_flow(*, provider: str, headers: dict[str, str]) -> MagicMock:
@@ -44,6 +42,7 @@ def _make_401_flow(*, provider: str, headers: dict[str, str]) -> MagicMock:
     }
     flow.request.method = "POST"
     flow.request.pretty_url = "https://api.anthropic.com/v1/messages"
+    flow.request.pretty_host = "api.anthropic.com"
     flow.request.headers = headers
     flow.request.content = b'{"model": "claude-3"}'
     flow.response = MagicMock()
@@ -81,11 +80,11 @@ async def test_default_authorization_header_is_rewritten_on_flow_request() -> No
     mock_config.get_auth_header.return_value = None
     mock_config.provider_timeout = None
 
-    mock_async_client, _ = _patch_async_client(_make_200_response())
+    mock_get_client = _make_mock_client(_make_200_response())
 
     with (
         patch("ccproxy.inspector.oauth_addon.get_config", return_value=mock_config),
-        patch("ccproxy.inspector.oauth_addon.httpx.AsyncClient", return_value=mock_async_client),
+        patch("ccproxy.inspector.oauth_addon.transport.get_client", new=mock_get_client),
     ):
         await OAuthAddon().response(flow)
 
@@ -105,11 +104,11 @@ async def test_custom_auth_header_is_rewritten_raw_on_flow_request() -> None:
     mock_config.get_auth_header.return_value = "x-api-key"
     mock_config.provider_timeout = None
 
-    mock_async_client, _ = _patch_async_client(_make_200_response())
+    mock_get_client = _make_mock_client(_make_200_response())
 
     with (
         patch("ccproxy.inspector.oauth_addon.get_config", return_value=mock_config),
-        patch("ccproxy.inspector.oauth_addon.httpx.AsyncClient", return_value=mock_async_client),
+        patch("ccproxy.inspector.oauth_addon.transport.get_client", new=mock_get_client),
     ):
         await OAuthAddon().response(flow)
 

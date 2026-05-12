@@ -106,6 +106,12 @@ class FlowRecord:
     client_request: HttpSnapshot | None = None
     """Pre-pipeline client request snapshot."""
 
+    forwarded_request: HttpSnapshot | None = None
+    """Post-pipeline pre-rewrite request — the request as ccproxy intended
+    to send upstream, captured just before any destination rewrite (e.g.
+    ``TransportOverrideAddon``'s sidecar redirect). For flows that aren't
+    rewritten, leave ``None``; consumers fall back to ``flow.request``."""
+
     provider_response: HttpSnapshot | None = None
     """Raw provider response before transforms."""
 

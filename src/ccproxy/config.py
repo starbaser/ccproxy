@@ -25,6 +25,7 @@ from ccproxy.oauth.sources import (
     AuthFields,
     parse_auth_source,
 )
+from ccproxy.transport import VALID_PROFILES
 
 logger = logging.getLogger(__name__)
 
@@ -343,6 +344,13 @@ class Provider(BaseModel):
     (``perplexity_pro``). Drives ``lightllm.transform_to_provider`` when
     the incoming format differs from what the destination speaks."""
 
+    fingerprint_profile: str | None = None
+    """``curl-cffi`` impersonate profile name (e.g. ``"chrome131"``).
+    When set, the outbound request is routed through the in-process sidecar
+    transport, which forwards via ``httpx-curl-cffi`` so the upstream TLS+HTTP/2
+    fingerprint matches a real browser. ``None`` keeps mitmproxy's native
+    transport (the default for most providers; opt in per-target)."""
+
     @field_validator("provider", mode="before")
     @classmethod
     def _coerce_provider(cls, value: Any) -> Any:
@@ -351,6 +359,18 @@ class Provider(BaseModel):
         needs the string form for comparisons."""
         if hasattr(value, "value"):
             return value.value
+        return value
+
+    @field_validator("fingerprint_profile", mode="after")
+    @classmethod
+    def _validate_fingerprint_profile(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if value not in VALID_PROFILES:
+            raise ValueError(
+                f"unknown curl-cffi impersonate profile {value!r}; "
+                f"valid profiles: {sorted(VALID_PROFILES)}"
+            )
         return value
 
     @field_validator("auth", mode="before")

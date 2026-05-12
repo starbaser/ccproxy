@@ -95,12 +95,30 @@ class MultiHARSaver:
     def _build_provider_clone(flow: http.HTTPFlow) -> http.HTTPFlow:
         """Clone the flow with response replaced by the raw provider response.
 
-        Fallback: if provider_response is absent, the clone keeps the
-        post-transform response (identical to client clone).
+        For flows whose destination was rewritten by ``TransportOverrideAddon``
+        (sidecar impersonation), the request is also replaced with
+        ``record.forwarded_request`` — the post-pipeline pre-rewrite intent —
+        so the HAR entry shows the real upstream URL rather than the localhost
+        sidecar URL.
+
+        Fallback: if either snapshot is absent, the clone keeps the
+        corresponding mutated value from the live flow.
         """
         clone = cast("http.HTTPFlow", flow.copy())  # type: ignore[no-untyped-call]
 
         record = flow.metadata.get(InspectorMeta.RECORD)
+        if record is not None and record.forwarded_request is not None:
+            fr = record.forwarded_request
+            synthetic_req = http.Request.make(
+                method=fr.method or "GET",
+                url=fr.url or "",
+                content=fr.body,
+                headers=fr.headers,
+            )
+            synthetic_req.timestamp_start = flow.request.timestamp_start
+            synthetic_req.timestamp_end = flow.request.timestamp_end
+            clone.request = synthetic_req
+
         snapshot = record.provider_response if record is not None else None
         if snapshot is None:
             return clone

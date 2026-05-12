@@ -53,6 +53,9 @@
           tiktoken = prev.tiktoken.overrideAttrs {
             autoPatchelfIgnoreMissingDeps = true;
           };
+          curl-cffi = prev.curl-cffi.overrideAttrs (old: {
+            buildInputs = (old.buildInputs or []) ++ [ pkgs.stdenv.cc.cc.lib ];
+          });
           # Suppress uv's "Ignoring invalid SSL_CERT_FILE" warning: stdenv sets
           # SSL_CERT_FILE=/no-cert-file.crt to block network access; uv warns on
           # the missing path even though the install is --offline --no-cache.

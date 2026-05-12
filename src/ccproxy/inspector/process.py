@@ -20,6 +20,8 @@ if TYPE_CHECKING:
     from mitmproxy.proxy.mode_servers import ServerInstance
     from mitmproxy.tools.web.master import WebMaster
 
+    from ccproxy.transport.sidecar import Sidecar
+
 logger = logging.getLogger(__name__)
 
 
@@ -128,6 +130,7 @@ def _make_transform_router() -> Any:
 
 def _build_addons(
     wg_cli_port: int,
+    sidecar_port: int,
 ) -> list[Any]:
     """Final addon chain: ``InspectorAddon → MultiHARSaver → ShapeCapturer →
     inbound pipeline → transform (lightllm) → outbound pipeline → OAuthAddon →
@@ -143,13 +146,19 @@ def _build_addons(
     from mitmproxy import contentviews
 
     from ccproxy.inspector.addon import InspectorAddon
-    from ccproxy.inspector.contentview import ClientRequestContentview, ProviderResponseContentview
+    from ccproxy.inspector.contentview import (
+        ClientRequestContentview,
+        ForwardedRequestContentview,
+        ProviderResponseContentview,
+    )
     from ccproxy.inspector.gemini_addon import GeminiAddon
     from ccproxy.inspector.multi_har_saver import MultiHARSaver
     from ccproxy.inspector.oauth_addon import OAuthAddon
     from ccproxy.inspector.shape_capturer import ShapeCapturer
+    from ccproxy.inspector.transport_override_addon import TransportOverrideAddon
 
     contentviews.add(ClientRequestContentview())
+    contentviews.add(ForwardedRequestContentview())
     contentviews.add(ProviderResponseContentview())
 
     config = get_config()
@@ -202,6 +211,7 @@ def _build_addons(
     if outbound_hooks:
         addons.append(_make_pipeline_router("ccproxy_outbound", outbound_hooks))
 
+    addons.append(TransportOverrideAddon(sidecar_port=sidecar_port))
     addons.append(OAuthAddon())
     addons.append(GeminiAddon())
 
@@ -241,20 +251,31 @@ async def run_inspector(
     *,
     wg_cli_conf_path: Path,
     reverse_port: int,
-) -> tuple[WebMaster, asyncio.Task[None], str]:
+) -> tuple[WebMaster, asyncio.Task[None], str, Sidecar]:
     """Start the inspector in-process via mitmproxy's WebMaster API.
 
-    Creates a WebMaster with two listeners (reverse + WireGuard), registers
-    all addons, and waits for servers to bind. Returns after the running()
-    hook fires — all ports are bound and WG configs are readable.
+    Boots the impersonating sidecar first so its bound port is known when
+    addons construct. Creates a WebMaster with two listeners (reverse +
+    WireGuard), registers all addons, and waits for servers to bind.
+    Returns after the running() hook fires — all ports are bound and WG
+    configs are readable.
+
+    The returned :class:`~ccproxy.transport.sidecar.Sidecar` MUST be stopped
+    by the caller after ``master.shutdown()`` completes.
     """
     # deferred: heavy mitmproxy WebMaster import
     from mitmproxy.tools.web.master import WebMaster
+
+    # deferred: starlette/uvicorn pulled in only when inspector starts
+    from ccproxy.transport.sidecar import Sidecar
 
     config = get_config()
     inspector = config.inspector
 
     wg_cli_port = _find_free_udp_port()
+    sidecar = Sidecar()
+    await sidecar.start()
+
     web_password_cfg = inspector.mitmproxy.web_password
     if isinstance(web_password_cfg, str):
         web_token = web_password_cfg
@@ -278,7 +299,7 @@ async def run_inspector(
     opts.update(web_password=web_token)
 
     ready = ReadySignal()
-    addons = _build_addons(wg_cli_port)
+    addons = _build_addons(wg_cli_port, sidecar.port)
     master.addons.add(ready, *addons)  # type: ignore[no-untyped-call]
 
     master_task = asyncio.create_task(master.run())
@@ -288,16 +309,18 @@ async def run_inspector(
     except TimeoutError as err:
         master.shutdown()  # type: ignore[no-untyped-call]
         await master_task
+        await sidecar.stop()
         raise RuntimeError("mitmweb failed to start (timeout waiting for servers to bind)") from err
 
     logger.info(
-        "Inspector running: reverse@%d, wg-cli@%d, UI@%d",
+        "Inspector running: reverse@%d, wg-cli@%d, UI@%d, sidecar@%d",
         reverse_port,
         wg_cli_port,
         inspector.port,
+        sidecar.port,
     )
 
-    return master, master_task, web_token
+    return master, master_task, web_token, sidecar
 
 
 def get_inspector_status() -> dict[str, dict[str, bool | str | None]]:
