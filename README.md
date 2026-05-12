@@ -37,12 +37,82 @@ of your LLM usage while respecting terms of service:
 
 ## Installation
 
+### Platform support
+
+| Platform | Reverse proxy (`ccproxy start`) | WireGuard namespace jail (`ccproxy run --inspect`) |
+|----------|---|---|
+| Linux | ✅ | ✅ |
+| Windows (WSL2) | ✅ | ✅ |
+| macOS | ✅ | ❌ — requires Linux namespaces |
+
+WSL2 is fully supported because it *is* Linux. Native Windows is not — use WSL2.
+On macOS, the reverse proxy listener (`ccproxy start` + SDK use) works fine, but
+the namespace jail (`ccproxy run --inspect`) requires Linux kernel features
+(unprivileged user/net namespaces, `slirp4netns`, `iptables` NAT) that have no
+macOS equivalent.
+
+### Linux / WSL2
+
+The WireGuard namespace jail needs a small set of system tools on `PATH`:
+`slirp4netns`, `wireguard-tools` (`wg`), `iproute2` (`ip`), `iptables`,
+`util-linux` (`unshare`, `nsenter`).
+
 ```bash
-# Recommended: uv tool
+# Debian / Ubuntu / WSL2-Ubuntu
+sudo apt update
+sudo apt install -y slirp4netns wireguard-tools iproute2 iptables
+
+# Fedora
+sudo dnf install -y slirp4netns wireguard-tools iproute iptables-nft
+
+# Arch
+sudo pacman -S slirp4netns wireguard-tools iproute2 iptables
+
+# NixOS — provided via the project devShell (`nix develop`)
+```
+
+Then install ccproxy:
+
+```bash
+# Recommended: uv tool (isolated venv, console scripts on PATH)
 uv tool install claude-ccproxy
 
 # Alternative: pip
 pip install claude-ccproxy
+```
+
+On Ubuntu 24.04+, unprivileged user namespaces are restricted by AppArmor by
+default. Either run once:
+
+```bash
+sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+```
+
+…or add a path-scoped AppArmor profile (see
+[rootless-containers/rootlesskit][rk-apparmor]).
+
+[rk-apparmor]: https://github.com/rootless-containers/rootlesskit/blob/main/docs/getting-started.md#ubuntu-2310-and-later
+
+### macOS
+
+Only the reverse proxy is supported. No system packages are required.
+
+```bash
+uv tool install claude-ccproxy
+# or
+pip install claude-ccproxy
+```
+
+`ccproxy start` and SDK use (`ANTHROPIC_BASE_URL=http://localhost:4000`) work
+the same as on Linux. `ccproxy run --inspect` will fail fast with a clear error
+listing the missing Linux-only tools.
+
+### Verify
+
+```bash
+ccproxy --help
+ccproxy init
+ccproxy status --proxy --inspect    # exit 3 = both down (expected, nothing running yet)
 ```
 
 ## Quick Start
@@ -480,10 +550,10 @@ port 8083. Config and cert store at `.ccproxy/` inside the project directory.
 
 ### Inspector prerequisites
 
-The WireGuard namespace jail (`ccproxy run --inspect`) requires `slirp4netns`,
-`wg`, `unshare`, `nsenter`, and `ip` to be available on `PATH`. On NixOS these
-are provided by the devShell; on other systems install them via your package
-manager.
+See [Installation](#installation) for the per-distro system package list.
+`ccproxy run --inspect` checks `slirp4netns`, `wg`, `unshare`, `nsenter`, `ip`
+on `PATH` and prints the missing ones with package hints. The reverse proxy
+(`ccproxy start`) does not require any of these and works on macOS too.
 
 ### OAuth token errors
 

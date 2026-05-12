@@ -6,9 +6,6 @@ resolution-markers = [
     "python_full_version < '3.14'",
 ]
 
-[manifest]
-overrides = [{ name = "mitmproxy", specifier = ">=10.0.0" }]
-
 [[package]]
 name = "aiohappyeyeballs"
 version = "2.6.1"
@@ -498,7 +495,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "rich" },
     { name = "tyro" },
-    { name = "xepor" },
+    { name = "xepor-ccproxy" },
     { name = "xxhash" },
 ]
 
@@ -579,7 +576,7 @@ requires-dist = [
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.12.20250516" },
     { name = "types-requests", marker = "extra == 'dev'", specifier = ">=2.32.4.20250611" },
     { name = "tyro", specifier = ">=0.7.0" },
-    { name = "xepor", specifier = ">=0.6.0" },
+    { name = "xepor-ccproxy", specifier = ">=0.7.0" },
     { name = "xxhash", specifier = ">=3.0.0" },
 ]
 provides-extras = ["otel", "journal", "sdk", "dev"]
@@ -3060,16 +3057,16 @@ wheels = [
 ]
 
 [[package]]
-name = "xepor"
-version = "0.6.0"
+name = "xepor-ccproxy"
+version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "mitmproxy" },
     { name = "parse" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/05/dd/a707dc216c61fd439996e86b75f33ab4e47a67eeaaa265f69b431b89894b/xepor-0.6.0.tar.gz", hash = "sha256:c9e88e2142def8558735d0b2023d4f8df38ab5186283c3f72896033ce721392f", size = 38204, upload-time = "2023-07-06T02:11:14.713Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3c/cc/9f3581a4a86672abafe4459db930327c59f236455dae65594de74c606899/xepor_ccproxy-0.7.0.tar.gz", hash = "sha256:546fa914d417644f141cc3dc37d46c7d775da86207db1db0b0ca137b3747040b", size = 38644, upload-time = "2026-05-12T03:43:47.75Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/94/b1/521b6b257bede92726324785de823ac320c636dcf2f9666cba2b819ead94/xepor-0.6.0-py3-none-any.whl", hash = "sha256:644437d79872dde07a1b517dd803664b7aa5acda3e022c4c6f0fd8d3fef13f7a", size = 13653, upload-time = "2023-07-06T02:11:13.48Z" },
+    { url = "https://files.pythonhosted.org/packages/04/d9/332467de7585adda6fe89d6a8451c9c6cba274c0991e64a6b02e06d52ee8/xepor_ccproxy-0.7.0-py3-none-any.whl", hash = "sha256:96ceb904252e3551115abc63fd0f54b846a7b248920890b959605af8d069bb5a", size = 13795, upload-time = "2026-05-12T03:43:49.095Z" },
 ]
 
 [[package]]

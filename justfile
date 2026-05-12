@@ -29,3 +29,23 @@ logs *ARGS:
 # Regenerate src/ccproxy/templates/ccproxy.yaml from nix/defaults.nix
 sync-template:
     nix eval --json .#defaultSettings.settings | python3 scripts/render_template.py > src/ccproxy/templates/ccproxy.yaml
+
+# Build wheel for pip-install validation (mirrors the GHA build-wheel job)
+build-wheel:
+    rm -rf dist
+    uv build --wheel
+
+# Release-gate: boot a vanilla cloud VM and validate the install end-to-end.
+# Pre-req: `just build-wheel`.
+#
+# Usage: just release-test-qemu debian-12 | ubuntu-24.04 | fedora-44
+release-test-qemu DISTRO="debian-12":
+    test -d dist || just build-wheel
+    scripts/qemu_release_test.sh {{DISTRO}}
+
+# Run release-gate test against every supported distro sequentially.
+release-test-qemu-all:
+    just build-wheel
+    scripts/qemu_release_test.sh debian-12
+    scripts/qemu_release_test.sh ubuntu-24.04
+    scripts/qemu_release_test.sh fedora-44

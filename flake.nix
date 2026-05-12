@@ -154,6 +154,8 @@
               wireguard-tools
               iproute2
               iptables
+              qemu_kvm
+              cloud-utils
             ];
 
             shellHook = ''

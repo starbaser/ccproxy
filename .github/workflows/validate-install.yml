@@ -1,0 +1,207 @@
+name: validate-install
+
+on:
+  pull_request:
+    branches: [main, dev]
+  push:
+    branches: [main, dev]
+  workflow_dispatch:
+
+concurrency:
+  group: validate-install-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nix-check:
+    name: nix flake check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+      - name: Evaluate flake outputs
+        run: nix flake check --no-build --show-trace
+
+  build-wheel:
+    name: build wheel (uv)
+    runs-on: ubuntu-24.04
+    outputs:
+      wheel-name: ${{ steps.build.outputs.wheel-name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+      - name: Pin Python 3.13
+        run: uv python install 3.13
+      - name: Build wheel
+        id: build
+        run: |
+          uv build --wheel
+          name="$(ls dist/*.whl | head -1 | xargs basename)"
+          echo "wheel-name=$name" >> "$GITHUB_OUTPUT"
+          echo "built: $name"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel
+          path: dist/*.whl
+          retention-days: 7
+          if-no-files-found: error
+
+  validate-install:
+    name: pip install / ${{ matrix.distro.id }}
+    needs: build-wheel
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        distro:
+          - id: debian-12
+            image: debian:12
+            install_deps: |
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                slirp4netns wireguard-tools iproute2 iptables \
+                ca-certificates curl xz-utils
+          - id: ubuntu-24.04
+            image: ubuntu:24.04
+            install_deps: |
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                slirp4netns wireguard-tools iproute2 iptables \
+                ca-certificates curl xz-utils
+          - id: fedora-44
+            image: fedora:44
+            install_deps: |
+              dnf install -y \
+                slirp4netns wireguard-tools iproute iptables-nft \
+                ca-certificates curl xz which
+          - id: archlinux
+            image: archlinux:latest
+            install_deps: |
+              pacman -Sy --noconfirm \
+                slirp4netns wireguard-tools iproute2 iptables \
+                ca-certificates curl xz which
+    container:
+      image: ${{ matrix.distro.image }}
+    steps:
+      - name: Install system packages
+        run: ${{ matrix.distro.install_deps }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Provision Python 3.13
+        run: uv python install 3.13
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wheel
+          path: dist
+      - name: Create venv + install wheel
+        run: |
+          uv venv --python 3.13 /tmp/ccproxy-venv
+          source /tmp/ccproxy-venv/bin/activate
+          uv pip install ./dist/*.whl
+      - name: Verify console scripts on PATH
+        run: |
+          source /tmp/ccproxy-venv/bin/activate
+          command -v ccproxy
+          command -v ccproxy_mcp
+      - name: Smoke test - ccproxy --help (entry point + tyro dispatch)
+        run: |
+          source /tmp/ccproxy-venv/bin/activate
+          ccproxy --help > /dev/null
+      - name: Smoke test - ccproxy init
+        run: |
+          source /tmp/ccproxy-venv/bin/activate
+          mkdir -p /tmp/ccproxy-config
+          CCPROXY_CONFIG_DIR=/tmp/ccproxy-config ccproxy init
+          test -f /tmp/ccproxy-config/ccproxy.yaml
+      - name: Verify system tools discoverable
+        run: |
+          # iptables/ip/sysctl live in /usr/sbin on Debian/Ubuntu, not in non-root PATH by default.
+          export PATH="$PATH:/usr/sbin:/sbin"
+          for tool in slirp4netns wg unshare nsenter ip iptables sysctl; do
+            command -v "$tool" || { echo "missing: $tool"; exit 1; }
+          done
+      - name: Smoke test - ccproxy status (expects bitmask 3, nothing running)
+        run: |
+          source /tmp/ccproxy-venv/bin/activate
+          rc=0
+          CCPROXY_CONFIG_DIR=/tmp/ccproxy-config ccproxy status --proxy --inspect || rc=$?
+          test "$rc" = "3" || { echo "unexpected status rc=$rc (expected 3 = proxy|inspect both down)"; exit 1; }
+      - name: Smoke test - python -m import
+        run: |
+          source /tmp/ccproxy-venv/bin/activate
+          python -c "import ccproxy; import ccproxy.cli; import ccproxy.mcp.server; print('imports ok')"
+
+  validate-install-macos:
+    name: pip install / macos
+    needs: build-wheel
+    runs-on: macos-latest
+    steps:
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+      - name: Provision Python 3.13
+        run: uv python install 3.13
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wheel
+          path: dist
+      - name: Create venv + install wheel
+        run: |
+          uv venv --python 3.13 /tmp/ccproxy-venv
+          source /tmp/ccproxy-venv/bin/activate
+          uv pip install ./dist/*.whl
+      - name: Verify console scripts on PATH
+        run: |
+          source /tmp/ccproxy-venv/bin/activate
+          command -v ccproxy
+          command -v ccproxy_mcp
+      - name: Smoke test - ccproxy --help (entry point + tyro dispatch)
+        run: |
+          source /tmp/ccproxy-venv/bin/activate
+          ccproxy --help > /dev/null
+      - name: Smoke test - ccproxy init
+        run: |
+          source /tmp/ccproxy-venv/bin/activate
+          mkdir -p /tmp/ccproxy-config
+          CCPROXY_CONFIG_DIR=/tmp/ccproxy-config ccproxy init
+          test -f /tmp/ccproxy-config/ccproxy.yaml
+      - name: Smoke test - ccproxy status (no daemon, bitmask 3 = proxy|inspect down)
+        run: |
+          source /tmp/ccproxy-venv/bin/activate
+          rc=0
+          CCPROXY_CONFIG_DIR=/tmp/ccproxy-config ccproxy status --proxy --inspect || rc=$?
+          test "$rc" = "3" || { echo "unexpected status rc=$rc (expected 3)"; exit 1; }
+      - name: Smoke test - python -m import
+        run: |
+          source /tmp/ccproxy-venv/bin/activate
+          python -c "import ccproxy; import ccproxy.cli; import ccproxy.mcp.server; print('imports ok')"
+      - name: Smoke test - daemon start binds :4000 (reverse-proxy mode, no namespace jail)
+        run: |
+          source /tmp/ccproxy-venv/bin/activate
+          export CCPROXY_CONFIG_DIR=/tmp/ccproxy-config
+          nohup ccproxy start > /tmp/ccproxy.log 2>&1 &
+          CCPROXY_PID=$!
+          ready=0
+          for i in $(seq 1 30); do
+            if nc -z 127.0.0.1 4000 2>/dev/null; then
+              echo "proxy bound :4000 (attempt $i)"
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          kill $CCPROXY_PID 2>/dev/null || true
+          if [[ $ready -eq 0 ]]; then
+            echo "proxy never bound :4000"
+            tail -100 /tmp/ccproxy.log
+            exit 1
+          fi

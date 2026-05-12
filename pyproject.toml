@@ -9,6 +9,11 @@ keywords = ["proxy", "routing", "ai", "llm"]
 classifiers = [
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.13",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS :: MacOS X",
+  "Topic :: Internet :: Proxy Servers",
+  "Topic :: Security",
 ]
 dependencies = [
   "litellm>=1.83.0",
@@ -23,7 +28,7 @@ dependencies = [
   "rich>=13.7.1",
   "certifi>=2024.0.0",
   "mitmproxy>=10.0.0",
-  "xepor>=0.6.0",
+  "xepor-ccproxy>=0.7.0",
   "humanize>=4.0.0",
   "pydantic-ai-slim>=1.85.1",
   "glom>=24.1.0",
@@ -173,9 +178,6 @@ ignore = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["ccproxy"]
-
-[tool.uv]
-override-dependencies = ["mitmproxy>=10.0.0"]
 
 [dependency-groups]
 dev = [

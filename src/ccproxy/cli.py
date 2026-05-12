@@ -469,17 +469,6 @@ async def _run_inspect(
 
     from ccproxy.config import get_config
     from ccproxy.inspector import get_wg_client_conf, run_inspector
-    from ccproxy.inspector.namespace import check_namespace_capabilities
-
-    problems = check_namespace_capabilities()
-    if problems:
-        for p in problems:
-            builtin_print(f"Error: {p}", file=sys.stderr)
-        builtin_print(
-            "\nCannot create network namespace for --inspect mode. All prerequisites above must be satisfied.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
 
     inspector = get_config().inspector
 
