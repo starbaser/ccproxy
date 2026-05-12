@@ -140,6 +140,7 @@ jobs:
           python -c "import ccproxy; import ccproxy.cli; import ccproxy.mcp.server; print('imports ok')"
 
   validate-install-macos:
+    if: false  # disabled — macOS bills at 10x
     name: pip install / macos
     needs: build-wheel
     runs-on: macos-latest
