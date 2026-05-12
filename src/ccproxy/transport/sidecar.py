@@ -160,11 +160,18 @@ class Sidecar:
         self._sock = sock
         self._port = sock.getsockname()[1]
 
+        # log_config=None: uvicorn's default LOGGING_CONFIG runs through
+        # logging.config.dictConfig() which silently calls
+        # _clearExistingHandlers() — closing every root-logger handler stream,
+        # including the FileHandler ccproxy installed for ccproxy.log.
+        # Setting log_config=None skips uvicorn's logging setup entirely;
+        # ccproxy's setup_logging is the single source of truth.
         config = uvicorn.Config(
             app=_build_app(),
             log_level="warning",
             lifespan="off",
             access_log=False,
+            log_config=None,
         )
         self._server = uvicorn.Server(config)
         self._task = asyncio.create_task(
