@@ -16,8 +16,8 @@ from ccproxy.lightllm.pplx import (
     _extract_deltas,
     _flatten_messages,
     _parse_sse_line,
-    _PerplexityClarifyingQuestionsError,
-    _StreamState,
+    PerplexityClarifyingQuestionsError,
+    StreamState,
     _thread_to_openai_messages,
 )
 from ccproxy.lightllm.pplx_threads import (
@@ -123,7 +123,7 @@ def test_parse_sse_line_basic() -> None:
 
 
 def test_extract_deltas_prefix_diffs_answer_and_reasoning() -> None:
-    state = _StreamState()
+    state = StreamState()
     e1 = {
         "blocks": [
             {
@@ -175,13 +175,13 @@ def test_extract_deltas_prefix_diffs_answer_and_reasoning() -> None:
 
 
 def test_extract_deltas_raises_on_clarifying_questions() -> None:
-    state = _StreamState()
+    state = StreamState()
     event = {
         "text": json.dumps(
             [{"step_type": "RESEARCH_CLARIFYING_QUESTIONS", "content": {"questions": ["a?", "b?"]}}]
         )
     }
-    with pytest.raises(_PerplexityClarifyingQuestionsError) as exc_info:
+    with pytest.raises(PerplexityClarifyingQuestionsError) as exc_info:
         _extract_deltas(event, state)
     assert exc_info.value.questions == ["a?", "b?"]
 

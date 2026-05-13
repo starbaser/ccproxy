@@ -39,7 +39,7 @@ from ccproxy.lightllm.pplx import (
     PERPLEXITY_PROVIDER_NAME,
     PERPLEXITY_SESSION_COOKIE,
     PERPLEXITY_URL_BASE,
-    _PerplexityThreadNotFoundError,
+    PerplexityThreadNotFoundError,
 )
 from ccproxy.lightllm.pplx_threads import get_pplx_thread_store
 from ccproxy.pipeline.hook import hook
@@ -172,7 +172,7 @@ def pplx_thread_inject(ctx: Context, _: dict[str, Any]) -> Context:
                 )
                 thread = None
             if thread is None:
-                raise _PerplexityThreadNotFoundError(
+                raise PerplexityThreadNotFoundError(
                     status_code=404,
                     message=(
                         f"Perplexity thread {slug!r} not found or no longer accessible. "
@@ -217,7 +217,7 @@ def pplx_thread_inject(ctx: Context, _: dict[str, Any]) -> Context:
                 f"turn_count_mismatch: client={client_user_turns} server={thread_entry_count}"
             )
             if mode == "strict":
-                raise _PerplexityThreadNotFoundError(
+                raise PerplexityThreadNotFoundError(
                     status_code=409,
                     message=(
                         f"Perplexity thread {slug!r} diverged from incoming history "

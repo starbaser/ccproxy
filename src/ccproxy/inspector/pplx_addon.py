@@ -35,7 +35,7 @@ from ccproxy.lightllm.pplx import (
     _PPLX_ID_FIELDS,
     _extract_deltas,
     _parse_sse_line,
-    _StreamState,
+    StreamState,
 )
 from ccproxy.lightllm.pplx_threads import get_pplx_thread_store
 
@@ -139,7 +139,7 @@ class PerplexityAddon:
         except Exception:
             return None
 
-        state = _StreamState()
+        state = StreamState()
         for line in text.splitlines():
             event = _parse_sse_line(line)
             if event is None:

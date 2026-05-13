@@ -259,7 +259,7 @@ def _build_pplx_payload(
 
 
 @dataclass
-class _StreamState:
+class StreamState:
     """Running state across SSE events for a single Perplexity response."""
 
     answer_seen: str = ""
@@ -301,7 +301,7 @@ def _parse_sse_line(line: str | bytes) -> dict[str, Any] | None:
 
 
 def _extract_deltas(
-    event: dict[str, Any], state: _StreamState
+    event: dict[str, Any], state: StreamState
 ) -> tuple[str | None, str | None]:
     """Apply one SSE event to ``state``; return new (answer_delta, reasoning_delta).
 
@@ -317,7 +317,7 @@ def _extract_deltas(
     into ``state.ids`` lazily — they arrive on different events per
     ``core-query.md:1260-1273``.
 
-    Raises ``_PerplexityClarifyingQuestionsError`` when a
+    Raises ``PerplexityClarifyingQuestionsError`` when a
     ``RESEARCH_CLARIFYING_QUESTIONS`` step block appears (Deep Research mode).
     """
     for key in _PPLX_ID_FIELDS:
@@ -344,7 +344,7 @@ def _extract_deltas(
                     isinstance(step, dict)
                     and step.get("step_type") == "RESEARCH_CLARIFYING_QUESTIONS"
                 ):
-                    raise _PerplexityClarifyingQuestionsError(
+                    raise PerplexityClarifyingQuestionsError(
                         _extract_clarifying_questions(step)
                     )
 
@@ -639,15 +639,15 @@ def _thread_to_openai_messages(
     return out
 
 
-class _PerplexityException(BaseLLMException):
+class PerplexityException(BaseLLMException):
     pass
 
 
-class _PerplexityThreadNotFoundError(_PerplexityException):
+class PerplexityThreadNotFoundError(PerplexityException):
     pass
 
 
-class _PerplexityClarifyingQuestionsError(_PerplexityException):
+class PerplexityClarifyingQuestionsError(PerplexityException):
     """Deep Research returned clarifying questions instead of an answer."""
 
     def __init__(self, questions: list[str]) -> None:
@@ -751,14 +751,14 @@ class PerplexityProConfig(BaseConfig):
         api_key: str | None = None,
         json_mode: bool | None = None,
     ) -> ModelResponse:
-        state = _StreamState()
+        state = StreamState()
         for raw_line in raw_response.text.splitlines():
             event = _parse_sse_line(raw_line)
             if event is None:
                 continue
             try:
                 _extract_deltas(event, state)
-            except _PerplexityClarifyingQuestionsError:
+            except PerplexityClarifyingQuestionsError:
                 raise
 
         from litellm.types.utils import Choices, Message
@@ -790,7 +790,7 @@ class PerplexityProConfig(BaseConfig):
         status_code: int,
         headers: Any,
     ) -> BaseLLMException:
-        return _PerplexityException(
+        return PerplexityException(
             status_code=status_code, message=error_message, headers=headers
         )
 
@@ -829,7 +829,7 @@ class PerplexityProIterator(BaseModelResponseIterator):
             sync_stream=sync_stream,
             json_mode=json_mode,
         )
-        self._state = _StreamState()
+        self._state = StreamState()
         self._terminated = False
 
     def chunk_parser(self, chunk: dict[str, Any]) -> ModelResponseStream | None:
@@ -838,7 +838,7 @@ class PerplexityProIterator(BaseModelResponseIterator):
 
         try:
             answer_delta, reasoning_delta = _extract_deltas(chunk, self._state)
-        except _PerplexityClarifyingQuestionsError as e:
+        except PerplexityClarifyingQuestionsError as e:
             answer_delta = e.message
             reasoning_delta = None
             self._state.final = True
