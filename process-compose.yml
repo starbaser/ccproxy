@@ -3,6 +3,8 @@ version: "0.5"
 processes:
   ccproxy:
     command: "ccproxy start"
+    environment:
+      - "CCPROXY_CONFIG_DIR=${CCPROXY_CONFIG_DIR}"
     readiness_probe:
       exec:
         command: "ccproxy status --proxy"
