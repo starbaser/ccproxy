@@ -4,6 +4,7 @@ import pytest
 
 from ccproxy.config import clear_config_instance
 from ccproxy.flows.store import clear_flow_store
+from ccproxy.lightllm.pplx_threads import clear_pplx_threads
 from ccproxy.mcp.buffer import clear_buffer
 from ccproxy.shaping.executor import clear_shape_hook_cache
 from ccproxy.shaping.store import clear_store_instance
@@ -18,3 +19,4 @@ def cleanup():
     clear_flow_store()
     clear_store_instance()
     clear_shape_hook_cache()
+    clear_pplx_threads()

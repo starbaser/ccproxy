@@ -13,7 +13,7 @@ from litellm.llms.base_llm.chat.transformation import BaseConfig
 from litellm.types.utils import LlmProviders
 from litellm.utils import ProviderConfigManager
 
-from ccproxy.lightllm.perplexity import PERPLEXITY_PROVIDER_NAME, PerplexityProConfig
+from ccproxy.lightllm.pplx import PERPLEXITY_PROVIDER_NAME, PerplexityProConfig
 
 _LOCAL_CONFIGS: dict[str, Callable[[], BaseConfig]] = {
     PERPLEXITY_PROVIDER_NAME: PerplexityProConfig,

@@ -154,6 +154,7 @@ def _build_addons(
     from ccproxy.inspector.gemini_addon import GeminiAddon
     from ccproxy.inspector.multi_har_saver import MultiHARSaver
     from ccproxy.inspector.oauth_addon import OAuthAddon
+    from ccproxy.inspector.pplx_addon import PerplexityAddon
     from ccproxy.inspector.shape_capturer import ShapeCapturer
     from ccproxy.inspector.transport_override_addon import TransportOverrideAddon
 
@@ -214,6 +215,7 @@ def _build_addons(
     addons.append(TransportOverrideAddon(sidecar_port=sidecar_port))
     addons.append(OAuthAddon())
     addons.append(GeminiAddon())
+    addons.append(PerplexityAddon())
 
     return addons
 

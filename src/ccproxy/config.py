@@ -260,6 +260,50 @@ class GeminiCapacityFallbackConfig(BaseModel):
     """Wall-clock budget for the entire retry chain across all candidates."""
 
 
+class PplxThreadConfig(BaseModel):
+    """Perplexity thread-continuation runtime knobs.
+
+    Owned by :class:`~ccproxy.inspector.pplx_addon.PerplexityAddon` and the
+    ``pplx_thread_inject`` hook. Distinct from :class:`Provider` (routing)
+    and :class:`ShapingConfig` (Perplexity is the OpenAI→provider direction,
+    so the identity-preserving shape replay subsystem doesn't apply).
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    consistency_mode: Literal["warn", "strict", "ignore"] = "warn"
+    """How to react when incoming OpenAI message history diverges from
+    Perplexity's authoritative thread state after explicit slug resolution.
+    ``warn`` continues with server state and stamps a response header.
+    ``strict`` raises a structured 409. ``ignore`` is silent."""
+
+    citation_mode: Literal["markdown", "default", "clean"] = "markdown"
+    """How the ``import_pplx_thread`` MCP tool formats ``[N]`` citation
+    markers when converting a Perplexity thread to OpenAI ``messages[]``.
+    ``markdown`` substitutes ``[N](url)``; ``default`` preserves verbatim;
+    ``clean`` strips them entirely. Per-call argument overrides this."""
+
+    ttl_seconds: float = Field(default=1800.0, gt=0)
+    """L1 cache TTL for :class:`PerplexityThreadStore`. The store is
+    organic-continuation-only; explicit resume via
+    ``metadata.ccproxy_pplx_thread`` bypasses TTL and hits the server."""
+
+
+class PplxConfig(BaseModel):
+    """Perplexity-specific runtime configuration.
+
+    Sibling of :class:`GeminiCapacityFallbackConfig` in topology and intent:
+    provider-specific behavior knobs owned by the Perplexity addon/hook layer,
+    separate from per-provider routing (:class:`Provider`) and from the
+    request-shape replay subsystem (:class:`ShapingConfig`, which is
+    structurally the wrong direction for OpenAI→Perplexity translation).
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    thread: PplxThreadConfig = Field(default_factory=PplxThreadConfig)
+
+
 class MitmproxyOptions(BaseModel):
     """Typed facade over mitmproxy's OptManager options.
 
@@ -561,6 +605,11 @@ class CCProxyConfig(BaseSettings):
     gemini_capacity: GeminiCapacityFallbackConfig = Field(default_factory=GeminiCapacityFallbackConfig)
     """Sticky-retry + fallback chain for Gemini RESOURCE_EXHAUSTED responses.
     Owned by :class:`~ccproxy.inspector.gemini_addon.GeminiAddon`."""
+
+    pplx: PplxConfig = Field(default_factory=PplxConfig)
+    """Perplexity-specific runtime knobs (thread continuation, citation mode,
+    L1 cache TTL). Owned by :class:`~ccproxy.inspector.pplx_addon.PerplexityAddon`
+    and the ``pplx_thread_inject`` hook."""
 
     providers: dict[str, Provider] = Field(default_factory=dict)
     """Provider entries keyed by sentinel suffix.

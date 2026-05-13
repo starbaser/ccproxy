@@ -41,20 +41,31 @@
         host = "www.perplexity.ai";
         path = "/rest/sse/perplexity_ask";
         provider = "perplexity_pro";
+        fingerprint_profile = "chrome131";
       };
     };
     hooks = {
       inbound = [
         "ccproxy.hooks.forward_oauth"
         "ccproxy.hooks.extract_session_id"
+        "ccproxy.hooks.extract_pplx_files"
+        "ccproxy.hooks.pplx_thread_inject"
       ];
       outbound = [
         "ccproxy.hooks.gemini_cli"
+        "ccproxy.hooks.pplx_preflight"
         "ccproxy.hooks.inject_mcp_notifications"
         "ccproxy.hooks.verbose_mode"
         "ccproxy.hooks.commitbee_compat"
         "ccproxy.hooks.shape"
       ];
+    };
+    pplx = {
+      thread = {
+        consistency_mode = "warn";
+        citation_mode = "markdown";
+        ttl_seconds = 1800;
+      };
     };
     gemini_capacity = {
       enabled = true;

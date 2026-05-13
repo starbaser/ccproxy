@@ -188,6 +188,197 @@ def list_models(refresh: bool = False) -> dict[str, Any]:
     return build_catalog(refresh=refresh)
 
 
+def _pplx_session() -> tuple[str, dict[str, str]]:
+    """Resolve Perplexity session cookie + standard API headers.
+
+    Returns ``(base_url, headers)``. Raises ``RuntimeError`` when the
+    ``perplexity_pro`` provider isn't configured or has no token on disk —
+    surfaced to the MCP client as a tool execution error.
+    """
+    from ccproxy.config import get_config
+    from ccproxy.lightllm.pplx import (
+        PERPLEXITY_BROWSER_UA,
+        PERPLEXITY_PROVIDER_NAME,
+        PERPLEXITY_SESSION_COOKIE,
+        PERPLEXITY_URL_BASE,
+    )
+
+    cfg = get_config()
+    if PERPLEXITY_PROVIDER_NAME not in cfg.providers:
+        raise RuntimeError(
+            f"provider {PERPLEXITY_PROVIDER_NAME!r} not configured in ccproxy.yaml"
+        )
+    token = cfg.resolve_oauth_token(PERPLEXITY_PROVIDER_NAME)
+    if not token:
+        raise RuntimeError(
+            f"no session cookie resolved for {PERPLEXITY_PROVIDER_NAME!r}"
+        )
+    headers = {
+        "Cookie": f"{PERPLEXITY_SESSION_COOKIE}={token}",
+        "User-Agent": PERPLEXITY_BROWSER_UA,
+        "Origin": PERPLEXITY_URL_BASE,
+        "Referer": f"{PERPLEXITY_URL_BASE}/",
+        "Accept": "application/json",
+        "x-app-apiclient": "default",
+        "x-app-apiversion": "2.18",
+        "x-perplexity-request-reason": "perplexity-query-state-provider",
+    }
+    return PERPLEXITY_URL_BASE, headers
+
+
+@mcp.tool()
+def list_pplx_threads(
+    search_term: str = "",
+    limit: int = 100,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    """List the authenticated user's Perplexity threads (``/rest/thread/list_ask_threads``).
+
+    Each entry contains ``slug``, ``title``, ``context_uuid``,
+    ``last_query_datetime``, etc. Use ``slug`` as the value of
+    ``metadata.ccproxy_pplx_thread`` on the next chat-completions request
+    to resume that thread, or pass to ``get_pplx_thread`` / ``import_pplx_thread``.
+    """
+    import httpx
+
+    base, headers = _pplx_session()
+    headers["Content-Type"] = "application/json"
+    resp = httpx.post(
+        f"{base}/rest/thread/list_ask_threads",
+        headers=headers,
+        json={
+            "limit": limit,
+            "offset": offset,
+            "ascending": False,
+            "search_term": search_term,
+            "with_temporary_threads": False,
+            "exclude_asi": False,
+        },
+        timeout=15.0,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict) and isinstance(data.get("entries"), list):
+        return data["entries"]
+    return []
+
+
+@mcp.tool()
+def get_pplx_thread(slug_or_uuid: str) -> dict[str, Any]:
+    """Fetch a Perplexity thread by URL slug or context UUID (``/rest/thread/{slug}``)."""
+    import httpx
+
+    from ccproxy.lightllm.pplx import PERPLEXITY_BLOCK_USE_CASES
+
+    base, headers = _pplx_session()
+    params: list[tuple[str, str]] = [
+        ("version", "2.18"),
+        ("source", "default"),
+        ("limit", "100"),
+        ("offset", "0"),
+        ("from_first", "true"),
+        ("with_parent_info", "true"),
+        ("with_schematized_response", "true"),
+    ]
+    params.extend(("supported_block_use_cases", uc) for uc in PERPLEXITY_BLOCK_USE_CASES)
+    headers["x-perplexity-request-endpoint"] = f"{base}/rest/thread/{slug_or_uuid}"
+    resp = httpx.get(
+        f"{base}/rest/thread/{slug_or_uuid}",
+        params=params,
+        headers=headers,
+        timeout=15.0,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+@mcp.tool()
+def import_pplx_thread(
+    slug_or_uuid: str,
+    citation_mode: str | None = None,
+    include_reasoning: bool = False,
+) -> dict[str, Any]:
+    """Convert a Perplexity thread into a kit for next-turn resume.
+
+    Returns ``{messages: [...], metadata: {ccproxy_pplx_thread: slug}, thread_info: {...}}``.
+    The caller assembles the next OpenAI chat-completions request as:
+
+        {"messages": [...returned, new_user_turn], "metadata": {ccproxy_pplx_thread: slug}}
+
+    ccproxy's ``pplx_thread_inject`` hook then resolves the metadata slug
+    to the thread's latest identifiers and routes the new turn as a
+    Perplexity ``followup`` against the existing thread.
+    """
+    from ccproxy.config import get_config
+    from ccproxy.lightllm.pplx import _thread_to_openai_messages
+
+    mode = citation_mode or get_config().pplx.thread.citation_mode
+    thread = get_pplx_thread(slug_or_uuid=slug_or_uuid)
+    messages = _thread_to_openai_messages(thread, citation_mode=mode, include_reasoning=include_reasoning)
+
+    thread_meta = thread.get("thread") if isinstance(thread.get("thread"), dict) else {}
+    entries = thread.get("entries") if isinstance(thread.get("entries"), list) else []
+
+    return {
+        "messages": messages,
+        "metadata": {"ccproxy_pplx_thread": slug_or_uuid},
+        "thread_info": {
+            "slug": (thread_meta.get("slug") if thread_meta else None) or slug_or_uuid,
+            "context_uuid": thread_meta.get("context_uuid") if thread_meta else None,
+            "title": thread_meta.get("title") if thread_meta else None,
+            "entry_count": len(entries),
+        },
+    }
+
+
+@mcp.tool()
+def delete_pplx_thread(entry_uuid: str, read_write_token: str) -> dict[str, Any]:
+    """Delete a Perplexity thread by entry UUID + read_write_token.
+
+    Both identifiers come from a prior SSE response (captured by ccproxy
+    on the response side) or from a ``get_pplx_thread`` call.
+    """
+    import httpx
+
+    base, headers = _pplx_session()
+    headers["Content-Type"] = "application/json"
+    resp = httpx.request(
+        "DELETE",
+        f"{base}/rest/thread/delete_thread_by_entry_uuid",
+        headers=headers,
+        json={"entry_uuid": entry_uuid, "read_write_token": read_write_token},
+        timeout=15.0,
+    )
+    resp.raise_for_status()
+    try:
+        return resp.json()
+    except Exception:
+        return {"status": "ok"}
+
+
+@mcp.tool()
+def export_pplx_thread(entry_uuid: str, format: str = "md") -> dict[str, Any]:
+    """Export a single thread entry. Format is ``"pdf"``, ``"md"``, or ``"docx"``.
+
+    Returns ``{filename, file_content_64}`` per ``threads-history.md:369-394``;
+    base64-decode on the client side.
+    """
+    import httpx
+
+    base, headers = _pplx_session()
+    headers["Content-Type"] = "application/json"
+    resp = httpx.post(
+        f"{base}/rest/entry/export",
+        headers=headers,
+        json={"entry_uuid": entry_uuid, "format": format},
+        timeout=30.0,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 @mcp.resource("proxy://requests")
 def resource_requests() -> str:
     """Resource view of the captured flow set (JSON list)."""

@@ -133,5 +133,68 @@
     "tool_name": "pplx_nemotron3_super_think",
     "min_tier": "pro",
     "mode": "copilot"
+  },
+  {
+    "id": "perplexity/pro",
+    "name": "Perplexity Pro",
+    "description": "Perplexity Pro (default Pro model).",
+    "identifier": "pplx_pro",
+    "tool_name": "pplx_pro",
+    "min_tier": "pro",
+    "mode": "copilot"
+  },
+  {
+    "id": "perplexity/reasoning",
+    "name": "Perplexity Reasoning",
+    "description": "Perplexity reasoning-focused model.",
+    "identifier": "pplx_reasoning",
+    "tool_name": "pplx_reasoning",
+    "min_tier": "pro",
+    "mode": "copilot"
+  },
+  {
+    "id": "openai/gpt-5.5",
+    "name": "GPT-5.5",
+    "description": "OpenAI GPT-5.5.",
+    "identifier": "gpt55",
+    "tool_name": "pplx_gpt55",
+    "min_tier": "max",
+    "mode": "copilot"
+  },
+  {
+    "id": "openai/o3",
+    "name": "O3",
+    "description": "OpenAI O3.",
+    "identifier": "o3",
+    "tool_name": "pplx_o3",
+    "min_tier": "pro",
+    "mode": "copilot"
+  },
+  {
+    "id": "openai/o3-pro",
+    "name": "O3 Pro",
+    "description": "OpenAI O3 Pro.",
+    "identifier": "o3pro",
+    "tool_name": "pplx_o3_pro",
+    "min_tier": "max",
+    "mode": "copilot"
+  },
+  {
+    "id": "xai/grok-4",
+    "name": "Grok 4",
+    "description": "xAI Grok 4.",
+    "identifier": "grok4",
+    "tool_name": "pplx_grok4",
+    "min_tier": "pro",
+    "mode": "copilot"
+  },
+  {
+    "id": "deepseek/r1",
+    "name": "DeepSeek R1",
+    "description": "DeepSeek R1 reasoning model.",
+    "identifier": "r1",
+    "tool_name": "pplx_r1",
+    "min_tier": "pro",
+    "mode": "copilot"
   }
 ]

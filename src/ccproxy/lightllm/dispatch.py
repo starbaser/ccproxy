@@ -23,7 +23,7 @@ from litellm.types.utils import LlmProviders, ModelResponse
 from litellm.utils import ProviderConfigManager
 
 from ccproxy.lightllm.noop_logging import NoopLogging
-from ccproxy.lightllm.perplexity import PERPLEXITY_PROVIDER_NAME, PerplexityProIterator
+from ccproxy.lightllm.pplx import PERPLEXITY_PROVIDER_NAME, PerplexityProIterator
 from ccproxy.lightllm.registry import get_config
 
 logger = logging.getLogger(__name__)
