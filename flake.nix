@@ -108,6 +108,15 @@
             '';
           };
 
+        # Bundled template installed at src/ccproxy/templates/ccproxy.yaml and
+        # served by `ccproxy init` to seed a user's first ccproxy.yaml. Built
+        # from nix/defaults.nix as-is (no dev overrides). The dev shellHook
+        # copies it into the source tree on every shell entry so it stays in
+        # sync without a pre-commit hook or any Python rendering script.
+        templateYaml = yaml.generate "ccproxy.yaml" {
+          ccproxy = defaultSettings.settings;
+        };
+
         devConfig = mkConfig {
           settings = {
             port = 4001;
@@ -160,6 +169,11 @@
 
             shellHook = ''
               ${devConfig.shellHook}
+              # Refresh the bundled ccproxy init template from nix/defaults.nix.
+              # Nix-driven; no Python script, no pre-commit hook. Runs once per
+              # dev-shell entry so the template stays in sync with the canonical
+              # defaults file.
+              install -m 644 ${templateYaml} src/ccproxy/templates/ccproxy.yaml
               export CCPROXY_BASE_URL="http://127.0.0.1:4001"
               export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [
                 pkgs.stdenv.cc.cc.lib

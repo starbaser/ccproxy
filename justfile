@@ -26,10 +26,6 @@ restart:
 logs *ARGS:
     process-compose process logs ccproxy {{ARGS}}
 
-# Regenerate src/ccproxy/templates/ccproxy.yaml from nix/defaults.nix
-sync-template:
-    nix eval --json .#defaultSettings.settings | python3 scripts/render_template.py > src/ccproxy/templates/ccproxy.yaml
-
 # Build wheel for pip-install validation (mirrors the GHA build-wheel job)
 build-wheel:
     rm -rf dist

@@ -1,0 +1,143 @@
+ccproxy:
+  gemini_capacity:
+    enabled: true
+    fallback_models:
+    - gemini-3-flash-preview
+    - gemini-2.5-pro
+    - gemini-2.5-flash
+    retry_status_codes:
+    - 429
+    - 503
+    - 500
+    sticky_retry_attempts: 3
+    sticky_retry_max_delay_seconds: 60
+    terminal_delay_threshold_seconds: 300
+    total_retry_budget_seconds: 120
+  hooks:
+    inbound:
+    - ccproxy.hooks.forward_oauth
+    - ccproxy.hooks.extract_session_id
+    - ccproxy.hooks.extract_pplx_files
+    - ccproxy.hooks.pplx_thread_inject
+    outbound:
+    - ccproxy.hooks.gemini_cli
+    - ccproxy.hooks.pplx_preflight
+    - ccproxy.hooks.inject_mcp_notifications
+    - ccproxy.hooks.verbose_mode
+    - ccproxy.hooks.commitbee_compat
+    - ccproxy.hooks.shape
+  host: 127.0.0.1
+  inspector:
+    cert_dir: ~/.config/ccproxy
+    port: 8083
+    transforms: []
+  log_level: INFO
+  otel:
+    enabled: false
+    endpoint: http://localhost:4317
+    service_name: ccproxy
+  port: 4000
+  pplx:
+    thread:
+      citation_mode: markdown
+      consistency_mode: warn
+      ttl_seconds: 1800
+  providers:
+    anthropic:
+      auth:
+        command: jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json
+        type: command
+      host: api.anthropic.com
+      path: /v1/messages
+      provider: anthropic
+    deepseek:
+      auth:
+        command: printenv DEEPSEEK_API_KEY
+        header: x-api-key
+        type: command
+      host: api.deepseek.com
+      path: /anthropic/v1/messages
+      provider: anthropic
+    gemini:
+      auth:
+        client_id: 681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com
+        client_secret: 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
+        type: google_oauth
+      host: cloudcode-pa.googleapis.com
+      path: /v1internal:{action}
+      provider: gemini
+    perplexity_pro:
+      auth:
+        file: ~/.config/ccproxy/perplexity-session-token
+        type: file
+      fingerprint_profile: chrome131
+      host: www.perplexity.ai
+      path: /rest/sse/perplexity_ask
+      provider: perplexity_pro
+  shaping:
+    enabled: true
+    providers:
+      anthropic:
+        capture:
+          path_pattern: ^/v1/messages
+        content_fields:
+        - model
+        - messages
+        - tools
+        - tool_choice
+        - system
+        - thinking
+        - context_management
+        - stream
+        - max_tokens
+        - temperature
+        - top_p
+        - top_k
+        - stop_sequences
+        merge_strategies:
+          system: prepend_shape:2
+        preserve_headers:
+        - authorization
+        - x-api-key
+        - x-goog-api-key
+        - host
+        shape_hooks:
+        - ccproxy.shaping.regenerate
+        - hook: ccproxy.shaping.caching.strip
+          params:
+            paths:
+            - system.*.cache_control
+        - hook: ccproxy.shaping.caching.insert
+          params:
+            path: system.-1.cache_control
+            value:
+              type: ephemeral
+        strip_headers:
+        - authorization
+        - x-api-key
+        - x-goog-api-key
+        - content-length
+        - host
+        - transfer-encoding
+        - connection
+        - accept-encoding
+      gemini:
+        capture:
+          path_pattern: '^/v1internal:'
+        content_fields:
+        - model
+        - project
+        preserve_headers:
+        - authorization
+        - host
+        shape_hooks:
+        - ccproxy.shaping.regenerate
+        - ccproxy.shaping.gemini
+        strip_headers:
+        - authorization
+        - content-length
+        - host
+        - transfer-encoding
+        - connection
+        - accept-encoding
+    shapes_dir: ~/.config/ccproxy/shaping/shapes
