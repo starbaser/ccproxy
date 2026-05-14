@@ -575,7 +575,13 @@ class TestMainFunction:
         cmd = Status(json_output=False)
         main(cmd, config=tmp_path)
 
-        mock_status.assert_called_once_with(tmp_path, json_output=False, check_proxy=False, check_inspect=False)
+        mock_status.assert_called_once_with(
+            tmp_path,
+            json_output=False,
+            check_proxy=False,
+            check_inspect=False,
+            check_mcp=False,
+        )
 
     @patch("ccproxy.cli.show_status")
     def test_main_status_command_json(self, mock_status: Mock, tmp_path: Path, monkeypatch) -> None:
@@ -585,7 +591,13 @@ class TestMainFunction:
         cmd = Status(json_output=True)
         main(cmd, config=tmp_path)
 
-        mock_status.assert_called_once_with(tmp_path, json_output=True, check_proxy=False, check_inspect=False)
+        mock_status.assert_called_once_with(
+            tmp_path,
+            json_output=True,
+            check_proxy=False,
+            check_inspect=False,
+            check_mcp=False,
+        )
 
 
 class TestSetupLogging:

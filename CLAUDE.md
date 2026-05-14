@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `ccproxy` is a transparent network interceptor for LLM tooling. It accepts traffic at one of two listeners (a reverse proxy on port 4000, or a rootless WireGuard namespace jail), feeds each request through a DAG-driven hook pipeline, and forwards directly to the provider API. Cross-provider request/response transformation is handled by the `lightllm` subpackage — a surgical connector into LiteLLM's `BaseConfig` transformation pipeline that bypasses the LiteLLM proxy server, cost tracking, and callbacks.
 
-The package name is `ccproxy` (lowercase). The PyPI distribution is `claude-ccproxy`. Python 3.13+. Console scripts: `ccproxy` (`ccproxy.cli:entry_point`) and `ccproxy_mcp` (`ccproxy.mcp.server:main`).
+The package name is `ccproxy` (lowercase). The PyPI distribution is `claude-ccproxy`. Python 3.13+. Console script: `ccproxy` (`ccproxy.cli:entry_point`).
 
 ## Commands
 
@@ -38,11 +38,12 @@ The `process-compose` socket is `/tmp/process-compose-ccproxy.sock` (set via `PC
 ```bash
 ccproxy start                          # Start server (inspector mode, foreground)
 ccproxy run [--inspect] -- <cmd>       # Run command with proxy env vars / WireGuard jail
-ccproxy status [--proxy] [--inspect]   # Health check (bitmask exit codes: 1=proxy down, 2=inspect down)
+ccproxy status [--proxy] [--inspect] [--mcp]  # Health check (bitmask exit codes: 1=proxy, 2=inspect, 4=mcp)
 ccproxy init [--force]                 # Initialize ~/.config/ccproxy/ccproxy.yaml
 ccproxy logs [-f] [-n LINES]           # Tail $CCPROXY_CONFIG_DIR/ccproxy.log
 ccproxy flows {list,dump,diff,compare,clear,shape}  # Flow inspection
-ccproxy_mcp                            # FastMCP stdio server (separate console_script)
+# MCP server: streamable-HTTP, hosted in-daemon on cfg.mcp.http.port (default 4030; dev 4031)
+# clients connect to http://127.0.0.1:<port>/mcp with `Authorization: Bearer <token>`
 ```
 
 ### Smoke Test
@@ -142,9 +143,10 @@ The pipeline routers are only added when their hook list is non-empty. `Transpor
   - `billing_salt.py` — Returns the configured `billing_salt` from `CCProxyConfig`. The salt is NOT vendored — user supplies via `ccproxy.yaml` `shaping.providers.anthropic.billing.salt` or `CCPROXY_BILLING_SALT` env var.
   - `model_catalog.py` — OpenAI-compatible `/v1/models` payload generator. `STATIC_MODEL_CATALOG` is the floor list; `build_catalog(refresh=True)` queries each provider's upstream `/v1/models` and unions deduplicated results.
 
-- **`mcp/`** — Two surfaces.
-  - `buffer.py` + `routes.py` — Thread-safe `NotificationBuffer` singleton + `POST /mcp/notify` FastAPI endpoint for MCP terminal event ingestion (consumed by the `inject_mcp_notifications` hook). Max 50 events/task, 600s TTL, drop oldest on overflow.
-  - `server.py` — FastMCP stdio server exposing tools (`list_flows`, `get_flow`, `dump_har`, `get_request_body`, `get_response_body`, `diff_flows`, `compare_flow`, `clear_flows`, `capture_shape`, `list_shapes`, `list_conversations`, `list_models`) and resources (`proxy://requests`, `proxy://status`). Wraps `MitmwebClient` and `ShapeStore`. Console-script entry point: `ccproxy_mcp`.
+- **`mcp/`** — In-daemon FastMCP streamable-HTTP server. HTTP is the only MCP transport; stdio has been removed.
+  - `server.py` — `mcp = FastMCP("ccproxy", stateless_http=True)` singleton plus 17 `@mcp.tool()`-decorated functions: flow inspection (`list_flows`, `get_flow`, `dump_har`, `get_request_body`, `get_response_body`, `diff_flows`, `compare_flow`, `clear_flows`), shape capture (`capture_shape`, `list_shapes`), conversation grouping (`list_conversations`), model catalog (`list_models`), and Perplexity Pro thread management (`list_pplx_threads`, `get_pplx_thread`, `import_pplx_thread`, `delete_pplx_thread`, `export_pplx_thread`). Resources: `proxy://requests`, `proxy://status`. Long-running tools accept a `ctx: Context` parameter for `notifications/message` and `notifications/progress` over the streaming POST response. Wraps `MitmwebClient` and `ShapeStore`; sync httpx calls inside async tools go through `asyncio.to_thread`. `configure_auth(token, base_url)` mutates `mcp.settings.auth` + `mcp._token_verifier` at daemon startup before `mcp.streamable_http_app()` is called.
+  - The uvicorn lifecycle lives in `inspector/process.py:run_inspector()` next to the fingerprint sidecar — same `uvicorn.Config + uvicorn.Server + asyncio.create_task + poll-server.started` pattern. `log_config=None` is mandatory (preserves the `ccproxy.log` `FileHandler`); `lifespan="on"` is mandatory (the `StreamableHTTPSessionManager` task group runs there).
+  - `buffer.py` + `routes.py` — Thread-safe `NotificationBuffer` singleton + `POST /mcp/notify` FastAPI endpoint for MCP terminal event ingestion (consumed by the `inject_mcp_notifications` hook). Max 50 events/task, 600s TTL, drop oldest on overflow. **The `/mcp/notify` router is currently unmounted** — it is a Claude-Code-notification-support hack that is intentionally not wired into either the in-daemon FastMCP server or any other ASGI surface. Leave it untouched.
 
 - **`flows.py` (CLI)** — `Flows*` tyro subcommands plus `MitmwebClient` for programmatic mitmweb REST access. Auth is Bearer token resolved from `inspector.mitmproxy.web_password`. All subcommands operate on a resolved flow set: `GET /flows → config default_jq_filters → CLI --jq filters → final set`. Filters are jq expressions (subprocess; not a Python dependency); each must consume and produce a JSON array. Multiple `--jq` flags chain via `|`.
 

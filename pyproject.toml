@@ -40,7 +40,6 @@ dependencies = [
 
 [project.scripts]
 ccproxy = "ccproxy.cli:entry_point"
-ccproxy_mcp = "ccproxy.mcp.server:main"
 
 [project.optional-dependencies]
 otel = [
@@ -148,6 +147,16 @@ module = "tests.*"
 disallow_untyped_defs = false
 check_untyped_defs = true
 
+# FastMCP's ``Context`` class is generic over three TypeVars
+# (ServerSessionT, LifespanContextT, RequestT) and FastMCP's runtime detection
+# uses ``inspect.isclass(annotation) and issubclass(annotation, Context)`` —
+# parameterized aliases like ``Context[Any, Any, Any]`` evaluate to
+# ``_GenericAlias`` (not a class) and break injection. Use bare ``Context``
+# here and turn off the generic-type-args rule for this module.
+[[tool.mypy.overrides]]
+module = "ccproxy.mcp.server"
+disallow_any_generics = false
+
 [tool.pyright]
 include = ["src", "tests"]
 ignore = ["tests/"]
@@ -157,8 +166,6 @@ stubPath = "stubs"
 
 [tool.ty.environment]
 python-version = "3.13"
-
-[tool.ty.src]
 root = "src"
 
 [tool.ruff]

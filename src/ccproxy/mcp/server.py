@@ -1,23 +1,31 @@
-"""MCP stdio server exposing ccproxy's flow inspection surface as tools.
+"""FastMCP streamable-HTTP server exposing ccproxy's flow inspection surface.
 
-Launched via the ``ccproxy_mcp`` console script (or ``ccproxy mcp`` CLI
-subcommand). Wraps ``MitmwebClient`` and ``ShapeStore`` so MCP-aware
-clients (e.g. Claude Code with an MCP server config) can list captured
-HTTP flows, fetch bodies, dump HAR, group by conversation, and capture
-shape templates without spawning the ccproxy CLI per call.
+This is THE MCP surface for ccproxy. It is hosted inside the running ccproxy
+daemon process — see :mod:`ccproxy.inspector.process` for the in-event-loop
+``uvicorn`` integration. There is no stdio transport; clients connect to
+``http://<host>:<port>/mcp`` with a bearer token (when auth is configured).
 
-Tools mirror the ``ccproxy flows`` CLI surface plus a few extras for
-shape capture and conversation grouping.
+Tools mirror the ``ccproxy flows`` CLI surface plus extras for shape capture,
+conversation grouping, and Perplexity Pro thread management.
+
+Long-running tools accept a ``ctx: Context`` parameter (auto-injected by
+FastMCP, excluded from the published JSON schema) and emit
+``notifications/message`` events via ``ctx.info()`` interleaved into the
+streaming POST response body.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
-from typing import Any
+from typing import Any, cast
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.auth.provider import AccessToken, TokenVerifier
+from mcp.server.auth.settings import AuthSettings
+from mcp.server.fastmcp import Context, FastMCP
+from pydantic import AnyHttpUrl
 
 from ccproxy.flows import MitmwebClient, _make_client, _run_jq
 from ccproxy.shaping.store import get_store
@@ -25,7 +33,50 @@ from ccproxy.specs.model_catalog import build_catalog
 
 logger = logging.getLogger(__name__)
 
-mcp = FastMCP("ccproxy")
+
+class _StaticTokenVerifier(TokenVerifier):
+    """Minimal ``TokenVerifier`` implementation for the ccproxy MCP server.
+
+    The MCP SDK ships ``ProviderTokenVerifier`` which validates against an
+    upstream OAuth introspection endpoint. We don't want that — ccproxy is a
+    local daemon and the bearer token comes from an opnix-managed file or
+    command source. This class wraps a single expected token string and
+    rejects anything else.
+    """
+
+    def __init__(self, expected_token: str, *, client_id: str = "ccproxy") -> None:
+        self._expected = expected_token
+        self._client_id = client_id
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        if not token or token != self._expected:
+            return None
+        return AccessToken(token=token, client_id=self._client_id, scopes=[])
+
+
+# Module-level FastMCP singleton. Tools register via ``@mcp.tool()`` decorators
+# at import time. Auth is configured later via ``configure_auth()`` once
+# CCProxyConfig is loaded — the SDK's ``streamable_http_app()`` reads
+# ``self.settings.auth`` and ``self._token_verifier`` lazily, so post-import
+# mutation is safe (and clearer than juggling factory + decorator scoping).
+mcp: FastMCP = FastMCP("ccproxy", stateless_http=True)
+
+
+def configure_auth(token: str, base_url: str) -> None:
+    """Wire a static bearer token onto the MCP singleton.
+
+    Called once during daemon startup from :func:`ccproxy.inspector.process.run_inspector`
+    before ``mcp.streamable_http_app()`` is invoked. ``base_url`` is the MCP
+    server's own externally-visible URL (e.g. ``http://127.0.0.1:4030/mcp``);
+    it satisfies ``AuthSettings``'s required ``issuer_url`` /
+    ``resource_server_url`` fields, which exist for OAuth discovery flows that
+    static-token clients don't use.
+    """
+    mcp.settings.auth = AuthSettings(
+        issuer_url=cast(AnyHttpUrl, base_url),
+        resource_server_url=cast(AnyHttpUrl, base_url),
+    )
+    mcp._token_verifier = _StaticTokenVerifier(token)
 
 
 def _flows_with_optional_filter(client: MitmwebClient, jq_filter: str | None) -> list[dict[str, Any]]:
@@ -54,10 +105,15 @@ def get_flow(flow_id: str) -> dict[str, Any] | None:
 
 
 @mcp.tool()
-def dump_har(flow_ids: list[str]) -> str:
+async def dump_har(flow_ids: list[str], ctx: Context) -> str:
     """Render the given flow ids as a multi-page HAR 1.2 JSON string."""
-    with _make_client() as client:
-        return client.dump_har(flow_ids)
+    await ctx.info(f"dumping HAR for {len(flow_ids)} flow(s)")
+
+    def _do() -> str:
+        with _make_client() as client:
+            return client.dump_har(flow_ids)
+
+    return await asyncio.to_thread(_do)
 
 
 @mcp.tool()
@@ -77,7 +133,7 @@ def get_response_body(flow_id: str) -> str:
 
 
 @mcp.tool()
-def diff_flows(flow_ids: list[str]) -> str:
+async def diff_flows(flow_ids: list[str], ctx: Context) -> str:
     """Return a sliding-window unified diff of request bodies across the given flows.
 
     Requires at least two ids. Returns the concatenated diff text.
@@ -86,8 +142,13 @@ def diff_flows(flow_ids: list[str]) -> str:
         raise ValueError("diff_flows: need at least two flow ids")
     import difflib
 
-    with _make_client() as client:
-        bodies = [client.get_request_body(fid).decode("utf-8", errors="replace") for fid in flow_ids]
+    await ctx.info(f"diffing {len(flow_ids)} flow body bodies")
+
+    def _fetch_bodies() -> list[str]:
+        with _make_client() as client:
+            return [client.get_request_body(fid).decode("utf-8", errors="replace") for fid in flow_ids]
+
+    bodies = await asyncio.to_thread(_fetch_bodies)
 
     chunks: list[str] = []
     for i in range(len(bodies) - 1):
@@ -104,7 +165,7 @@ def diff_flows(flow_ids: list[str]) -> str:
 
 
 @mcp.tool()
-def compare_flow(flow_id: str) -> dict[str, Any]:
+async def compare_flow(flow_id: str, ctx: Context) -> dict[str, Any]:
     """Diff client-request vs forwarded-request for a single flow.
 
     Returns ``{client_request, forwarded_request, diff}`` where ``diff`` is
@@ -112,9 +173,15 @@ def compare_flow(flow_id: str) -> dict[str, Any]:
     """
     import difflib
 
-    with _make_client() as client:
-        client_body = client.get_request_body(flow_id).decode("utf-8", errors="replace")
-        flow_obj = next((f for f in client.list_flows() if f.get("id") == flow_id), None)
+    await ctx.info(f"comparing client vs forwarded request for flow {flow_id}")
+
+    def _fetch() -> tuple[str, dict[str, Any] | None]:
+        with _make_client() as client:
+            body = client.get_request_body(flow_id).decode("utf-8", errors="replace")
+            obj = next((f for f in client.list_flows() if f.get("id") == flow_id), None)
+        return body, obj
+
+    client_body, flow_obj = await asyncio.to_thread(_fetch)
 
     if flow_obj is None:
         raise ValueError(f"flow not found: {flow_id}")
@@ -151,10 +218,15 @@ def clear_flows(jq_filter: str | None = None) -> int:
 
 
 @mcp.tool()
-def capture_shape(flow_id: str, provider: str) -> dict[str, Any]:
+async def capture_shape(flow_id: str, provider: str, ctx: Context) -> dict[str, Any]:
     """Save a captured flow as a shape template under ``provider``."""
-    with _make_client() as client:
-        return client.save_shape([flow_id], provider)
+    await ctx.info(f"capturing shape {provider!r} from flow {flow_id!r}")
+
+    def _do() -> dict[str, Any]:
+        with _make_client() as client:
+            return client.save_shape([flow_id], provider)
+
+    return await asyncio.to_thread(_do)
 
 
 @mcp.tool()
@@ -183,9 +255,11 @@ def list_conversations() -> dict[str, list[str]]:
 
 
 @mcp.tool()
-def list_models(refresh: bool = False) -> dict[str, Any]:
+async def list_models(ctx: Context, refresh: bool = False) -> dict[str, Any]:
     """Return ccproxy's OpenAI-shaped model catalog. ``refresh=True`` queries upstream providers."""
-    return build_catalog(refresh=refresh)
+    if refresh:
+        await ctx.info("refreshing model catalog from upstream providers")
+    return await asyncio.to_thread(lambda: build_catalog(refresh=refresh))
 
 
 def _pplx_session() -> tuple[str, dict[str, str]]:
@@ -205,14 +279,10 @@ def _pplx_session() -> tuple[str, dict[str, str]]:
 
     cfg = get_config()
     if PERPLEXITY_PROVIDER_NAME not in cfg.providers:
-        raise RuntimeError(
-            f"provider {PERPLEXITY_PROVIDER_NAME!r} not configured in ccproxy.yaml"
-        )
+        raise RuntimeError(f"provider {PERPLEXITY_PROVIDER_NAME!r} not configured in ccproxy.yaml")
     token = cfg.resolve_oauth_token(PERPLEXITY_PROVIDER_NAME)
     if not token:
-        raise RuntimeError(
-            f"no session cookie resolved for {PERPLEXITY_PROVIDER_NAME!r}"
-        )
+        raise RuntimeError(f"no session cookie resolved for {PERPLEXITY_PROVIDER_NAME!r}")
     headers = {
         "Cookie": f"{PERPLEXITY_SESSION_COOKIE}={token}",
         "User-Agent": PERPLEXITY_BROWSER_UA,
@@ -227,7 +297,8 @@ def _pplx_session() -> tuple[str, dict[str, str]]:
 
 
 @mcp.tool()
-def list_pplx_threads(
+async def list_pplx_threads(
+    ctx: Context,
     search_term: str = "",
     limit: int = 100,
     offset: int = 0,
@@ -243,37 +314,42 @@ def list_pplx_threads(
 
     base, headers = _pplx_session()
     headers["Content-Type"] = "application/json"
-    resp = httpx.post(
-        f"{base}/rest/thread/list_ask_threads",
-        headers=headers,
-        json={
-            "limit": limit,
-            "offset": offset,
-            "ascending": False,
-            "search_term": search_term,
-            "with_temporary_threads": False,
-            "exclude_asi": False,
-        },
-        timeout=15.0,
-    )
+    await ctx.info(f"listing perplexity threads (limit={limit}, offset={offset})")
+
+    def _do() -> Any:
+        return httpx.post(
+            f"{base}/rest/thread/list_ask_threads",
+            headers=headers,
+            json={
+                "limit": limit,
+                "offset": offset,
+                "ascending": False,
+                "search_term": search_term,
+                "with_temporary_threads": False,
+                "exclude_asi": False,
+            },
+            timeout=15.0,
+        )
+
+    resp = await asyncio.to_thread(_do)
     resp.raise_for_status()
     data = resp.json()
     if isinstance(data, list):
-        return data
+        return cast(list[dict[str, Any]], data)
     if isinstance(data, dict) and isinstance(data.get("entries"), list):
-        return data["entries"]
+        return cast(list[dict[str, Any]], data["entries"])
     return []
 
 
-@mcp.tool()
-def get_pplx_thread(slug_or_uuid: str) -> dict[str, Any]:
-    """Fetch a Perplexity thread by URL slug or context UUID (``/rest/thread/{slug}``)."""
+def _fetch_pplx_thread(slug_or_uuid: str) -> dict[str, Any]:
+    """Synchronous Perplexity thread fetch. Shared by the async tool and the
+    ``import_pplx_thread`` helper which composes it."""
     import httpx
 
     from ccproxy.lightllm.pplx import PERPLEXITY_BLOCK_USE_CASES
 
     base, headers = _pplx_session()
-    params: list[tuple[str, str]] = [
+    params: list[tuple[str, str | int | float | None]] = [
         ("version", "2.18"),
         ("source", "default"),
         ("limit", "100"),
@@ -291,12 +367,20 @@ def get_pplx_thread(slug_or_uuid: str) -> dict[str, Any]:
         timeout=15.0,
     )
     resp.raise_for_status()
-    return resp.json()
+    return cast(dict[str, Any], resp.json())
 
 
 @mcp.tool()
-def import_pplx_thread(
+async def get_pplx_thread(slug_or_uuid: str, ctx: Context) -> dict[str, Any]:
+    """Fetch a Perplexity thread by URL slug or context UUID (``/rest/thread/{slug}``)."""
+    await ctx.info(f"fetching perplexity thread {slug_or_uuid}")
+    return await asyncio.to_thread(_fetch_pplx_thread, slug_or_uuid)
+
+
+@mcp.tool()
+async def import_pplx_thread(
     slug_or_uuid: str,
+    ctx: Context,
     citation_mode: str | None = None,
     include_reasoning: bool = False,
 ) -> dict[str, Any]:
@@ -315,11 +399,15 @@ def import_pplx_thread(
     from ccproxy.lightllm.pplx import _thread_to_openai_messages
 
     mode = citation_mode or get_config().pplx.thread.citation_mode
-    thread = get_pplx_thread(slug_or_uuid=slug_or_uuid)
+
+    await ctx.info(f"importing perplexity thread {slug_or_uuid} (citation_mode={mode})")
+    thread = await asyncio.to_thread(_fetch_pplx_thread, slug_or_uuid)
     messages = _thread_to_openai_messages(thread, citation_mode=mode, include_reasoning=include_reasoning)
 
-    thread_meta = thread.get("thread") if isinstance(thread.get("thread"), dict) else {}
-    entries = thread.get("entries") if isinstance(thread.get("entries"), list) else []
+    thread_meta_raw = thread.get("thread")
+    thread_meta: dict[str, Any] = thread_meta_raw if isinstance(thread_meta_raw, dict) else {}
+    entries_raw = thread.get("entries")
+    entries: list[Any] = entries_raw if isinstance(entries_raw, list) else []
 
     return {
         "messages": messages,
@@ -334,7 +422,7 @@ def import_pplx_thread(
 
 
 @mcp.tool()
-def delete_pplx_thread(entry_uuid: str, read_write_token: str) -> dict[str, Any]:
+async def delete_pplx_thread(entry_uuid: str, read_write_token: str, ctx: Context) -> dict[str, Any]:
     """Delete a Perplexity thread by entry UUID + read_write_token.
 
     Both identifiers come from a prior SSE response (captured by ccproxy
@@ -344,22 +432,27 @@ def delete_pplx_thread(entry_uuid: str, read_write_token: str) -> dict[str, Any]
 
     base, headers = _pplx_session()
     headers["Content-Type"] = "application/json"
-    resp = httpx.request(
-        "DELETE",
-        f"{base}/rest/thread/delete_thread_by_entry_uuid",
-        headers=headers,
-        json={"entry_uuid": entry_uuid, "read_write_token": read_write_token},
-        timeout=15.0,
-    )
+    await ctx.info(f"deleting perplexity thread entry {entry_uuid}")
+
+    def _do() -> Any:
+        return httpx.request(
+            "DELETE",
+            f"{base}/rest/thread/delete_thread_by_entry_uuid",
+            headers=headers,
+            json={"entry_uuid": entry_uuid, "read_write_token": read_write_token},
+            timeout=15.0,
+        )
+
+    resp = await asyncio.to_thread(_do)
     resp.raise_for_status()
     try:
-        return resp.json()
+        return cast(dict[str, Any], resp.json())
     except Exception:
         return {"status": "ok"}
 
 
 @mcp.tool()
-def export_pplx_thread(entry_uuid: str, format: str = "md") -> dict[str, Any]:
+async def export_pplx_thread(entry_uuid: str, ctx: Context, format: str = "md") -> dict[str, Any]:
     """Export a single thread entry. Format is ``"pdf"``, ``"md"``, or ``"docx"``.
 
     Returns ``{filename, file_content_64}`` per ``threads-history.md:369-394``;
@@ -369,14 +462,19 @@ def export_pplx_thread(entry_uuid: str, format: str = "md") -> dict[str, Any]:
 
     base, headers = _pplx_session()
     headers["Content-Type"] = "application/json"
-    resp = httpx.post(
-        f"{base}/rest/entry/export",
-        headers=headers,
-        json={"entry_uuid": entry_uuid, "format": format},
-        timeout=30.0,
-    )
+    await ctx.info(f"exporting perplexity entry {entry_uuid} as {format!r}")
+
+    def _do() -> Any:
+        return httpx.post(
+            f"{base}/rest/entry/export",
+            headers=headers,
+            json={"entry_uuid": entry_uuid, "format": format},
+            timeout=30.0,
+        )
+
+    resp = await asyncio.to_thread(_do)
     resp.raise_for_status()
-    return resp.json()
+    return cast(dict[str, Any], resp.json())
 
 
 @mcp.resource("proxy://requests")
@@ -406,12 +504,3 @@ def resource_status() -> str:
             "wall_clock": int(time.time()),
         }
     )
-
-
-def main() -> None:
-    """Entry point for the ``ccproxy_mcp`` console script."""
-    mcp.run()
-
-
-if __name__ == "__main__":
-    main()

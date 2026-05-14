@@ -75,17 +75,18 @@ class Logs(BaseModel):
 class Status(BaseModel):
     """Show ccproxy status.
 
-    When service flags (--proxy, --inspect) are specified,
+    When service flags (--proxy, --inspect, --mcp) are specified,
     runs in health check mode with bitmask exit codes:
 
       0 = all healthy
       1 = proxy down
       2 = inspect down
-      3 = both down
+      4 = mcp down
+      (bits OR together when multiple checks fail)
 
     Examples:
-        ccproxy status --proxy --inspect  # All must be running
-        ccproxy status --proxy            # Just check proxy
+        ccproxy status --proxy --inspect --mcp  # All must be running
+        ccproxy status --proxy                   # Just check proxy
     """
 
     json_output: Annotated[bool, tyro.conf.arg(name="json")] = False
@@ -96,6 +97,9 @@ class Status(BaseModel):
 
     inspect: bool = False
     """Check if inspector stack (mitmweb) is running."""
+
+    mcp: bool = False
+    """Check if the MCP HTTP server is running."""
 
 
 Command = (
@@ -126,6 +130,23 @@ class InspectorStatus:
 
 
 @dataclass(frozen=True)
+class McpStatus:
+    """In-daemon MCP HTTP server status."""
+
+    enabled: bool
+    """Whether MCP is configured to run (cfg.mcp.http.enabled)."""
+
+    running: bool
+    """Whether the MCP HTTP server is listening."""
+
+    port: int
+    """MCP HTTP server port."""
+
+    url: str | None
+    """MCP HTTP endpoint URL (no auth header — clients still need a bearer token)."""
+
+
+@dataclass(frozen=True)
 class StatusResult:
     """Structured output from show_status."""
 
@@ -146,6 +167,9 @@ class StatusResult:
 
     inspector: InspectorStatus
     """Inspector subsystem status."""
+
+    mcp: McpStatus
+    """In-daemon MCP HTTP server status."""
 
 
 def _derive_journal_identifier(config_dir: Path, override: str | None) -> str:
@@ -496,13 +520,22 @@ async def _run_inspect(
         inspector.port,
     )
 
-    master, master_task, web_token, sidecar = await run_inspector(
+    master, master_task, web_token, sidecar, mcp_uvicorn, mcp_task = await run_inspector(
         wg_cli_conf_path=wg_cli_keypair_path,
         reverse_port=main_port,
     )
 
     loop = asyncio.get_running_loop()
     loop.add_signal_handler(signal.SIGTERM, master.shutdown)
+
+    async def _stop_mcp() -> None:
+        if mcp_uvicorn is None or mcp_task is None:
+            return
+        mcp_uvicorn.should_exit = True
+        try:
+            await asyncio.wait_for(mcp_task, timeout=5.0)
+        except TimeoutError:
+            mcp_task.cancel()
 
     if get_config().verify_readiness_on_startup:
         # deferred: conditional readiness check path
@@ -516,6 +549,8 @@ async def _run_inspect(
                 await master_task
             with _contextlib.suppress(Exception):
                 await sidecar.stop()
+            with _contextlib.suppress(Exception):
+                await _stop_mcp()
             with _contextlib.suppress(Exception):
                 from ccproxy import transport
 
@@ -569,6 +604,8 @@ async def _run_inspect(
         with contextlib.suppress(Exception):
             await sidecar.stop()
         with contextlib.suppress(Exception):
+            await _stop_mcp()
+        with contextlib.suppress(Exception):
             from ccproxy import transport
 
             await transport.aclose_all()
@@ -595,8 +632,11 @@ def start_server(
     from ccproxy.config import get_config
     from ccproxy.preflight import run_preflight_checks
 
-    main_port = get_config().port
-    ports_to_check = [main_port, get_config().inspector.port]
+    cfg = get_config()
+    main_port = cfg.port
+    ports_to_check = [main_port, cfg.inspector.port]
+    if cfg.mcp.http.enabled:
+        ports_to_check.append(cfg.mcp.http.port)
     run_preflight_checks(ports=ports_to_check, config_dir=config_dir)
 
     exit_code = asyncio.run(
@@ -640,6 +680,7 @@ def show_status(
     json_output: bool = False,
     check_proxy: bool = False,
     check_inspect: bool = False,
+    check_mcp: bool = False,
 ) -> None:
     """Show ccproxy status."""
     # deferred: only needed for TCP probe
@@ -690,6 +731,14 @@ def show_status(
         inspect_port=inspect_port,
         inspect_url=inspect_url,
     )
+    mcp_cfg = cfg.mcp.http
+    mcp_running = mcp_cfg.enabled and _check_alive(mcp_cfg.host, mcp_cfg.port)
+    mcp_status = McpStatus(
+        enabled=mcp_cfg.enabled,
+        running=mcp_running,
+        port=mcp_cfg.port,
+        url=f"http://{mcp_cfg.host}:{mcp_cfg.port}/mcp" if mcp_cfg.enabled else None,
+    )
     log_path = cfg.resolved_log_file
     status = StatusResult(
         proxy=proxy_running,
@@ -698,16 +747,19 @@ def show_status(
         hooks=hooks,
         log=str(log_path) if log_path is not None and log_path.exists() else None,
         inspector=inspector_status,
+        mcp=mcp_status,
     )
 
     # Health check mode: exit with bitmask code indicating failed services
-    # Bit 0 (1): proxy, Bit 1 (2): inspect stack
-    if check_proxy or check_inspect:
+    # Bit 0 (1): proxy, Bit 1 (2): inspect stack, Bit 2 (4): MCP HTTP
+    if check_proxy or check_inspect or check_mcp:
         exit_code = 0
         if check_proxy and not status.proxy:
             exit_code |= 1
         if check_inspect and not status.inspector.running:
             exit_code |= 2
+        if check_mcp and not status.mcp.running:
+            exit_code |= 4
         sys.exit(exit_code)
 
     if json_output:
@@ -734,6 +786,17 @@ def show_status(
             inspect_status = "[dim]stopped[/dim]"
 
         table.add_row("inspector", inspect_status)
+
+        if not status.mcp.enabled:
+            mcp_display = "[dim]disabled[/dim]"
+        elif status.mcp.running:
+            mcp_display = f"[green]listening[/green]@[cyan]{status.mcp.port}[/cyan]"
+            if status.mcp.url:
+                mcp_display += f"\n[green]url[/green] → [cyan]{status.mcp.url}[/cyan]"
+        else:
+            mcp_display = f"[dim]stopped[/dim]@[cyan]{status.mcp.port}[/cyan]"
+
+        table.add_row("mcp", mcp_display)
 
         if status.config:
             config_display = "\n".join(f"[cyan]{key}[/cyan]: {value}" for key, value in status.config.items())
@@ -870,6 +933,7 @@ def main(
             json_output=cmd.json_output,
             check_proxy=cmd.proxy,
             check_inspect=cmd.inspect,
+            check_mcp=cmd.mcp,
         )
 
     elif isinstance(cmd, FlowsList | FlowsDump | FlowsDiff | FlowsCompare | FlowsShape | FlowsClear):

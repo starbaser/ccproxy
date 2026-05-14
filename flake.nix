@@ -131,6 +131,15 @@
                 ];
               };
             };
+            mcp = {
+              http = {
+                port = 4031;
+                auth = {
+                  type = "command";
+                  command = "opc secret op://dev/ccproxy/mcp_token";
+                };
+              };
+            };
           };
         };
         inspectDeps = pkgs.lib.makeBinPath [

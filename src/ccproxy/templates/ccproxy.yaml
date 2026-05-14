@@ -32,6 +32,12 @@ ccproxy:
     port: 8083
     transforms: []
   log_level: INFO
+  mcp:
+    http:
+      auth: null
+      enabled: true
+      host: 127.0.0.1
+      port: 4030
   otel:
     enabled: false
     endpoint: http://localhost:4317

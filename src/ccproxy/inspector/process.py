@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 from ccproxy.config import MitmproxyOptions, get_config
 
 if TYPE_CHECKING:
+    import uvicorn
     from mitmproxy.proxy.mode_servers import ServerInstance
     from mitmproxy.tools.web.master import WebMaster
 
@@ -253,7 +254,14 @@ async def run_inspector(
     *,
     wg_cli_conf_path: Path,
     reverse_port: int,
-) -> tuple[WebMaster, asyncio.Task[None], str, Sidecar]:
+) -> tuple[
+    WebMaster,
+    asyncio.Task[None],
+    str,
+    Sidecar,
+    uvicorn.Server | None,
+    asyncio.Task[None] | None,
+]:
     """Start the inspector in-process via mitmproxy's WebMaster API.
 
     Boots the impersonating sidecar first so its bound port is known when
@@ -262,13 +270,19 @@ async def run_inspector(
     Returns after the running() hook fires — all ports are bound and WG
     configs are readable.
 
-    The returned :class:`~ccproxy.transport.sidecar.Sidecar` MUST be stopped
-    by the caller after ``master.shutdown()`` completes.
+    When ``cfg.mcp.http.enabled`` is true, also starts the in-daemon FastMCP
+    streamable-HTTP server next to the sidecar. The returned ``mcp_uvicorn``
+    and ``mcp_task`` are ``None`` when MCP is disabled.
+
+    The returned :class:`~ccproxy.transport.sidecar.Sidecar` and (when
+    present) the MCP uvicorn server MUST be stopped by the caller after
+    ``master.shutdown()`` completes.
     """
     # deferred: heavy mitmproxy WebMaster import
+    # deferred: starlette/uvicorn pulled in only when inspector starts
+    import uvicorn as _uvicorn
     from mitmproxy.tools.web.master import WebMaster
 
-    # deferred: starlette/uvicorn pulled in only when inspector starts
     from ccproxy.transport.sidecar import Sidecar
 
     config = get_config()
@@ -287,6 +301,70 @@ async def run_inspector(
     else:
         web_token = secrets.token_hex(16)
         logger.info("Generated random mitmweb web_password")
+
+    # Start the in-daemon FastMCP streamable-HTTP server alongside the sidecar.
+    # FastMCP's ``streamable_http_app()`` returns a Starlette app with the
+    # session manager wired into its lifespan; uvicorn runs it as a task on
+    # the same event loop. ``log_config=None`` is mandatory — uvicorn's
+    # default LOGGING_CONFIG calls ``_clearExistingHandlers()`` which would
+    # silently close ccproxy.log's FileHandler. ``lifespan="on"`` is the
+    # FastMCP requirement (the sidecar has it off because it carries no
+    # lifespan).
+    mcp_uvicorn: uvicorn.Server | None = None
+    mcp_task: asyncio.Task[None] | None = None
+    mcp_cfg = config.mcp.http
+    if mcp_cfg.enabled:
+        from ccproxy.mcp.server import configure_auth, mcp
+
+        auth_cfg = mcp_cfg.auth
+        if isinstance(auth_cfg, str):
+            mcp_token: str | None = auth_cfg
+        elif auth_cfg is not None:
+            mcp_token = auth_cfg.resolve("MCP HTTP bearer token")
+            if mcp_token:
+                logger.info("Resolved MCP HTTP bearer token from credential source")
+            else:
+                logger.warning("MCP HTTP auth configured but token resolution returned empty; running unauthenticated")
+        else:
+            mcp_token = None
+
+        if mcp_token:
+            configure_auth(mcp_token, f"http://{mcp_cfg.host}:{mcp_cfg.port}/mcp")
+        else:
+            logger.warning(
+                "MCP HTTP server starting WITHOUT authentication on %s:%d — bind localhost only",
+                mcp_cfg.host,
+                mcp_cfg.port,
+            )
+
+        mcp_uvicorn = _uvicorn.Server(
+            _uvicorn.Config(
+                app=mcp.streamable_http_app(),
+                host=mcp_cfg.host,
+                port=mcp_cfg.port,
+                log_level="warning",
+                log_config=None,
+                lifespan="on",
+                access_log=False,
+                ws="websockets-sansio",
+                timeout_graceful_shutdown=2,
+            )
+        )
+        mcp_task = asyncio.create_task(mcp_uvicorn.serve(), name="ccproxy-mcp-http")
+        deadline = asyncio.get_running_loop().time() + 5.0
+        while not mcp_uvicorn.started:
+            if asyncio.get_running_loop().time() > deadline:
+                exc = mcp_task.exception() if mcp_task.done() else None
+                await sidecar.stop()
+                raise RuntimeError(
+                    f"MCP HTTP server failed to bind {mcp_cfg.host}:{mcp_cfg.port} within 5s"
+                    + (f" (serve() exited: {exc!r})" if exc else "")
+                )
+            if mcp_task.done():
+                exc = mcp_task.exception()
+                await sidecar.stop()
+                raise RuntimeError(f"MCP HTTP serve() exited prematurely: {exc!r}") from exc
+            await asyncio.sleep(0.01)
 
     opts = _build_opts(
         wg_cli_conf_path,
@@ -312,17 +390,33 @@ async def run_inspector(
         master.shutdown()  # type: ignore[no-untyped-call]
         await master_task
         await sidecar.stop()
+        if mcp_uvicorn is not None and mcp_task is not None:
+            mcp_uvicorn.should_exit = True
+            try:
+                await asyncio.wait_for(mcp_task, timeout=5.0)
+            except TimeoutError:
+                mcp_task.cancel()
         raise RuntimeError("mitmweb failed to start (timeout waiting for servers to bind)") from err
 
-    logger.info(
-        "Inspector running: reverse@%d, wg-cli@%d, UI@%d, sidecar@%d",
-        reverse_port,
-        wg_cli_port,
-        inspector.port,
-        sidecar.port,
-    )
+    if mcp_uvicorn is not None:
+        logger.info(
+            "Inspector running: reverse@%d, wg-cli@%d, UI@%d, sidecar@%d, mcp@%d",
+            reverse_port,
+            wg_cli_port,
+            inspector.port,
+            sidecar.port,
+            mcp_cfg.port,
+        )
+    else:
+        logger.info(
+            "Inspector running: reverse@%d, wg-cli@%d, UI@%d, sidecar@%d (mcp disabled)",
+            reverse_port,
+            wg_cli_port,
+            inspector.port,
+            sidecar.port,
+        )
 
-    return master, master_task, web_token, sidecar
+    return master, master_task, web_token, sidecar, mcp_uvicorn, mcp_task
 
 
 def get_inspector_status() -> dict[str, dict[str, bool | str | None]]:

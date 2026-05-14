@@ -81,6 +81,14 @@
       endpoint = "http://localhost:4317";
       service_name = "ccproxy";
     };
+    mcp = {
+      http = {
+        enabled = true;
+        host = "127.0.0.1";
+        port = 4030;
+        auth = null;
+      };
+    };
     shaping = {
       enabled = true;
       shapes_dir = "~/.config/ccproxy/shaping/shapes";

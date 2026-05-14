@@ -35,6 +35,8 @@ __all__ = [
     "BillingConfig",
     "CCProxyConfig",
     "GeminiCapacityFallbackConfig",
+    "McpConfig",
+    "McpHttpConfig",
     "Provider",
     "ProviderShapingConfig",
     "ShapingConfig",
@@ -412,8 +414,7 @@ class Provider(BaseModel):
             return None
         if value not in VALID_PROFILES:
             raise ValueError(
-                f"unknown curl-cffi impersonate profile {value!r}; "
-                f"valid profiles: {sorted(VALID_PROFILES)}"
+                f"unknown curl-cffi impersonate profile {value!r}; valid profiles: {sorted(VALID_PROFILES)}"
             )
         return value
 
@@ -530,6 +531,48 @@ class InspectorConfig(BaseModel):
         return self
 
 
+class McpHttpConfig(BaseModel):
+    """Configuration for the in-daemon FastMCP streamable-HTTP server.
+
+    The MCP server is hosted inside the running ccproxy daemon process. There
+    is no stdio transport — this is the single MCP surface. Clients connect
+    to ``http://<host>:<port>/mcp`` with a bearer token (when ``auth`` is set).
+    """
+
+    enabled: bool = True
+    """Run the FastMCP streamable-HTTP server alongside the proxy/inspector.
+    Set to ``false`` to disable the MCP surface entirely."""
+
+    host: str = "127.0.0.1"
+    """Bind address. Defaults to localhost only — do not expose to the network
+    without putting it behind authenticated transport (the bearer token is the
+    only credential)."""
+
+    port: int = 4030
+    """Streamable-HTTP listen port. Static so client ``.mcp.json`` entries are
+    deterministic. The dev shell overrides this to ``4031`` to avoid colliding
+    with a concurrently-running production daemon."""
+
+    auth: AnyAuthSource | str | None = None
+    """Bearer-token source. Accepts a plain string literal, a ``file`` source,
+    or a ``command`` source — same shape as ``inspector.mitmproxy.web_password``.
+    ``None`` (default) disables auth — for localhost-only daemons that's safe;
+    if ``host`` is bound to a non-loopback address auth becomes mandatory."""
+
+    @field_validator("auth", mode="before")
+    @classmethod
+    def _coerce_auth(cls, v: Any) -> Any:
+        if v is None or isinstance(v, str | AuthFields):
+            return v
+        return parse_auth_source(v)
+
+
+class McpConfig(BaseModel):
+    """Top-level MCP namespace. Currently exposes only the HTTP server."""
+
+    http: McpHttpConfig = Field(default_factory=McpHttpConfig)
+
+
 class CCProxyConfig(BaseSettings):
     """Main configuration for ccproxy that reads from ccproxy.yaml."""
 
@@ -610,6 +653,12 @@ class CCProxyConfig(BaseSettings):
     """Perplexity-specific runtime knobs (thread continuation, citation mode,
     L1 cache TTL). Owned by :class:`~ccproxy.inspector.pplx_addon.PerplexityAddon`
     and the ``pplx_thread_inject`` hook."""
+
+    mcp: McpConfig = Field(default_factory=McpConfig)
+    """In-daemon FastMCP streamable-HTTP server. Hosts the tool surface
+    (``mcp.streamable_http_app()``) inside ``run_inspector()`` alongside the
+    transport sidecar. Stdio is intentionally absent — HTTP is the only MCP
+    transport ccproxy ships."""
 
     providers: dict[str, Provider] = Field(default_factory=dict)
     """Provider entries keyed by sentinel suffix.
@@ -731,6 +780,10 @@ class CCProxyConfig(BaseSettings):
                 gemini_capacity_data = ccproxy_data.get("gemini_capacity")
                 if gemini_capacity_data:
                     instance.gemini_capacity = GeminiCapacityFallbackConfig(**gemini_capacity_data)
+
+                mcp_data = ccproxy_data.get("mcp")
+                if mcp_data:
+                    instance.mcp = McpConfig(**cast(dict[str, Any], mcp_data))
 
         return instance
 
