@@ -57,13 +57,8 @@ _UPLOAD_TIMEOUT = 60.0
 _SUBSCRIBE_TIMEOUT = 120.0
 _DEFAULT_MIMETYPE = "application/octet-stream"
 
-_BATCH_UPLOAD_URL = (
-    f"{PERPLEXITY_URL_BASE}/rest/uploads/batch_create_upload_urls"
-    "?version=2.18&source=default"
-)
-_PROCESSING_SUBSCRIBE_URL = (
-    f"{PERPLEXITY_URL_BASE}/rest/sse/attachment_processing/subscribe"
-)
+_BATCH_UPLOAD_URL = f"{PERPLEXITY_URL_BASE}/rest/uploads/batch_create_upload_urls?version=2.18&source=default"
+_PROCESSING_SUBSCRIBE_URL = f"{PERPLEXITY_URL_BASE}/rest/sse/attachment_processing/subscribe"
 
 
 class PerplexityFileError(BaseLLMException):
@@ -81,20 +76,14 @@ class FileInfo:
 def extract_pplx_files_guard(ctx: Context) -> bool:
     """Run only when forward_oauth resolved the Perplexity sentinel."""
     assert ctx.flow is not None
-    return (
-        ctx.flow.metadata.get("ccproxy.oauth_provider") == PERPLEXITY_PROVIDER_NAME
-    )
+    return ctx.flow.metadata.get("ccproxy.oauth_provider") == PERPLEXITY_PROVIDER_NAME
 
 
 def _collect_parts(messages: list[Any]) -> list[tuple[int, int, dict[str, Any]]]:
     """Walk messages, yielding (msg_idx, part_idx, part) for non-text content parts."""
     found: list[tuple[int, int, dict[str, Any]]] = []
     for mi, msg in enumerate(messages):
-        content = (
-            msg.get("content")
-            if isinstance(msg, dict)
-            else getattr(msg, "content", None)
-        )
+        content = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", None)
         if not isinstance(content, list):
             continue
         for pi, part in enumerate(content):
@@ -182,9 +171,7 @@ def _fetch_url(url: str) -> FileInfo | None:
     parsed = urlparse(url)
     name = parsed.path.rsplit("/", 1)[-1] or "image"
     mimetype = (
-        resp.headers.get("content-type", "").split(";")[0].strip()
-        or mimetypes.guess_type(name)[0]
-        or _DEFAULT_MIMETYPE
+        resp.headers.get("content-type", "").split(";")[0].strip() or mimetypes.guess_type(name)[0] or _DEFAULT_MIMETYPE
     )
     if "." not in name:
         ext = mimetypes.guess_extension(mimetype) or ".bin"
@@ -216,10 +203,7 @@ def _validate(files: list[FileInfo]) -> None:
         if size > _MAX_FILE_SIZE:
             raise PerplexityFileError(
                 status_code=400,
-                message=(
-                    f"Attachment {f.filename!r} exceeds 50 MB limit: "
-                    f"{size / (1024 * 1024):.1f} MB"
-                ),
+                message=(f"Attachment {f.filename!r} exceeds 50 MB limit: {size / (1024 * 1024):.1f} MB"),
                 headers=None,
             )
 
@@ -270,10 +254,7 @@ def _batch_create_upload_urls(files: list[FileInfo], token: str) -> dict[str, di
             headers=None,
         )
 
-    return {
-        client_uuid: result
-        for client_uuid, result in zip(payload_files, results.values(), strict=False)
-    }
+    return {client_uuid: result for client_uuid, result in zip(payload_files, results.values(), strict=False)}
 
 
 def _s3_upload(file_info: FileInfo, result: dict[str, Any]) -> str:
@@ -309,10 +290,7 @@ def _s3_upload(file_info: FileInfo, result: dict[str, Any]) -> str:
         if resp.status_code not in (200, 201, 204):
             raise PerplexityFileError(
                 status_code=502,
-                message=(
-                    f"S3 upload failed for {file_info.filename!r}: "
-                    f"status {resp.status_code}"
-                ),
+                message=(f"S3 upload failed for {file_info.filename!r}: status {resp.status_code}"),
                 headers=None,
             )
     finally:
@@ -346,8 +324,7 @@ def _await_processing(file_uuids: list[str], token: str) -> None:
                 pass
     except httpx.HTTPError:
         logger.warning(
-            "extract_pplx_files: attachment_processing/subscribe failed; "
-            "proceeding without waiting",
+            "extract_pplx_files: attachment_processing/subscribe failed; proceeding without waiting",
             exc_info=True,
         )
 

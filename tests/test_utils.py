@@ -188,8 +188,6 @@ class TestFindAvailablePort:
                 find_available_port(port, port)
 
 
-
-
 class TestFormatValue:
     """Tests for _format_value helper."""
 
@@ -214,7 +212,6 @@ class TestFormatValue:
 
         result = _format_value("[bold]text[/bold]")
         assert r"\[" in result
-
 
 
 class TestParseSessionId:

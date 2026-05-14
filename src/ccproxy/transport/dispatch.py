@@ -84,8 +84,7 @@ class _Cache:
         """
         if profile not in VALID_PROFILES:
             raise UnknownFingerprintProfileError(
-                f"unknown curl-cffi impersonate profile {profile!r}; "
-                f"valid profiles: {sorted(VALID_PROFILES)}"
+                f"unknown curl-cffi impersonate profile {profile!r}; valid profiles: {sorted(VALID_PROFILES)}"
             )
         impersonate = cast(BrowserTypeLiteral, profile)
 

@@ -326,9 +326,7 @@ def _handle_transform(
     # Cookie-auth providers (Perplexity Pro) ship without an Authorization
     # header. forward_oauth has already stamped one with the real token —
     # strip it so the upstream doesn't see two competing auth signals.
-    if any(k.lower() == "cookie" for k in headers) and not any(
-        k.lower() == "authorization" for k in headers
-    ):
+    if any(k.lower() == "cookie" for k in headers) and not any(k.lower() == "authorization" for k in headers):
         flow.request.headers.pop("Authorization", None)
     flow.request.content = new_body
 

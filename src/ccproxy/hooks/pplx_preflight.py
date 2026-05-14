@@ -45,9 +45,7 @@ _PREFLIGHT_TIMEOUT = 5.0
 def pplx_preflight_guard(ctx: Context) -> bool:
     """Run only when forward_oauth resolved the Perplexity sentinel."""
     assert ctx.flow is not None
-    return (
-        ctx.flow.metadata.get("ccproxy.oauth_provider") == PERPLEXITY_PROVIDER_NAME
-    )
+    return ctx.flow.metadata.get("ccproxy.oauth_provider") == PERPLEXITY_PROVIDER_NAME
 
 
 @hook(reads=["query_str"], writes=[])

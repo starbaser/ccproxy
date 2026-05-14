@@ -57,9 +57,7 @@ _THREAD_FETCH_TIMEOUT = 10.0
 def pplx_thread_inject_guard(ctx: Context) -> bool:
     """Run only when forward_oauth resolved the Perplexity sentinel."""
     assert ctx.flow is not None
-    return (
-        ctx.flow.metadata.get("ccproxy.oauth_provider") == PERPLEXITY_PROVIDER_NAME
-    )
+    return ctx.flow.metadata.get("ccproxy.oauth_provider") == PERPLEXITY_PROVIDER_NAME
 
 
 def _fetch_thread(slug: str, token: str) -> dict[str, Any] | None:
@@ -93,9 +91,7 @@ def _fetch_thread(slug: str, token: str) -> dict[str, Any] | None:
         "x-perplexity-request-endpoint": url,
     }
 
-    resp = httpx.get(
-        url, params=params, headers=headers, timeout=_THREAD_FETCH_TIMEOUT
-    )
+    resp = httpx.get(url, params=params, headers=headers, timeout=_THREAD_FETCH_TIMEOUT)
     if resp.status_code == 404:
         return None
     resp.raise_for_status()
@@ -205,17 +201,11 @@ def pplx_thread_inject(ctx: Context, _: dict[str, Any]) -> Context:
     if resolved is None:
         return ctx
 
-    if (
-        resolved_via == "metadata"
-        and thread_entry_count is not None
-        and isinstance(body.get("messages"), list)
-    ):
+    if resolved_via == "metadata" and thread_entry_count is not None and isinstance(body.get("messages"), list):
         client_user_turns = _count_client_user_turns(body["messages"])
         if client_user_turns != thread_entry_count:
             mode = get_config().pplx.thread.consistency_mode
-            divergence = (
-                f"turn_count_mismatch: client={client_user_turns} server={thread_entry_count}"
-            )
+            divergence = f"turn_count_mismatch: client={client_user_turns} server={thread_entry_count}"
             if mode == "strict":
                 raise PerplexityThreadNotFoundError(
                     status_code=409,

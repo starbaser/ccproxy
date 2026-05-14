@@ -399,6 +399,7 @@ class TestResolveOAuthToken:
         monkeypatch.setattr(subprocess, "run", mock.Mock(return_value=mock_result))
 
         assert config.resolve_oauth_token("prov") == "fresh-tok"
+
     def test_provider_not_configured_returns_none(self) -> None:
         config = CCProxyConfig()
         assert config.resolve_oauth_token("missing-provider") is None
@@ -421,6 +422,7 @@ class TestResolveOAuthToken:
             }
         )
         assert config.resolve_oauth_token("prov") == "file-tok"
+
 
 class TestGetAuthHeader:
     def test_provider_with_auth_header(self) -> None:

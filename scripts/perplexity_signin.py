@@ -51,10 +51,7 @@ import httpx
 
 PERPLEXITY_BASE = "https://www.perplexity.ai"
 SESSION_COOKIE = "__Secure-next-auth.session-token"
-CHROME_UA = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-)
+CHROME_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 OTP_REGEX = re.compile(r"\b(\d{6})\b")
 
 logger = logging.getLogger("refresh_perplexity_token")
@@ -71,9 +68,7 @@ def _config_dir() -> Path:
 
 def _load_gmail_config(path: Path) -> dict[str, object]:
     if not path.is_file():
-        raise SystemExit(
-            f"Gmail config not found at {path}. Create it with email + app_password."
-        )
+        raise SystemExit(f"Gmail config not found at {path}. Create it with email + app_password.")
     cfg = json.loads(path.read_text())
     if not cfg.get("email") or not cfg.get("app_password"):
         raise SystemExit(f"{path} missing 'email' or 'app_password'.")
@@ -220,9 +215,7 @@ def _redeem_otp(client: httpx.Client, email_addr: str, otp: str) -> str:
     if not redirect_path:
         raise RuntimeError("No redirect URL received from OTP exchange")
 
-    redirect_url = (
-        f"{PERPLEXITY_BASE}{redirect_path}" if redirect_path.startswith("/") else redirect_path
-    )
+    redirect_url = f"{PERPLEXITY_BASE}{redirect_path}" if redirect_path.startswith("/") else redirect_path
     client.get(redirect_url).raise_for_status()
 
     token = client.cookies.get(SESSION_COOKIE)

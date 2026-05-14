@@ -278,9 +278,7 @@ class TestInvalidProfile:
         sidecar = Sidecar()
         with patch("ccproxy.transport.sidecar.transport") as m:
             m.UnknownFingerprintProfileError = UnknownFingerprintProfileError
-            m.get_client = AsyncMock(
-                side_effect=UnknownFingerprintProfileError("totally_bogus_xyz not found")
-            )
+            m.get_client = AsyncMock(side_effect=UnknownFingerprintProfileError("totally_bogus_xyz not found"))
             await sidecar.start()
             try:
                 async with httpx.AsyncClient() as client:
@@ -313,15 +311,18 @@ class TestHappyPathForwarding:
             )
 
         async_transport.handler = handler
-        async with httpx.AsyncClient() as client, client.stream(
-            "POST",
-            f"http://127.0.0.1:{sidecar.port}/v1/messages",
-            headers={
-                TARGET_URL_HEADER: "https://api.anthropic.com/v1/messages",
-                IMPERSONATE_HEADER: "chrome131",
-            },
-            content=b'{"model":"claude-3"}',
-        ) as resp:
+        async with (
+            httpx.AsyncClient() as client,
+            client.stream(
+                "POST",
+                f"http://127.0.0.1:{sidecar.port}/v1/messages",
+                headers={
+                    TARGET_URL_HEADER: "https://api.anthropic.com/v1/messages",
+                    IMPERSONATE_HEADER: "chrome131",
+                },
+                content=b'{"model":"claude-3"}',
+            ) as resp,
+        ):
             assert resp.status_code == 201
             await resp.aread()
 
@@ -336,15 +337,18 @@ class TestHappyPathForwarding:
             )
 
         async_transport.handler = handler
-        async with httpx.AsyncClient() as client, client.stream(
-            "POST",
-            f"http://127.0.0.1:{sidecar.port}/v1/messages",
-            headers={
-                TARGET_URL_HEADER: "https://api.anthropic.com/v1/messages",
-                IMPERSONATE_HEADER: "chrome131",
-            },
-            content=b"{}",
-        ) as resp:
+        async with (
+            httpx.AsyncClient() as client,
+            client.stream(
+                "POST",
+                f"http://127.0.0.1:{sidecar.port}/v1/messages",
+                headers={
+                    TARGET_URL_HEADER: "https://api.anthropic.com/v1/messages",
+                    IMPERSONATE_HEADER: "chrome131",
+                },
+                content=b"{}",
+            ) as resp,
+        ):
             body = await resp.aread()
         assert body == expected_body
 
@@ -359,15 +363,18 @@ class TestHappyPathForwarding:
             )
 
         async_transport.handler = handler
-        async with httpx.AsyncClient() as client, client.stream(
-            "POST",
-            f"http://127.0.0.1:{sidecar.port}/v1/messages",
-            headers={
-                TARGET_URL_HEADER: "https://api.anthropic.com/v1/messages",
-                IMPERSONATE_HEADER: "chrome131",
-            },
-            content=b"{}",
-        ) as resp:
+        async with (
+            httpx.AsyncClient() as client,
+            client.stream(
+                "POST",
+                f"http://127.0.0.1:{sidecar.port}/v1/messages",
+                headers={
+                    TARGET_URL_HEADER: "https://api.anthropic.com/v1/messages",
+                    IMPERSONATE_HEADER: "chrome131",
+                },
+                content=b"{}",
+            ) as resp,
+        ):
             await resp.aread()
         assert resp.headers.get("x-request-id") == "req-abc"
 
@@ -380,15 +387,18 @@ class TestHappyPathForwarding:
             return httpx.Response(200, stream=_AsyncChunkedStream([b"{}"]))
 
         async_transport.handler = handler
-        async with httpx.AsyncClient() as client, client.stream(
-            "POST",
-            f"http://127.0.0.1:{sidecar.port}/v1/messages",
-            headers={
-                TARGET_URL_HEADER: "https://api.anthropic.com/v1/messages",
-                IMPERSONATE_HEADER: "chrome131",
-            },
-            content=b"{}",
-        ) as resp:
+        async with (
+            httpx.AsyncClient() as client,
+            client.stream(
+                "POST",
+                f"http://127.0.0.1:{sidecar.port}/v1/messages",
+                headers={
+                    TARGET_URL_HEADER: "https://api.anthropic.com/v1/messages",
+                    IMPERSONATE_HEADER: "chrome131",
+                },
+                content=b"{}",
+            ) as resp,
+        ):
             await resp.aread()
         assert received_method == ["POST"]
 
@@ -401,17 +411,20 @@ class TestHappyPathForwarding:
             return httpx.Response(200, stream=_AsyncChunkedStream([b"{}"]))
 
         async_transport.handler = handler
-        async with httpx.AsyncClient() as client, client.stream(
-            "POST",
-            f"http://127.0.0.1:{sidecar.port}/v1/messages",
-            headers={
-                TARGET_URL_HEADER: "https://api.anthropic.com/v1/messages",
-                IMPERSONATE_HEADER: "chrome131",
-                "x-custom-header": "custom-value",
-                "authorization": "Bearer mytoken",
-            },
-            content=b"{}",
-        ) as resp:
+        async with (
+            httpx.AsyncClient() as client,
+            client.stream(
+                "POST",
+                f"http://127.0.0.1:{sidecar.port}/v1/messages",
+                headers={
+                    TARGET_URL_HEADER: "https://api.anthropic.com/v1/messages",
+                    IMPERSONATE_HEADER: "chrome131",
+                    "x-custom-header": "custom-value",
+                    "authorization": "Bearer mytoken",
+                },
+                content=b"{}",
+            ) as resp,
+        ):
             await resp.aread()
         assert len(received_headers) == 1
         hdrs = received_headers[0]
@@ -428,15 +441,18 @@ class TestHappyPathForwarding:
 
         async_transport.handler = handler
         payload = b'{"model":"claude-3","messages":[{"role":"user","content":"hi"}]}'
-        async with httpx.AsyncClient() as client, client.stream(
-            "POST",
-            f"http://127.0.0.1:{sidecar.port}/v1/messages",
-            headers={
-                TARGET_URL_HEADER: "https://api.anthropic.com/v1/messages",
-                IMPERSONATE_HEADER: "chrome131",
-            },
-            content=payload,
-        ) as resp:
+        async with (
+            httpx.AsyncClient() as client,
+            client.stream(
+                "POST",
+                f"http://127.0.0.1:{sidecar.port}/v1/messages",
+                headers={
+                    TARGET_URL_HEADER: "https://api.anthropic.com/v1/messages",
+                    IMPERSONATE_HEADER: "chrome131",
+                },
+                content=payload,
+            ) as resp,
+        ):
             await resp.aread()
         assert received_body == [payload]
 
@@ -457,15 +473,18 @@ class TestHopByHopStripping:
             return httpx.Response(200, stream=_AsyncChunkedStream([b"{}"]))
 
         async_transport.handler = handler
-        async with httpx.AsyncClient() as client, client.stream(
-            "POST",
-            f"http://127.0.0.1:{sidecar.port}/v1/messages",
-            headers={
-                TARGET_URL_HEADER: "https://api.anthropic.com/v1/messages",
-                IMPERSONATE_HEADER: "chrome131",
-            },
-            content=b"{}",
-        ) as resp:
+        async with (
+            httpx.AsyncClient() as client,
+            client.stream(
+                "POST",
+                f"http://127.0.0.1:{sidecar.port}/v1/messages",
+                headers={
+                    TARGET_URL_HEADER: "https://api.anthropic.com/v1/messages",
+                    IMPERSONATE_HEADER: "chrome131",
+                },
+                content=b"{}",
+            ) as resp,
+        ):
             await resp.aread()
         hdrs = received_headers[0]
         assert TARGET_URL_HEADER not in hdrs
@@ -486,16 +505,19 @@ class TestHopByHopStripping:
             return httpx.Response(200, stream=_AsyncChunkedStream([b"{}"]))
 
         async_transport.handler = handler
-        async with httpx.AsyncClient() as client, client.stream(
-            "POST",
-            f"http://127.0.0.1:{sidecar.port}/v1/messages",
-            headers={
-                TARGET_URL_HEADER: "https://api.anthropic.com/v1/messages",
-                IMPERSONATE_HEADER: "chrome131",
-                "proxy-authorization": "Basic abc123",
-            },
-            content=b"{}",
-        ) as resp:
+        async with (
+            httpx.AsyncClient() as client,
+            client.stream(
+                "POST",
+                f"http://127.0.0.1:{sidecar.port}/v1/messages",
+                headers={
+                    TARGET_URL_HEADER: "https://api.anthropic.com/v1/messages",
+                    IMPERSONATE_HEADER: "chrome131",
+                    "proxy-authorization": "Basic abc123",
+                },
+                content=b"{}",
+            ) as resp,
+        ):
             await resp.aread()
         assert "proxy-authorization" not in received_headers[0]
 
@@ -508,16 +530,19 @@ class TestHopByHopStripping:
             return httpx.Response(200, stream=_AsyncChunkedStream([b"{}"]))
 
         async_transport.handler = handler
-        async with httpx.AsyncClient() as client, client.stream(
-            "POST",
-            f"http://127.0.0.1:{sidecar.port}/v1/messages",
-            headers={
-                TARGET_URL_HEADER: "https://api.anthropic.com/v1/messages",
-                IMPERSONATE_HEADER: "chrome131",
-                "transfer-encoding": "chunked",
-            },
-            content=b"{}",
-        ) as resp:
+        async with (
+            httpx.AsyncClient() as client,
+            client.stream(
+                "POST",
+                f"http://127.0.0.1:{sidecar.port}/v1/messages",
+                headers={
+                    TARGET_URL_HEADER: "https://api.anthropic.com/v1/messages",
+                    IMPERSONATE_HEADER: "chrome131",
+                    "transfer-encoding": "chunked",
+                },
+                content=b"{}",
+            ) as resp,
+        ):
             await resp.aread()
         assert "transfer-encoding" not in received_headers[0]
 
@@ -544,15 +569,18 @@ class TestHopByHopStripping:
             )
 
         async_transport.handler = handler
-        async with httpx.AsyncClient() as client, client.stream(
-            "POST",
-            f"http://127.0.0.1:{sidecar.port}/v1/messages",
-            headers={
-                TARGET_URL_HEADER: "https://api.anthropic.com/v1/messages",
-                IMPERSONATE_HEADER: "chrome131",
-            },
-            content=b"{}",
-        ) as resp:
+        async with (
+            httpx.AsyncClient() as client,
+            client.stream(
+                "POST",
+                f"http://127.0.0.1:{sidecar.port}/v1/messages",
+                headers={
+                    TARGET_URL_HEADER: "https://api.anthropic.com/v1/messages",
+                    IMPERSONATE_HEADER: "chrome131",
+                },
+                content=b"{}",
+            ) as resp,
+        ):
             resp_hdrs = {k.lower(): v for k, v in resp.headers.items()}
             await resp.aread()
 
@@ -653,15 +681,18 @@ class TestStreamingResponse:
 
         async_transport.handler = handler
         received = bytearray()
-        async with httpx.AsyncClient() as client, client.stream(
-            "POST",
-            f"http://127.0.0.1:{sidecar.port}/v1/messages",
-            headers={
-                TARGET_URL_HEADER: "https://api.anthropic.com/v1/messages",
-                IMPERSONATE_HEADER: "chrome131",
-            },
-            content=b"{}",
-        ) as resp:
+        async with (
+            httpx.AsyncClient() as client,
+            client.stream(
+                "POST",
+                f"http://127.0.0.1:{sidecar.port}/v1/messages",
+                headers={
+                    TARGET_URL_HEADER: "https://api.anthropic.com/v1/messages",
+                    IMPERSONATE_HEADER: "chrome131",
+                },
+                content=b"{}",
+            ) as resp,
+        ):
             async for chunk in resp.aiter_bytes():
                 received.extend(chunk)
 
@@ -678,14 +709,17 @@ class TestStreamingResponse:
             )
 
         async_transport.handler = handler
-        async with httpx.AsyncClient() as client, client.stream(
-            "GET",
-            f"http://127.0.0.1:{sidecar.port}/v1/messages",
-            headers={
-                TARGET_URL_HEADER: "https://api.anthropic.com/v1/messages",
-                IMPERSONATE_HEADER: "chrome131",
-            },
-        ) as resp:
+        async with (
+            httpx.AsyncClient() as client,
+            client.stream(
+                "GET",
+                f"http://127.0.0.1:{sidecar.port}/v1/messages",
+                headers={
+                    TARGET_URL_HEADER: "https://api.anthropic.com/v1/messages",
+                    IMPERSONATE_HEADER: "chrome131",
+                },
+            ) as resp,
+        ):
             assert resp.status_code == 206
             async for _ in resp.aiter_bytes():
                 pass
@@ -702,15 +736,18 @@ class TestStreamingResponse:
 
         async_transport.handler = handler
         received_bytes = bytearray()
-        async with httpx.AsyncClient() as client, client.stream(
-            "POST",
-            f"http://127.0.0.1:{sidecar.port}/v1/messages",
-            headers={
-                TARGET_URL_HEADER: "https://api.anthropic.com/v1/messages",
-                IMPERSONATE_HEADER: "chrome131",
-            },
-            content=b"{}",
-        ) as resp:
+        async with (
+            httpx.AsyncClient() as client,
+            client.stream(
+                "POST",
+                f"http://127.0.0.1:{sidecar.port}/v1/messages",
+                headers={
+                    TARGET_URL_HEADER: "https://api.anthropic.com/v1/messages",
+                    IMPERSONATE_HEADER: "chrome131",
+                },
+                content=b"{}",
+            ) as resp,
+        ):
             async for chunk in resp.aiter_bytes():
                 received_bytes.extend(chunk)
 

@@ -123,5 +123,3 @@ class TestHookDecorator:
         spec = get_registry().get_spec("explicit_guard_hook")
         assert spec is not None
         assert spec.guard is my_guard
-
-

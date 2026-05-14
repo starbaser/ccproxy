@@ -148,9 +148,7 @@ class PerplexityThreadStore:
     def _evict_expired_locked(self) -> None:
         now = time.monotonic()
         ttl = self.ttl
-        expired = [
-            k for k, v in self._store.items() if now - v.last_used > ttl
-        ]
+        expired = [k for k, v in self._store.items() if now - v.last_used > ttl]
         for k in expired:
             del self._store[k]
 

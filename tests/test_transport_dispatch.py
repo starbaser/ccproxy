@@ -252,9 +252,7 @@ class TestIdleEviction:
 class TestAcloseAll:
     async def test_aclose_all_closes_every_client(self) -> None:
         cache = _Cache(max_sessions=16, idle_timeout=60.0)
-        clients = [
-            await cache.get(host=f"host{i}.com", profile="chrome131") for i in range(3)
-        ]
+        clients = [await cache.get(host=f"host{i}.com", profile="chrome131") for i in range(3)]
         await cache.aclose_all()
 
         assert all(c.is_closed for c in clients)
@@ -274,9 +272,7 @@ class TestAcloseAll:
         await cache.aclose_all()  # must not raise
 
     async def test_aclose_all_via_public_api(self) -> None:
-        clients = [
-            await get_client(host=f"host{i}.com", profile="chrome131") for i in range(3)
-        ]
+        clients = [await get_client(host=f"host{i}.com", profile="chrome131") for i in range(3)]
         await aclose_all()
 
         assert all(c.is_closed for c in clients)

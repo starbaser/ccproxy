@@ -59,8 +59,7 @@ async def verify_outbound_reachability(config: CCProxyConfig) -> None:
             ) from e
         except httpx.ConnectTimeout as e:
             raise ReadinessError(
-                f"Outbound reachability probe failed: connect timeout to {url} "
-                f"(after {timeout_seconds}s)",
+                f"Outbound reachability probe failed: connect timeout to {url} (after {timeout_seconds}s)",
             ) from e
         except httpx.ReadTimeout as e:
             raise ReadinessError(

@@ -41,9 +41,7 @@ def test_models_catalog_has_known_ids() -> None:
 
 
 def test_build_payload_first_turn_full_production_shape() -> None:
-    payload = _build_pplx_payload(
-        query="what is quantum?", model_id="perplexity/best", extras={}
-    )
+    payload = _build_pplx_payload(query="what is quantum?", model_id="perplexity/best", extras={})
     params = payload["params"]
     assert payload["query_str"] == "what is quantum?"
     assert params["query_source"] == "home"
@@ -177,9 +175,7 @@ def test_extract_deltas_prefix_diffs_answer_and_reasoning() -> None:
 def test_extract_deltas_raises_on_clarifying_questions() -> None:
     state = StreamState()
     event = {
-        "text": json.dumps(
-            [{"step_type": "RESEARCH_CLARIFYING_QUESTIONS", "content": {"questions": ["a?", "b?"]}}]
-        )
+        "text": json.dumps([{"step_type": "RESEARCH_CLARIFYING_QUESTIONS", "content": {"questions": ["a?", "b?"]}}])
     }
     with pytest.raises(PerplexityClarifyingQuestionsError) as exc_info:
         _extract_deltas(event, state)
@@ -338,9 +334,7 @@ def _make_payload_bytes(payload: dict[str, Any]) -> bytes:
 def test_iterator_emits_content_and_reasoning_deltas() -> None:
     from ccproxy.lightllm.pplx import PerplexityProIterator
 
-    iterator = PerplexityProIterator(
-        streaming_response=iter([]), sync_stream=True, json_mode=False
-    )
+    iterator = PerplexityProIterator(streaming_response=iter([]), sync_stream=True, json_mode=False)
     e1 = {
         "blocks": [
             {
