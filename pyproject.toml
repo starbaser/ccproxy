@@ -155,8 +155,8 @@ pythonVersion = "3.13"
 typeCheckingMode = "standard"
 stubPath = "stubs"
 
-[tool.ty]
-python_version = "3.13"
+[tool.ty.environment]
+python-version = "3.13"
 
 [tool.ty.src]
 root = "src"
