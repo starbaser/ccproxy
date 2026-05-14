@@ -108,10 +108,15 @@ class TestMcpToolsList:
             "list_shapes",
             "list_conversations",
             "list_models",
+            "pplx_usage",
             "list_pplx_threads",
+            "list_pplx_recent_threads",
             "get_pplx_thread",
             "import_pplx_thread",
+            "set_pplx_thread_title",
+            "update_pplx_thread_access",
             "delete_pplx_thread",
+            "bulk_delete_pplx_threads",
             "export_pplx_thread",
         }
     )

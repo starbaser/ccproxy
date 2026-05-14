@@ -3,10 +3,7 @@
     "inspector/mitmproxy" = {
       url = "https://github.com/mitmproxy/mitmproxy";
       kits = {
-        docs = {
-          include = ["docs/src/**"];
-          chunk_by = "lines";
-        };
+        docs = { include = [ "docs/src/**" ]; chunk_by = "lines"; };
         src = {
           include = [
             "mitmproxy/**/*.py"
@@ -59,18 +56,15 @@
     "inspector/xepor" = {
       url = "https://github.com/xepor/xepor";
       kits = {
-        docs = {
-          include = ["docs/**"];
-          chunk_by = "lines";
-        };
-        src = {
-          include = ["src/xepor/**"];
-          chunk_by = "symbols";
-        };
+        docs = { include = [ "docs/**" ]; chunk_by = "lines"; };
+        src = { include = [ "src/xepor/**" ]; chunk_by = "symbols"; };
       };
     };
     "inspector/xepor-examples" = {
       url = "https://github.com/xepor/xepor-examples";
+    };
+    "lib/fastmcp" = {
+      url = "https://github.com/jlowin/fastmcp";
     };
     "lib/glom" = {
       url = "https://github.com/mahmoud/glom";
@@ -84,10 +78,7 @@
           ];
           chunk_by = "lines";
         };
-        src = {
-          include = ["glom/**/*.py"];
-          chunk_by = "symbols";
-        };
+        src = { include = [ "glom/**/*.py" ]; chunk_by = "symbols"; };
       };
     };
     "lib/litellm" = {
@@ -113,18 +104,15 @@
           ];
           chunk_by = "symbols";
         };
-        docs = {
-          include = ["docs/my-website/docs/**/*.md"];
-          chunk_by = "lines";
-        };
+        docs = { include = [ "docs/my-website/docs/**/*.md" ]; chunk_by = "lines"; };
         llms = {
-          include = ["litellm/llms/**/*.py"];
-          exclude = ["tests/**/*"];
+          include = [ "litellm/llms/**/*.py" ];
+          exclude = [ "tests/**/*" ];
           chunk_by = "symbols";
         };
         proxy = {
-          include = ["litellm/proxy/**/*.py"];
-          exclude = ["tests/**/*"];
+          include = [ "litellm/proxy/**/*.py" ];
+          exclude = [ "tests/**/*" ];
           chunk_by = "symbols";
         };
       };
@@ -140,10 +128,7 @@
           ];
           chunk_by = "lines";
         };
-        src = {
-          include = ["src/tyro/**/*.py" "examples/**/*.py"];
-          chunk_by = "symbols";
-        };
+        src = { include = [ "src/tyro/**/*.py" "examples/**/*.py" ]; chunk_by = "symbols"; };
       };
     };
   };

@@ -256,14 +256,49 @@ thread) would lose context invisibly, which is the worst failure mode.
 
 ## MCP tools
 
-Five MCP tools surface Perplexity's thread API to the ccproxy MCP stdio
-server (`ccproxy_mcp` console script). Use them from any MCP-aware client
-(Claude Code, Cursor, etc.).
+Ten MCP tools surface Perplexity's quota and thread API to the ccproxy
+in-daemon FastMCP streamable-HTTP server. Connect from any MCP-aware client
+(Claude Code, Cursor, etc.) at `http://127.0.0.1:4030/mcp` (production) or
+`4031` (dev) with `Authorization: Bearer <token>`.
 
-### `list_pplx_threads(search_term="", limit=100, offset=0)`
+The FastMCP server advertises an `instructions=` block telling calling LLMs
+to use the `/v1/chat/completions` endpoint for normal Perplexity queries and
+reserve MCP tools for **thread library curation + quota observability**.
+This is intentional — adding chat through MCP would duplicate the
+chat-completions path with an extra hop and tool-call round-trip, so it's
+explicitly out of scope.
 
-Lists the user's Perplexity thread library. Returns an array of
-`{slug, title, context_uuid, last_query_datetime, ...}`.
+### Quota observability
+
+#### `pplx_usage(refresh=False)`
+
+Fetches `GET /rest/rate-limit/all` and returns remaining Pro Search
+(weekly), Deep Research (monthly), Labs, agentic-research, and per-source
+quotas. Cached for 60 seconds — calling LLMs aggressively poll, and an
+unbounded poll rate risks a shadow-ban on the session cookie.
+`refresh=True` bypasses the cache.
+
+```python
+quota = pplx_usage()
+# {
+#   "remaining_pro": 192,
+#   "remaining_research": 19,
+#   "remaining_labs": 25,
+#   "remaining_agentic_research": 2,
+#   "model_specific_limits": {...},
+#   "sources": {"source_to_limit": {"bmj": {"monthly_limit": 5, "remaining": 5}, ...}}
+# }
+```
+
+Call once per session before scheduling expensive queries. Cache survives
+across tool invocations within the daemon process.
+
+### Library discovery
+
+#### `list_pplx_threads(search_term="", limit=100, offset=0)`
+
+Lists the user's Perplexity thread library (`POST /rest/thread/list_ask_threads`).
+Returns an array of `{slug, title, context_uuid, last_query_datetime, ...}`.
 
 ```python
 threads = list_pplx_threads(search_term="quantum")
@@ -273,7 +308,13 @@ for t in threads[:5]:
 
 Pagination via `offset` + `limit`. Server caps `limit` at 100.
 
-### `get_pplx_thread(slug_or_uuid)`
+#### `list_pplx_recent_threads(exclude_asi=False)`
+
+Lighter than `list_pplx_threads` — wraps `GET /rest/thread/list_recent`. No
+pagination, no search, fewer fields per entry. Use for "show me my recent
+threads" workflows. `exclude_asi=True` omits Deep Research / ASI threads.
+
+#### `get_pplx_thread(slug_or_uuid)`
 
 Fetches a single thread by slug or context UUID. Returns the full thread
 dict with `entries[]` (each entry has `query_str`, `structured_answer`,
@@ -286,10 +327,12 @@ for e in thread["entries"]:
     print("Q:", e["query_str"])
 ```
 
-### `import_pplx_thread(slug_or_uuid, citation_mode=None, include_reasoning=False)`
+### Resume — bring a server thread into a local conversation
 
-The "convert Perplexity thread to OpenAI messages" tool. Returns a request-
-construction kit:
+#### `import_pplx_thread(slug_or_uuid, citation_mode=None, include_reasoning=False)`
+
+The "convert Perplexity thread to OpenAI messages" tool. Returns a
+request-construction kit:
 
 ```json
 {
@@ -317,32 +360,51 @@ next_request = {
     "messages": result["messages"] + [{"role": "user", "content": "<your new question>"}],
     "metadata": result["metadata"],
 }
-# Send to OpenAI client
 ```
 
-ccproxy will see `metadata.ccproxy_pplx_thread` (Mode 1) and route as a
-follow-up.
+ccproxy sees `metadata.ccproxy_pplx_thread` (Mode 1) and routes as a follow-up.
 
-**Citation modes:**
-- `markdown` (default): `[N]` → `[N](url)` using the entry's `web_results`
-- `default`: preserve `[N]` markers verbatim
-- `clean`: strip all `[N]` markers
+**Citation modes**: `markdown` (default) embeds URLs as `[N](url)`;
+`default` preserves `[N]` markers verbatim; `clean` strips them entirely.
+**Reasoning inclusion**: `include_reasoning=True` appends each turn's
+`plan_block.goals[].description` strings as a footnote section.
 
-**Reasoning inclusion**: `include_reasoning=True` appends the
-`plan_block.goals[].description` strings as a markdown footnote section on
-each assistant turn. Default is to skip (most clients don't need it).
+### Library curation — slug-first mutations
 
-### `delete_pplx_thread(entry_uuid, read_write_token)`
+All mutation tools are **slug-first**: ccproxy resolves the slug to
+`context_uuid` + `read_write_token` internally via `_resolve_thread_ids`.
+Callers don't need to surface those low-level IDs.
 
-Deletes a thread by entry UUID (any backend_uuid from the thread works —
-deleting any entry deletes the whole thread). Requires the
-`read_write_token` from a prior SSE response or `get_pplx_thread` call.
+#### `set_pplx_thread_title(slug, title)`
 
-### `export_pplx_thread(entry_uuid, format="md")`
+Wraps `POST /rest/thread/set_thread_title`. Renames a thread to `title`.
 
-Exports a thread entry to a file. `format` is `"pdf"`, `"md"`, or `"docx"`.
-Returns `{filename, file_content_64}` — base64-decode on the client side
-to get the file bytes.
+#### `update_pplx_thread_access(slug, public)`
+
+Wraps `POST /rest/thread/update_thread_access`. `public=True` sets
+`updated_access=2` (shareable); `public=False` sets `1` (private). When
+public, the response includes `share_url: "https://www.perplexity.ai/search/{slug}"`.
+
+#### `delete_pplx_thread(slug)`
+
+Wraps `DELETE /rest/thread/delete_thread_by_entry_uuid`. Deletes the entire
+thread (all turns). The slug-first signature replaces the previous
+`(entry_uuid, read_write_token)` pair.
+
+#### `bulk_delete_pplx_threads(slugs)`
+
+Wraps `DELETE /rest/thread`. Resolves each slug to its `entry_uuid`; sends
+them together with a single `read_write_token` (token authority spans the
+user's library). Returns `{deleted: [slug...], failed: [{slug, error}...],
+response: <upstream>}` — per-slug resolution failures are collected, not
+raised, so partial-success cleanup workflows behave sensibly.
+
+#### `export_pplx_thread(slug, format="md")`
+
+Wraps `POST /rest/entry/export`. Exports the thread's **most recent entry**
+(slug-first refactor — was previously per-entry by `entry_uuid`). Format is
+`"pdf"`, `"md"`, or `"docx"`. Returns `{filename, file_content_64}` —
+base64-decode on the client side.
 
 ---
 
