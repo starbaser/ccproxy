@@ -346,7 +346,7 @@ async def run_inspector(
                 log_config=None,
                 lifespan="on",
                 access_log=False,
-                ws="websockets-sansio",
+                ws="none",
                 timeout_graceful_shutdown=2,
             )
         )
