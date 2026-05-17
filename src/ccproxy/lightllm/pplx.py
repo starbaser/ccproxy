@@ -14,7 +14,7 @@ delivering cumulative answer text via ``diff_block.patches[]`` patches on
 OpenAI-format delta chunks (``content`` + ``reasoning_content``).
 
 Thread continuation: the inbound ``pplx_thread_inject`` hook resolves
-``body.metadata.ccproxy_pplx_thread`` (or an L1 cache hit) to identifiers
+``body.metadata.session_id`` (or an L1 cache hit) to identifiers
 and writes them into ``optional_params["pplx"]`` as ``last_backend_uuid``
 + ``read_write_token`` + ``frontend_context_uuid``. The payload builder
 honors these to emit ``query_source: "followup"``. The final SSE event's
@@ -787,7 +787,7 @@ class PerplexityProIterator(BaseModelResponseIterator):
     ``ModelResponseStream`` chunk. On the final event (``final_sse_message``
     or ``final``), the captured ``thread_url_slug`` is stamped as a non-spec
     top-level field on the response so cooperating clients can echo it back
-    via ``metadata.ccproxy_pplx_thread`` on the next turn.
+    via ``metadata.session_id`` on the next turn.
     """
 
     def __init__(

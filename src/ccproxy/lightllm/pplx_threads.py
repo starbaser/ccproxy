@@ -4,16 +4,16 @@ ccproxy itself holds NO authoritative thread state — Perplexity's
 server-side thread library at ``/rest/thread/*`` is the canonical store
 (see ``threads-history.md``). This module exists purely as a hot-path
 optimization for *organic in-session continuation* where the client
-sends Turn N+1 without setting ``metadata.ccproxy_pplx_thread``: the
+sends Turn N+1 without setting ``metadata.session_id``: the
 ``PerplexityAddon`` captures identifiers from each completed SSE
 response into this store keyed by the conversation_id SHA12 stamped by
 ``InspectorAddon``, and the next-turn ``pplx_thread_inject`` hook
-reads them back when no explicit ``metadata.ccproxy_pplx_thread`` was
+reads them back when no explicit ``metadata.session_id`` was
 supplied.
 
 The store is in-memory only; no disk persistence. Survives no
 ccproxy restarts. If a client wants cross-restart resume, they pass
-the slug explicitly via ``metadata.ccproxy_pplx_thread`` and the
+the slug explicitly via ``metadata.session_id`` and the
 hook resolves via ``GET /rest/thread/{slug}``.
 
 Pattern modeled on the SessionStore reference at ``core-query.md:1180-1230``.

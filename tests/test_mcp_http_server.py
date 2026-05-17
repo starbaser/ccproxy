@@ -108,16 +108,6 @@ class TestMcpToolsList:
             "list_shapes",
             "list_conversations",
             "list_models",
-            "pplx_usage",
-            "list_pplx_threads",
-            "list_pplx_recent_threads",
-            "get_pplx_thread",
-            "import_pplx_thread",
-            "set_pplx_thread_title",
-            "update_pplx_thread_access",
-            "delete_pplx_thread",
-            "bulk_delete_pplx_threads",
-            "export_pplx_thread",
         }
     )
 
@@ -144,7 +134,7 @@ class TestMcpToolsList:
         retrofit_tools = [
             tool
             for tool in result.tools
-            if tool.name in {"dump_har", "diff_flows", "compare_flow", "capture_shape", "import_pplx_thread"}
+            if tool.name in {"dump_har", "diff_flows", "compare_flow", "capture_shape"}
         ]
         assert retrofit_tools, "expected to find at least one ctx-retrofit tool"
 

@@ -128,7 +128,7 @@ implements three resolution modes — first match wins.
 
 ### Mode 1: Explicit metadata (the recommended channel)
 
-Pass `body.metadata.ccproxy_pplx_thread = "<slug-or-uuid>"` in the OpenAI
+Pass `body.metadata.session_id = "<slug-or-uuid>"` in the OpenAI
 request body. ccproxy fetches the thread via `GET /rest/thread/{slug}`,
 extracts the latest entry's identifiers, and routes as a follow-up.
 
@@ -136,7 +136,7 @@ extracts the latest entry's identifiers, and routes as a follow-up.
 resp = client.chat.completions.create(
     model="perplexity/best",
     messages=[{"role": "user", "content": "And how about superposition?"}],
-    extra_body={"metadata": {"ccproxy_pplx_thread": "quantum-abc123"}},
+    extra_body={"metadata": {"session_id": "quantum-abc123"}},
 )
 ```
 
@@ -181,7 +181,7 @@ you don't want to think about thread IDs.
 
 ### Mode 3: Pass-through
 
-No `metadata.ccproxy_pplx_thread`, no L1 cache hit → ccproxy creates a fresh
+No `metadata.session_id`, no L1 cache hit → ccproxy creates a fresh
 Perplexity thread for every request. Full OpenAI history is flattened into
 `query_str` and sent in one shot.
 
@@ -213,7 +213,7 @@ data: [DONE]
 ```
 
 Cooperating clients capture this and round-trip it via
-`metadata.ccproxy_pplx_thread` on the next turn. Naive clients ignore the
+`metadata.session_id` on the next turn. Naive clients ignore the
 non-spec field silently.
 
 ### Divergence detection
@@ -237,14 +237,14 @@ authoritative state. Behavior depends on `pplx.thread.consistency_mode`:
 
 ### Slug not found
 
-If the slug in `metadata.ccproxy_pplx_thread` doesn't exist (or was deleted
+If the slug in `metadata.session_id` doesn't exist (or was deleted
 on perplexity.ai), ccproxy returns a structured 404:
 
 ```json
 {
   "error": {
     "type": "pplx_thread_not_found",
-    "message": "Perplexity thread 'quantum-abc123' not found or no longer accessible. Verify the slug or remove metadata.ccproxy_pplx_thread to start a new thread."
+    "message": "Perplexity thread 'quantum-abc123' not found or no longer accessible. Verify the slug or remove metadata.session_id to start a new thread."
   }
 }
 ```
@@ -342,7 +342,7 @@ request-construction kit:
     {"role": "user", "content": "And error correction?"},
     {"role": "assistant", "content": "..."}
   ],
-  "metadata": {"ccproxy_pplx_thread": "quantum-abc123"},
+  "metadata": {"session_id": "quantum-abc123"},
   "thread_info": {
     "slug": "quantum-abc123",
     "context_uuid": "...",
@@ -362,7 +362,7 @@ next_request = {
 }
 ```
 
-ccproxy sees `metadata.ccproxy_pplx_thread` (Mode 1) and routes as a follow-up.
+ccproxy sees `metadata.session_id` (Mode 1) and routes as a follow-up.
 
 **Citation modes**: `markdown` (default) embeds URLs as `[N](url)`;
 `default` preserves `[N]` markers verbatim; `clean` strips them entirely.
@@ -481,7 +481,7 @@ then merges with the resolved thread state).
 OpenAI client (openai-python, aider, anything)
    │  POST /v1/chat/completions
    │  Authorization: Bearer sk-ant-oat-ccproxy-perplexity_pro
-   │  { model, messages, [stream], [metadata.ccproxy_pplx_thread] }
+   │  { model, messages, [stream], [metadata.session_id] }
    ▼
 ccproxy port 4000 / 4001 (mitmweb reverse listener)
    │
@@ -500,7 +500,7 @@ ccproxy port 4000 / 4001 (mitmweb reverse listener)
                                writes S3 URLs to ctx._body["pplx"]["attachments"]
                                strips non-text parts from ctx._body["messages"]
      4. pplx_thread_inject     resolution chain:
-                                 Mode 1: glom(body, "metadata.ccproxy_pplx_thread")
+                                 Mode 1: glom(body, "metadata.session_id")
                                  Mode 2: PerplexityThreadStore.get(conversation_id)
                                  Mode 3: no-op
                                injects ctx._body["pplx"] = {last_backend_uuid, read_write_token, frontend_context_uuid}
@@ -797,7 +797,7 @@ for clarification then retry with a more specific query.
 `extract_session_id`. Stops at the first hit.
 
 ```
-slug = glom(ctx._body, "metadata.ccproxy_pplx_thread", default=None)
+slug = glom(ctx._body, "metadata.session_id", default=None)
 if slug:
     # Mode 1 — Body metadata
     try:
@@ -969,7 +969,7 @@ TURN 2 (organic — client just appends to history)
 TURN 3 (cross-restart resume via explicit metadata)
   ccproxy restarts — L1 cache wiped
   Client → ccproxy   { messages: [{user, "And a herb"}],
-                       metadata: { ccproxy_pplx_thread: "S1" } }
+                       metadata: { session_id: "S1" } }
                      conversation_id = sha12("And a herb") = "9a2c4811..."  ← different
   pplx_thread_inject Mode 1: HIT — slug = S1
                      GET /rest/thread/S1 → entries = [3 entries…]
@@ -1375,14 +1375,14 @@ but Perplexity returned empty results. Possible causes:
 
 ### `pplx_thread_not_found`
 
-The slug in `metadata.ccproxy_pplx_thread` doesn't exist on perplexity.ai.
+The slug in `metadata.session_id` doesn't exist on perplexity.ai.
 Either:
 
 - The thread was deleted via web UI or `delete_pplx_thread`
 - You're using a slug from a different account (slugs are per-user)
 - The slug is stale or typo'd
 
-Action: remove `metadata.ccproxy_pplx_thread` to start fresh, or re-import
+Action: remove `metadata.session_id` to start fresh, or re-import
 the thread via `import_pplx_thread`.
 
 ### `pplx_thread_divergence` (strict mode)
@@ -1396,7 +1396,7 @@ locally. Options:
   proceeds)
 - Re-import the thread via `import_pplx_thread` to sync local history with
   server state, then continue
-- Remove `metadata.ccproxy_pplx_thread` to start a new thread
+- Remove `metadata.session_id` to start a new thread
 
 ### Mode 2 (L1 cache) not hitting
 
@@ -1427,9 +1427,9 @@ The `intended_usage == "ask_text"` filter is missing or broken. Both
 `ask_text_0_markdown` and `ask_text` carry identical patches; processing
 both doubles every chunk. The parser should skip `ask_text`.
 
-### `Hook 'pplx_thread_inject' reads unavailable keys: ['metadata.ccproxy_pplx_thread']`
+### `Hook 'pplx_thread_inject' reads unavailable keys: ['metadata.session_id']`
 
-Benign warning. The hook declares a read of `metadata.ccproxy_pplx_thread`
+Benign warning. The hook declares a read of `metadata.session_id`
 but the body has no such key. Expected when the user isn't doing explicit
 resume; the hook still runs (via guard) and falls through to Mode 2 or 3.
 Can be silenced by removing the read declaration from the `@hook` decorator
@@ -1442,9 +1442,9 @@ at the next outbound connection from the sidecar process to
 `www.perplexity.ai:443`. With the TLS keylog file loaded, both legs
 decrypt.
 
-### `ccproxy_pplx_thread` metadata key being filtered out by client
+### `session_id` metadata key being filtered out by client
 
 Some OpenAI SDKs validate the `metadata` dict against a strict schema and
-drop unknown keys. Use `extra_body={"metadata": {"ccproxy_pplx_thread": "..."}}`
+drop unknown keys. Use `extra_body={"metadata": {"session_id": "..."}}`
 in `openai-python` to bypass the validator. Or set the key on the request
 via the SDK's raw HTTP layer.

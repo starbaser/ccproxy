@@ -12,7 +12,7 @@ completes and persist the captured ``backend_uuid`` /
 
 The next-turn ``pplx_thread_inject`` hook reads this cache as Mode 2
 (organic in-session continuation) when the client did not supply an
-explicit ``metadata.ccproxy_pplx_thread``. This gives zero-friction
+explicit ``metadata.session_id``. This gives zero-friction
 multi-turn for naive OpenAI SDK clients without requiring ccproxy to
 hold authoritative state — Perplexity remains the source of truth,
 this is just a hot-path latency optimization.

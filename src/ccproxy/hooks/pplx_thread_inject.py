@@ -4,7 +4,7 @@ ccproxy holds no authoritative thread state — Perplexity's server-side
 thread library is the source of truth (see ``threads-history.md``). This
 hook implements the three-mode resolution chain:
 
-1. **Body metadata** — ``body.metadata.ccproxy_pplx_thread = "<slug-or-uuid>"``
+1. **Body metadata** — ``body.metadata.session_id = "<slug-or-uuid>"``
    wins; we ``GET /rest/thread/{value}`` to fetch the latest
    ``backend_uuid`` + ``read_write_token`` + ``context_uuid`` from the
    thread's most recent entry. 404 → structured ``pplx_thread_not_found``
@@ -136,7 +136,7 @@ def _count_client_user_turns(messages: list[Any]) -> int:
 
 
 @hook(
-    reads=["metadata.ccproxy_pplx_thread"],
+    reads=["metadata.session_id"],
     writes=["pplx"],
 )
 def pplx_thread_inject(ctx: Context, _: dict[str, Any]) -> Context:
@@ -145,7 +145,7 @@ def pplx_thread_inject(ctx: Context, _: dict[str, Any]) -> Context:
     flow = ctx.flow
     body = ctx._body if isinstance(ctx._body, dict) else {}
 
-    slug = glom(body, "metadata.ccproxy_pplx_thread", default=None)
+    slug = glom(body, "metadata.session_id", default=None)
     resolved: dict[str, str | None] | None = None
     resolved_via: str | None = None
     thread_entry_count: int | None = None
@@ -155,7 +155,7 @@ def pplx_thread_inject(ctx: Context, _: dict[str, Any]) -> Context:
         token = config.resolve_oauth_token(PERPLEXITY_PROVIDER_NAME)
         if not token:
             logger.warning(
-                "pplx_thread_inject: metadata.ccproxy_pplx_thread set but no session token; treating as Mode 3"
+                "pplx_thread_inject: metadata.session_id set but no session token; treating as Mode 3"
             )
         else:
             try:
@@ -172,7 +172,7 @@ def pplx_thread_inject(ctx: Context, _: dict[str, Any]) -> Context:
                     status_code=404,
                     message=(
                         f"Perplexity thread {slug!r} not found or no longer accessible. "
-                        f"Verify the slug or remove metadata.ccproxy_pplx_thread to start a "
+                        f"Verify the slug or remove metadata.session_id to start a "
                         f"new thread."
                     ),
                     headers=None,
@@ -212,7 +212,7 @@ def pplx_thread_inject(ctx: Context, _: dict[str, Any]) -> Context:
                     message=(
                         f"Perplexity thread {slug!r} diverged from incoming history "
                         f"({divergence}). Re-import the thread or remove "
-                        f"metadata.ccproxy_pplx_thread."
+                        f"metadata.session_id."
                     ),
                     headers=None,
                 )

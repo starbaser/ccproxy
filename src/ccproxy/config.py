@@ -288,7 +288,7 @@ class PplxThreadConfig(BaseModel):
     ttl_seconds: float = Field(default=1800.0, gt=0)
     """L1 cache TTL for :class:`PerplexityThreadStore`. The store is
     organic-continuation-only; explicit resume via
-    ``metadata.ccproxy_pplx_thread`` bypasses TTL and hits the server."""
+    ``metadata.session_id`` bypasses TTL and hits the server."""
 
 
 class PplxConfig(BaseModel):
