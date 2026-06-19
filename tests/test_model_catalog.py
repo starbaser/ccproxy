@@ -43,6 +43,14 @@ def test_static_floor_contains_known_gemini_models() -> None:
     assert "gemini-2.5-flash" in ids
 
 
+def test_static_floor_contains_known_requesty_models() -> None:
+    """The floor includes known Requesty (OpenAI-compatible gateway) model IDs."""
+    catalog = build_catalog()
+    ids = {entry["id"] for entry in catalog["data"]}
+    assert "openai/gpt-4o-mini" in ids
+    assert "anthropic/claude-sonnet-4-5" in ids
+
+
 def test_owned_by_matches_provider_keys() -> None:
     """Each entry's ``owned_by`` is one of the provider keys in STATIC_MODEL_CATALOG."""
     catalog = build_catalog()
@@ -86,6 +94,33 @@ def test_refresh_merges_live_anthropic_models() -> None:
     # No duplicates of the floor entry — the live anthropic block runs first
     # so the floor copy is skipped via the (owned_by, id) dedup set.
     assert ids.count("claude-opus-4-7") == 1
+
+
+def test_refresh_merges_live_requesty_models() -> None:
+    """``refresh=True`` unions live Requesty models with the static floor (deduped)."""
+    set_config_instance(CCProxyConfig())
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "router.requesty.ai" in str(request.url):
+            return httpx.Response(
+                200,
+                json={
+                    "object": "list",
+                    "data": [
+                        # one new model not in the floor
+                        {"id": "deepseek/deepseek-chat", "object": "model", "created": 1700000000},
+                        # one duplicate of a floor entry
+                        {"id": "openai/gpt-4o-mini", "object": "model"},
+                    ],
+                },
+            )
+        return httpx.Response(404)
+
+    catalog = build_catalog(refresh=True, transport=httpx.MockTransport(handler))
+    ids = [entry["id"] for entry in catalog["data"]]
+    assert "deepseek/deepseek-chat" in ids
+    # The duplicate floor entry is not double-counted (deduped by (owned_by, id)).
+    assert ids.count("openai/gpt-4o-mini") == 1
 
 
 def test_refresh_provider_failure_falls_back_to_floor() -> None:

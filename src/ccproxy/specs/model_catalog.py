@@ -52,6 +52,11 @@ STATIC_MODEL_CATALOG: dict[str, list[str]] = {
     "deepseek": [
         "deepseek-v4",
     ],
+    "requesty": [
+        "openai/gpt-4o-mini",
+        "anthropic/claude-sonnet-4-5",
+        "google/gemini-2.5-flash",
+    ],
     "perplexity": _perplexity_model_ids(),
 }
 """Provider → model IDs floor list. Updated alongside provider releases."""
@@ -60,6 +65,7 @@ STATIC_MODEL_CATALOG: dict[str, list[str]] = {
 _PROVIDER_ENDPOINTS: dict[str, str] = {
     "anthropic": "https://api.anthropic.com/v1/models",
     "openrouter": "https://openrouter.ai/api/v1/models",
+    "requesty": "https://router.requesty.ai/v1/models",
 }
 """Provider → upstream ``/v1/models`` URL for live merge. gemini is omitted
 because it requires GCP project context that ccproxy doesn't have at

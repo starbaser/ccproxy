@@ -552,6 +552,7 @@ ccproxy:
       api.openai.com: openai
       generativelanguage.googleapis.com: google
       openrouter.ai: openrouter
+      router.requesty.ai: requesty
     mitmproxy:
       ssl_insecure: true
       web_host: 127.0.0.1
