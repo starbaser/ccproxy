@@ -60,7 +60,7 @@ from pydantic_ai.messages import BinaryContent, FilePart, ModelResponseStreamEve
 from pydantic_graph import GraphBuilder, StepContext
 
 import ccproxy.lightllm.graph._subgraph_patch  # noqa: F401  — installs add_subgraph
-from ccproxy.lightllm.graph import _usage
+from ccproxy.lightllm.graph import _finish_reason, _usage
 from ccproxy.lightllm.graph._base import IntakeState, ResponseIntakeFSM
 
 if TYPE_CHECKING:
@@ -148,6 +148,13 @@ async def absorb_chunk(
     if not chunk.candidates:
         return
     candidate = chunk.candidates[0]
+    # Funnel: the finish reason rides the candidate, and a turn cut short by
+    # MAX_TOKENS or a safety filter often arrives on a candidate carrying no
+    # content at all — capture it before the parts short-circuits, or a
+    # truncated turn reaches the client indistinguishable from a complete one.
+    if candidate.finish_reason is not None:
+        state.raw_extras.setdefault("finish_reason", str(candidate.finish_reason.value))
+        state.finish_reason = _finish_reason.from_google(candidate.finish_reason)
     if candidate.content is None or candidate.content.parts is None:
         return
     state.parts_queue.extend(candidate.content.parts)

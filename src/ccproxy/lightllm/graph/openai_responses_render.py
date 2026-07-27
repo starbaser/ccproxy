@@ -16,7 +16,9 @@ calls stream their JSON arguments via
 ``response.function_call_arguments.delta``; reasoning items stream via
 ``response.reasoning_text.delta``. The stream prelude is a single
 ``response.created`` event with a Response envelope snapshot; the
-postlude is ``response.completed`` with final usage.
+postlude is the terminal envelope event for the turn's outcome —
+``response.completed``, ``response.incomplete``, or ``response.failed`` —
+carrying the final usage.
 
 Mirrors :mod:`ccproxy.lightllm.graph.openai_render` in shape: state is
 held across :meth:`render` calls, the graph dispatches one IR event
@@ -55,10 +57,11 @@ from pydantic_ai.messages import (
 from pydantic_graph import GraphBuilder, StepContext, TypeExpression
 
 import ccproxy.lightllm.graph._subgraph_patch  # noqa: F401  -- installs GraphBuilder.add_subgraph
-from ccproxy.lightllm.graph import _usage
+from ccproxy.lightllm.graph import _finish_reason, _usage
 from ccproxy.lightllm.graph._base import RenderState, ResponseRenderFSM
 
 if TYPE_CHECKING:
+    from pydantic_ai.messages import FinishReason
     from pydantic_ai.usage import RequestUsage
 
 logger = logging.getLogger(__name__)
@@ -78,6 +81,14 @@ def _args_to_str(args: _ToolCallArgs) -> str:
     if isinstance(args, str):
         return args
     return json.dumps(args, separators=(",", ":"))
+
+
+_TERMINAL_EVENT_BY_STATUS: dict[str, str] = {
+    "completed": "response.completed",
+    "incomplete": "response.incomplete",
+    "failed": "response.failed",
+}
+"""The Responses stream's three terminal events, one per terminal envelope status."""
 
 
 def _emit_event(event_name: str, payload: _WirePayload) -> bytes:
@@ -163,9 +174,6 @@ class _OpenAIResponsesRenderState(RenderState):
     open_items: dict[int, _OpenItemState] = field(default_factory=dict)
     """Indexed by ``output_index`` so each delta/end can find its open item."""
 
-    finish_status: str = "completed"
-    """``"completed"`` / ``"incomplete"`` / ``"failed"`` — stamped in postlude."""
-
     current_ir_index: int = 0
     """Transient: the IR event index, stashed by the inner-subgraph open step."""
 
@@ -210,9 +218,15 @@ def _response_envelope_snapshot(
     *,
     status: str,
     usage: Mapping[str, object] | None = None,
+    incomplete_reason: str | None = None,
 ) -> dict[str, object]:
-    """Build the Response envelope snapshot stamped in prelude/postlude."""
-    return {
+    """Build the Response envelope snapshot stamped in prelude/postlude.
+
+    ``incomplete_reason`` fills the spec's ``incomplete_details`` block, which
+    is the only place a Responses client learns *why* a turn came back
+    ``incomplete`` (``max_output_tokens`` vs ``content_filter``).
+    """
+    snapshot: dict[str, object] = {
         "id": state.response_id,
         "object": "response",
         "created_at": state.created_at,
@@ -221,6 +235,9 @@ def _response_envelope_snapshot(
         "output": [],
         "usage": usage,
     }
+    if incomplete_reason is not None:
+        snapshot["incomplete_details"] = {"reason": incomplete_reason}
+    return snapshot
 
 
 def _bump_seq(state: _OpenAIResponsesRenderState) -> int:
@@ -895,13 +912,21 @@ class OpenAIResponsesRenderFSM(ResponseRenderFSM[_OpenAIResponsesRenderState]):
         *,
         usage: RequestUsage | None = None,
         raw_extras: Mapping[str, object] | None = None,
+        finish_reason: FinishReason | None = None,
     ) -> bytes:
-        """Close any still-open items, then emit ``response.completed``.
+        """Close any still-open items, then emit the terminal envelope event.
 
-        When the intake captured usage, ``response.completed`` carries the real
-        token counts (funnel re-stamping) rather than zeros. Emits a telemetry
-        warning when IR events arrived but no content bytes were rendered — a
-        silent empty Responses turn must be explainable from logs.
+        The intake's captured ``finish_reason`` selects that terminal event:
+        ``response.completed`` for a turn that finished, ``response.incomplete``
+        (with ``incomplete_details.reason``) for one cut short by the token
+        ceiling or a content filter, ``response.failed`` for one killed by an
+        upstream error. A truncated turn announced as ``response.completed`` is
+        indistinguishable from a clean one, which is exactly the signal a
+        Responses client needs. When the intake captured usage, the terminal
+        event carries the real token counts (funnel re-stamping) rather than
+        zeros. Emits a telemetry warning when IR events arrived but no content
+        bytes were rendered — a silent empty Responses turn must be explainable
+        from logs.
         """
         del raw_extras  # response envelope has no slot for arbitrary upstream metadata
         state = self._state
@@ -914,21 +939,24 @@ class OpenAIResponsesRenderFSM(ResponseRenderFSM[_OpenAIResponsesRenderState]):
             item = state.open_items.pop(output_index)
             _close_item(state, item, out)
 
-        # Postlude — response.completed with the final envelope snapshot.
+        # Postlude — the terminal envelope event for the resolved status.
         usage_block = (
             {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
             if _usage.usage_is_empty(usage)
             else _usage.to_openai_responses(cast("RequestUsage", usage))
         )
+        status = _finish_reason.to_openai_responses_status(finish_reason)
         snapshot = _response_envelope_snapshot(
             state,
-            status=state.finish_status,
+            status=status,
             usage=usage_block,
+            incomplete_reason=_finish_reason.to_openai_responses_incomplete_reason(finish_reason),
         )
+        event_name = _TERMINAL_EVENT_BY_STATUS[status]
         out += _emit_event(
-            "response.completed",
+            event_name,
             {
-                "type": "response.completed",
+                "type": event_name,
                 "response": snapshot,
                 "sequence_number": _bump_seq(state),
             },

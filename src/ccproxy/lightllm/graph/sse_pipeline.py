@@ -179,13 +179,17 @@ class SSEPipeline:
         if not self._terminator_emitted:
             self._terminator_emitted = True
             try:
-                # Funnel: hand the intake's accumulated usage + carried-through
-                # metadata to the render terminator so token accounting the
-                # cross-format transform would otherwise drop is re-stamped.
+                # Funnel: hand the intake's accumulated usage, carried-through
+                # metadata, and captured finish reason to the render terminator
+                # so the token accounting AND the reason the turn ended — the
+                # difference between a completed turn and one truncated by a
+                # token ceiling, a content filter, or an upstream error — are
+                # re-stamped instead of dropped by the cross-format transform.
                 out.extend(
                     await self._render.close(
                         usage=self._intake.usage,
                         raw_extras=self._intake.raw_extras,
+                        finish_reason=self._intake.finish_reason,
                     )
                 )
             except Exception:

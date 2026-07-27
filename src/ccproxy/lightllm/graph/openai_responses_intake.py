@@ -14,26 +14,16 @@ from pydantic_ai.messages import ModelResponseStreamEvent
 from pydantic_graph import GraphBuilder, StepContext, TypeExpression
 
 import ccproxy.lightllm.graph._subgraph_patch  # noqa: F401  — installs GraphBuilder.add_subgraph
-from ccproxy.lightllm.graph import _usage
+from ccproxy.lightllm.graph import _finish_reason, _usage
 from ccproxy.lightllm.graph._base import IntakeState, ResponseIntakeFSM
 
 if TYPE_CHECKING:
-    from pydantic_ai.messages import FinishReason
     from pydantic_ai.models import ModelRequestParameters
 
 logger = logging.getLogger(__name__)
 
 
 _EVENT_ADAPTER: TypeAdapter[responses.ResponseStreamEvent] = TypeAdapter(responses.ResponseStreamEvent)
-
-_RESPONSES_FINISH_REASON_MAP: dict[str, FinishReason] = {
-    "max_output_tokens": "length",
-    "content_filter": "content_filter",
-    "completed": "stop",
-    "cancelled": "error",
-    "failed": "error",
-}
-
 
 type _ResponseEnvelopeWireEvent = (
     responses.ResponseCreatedEvent
@@ -254,7 +244,7 @@ def _record_response_metadata(state: _OpenAIResponsesIntakeState, event: _Respon
             **(state.provider_details or {}),
             "finish_reason": raw_finish_reason,
         }
-        state.finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
+        state.finish_reason = _finish_reason.from_openai_responses(raw_finish_reason)
 
 
 @_g.step

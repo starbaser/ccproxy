@@ -102,6 +102,9 @@ src/ccproxy/lightllm/
     │                      telemetry), feed()/render() templates, SSE framing
     │
     ├── _usage.py         usage_from_* capture + to_* projection helpers
+│
+├── _finish_reason.py from_* capture + to_* projection helpers for the
+│                      per-listener finish-reason / stop-reason vocabulary
     │
     ├── _subgraph_patch.py Monkey-patch installing GraphBuilder.add_subgraph
     │                      (temporary until pydantic_graph ships it natively)
@@ -346,8 +349,8 @@ inherits `ResponseRenderFSM` (shared `render()` = push event → run graph, an
 `_log_silent_close()` telemetry helper); the outer router dispatches each IR
 event kind, with the `part` / `delta` type-switches handled by inner no-loop
 subgraphs; the terminal step returns `bytes(state.out)`. Each `close()` stays
-wire-specific but shares the `close(*, usage=, raw_extras=)` keyword signature
-declared abstract on the base.
+wire-specific but shares the `close(*, usage=, raw_extras=, finish_reason=)`
+keyword signature declared abstract on the base.
 
 ### Why this shape
 
@@ -445,7 +448,7 @@ one rename pass at the import sites suffices.
 
 | File | What its FSM does | Key marker classes |
 |---|---|---|
-| `_base.py` | Shared base classes. `IntakeState[EventT]` / `RenderState` carry the common state slots (queues, funnel slots `usage`/`raw_extras`/`finish_reason`/`provider_response_id`, telemetry counters); `ResponseIntakeFSM[StateT]` owns the byte tee, SSE buffering, the `feed()` template, `_split_sse_frames()`, the funnel properties, and the silent-empty telemetry helpers; `ResponseRenderFSM[StateT]` owns `render()` and the abstract `close(*, usage=, raw_extras=)` signature. Subclass hooks: `_initial_state`, `_drain_events`, `_graph`. | — |
+| `_base.py` | Shared base classes. `IntakeState[EventT]` / `RenderState` carry the common state slots (queues, funnel slots `usage`/`raw_extras`/`finish_reason`/`provider_response_id`, telemetry counters); `ResponseIntakeFSM[StateT]` owns the byte tee, SSE buffering, the `feed()` template, `_split_sse_frames()`, the funnel properties, and the silent-empty telemetry helpers; `ResponseRenderFSM[StateT]` owns `render()` and the abstract `close(*, usage=, raw_extras=, finish_reason=)` signature. Subclass hooks: `_initial_state`, `_drain_events`, `_graph`. | — |
 | `_subgraph_patch.py` | Installs `GraphBuilder.add_subgraph` via monkey-patch (tracks upstream TODO at `pydantic_graph/graph_builder.py:1469`). Registers a built `Graph` as a synthetic `Step` whose body awaits `subgraph.run(state=ctx.state, deps=ctx.deps, inputs=ctx.inputs)`. Shared `StateT` flows through unchanged; inner subgraph mutates the same state instance as the parent. Mermaid renders the subgraph as a single labelled node. Removable when upstream ships native subgraph composition. | — |
 | `anthropic_intake.py` | Anthropic SSE → IR `ModelResponseStreamEvent` (typed dispatch on `BetaRawMessageStreamEvent` union) | `_FeedDone`, `_IgnoredEvent` |
 | `anthropic_render.py` | IR `ModelResponseStreamEvent` → Anthropic SSE wire bytes | `_RenderDone` |
@@ -764,6 +767,40 @@ protocols report none (Perplexity's only usage is subscription quota, via the
 `provider_response_id` (Anthropic carries its message id through
 `raw_extras["response_id"]`). If an upstream later exposes any of these,
 capture drops into the same seam.
+
+#### The finish reason travels the same funnel
+
+`finish_reason` is the other side-channel pydantic-ai keeps off the parts
+manager (it rides `ModelResponse.finish_reason`), and it answers a question no
+part can: whether the turn *completed*. Its mapping helpers live in
+`graph/_finish_reason.py`, same two directions as `_usage`:
+
+| Direction | Helpers |
+|---|---|
+| Capture | `from_anthropic` (`message_delta.delta.stop_reason`), `from_openai_chat` (`choice.finish_reason`), `from_openai_responses` (`incomplete_details.reason`, else envelope `status`), `from_google` (`candidate.finishReason`) |
+| Projection | `to_openai_chat` (`choice.finish_reason`), `to_anthropic` (`stop_reason`), `to_openai_responses_status` + `to_openai_responses_incomplete_reason` |
+
+Every terminator seam projects it, so the two transport paths agree for the same
+intake state: `SSEPipeline._drain_and_terminate` hands `finish_reason` to all
+three streaming `close()` implementations, and `render_parts_to_listener` hands
+it to all three buffered assemblers.
+
+* **OpenAI Chat** — the terminal `finish_reason` chunk before `[DONE]`.
+* **Anthropic** — `message_delta.delta.stop_reason`.
+* **OpenAI Responses** — the terminal envelope event *and* its `status`:
+  `response.completed`, `response.incomplete` (with `incomplete_details.reason`),
+  or `response.failed`.
+
+Two rules the projection encodes. A **rendered tool call supplies a reason the
+upstream did not give** — Gemini answers `STOP` even for a function call, so a
+tool-calling turn ends as `tool_calls` / `tool_use` rather than a bare
+completion the client would not act on; a substantive reason such as `length`
+still outranks it. And **`"error"` reaches the wire as `"error"`** on OpenAI
+Chat and Anthropic, whose closed enums have no member for it: both SDKs parse
+response enums permissively for forward compatibility, and an invented
+completion (`stop` / `end_turn`) would be the exact lie this funnel exists to
+remove. Anthropic reasons the IR cannot express (`pause_turn`, `compaction`)
+stay unmapped and ride `raw_extras["stop_reason"]`.
 
 ### Round-trip contract
 

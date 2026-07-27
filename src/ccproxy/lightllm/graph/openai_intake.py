@@ -58,26 +58,16 @@ from pydantic_ai.messages import ModelResponseStreamEvent
 from pydantic_graph import GraphBuilder, StepContext
 
 import ccproxy.lightllm.graph._subgraph_patch  # noqa: F401  — installs GraphBuilder.add_subgraph
-from ccproxy.lightllm.graph import _usage
+from ccproxy.lightllm.graph import _finish_reason, _usage
 from ccproxy.lightllm.graph._base import IntakeState, ResponseIntakeFSM
 
 if TYPE_CHECKING:
-    from pydantic_ai.messages import FinishReason
     from pydantic_ai.models import ModelRequestParameters
 
 logger = logging.getLogger(__name__)
 
 
 _CHUNK_ADAPTER: TypeAdapter[ChatCompletionChunk] = TypeAdapter(ChatCompletionChunk)
-
-
-_CHAT_FINISH_REASON_MAP: dict[str, FinishReason] = {
-    "stop": "stop",
-    "length": "length",
-    "tool_calls": "tool_call",
-    "content_filter": "content_filter",
-    "function_call": "tool_call",
-}
 
 
 # ── Dispatch envelopes ─────────────────────────────────────────────────────
@@ -202,7 +192,7 @@ async def open_standard_chunk(
     choice = chunk.choices[0]
 
     if (raw_finish_reason := choice.finish_reason) and not state.has_refusal:
-        state.finish_reason = _CHAT_FINISH_REASON_MAP.get(raw_finish_reason)
+        state.finish_reason = _finish_reason.from_openai_chat(raw_finish_reason)
 
     if provider_details := _map_provider_details(choice):
         if state.has_refusal:

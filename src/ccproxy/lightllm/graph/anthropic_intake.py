@@ -84,7 +84,7 @@ from pydantic_ai.models.anthropic import (
 from pydantic_graph import GraphBuilder, StepContext, TypeExpression
 
 import ccproxy.lightllm.graph._subgraph_patch  # noqa: F401  -- installs GraphBuilder.add_subgraph
-from ccproxy.lightllm.graph import _usage
+from ccproxy.lightllm.graph import _finish_reason, _usage
 from ccproxy.lightllm.graph._base import IntakeState, ResponseIntakeFSM
 
 if TYPE_CHECKING:
@@ -177,8 +177,18 @@ def _capture_message_start(state: _AnthropicIntakeState, event: BetaRawMessageSt
 
 
 def _capture_message_delta(state: _AnthropicIntakeState, event: BetaRawMessageDeltaEvent) -> None:
-    """Funnel ``message_delta``: accumulate the cumulative output-token usage."""
+    """Funnel ``message_delta``: accumulate output-token usage and the stop reason.
+
+    ``stop_reason`` is the only place the Anthropic wire says *why* the turn
+    ended — ``max_tokens`` truncation and ``refusal`` are otherwise
+    indistinguishable from a clean ``end_turn`` once the events become IR. The
+    raw value also rides ``raw_extras`` because two members (``pause_turn``,
+    ``compaction``) describe a resumable turn the IR cannot express.
+    """
     state.usage = _usage.usage_from_anthropic(event.usage, existing=state.usage)
+    if raw_stop_reason := event.delta.stop_reason:
+        state.raw_extras.setdefault("stop_reason", raw_stop_reason)
+        state.finish_reason = _finish_reason.from_anthropic(raw_stop_reason)
 
 
 @_g.step

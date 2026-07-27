@@ -53,10 +53,11 @@ from pydantic_ai.messages import (
 from pydantic_graph import GraphBuilder, StepContext, TypeExpression
 
 import ccproxy.lightllm.graph._subgraph_patch  # noqa: F401  -- installs GraphBuilder.add_subgraph
-from ccproxy.lightllm.graph import _usage
+from ccproxy.lightllm.graph import _finish_reason, _usage
 from ccproxy.lightllm.graph._base import RenderState, ResponseRenderFSM
 
 if TYPE_CHECKING:
+    from pydantic_ai.messages import FinishReason
     from pydantic_ai.usage import RequestUsage
 
 logger = logging.getLogger(__name__)
@@ -192,12 +193,12 @@ def _emit_content_block_stop(idx: int) -> bytes:
     return _emit("content_block_stop", {"type": "content_block_stop", "index": idx})
 
 
-def _emit_message_delta(usage: Mapping[str, object] | None = None) -> bytes:
+def _emit_message_delta(*, stop_reason: str, usage: Mapping[str, object] | None = None) -> bytes:
     return _emit(
         "message_delta",
         {
             "type": "message_delta",
-            "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+            "delta": {"stop_reason": stop_reason, "stop_sequence": None},
             "usage": dict(usage) if usage is not None else {"output_tokens": 0},
         },
     )
@@ -215,14 +216,19 @@ class _AnthropicRenderState(RenderState):
     """FSM state for one Anthropic render graph run.
 
     Shared queue/output/telemetry slots come from :class:`RenderState`.
-    ``message_id``, ``started``, and ``open_block_index`` persist across render
-    calls so the stream-level lifecycle stays consistent. ``current_ir_index``
-    is a transient scratch field written by the inner-subgraph open steps.
+    ``message_id``, ``started``, ``open_block_index``, and
+    ``tool_calls_rendered`` persist across render calls so the stream-level
+    lifecycle stays consistent. ``current_ir_index`` is a transient scratch
+    field written by the inner-subgraph open steps.
     """
 
     message_id: str
     started: bool = False
     open_block_index: int | None = None
+    tool_calls_rendered: bool = False
+    """True once a ``tool_use`` block reached the wire — the terminator's
+    fallback stop reason when the upstream reported none (or a plain
+    completion), so a tool-calling turn never ends as ``end_turn``."""
     current_ir_index: int = 0
     """Transient: the IR part/delta index, stashed by the inner-subgraph open step."""
 
@@ -287,6 +293,8 @@ async def open_part(
         state.out += _emit_content_block_stop(state.open_block_index)
     state.out += _emit_content_block_start(event.index, event.part)
     state.open_block_index = event.index
+    if isinstance(event.part, ToolCallPart | NativeToolCallPart):
+        state.tool_calls_rendered = True
     return event.part
 
 
@@ -545,15 +553,20 @@ class AnthropicResponseRenderFSM(ResponseRenderFSM[_AnthropicRenderState]):
         *,
         usage: RequestUsage | None = None,
         raw_extras: Mapping[str, object] | None = None,
+        finish_reason: FinishReason | None = None,
     ) -> bytes:
         """Flush any open block, then emit ``message_delta`` + ``message_stop``.
 
         Imperative (no FSM): the terminator sequence is a fixed three-step
-        emission with no per-event dispatch. When the intake captured usage, the
-        terminal ``message_delta`` carries the real token counts (funnel
-        re-stamping) rather than zeros. Emits a telemetry warning when IR events
-        arrived but no content bytes were rendered — a silent empty Anthropic
-        response must be explainable from logs.
+        emission with no per-event dispatch. The intake's captured
+        ``finish_reason`` is projected onto ``message_delta.delta.stop_reason``
+        — a turn truncated at ``max_tokens``, stopped as a ``refusal``, or
+        ending in a tool call is what the client is told, instead of a blanket
+        ``end_turn``. When the intake captured usage, the terminal
+        ``message_delta`` carries the real token counts (funnel re-stamping)
+        rather than zeros. Emits a telemetry warning when IR events arrived but
+        no content bytes were rendered — a silent empty Anthropic response must
+        be explainable from logs.
         """
         del raw_extras  # message_delta has no slot for arbitrary upstream metadata
         state = self._state
@@ -569,6 +582,9 @@ class AnthropicResponseRenderFSM(ResponseRenderFSM[_AnthropicRenderState]):
             start_usage = None if usage is None else _usage.to_anthropic_message_start(usage)
             out += _emit_message_start(state.message_id, state.model, start_usage)
             state.started = True
-        out += _emit_message_delta(delta_usage)
+        out += _emit_message_delta(
+            stop_reason=_finish_reason.to_anthropic(finish_reason, tool_calls=state.tool_calls_rendered),
+            usage=delta_usage,
+        )
         out += _emit_message_stop()
         return bytes(out)

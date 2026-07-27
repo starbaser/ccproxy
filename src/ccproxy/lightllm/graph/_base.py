@@ -276,11 +276,16 @@ class ResponseRenderFSM[StateT: RenderState](ABC):
         *,
         usage: RequestUsage | None = None,
         raw_extras: Mapping[str, object] | None = None,
+        finish_reason: FinishReason | None = None,
     ) -> bytes:
         """Emit the wire-specific end-of-stream terminator.
 
-        ``usage`` / ``raw_extras`` are the intake's funnel captures, re-stamped
-        into the terminator where the listener wire has a slot for them.
+        ``usage`` / ``raw_extras`` / ``finish_reason`` are the intake's funnel
+        captures, re-stamped into the terminator where the listener wire has a
+        slot for them. ``finish_reason`` in particular is what tells the client
+        the turn hit a token ceiling, tripped a content filter, or died on an
+        upstream error rather than completing — see :mod:`_finish_reason` for
+        the per-listener projection.
         """
 
     def _log_silent_close(self) -> None:

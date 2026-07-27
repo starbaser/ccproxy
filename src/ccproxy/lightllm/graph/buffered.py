@@ -75,13 +75,14 @@ from ccproxy.lightllm.graph import (
     _GOOGLE_COMPATIBLE,
     UnsupportedListenerError,
     UnsupportedUpstreamError,
+    _finish_reason,
     _usage,
     dispatch_intake,
 )
 from ccproxy.lightllm.parsed import InboundFormat
 
 if TYPE_CHECKING:
-    from pydantic_ai.messages import ModelResponsePart
+    from pydantic_ai.messages import FinishReason, ModelResponsePart
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.usage import RequestUsage
 
@@ -747,17 +748,12 @@ def _synthesize_google_sse(body: dict[str, Any]) -> bytes:
 # ── IR parts → listener-buffered JSON ──────────────────────────────────────
 
 
-_OPENAI_FINISH_BY_PART: dict[type, str] = {
-    ToolCallPart: "tool_calls",
-}
-
-
 def _parts_to_openai_chat_completion(
     *,
     parts: list[ModelResponsePart],
     model: str,
     provider_response_id: str | None = None,
-    finish_reason: str | None = None,
+    finish_reason: FinishReason | None = None,
     usage: RequestUsage | None = None,
 ) -> dict[str, Any]:
     """Serialize IR parts into an OpenAI ``ChatCompletion`` JSON dict.
@@ -787,10 +783,7 @@ def _parts_to_openai_chat_completion(
             )
 
     content_str = "".join(content_chunks) if content_chunks else None
-    if finish_reason == "tool_call":
-        # pydantic-ai's FinishReason spells it singular; the OpenAI wire is plural.
-        finish_reason = "tool_calls"
-    resolved_finish = "tool_calls" if out_tool_calls and finish_reason in (None, "stop") else finish_reason or "stop"
+    resolved_finish = _finish_reason.to_openai_chat(finish_reason, tool_calls=bool(out_tool_calls))
     message: dict[str, Any] = {
         "role": "assistant",
         "content": content_str,
@@ -822,7 +815,7 @@ def _parts_to_openai_responses(
     parts: list[ModelResponsePart],
     model: str,
     provider_response_id: str | None = None,
-    finish_reason: str | None = None,
+    finish_reason: FinishReason | None = None,
     usage: RequestUsage | None = None,
 ) -> dict[str, Any]:
     """Serialize IR parts into an OpenAI ``/v1/responses`` buffered JSON dict.
@@ -834,9 +827,11 @@ def _parts_to_openai_responses(
     item. :class:`ThinkingPart` becomes a ``reasoning`` item with its
     text under ``content=[{type: "reasoning_text", text: ...}]``.
 
-    ``finish_reason`` is captured in the envelope's ``status``:
-    ``"completed"`` normally, ``"incomplete"`` for length / max_tokens
-    truncation, mirroring the OpenAI Response spec.
+    ``finish_reason`` is captured in the envelope's ``status``: ``"completed"``
+    normally, ``"incomplete"`` (with ``incomplete_details.reason``) for a turn
+    cut short by the token ceiling or a content filter, ``"failed"`` for one
+    killed by an upstream error — mirroring the OpenAI Response spec and the
+    streaming renderer's terminal event.
     """
     text_chunks: list[str] = []
     output_items: list[_WireObject] = []
@@ -884,18 +879,19 @@ def _parts_to_openai_responses(
             )
     flush_text()
 
-    status = "incomplete" if finish_reason == "length" else "completed"
-
     usage_block = None if _usage.usage_is_empty(usage) else _usage.to_openai_responses(cast("RequestUsage", usage))
-    return {
+    out: dict[str, Any] = {
         "id": provider_response_id or f"resp_{uuid.uuid4().hex[:24]}",
         "object": "response",
         "created_at": int(time.time()),
         "model": model,
-        "status": status,
+        "status": _finish_reason.to_openai_responses_status(finish_reason),
         "output": output_items,
         "usage": usage_block,
     }
+    if (incomplete_reason := _finish_reason.to_openai_responses_incomplete_reason(finish_reason)) is not None:
+        out["incomplete_details"] = {"reason": incomplete_reason}
+    return out
 
 
 def _parts_to_anthropic_message(
@@ -903,10 +899,15 @@ def _parts_to_anthropic_message(
     parts: list[ModelResponsePart],
     model: str,
     provider_response_id: str | None = None,
-    stop_reason: str | None = None,
+    stop_reason: str,
     usage: RequestUsage | None = None,
 ) -> dict[str, Any]:
-    """Serialize IR parts into an Anthropic ``BetaMessage`` JSON dict."""
+    """Serialize IR parts into an Anthropic ``BetaMessage`` JSON dict.
+
+    ``stop_reason`` is the already-projected Anthropic wire value (see
+    :func:`ccproxy.lightllm.graph._finish_reason.to_anthropic`), so the buffered
+    body and the streaming ``message_delta`` agree for the same intake state.
+    """
     blocks: list[dict[str, Any]] = []
     for part in parts:
         if isinstance(part, TextPart):
@@ -935,7 +936,6 @@ def _parts_to_anthropic_message(
                 }
             )
 
-    resolved_stop = stop_reason or ("tool_use" if any(b.get("type") == "tool_use" for b in blocks) else "end_turn")
     usage_block = (
         {"input_tokens": 0, "output_tokens": 0}
         if _usage.usage_is_empty(usage)
@@ -947,7 +947,7 @@ def _parts_to_anthropic_message(
         "role": "assistant",
         "content": blocks,
         "model": model,
-        "stop_reason": resolved_stop,
+        "stop_reason": stop_reason,
         "stop_sequence": None,
         "usage": usage_block,
     }
@@ -959,7 +959,7 @@ def render_parts_to_listener(
     inbound_format: InboundFormat,
     model: str,
     provider_response_id: str | None = None,
-    finish_reason: str | None = None,
+    finish_reason: FinishReason | None = None,
     usage: RequestUsage | None = None,
 ) -> bytes:
     """Serialize IR parts into the listener's buffered JSON bytes by inbound format.
@@ -968,10 +968,13 @@ def render_parts_to_listener(
     path) and the streaming :class:`~ccproxy.lightllm.graph.sse_pipeline.SSEPipeline`'s
     collect mode (force-streamed providers such as ``openai_conversations``
     whose client asked for a single buffered object). ``provider_response_id``
-    and ``finish_reason`` are honored by the OpenAI Chat / Responses renderers
-    and ignored by the Anthropic renderer (which derives its own stop reason).
-    ``usage`` (captured off the upstream by the intake) is projected into each
-    listener's native usage block; when absent it is omitted rather than zeroed.
+    is honored by the OpenAI Chat / Responses renderers. ``finish_reason``
+    projects into every listener's native spelling — OpenAI Chat
+    ``finish_reason``, Anthropic ``stop_reason``, Responses envelope ``status``
+    — through the same helpers the streaming terminators use, so both paths
+    answer identically for a given intake state. ``usage`` (captured off the
+    upstream by the intake) is projected into each listener's native usage
+    block; when absent it is omitted rather than zeroed.
     """
     if not parts:
         logger.warning(
@@ -988,7 +991,15 @@ def render_parts_to_listener(
             usage=usage,
         )
     elif inbound_format is InboundFormat.ANTHROPIC_MESSAGES:
-        out_dict = _parts_to_anthropic_message(parts=parts, model=model, usage=usage)
+        out_dict = _parts_to_anthropic_message(
+            parts=parts,
+            model=model,
+            stop_reason=_finish_reason.to_anthropic(
+                finish_reason,
+                tool_calls=any(isinstance(part, ToolCallPart) for part in parts),
+            ),
+            usage=usage,
+        )
     elif inbound_format is InboundFormat.OPENAI_RESPONSES:
         out_dict = _parts_to_openai_responses(
             parts=parts,

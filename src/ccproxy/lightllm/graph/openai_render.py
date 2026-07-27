@@ -37,7 +37,7 @@ import time
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, cast
 
 from pydantic_ai.messages import (
     FinalResultEvent,
@@ -56,16 +56,14 @@ from pydantic_ai.messages import (
 from pydantic_graph import GraphBuilder, StepContext, TypeExpression
 
 import ccproxy.lightllm.graph._subgraph_patch  # noqa: F401  -- installs GraphBuilder.add_subgraph
-from ccproxy.lightllm.graph import _usage
+from ccproxy.lightllm.graph import _finish_reason, _usage
 from ccproxy.lightllm.graph._base import RenderState, ResponseRenderFSM
 
 if TYPE_CHECKING:
+    from pydantic_ai.messages import FinishReason
     from pydantic_ai.usage import RequestUsage
 
 logger = logging.getLogger(__name__)
-
-
-_FinishReason = Literal["stop", "length", "tool_calls", "content_filter", "function_call"]
 
 
 # ── Wire emission helpers (module-level — pure byte emitters) ──────────────
@@ -145,10 +143,10 @@ class _OpenAIRenderState(RenderState):
 
     Shared queue/output/telemetry slots come from :class:`RenderState`. The
     remaining fields (``chunk_id``, ``created``, ``role_emitted``,
-    ``part_to_tool_call_index``, ``next_tool_call_index``, ``finish_reason``)
-    persist across render calls so the stream-level lifecycle stays consistent.
-    ``current_ir_index`` is a transient scratch field written by the
-    inner-subgraph open steps.
+    ``part_to_tool_call_index``, ``next_tool_call_index``,
+    ``tool_calls_rendered``) persist across render calls so the stream-level
+    lifecycle stays consistent. ``current_ir_index`` is a transient scratch
+    field written by the inner-subgraph open steps.
     """
 
     chunk_id: str
@@ -156,7 +154,9 @@ class _OpenAIRenderState(RenderState):
     role_emitted: bool = False
     part_to_tool_call_index: dict[int, int] = field(default_factory=dict)
     next_tool_call_index: int = 0
-    finish_reason: _FinishReason = "stop"
+    tool_calls_rendered: bool = False
+    """True once a tool_call chunk reached the wire — the terminator's fallback
+    finish reason when the upstream reported none (or a plain completion)."""
     current_ir_index: int = 0
     """Transient: the IR event index, stashed by the inner-subgraph open step."""
 
@@ -266,7 +266,7 @@ async def handle_tool_call_part_start(ctx: StepContext[_OpenAIRenderState, None,
             ]
         },
     )
-    state.finish_reason = "tool_calls"
+    state.tool_calls_rendered = True
 
 
 @_psg.step
@@ -351,7 +351,7 @@ async def handle_tool_call_part_delta(ctx: StepContext[_OpenAIRenderState, None,
             fn["name"] = delta.tool_name_delta
         fn["arguments"] = _args_to_str(delta.args_delta)
         envelope["function"] = fn
-        state.finish_reason = "tool_calls"
+        state.tool_calls_rendered = True
         state.out += _emit_chunk(
             chunk_id=state.chunk_id,
             created=state.created,
@@ -360,7 +360,7 @@ async def handle_tool_call_part_delta(ctx: StepContext[_OpenAIRenderState, None,
         )
         return
 
-    state.finish_reason = "tool_calls"
+    state.tool_calls_rendered = True
     args_str = _args_to_str(delta.args_delta)
     state.out += _emit_chunk(
         chunk_id=state.chunk_id,
@@ -490,15 +490,21 @@ class OpenAIResponseRenderFSM(ResponseRenderFSM[_OpenAIRenderState]):
         *,
         usage: RequestUsage | None = None,
         raw_extras: Mapping[str, object] | None = None,
+        finish_reason: FinishReason | None = None,
     ) -> bytes:
         """Emit the final ``finish_reason`` chunk, the usage chunk, then ``[DONE]``.
 
-        Imperative (no FSM): the terminator sequence is fixed. When the intake
-        captured usage, a terminal usage-only chunk (empty ``choices``) is
-        emitted before ``[DONE]`` — the funnel re-stamping the token accounting
-        the cross-format transform would otherwise drop. Emits a telemetry
-        warning when IR events arrived but no content bytes were rendered — a
-        silent empty OpenAI Chat response must be explainable from logs.
+        Imperative (no FSM): the terminator sequence is fixed. The intake's
+        captured ``finish_reason`` is projected onto the Chat Completions wire
+        so a turn truncated by the token ceiling, stopped by a content filter,
+        or killed by an upstream error is distinguishable from a clean one; a
+        rendered tool call supplies the reason when the upstream reported none.
+        When the intake captured usage, a terminal usage-only chunk (empty
+        ``choices``) is emitted before ``[DONE]`` — the funnel re-stamping the
+        token accounting the cross-format transform would otherwise drop. Emits
+        a telemetry warning when IR events arrived but no content bytes were
+        rendered — a silent empty OpenAI Chat response must be explainable from
+        logs.
         """
         del raw_extras  # no OpenAI-chat wire slot for arbitrary upstream metadata
         state = self._state
@@ -509,7 +515,7 @@ class OpenAIResponseRenderFSM(ResponseRenderFSM[_OpenAIRenderState]):
             created=state.created,
             model=state.model,
             delta={},
-            finish_reason=state.finish_reason,
+            finish_reason=_finish_reason.to_openai_chat(finish_reason, tool_calls=state.tool_calls_rendered),
         )
         if not _usage.usage_is_empty(usage):
             out += _emit_usage_chunk(
