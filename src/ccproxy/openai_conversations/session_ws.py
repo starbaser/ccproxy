@@ -55,6 +55,8 @@ from ccproxy.openai_conversations.ws_handoff import (
     _WS_PING_INTERVAL,
     _WS_USER_AGENT,
     _as_sse_bytes,
+    _get_turn_idle_timeout_seconds,
+    _idle_timeout_frame,
     _is_done_item,
     _message_signals_done,
     _parse_ws_frames,
@@ -74,8 +76,11 @@ _WS_URL_TTL_SECONDS = 25.0 * 60.0
 # Bounded per-turn give-up: a turn that never receives a structural [DONE] must
 # not hang the client forever. This is scoped to the TURN, not the socket — the
 # socket stays open for reuse; only this turn's response ends. It is the
-# turn-response analogue of the per-message idle backstop in ws_handoff.
-_TURN_IDLE_TIMEOUT_SECONDS = 120.0
+# turn-response analogue of the per-message idle backstop in ws_handoff — both
+# read the shared ``turn_idle_timeout_seconds`` config value via
+# :func:`_get_turn_idle_timeout_seconds`. A give-up yields the typed
+# idle-timeout terminal frame (:func:`_idle_timeout_frame`) before returning,
+# so the truncation is distinguishable from a genuine ``[DONE]`` completion.
 
 # Open timeout for the wss dial.
 _WS_OPEN_TIMEOUT = 15.0
@@ -193,26 +198,32 @@ class _SessionConn:
 
         Yields:
             SSE ``data: …`` bytes for this turn, ending on the structural
-            ``[DONE]`` / ``done`` signal or the bounded per-turn give-up.
+            ``[DONE]`` / ``done`` signal, or on the bounded per-turn give-up —
+            which yields the typed idle-timeout terminal frame
+            (:func:`~ccproxy.openai_conversations.ws_handoff._idle_timeout_frame`)
+            first, so the truncation is distinguishable from a genuine
+            completion.
         """
         await self._ensure_connected(client=client, request_headers=request_headers)
 
         queue: asyncio.Queue[bytes | None] = asyncio.Queue()
         self._topics[topic_id] = queue
         sub_id = self._next_sub_id()
+        idle_timeout = _get_turn_idle_timeout_seconds()
         try:
             await self._send(_subscribe_message(topic_id=topic_id, sub_id=sub_id))
             logger.debug("session_ws: turn subscribed topic=%s (session=%s)", topic_id, self._session_key)
             yielded = 0
             while True:
                 try:
-                    item = await asyncio.wait_for(queue.get(), timeout=_TURN_IDLE_TIMEOUT_SECONDS)
+                    item = await asyncio.wait_for(queue.get(), timeout=idle_timeout)
                 except TimeoutError:
                     logger.warning(
                         "session_ws: turn idle give-up after %.0fs (topic=%s, no [DONE])",
-                        _TURN_IDLE_TIMEOUT_SECONDS,
+                        idle_timeout,
                         topic_id,
                     )
+                    yield _idle_timeout_frame(idle_seconds=idle_timeout)
                     return
                 if item is None:
                     logger.debug("session_ws: turn EOS topic=%s yielded=%d", topic_id, yielded)

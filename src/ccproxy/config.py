@@ -734,6 +734,20 @@ class OpenAIConversationsConfig(BaseModel):
     generation (deadline is roughly ``image_poll_interval_seconds`` times
     ``image_poll_max_attempts``)."""
 
+    turn_idle_timeout_seconds: float = Field(default=120.0, gt=0)
+    """Maximum wait for the next conduit WebSocket frame before a turn gives
+    up: the per-turn queue backstop in
+    :mod:`ccproxy.openai_conversations.session_ws` (the persistent
+    session socket) and the per-message read backstop in
+    :mod:`ccproxy.openai_conversations.ws_handoff` (the per-turn fallback
+    bridge) both bound the same reliability property and share this one
+    magnitude rather than two independently hardcoded literals. No stronger
+    rationale than "long enough to outlast normal turn latency, short enough
+    to eventually notice a stuck conduit turn" — a give-up always ends the
+    turn with the typed ``error`` finish reason (never a silently truncated
+    stream), so raising or lowering this only trades responsiveness against
+    tolerance for slow turns."""
+
 
 class LightllmConfig(BaseModel):
     """Configuration for lightllm cross-format routing and transforms."""

@@ -24,6 +24,7 @@ Coverage:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 from collections.abc import AsyncIterator
@@ -35,6 +36,7 @@ import pytest
 from websockets.asyncio.server import ServerConnection
 from websockets.asyncio.server import serve as ws_serve
 
+from ccproxy.config import CCProxyConfig, LightllmConfig, OpenAIConversationsConfig, set_config_instance
 from ccproxy.openai_conversations.session_ws import (
     SessionWSManager,
     _bearer_value,
@@ -334,6 +336,46 @@ class TestSessionWSManagerWithFakeServer:
         # ~25-min TTL so it is reused — only the dial repeats, not the URL fetch.
         assert connections == 2
         assert fetch.calls == 1
+
+    async def test_turn_idle_timeout_yields_typed_terminal_signal(self) -> None:
+        """A turn that never receives a structural [DONE] gives up after the
+        configured idle timeout — and yields the typed idle-timeout terminal
+        marker instead of ending silently, so the truncation is distinguishable
+        from a genuine completion (P-6 regression)."""
+        set_config_instance(
+            CCProxyConfig(
+                lightllm=LightllmConfig(openai_conversations=OpenAIConversationsConfig(turn_idle_timeout_seconds=0.05))
+            )
+        )
+        topic = "conversation-turn-idle"
+
+        async def _handler(ws: ServerConnection) -> None:
+            await ws.recv()  # init
+            await ws.recv()  # subscribe
+            with contextlib.suppress(Exception):
+                await ws.recv()  # never answers — blocks until the test tears the socket down
+
+        async with ws_serve(_handler, "127.0.0.1", 0, ping_interval=None) as server:
+            port = server.sockets[0].getsockname()[1]
+            ws_url = f"ws://127.0.0.1:{port}"
+            fetch = _CountingFetch(ws_url)
+            headers = _cookie_headers("idle-session")
+            manager = SessionWSManager()
+            with patch("ccproxy.openai_conversations.session_ws.fetch_ws_url", fetch):
+                chunks = await asyncio.wait_for(
+                    _drain(manager.stream_turn(topic_id=topic, client=_dummy_client(), request_headers=headers)),
+                    timeout=5.0,
+                )
+                conn = await manager._get_conn(session_key=_session_key(headers))
+                assert conn.alive is True  # only the TURN ends; the socket stays open
+                await manager.shutdown()
+
+        joined = b"".join(chunks)
+        assert b"[DONE]" not in joined  # never a false completion signal
+        assert b"ccproxy_idle_timeout" in joined
+        marker = json.loads(joined.decode().removeprefix("data: ").strip())
+        assert marker["type"] == "ccproxy_idle_timeout"
+        assert marker["idle_seconds"] == pytest.approx(0.05)
 
     async def test_every_inbound_frame_is_captured(self) -> None:
         """Every inbound WS message is recorded in the capture sink."""

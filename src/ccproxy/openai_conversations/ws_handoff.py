@@ -55,16 +55,77 @@ _WS_BASE_URL = "https://chatgpt.com"
 _HANDOFF_SIDE_EVENTS = frozenset({"stream_handoff"})
 
 # Idle backstop on the WS read: the maximum wait for the NEXT frame before the
-# turn-response gives up. This is a TEMPORARY safety valve, not the functional
-# terminator — the real end-of-turn is the structural [DONE]/done signal. To be
-# removed once live conduit turns prove structural EOS is consistently delivered.
-# The socket itself is never torn down on this timer (a future session manager
-# keeps it open across turns within the websocket_url window).
-_WS_READ_TIMEOUT = 120.0
+# turn-response gives up. This is a safety valve, not the functional terminator
+# — the real end-of-turn is the structural [DONE]/done signal. A give-up never
+# ends the turn silently: it always yields the typed idle-timeout terminal
+# frame (below) before returning, so a truncated turn is distinguishable from
+# a genuine upstream completion. The socket itself is never torn down on this
+# timer (a future session manager keeps it open across turns within the
+# websocket_url window).
+_FALLBACK_WS_READ_TIMEOUT_SECONDS = 120.0
+"""Used when the config singleton is unavailable (early startup, tests without
+a config instance) and as :func:`stream_handoff_sse`'s public default.
+Production reads
+``CCProxyConfig.lightllm.openai_conversations.turn_idle_timeout_seconds`` —
+see :func:`_get_turn_idle_timeout_seconds`."""
+
 # Ping interval (aurora: 25s).
 _WS_PING_INTERVAL = 25.0
 # Browser-shape User-Agent string for the WS dial and /celsius/ws/user GET.
 _WS_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
+CCPROXY_IDLE_TIMEOUT_EVENT_TYPE = "ccproxy_idle_timeout"
+"""Synthetic ``{"type": ...}`` SSE-v1 side-event kind ccproxy injects onto the
+wire when the idle-timeout backstop fires — never a real chatgpt.com event.
+Shared with :mod:`ccproxy.openai_conversations.session_ws` (the persistent
+per-turn queue backstop) so both give-up sites emit the same recognizable
+marker; :mod:`ccproxy.lightllm.graph.openai_conversations_intake` recognizes
+this kind and marks the turn's ``finish_reason`` as ``"error"`` instead of
+leaving termination unclassified (ADR-0002's "typed continuation error")."""
+
+
+def _get_turn_idle_timeout_seconds() -> float:
+    """Lazy-read the active idle-timeout bound from
+    ``CCProxyConfig.lightllm.openai_conversations.turn_idle_timeout_seconds``.
+
+    Shared by this module's per-message WS read backstop and
+    :mod:`ccproxy.openai_conversations.session_ws`'s per-turn queue backstop —
+    both bound the same reliability property (how long to wait for the next
+    conduit frame before giving up), so they read one config-declared
+    magnitude rather than two independently hardcoded literals. Falls back to
+    :data:`_FALLBACK_WS_READ_TIMEOUT_SECONDS` when the config singleton is not
+    yet initialized (early startup or tests that bypass config loading).
+    """
+    try:
+        from ccproxy.config import get_config
+
+        return float(get_config().lightllm.openai_conversations.turn_idle_timeout_seconds)
+    except Exception:
+        return _FALLBACK_WS_READ_TIMEOUT_SECONDS
+
+
+def _idle_timeout_frame(*, idle_seconds: float) -> bytes:
+    """Build the terminal SSE-v1 frame marking an idle-timeout give-up.
+
+    Replaces silent generator exhaustion with an explicit, classifiable
+    signal: a genuine upstream completion ends on a structural
+    ``[DONE]``/``finished_successfully``; a give-up ends on this instead, so
+    a consumer (ultimately :func:`ccproxy.lightllm.graph.openai_conversations_intake
+    .OpenAIConversationsIntakeFSM`) can always tell the two apart rather than
+    inferring truncation from silence.
+    """
+    payload = json.dumps({"type": CCPROXY_IDLE_TIMEOUT_EVENT_TYPE, "idle_seconds": idle_seconds})
+    return f"data: {payload}\n\n".encode()
+
+
+class _IdleTimeoutError(Exception):
+    """Raised by :func:`_ws_read_loop` when no frame arrives within the idle window.
+
+    Not an upstream failure — a control-flow signal so
+    :func:`_stream_handoff_sse_impl` can distinguish "gave up waiting" from
+    "the socket closed" and emit the typed idle-timeout terminal frame before
+    ending the generator.
+    """
 
 
 # ── Handoff state ─────────────────────────────────────────────────────────────
@@ -417,7 +478,7 @@ async def stream_handoff_sse(
     ws_url: str,
     topic_id: str,
     user_agent: str = _WS_USER_AGENT,
-    read_timeout: float = _WS_READ_TIMEOUT,
+    read_timeout: float = _FALLBACK_WS_READ_TIMEOUT_SECONDS,
     ping_interval: float = _WS_PING_INTERVAL,
 ) -> AsyncIterator[bytes]:
     """Dial the WS, subscribe to ``topic_id``, and yield SSE bytes.
@@ -428,8 +489,10 @@ async def stream_handoff_sse(
     Each inbound WS message is walked structurally (:func:`_walk_sse_items`):
     every ``encoded_item`` SSE payload routed to this turn is yielded as
     ``b"data: {...}\\n\\n"``; every raw message is captured (never dropped). The
-    generator stops on the structural ``[DONE]``/``done`` end-of-stream or any
-    error; it never raises into the caller.
+    generator stops on the structural ``[DONE]``/``done`` end-of-stream, the
+    idle-timeout backstop (which yields :func:`_idle_timeout_frame` first — see
+    :data:`CCPROXY_IDLE_TIMEOUT_EVENT_TYPE`), or any error; it never raises into
+    the caller.
 
     WS dial + init/subscribe handshake adapted from aurora ``DialChatWebsocket``
     (request.go:661-708, MIT-licensed).
@@ -522,6 +585,14 @@ async def _stream_handoff_sse_impl(
                     if done:
                         logger.debug("ws_handoff: WS done, yielded=%d items (topic=%s)", yielded, topic_id)
                         return
+            except _IdleTimeoutError:
+                # Give-up, not completion: yield the typed terminal signal so a
+                # truncated turn is distinguishable from a genuine [DONE] before
+                # the generator ends — never a silent drop.
+                yield _idle_timeout_frame(idle_seconds=read_timeout)
+                logger.debug(
+                    "ws_handoff: idle-timeout terminal signal emitted (topic=%s, yielded=%d)", topic_id, yielded
+                )
             finally:
                 ping_task.cancel()
                 logger.debug("ws_handoff: WS closed, yielded=%d items (topic=%s)", yielded, topic_id)
@@ -536,15 +607,17 @@ async def _ws_read_loop(
 ) -> AsyncIterator[str | bytes]:
     """Yield raw WebSocket messages until the socket closes or goes idle.
 
-    ``read_timeout`` is the temporary idle backstop (see :data:`_WS_READ_TIMEOUT`)
-    — the maximum wait for the next frame, not a per-message delay.
+    ``read_timeout`` is the idle backstop (see :func:`_get_turn_idle_timeout_seconds`)
+    — the maximum wait for the next frame, not a per-message delay. Raises
+    :class:`_IdleTimeoutError` (rather than returning silently) so the caller can
+    emit the typed terminal signal before ending the stream.
     """
     while True:
         try:
             msg = await asyncio.wait_for(ws.recv(), timeout=read_timeout)
-        except TimeoutError:
+        except TimeoutError as exc:
             logger.warning("ws_handoff: idle backstop hit after %.0fs (no [DONE] seen)", read_timeout)
-            return
+            raise _IdleTimeoutError(read_timeout) from exc
         except Exception as exc:
             logger.debug("ws_handoff: WS closed: %s", exc)
             return
@@ -588,7 +661,7 @@ async def run_handoff_bridge(
             ws_url=ws_url,
             topic_id=topic_id,
             user_agent=_WS_USER_AGENT,
-            read_timeout=_WS_READ_TIMEOUT,
+            read_timeout=_get_turn_idle_timeout_seconds(),
             ping_interval=_WS_PING_INTERVAL,
         ):
             yield chunk

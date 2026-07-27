@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -660,6 +661,76 @@ class TestStreamHandoffSseWithFakeServer:
             async for chunk in run_handoff_bridge(client=mock_client, topic_id="t1"):
                 chunks.append(chunk)
         assert chunks == []
+
+
+# ── Idle-timeout terminal signal (P-6 regression) ─────────────────────────────
+
+
+class TestIdleTimeoutTerminalSignal:
+    """A turn idled past the read-timeout backstop must end on an explicit,
+    classifiable terminal marker — never silent generator exhaustion — so it
+    is distinguishable from a genuine upstream ``[DONE]`` completion."""
+
+    async def test_idle_timeout_yields_typed_marker_instead_of_silence(self) -> None:
+        topic = "conversation-turn-idle"
+
+        async def _handler(ws: ServerConnection) -> None:
+            await ws.recv()  # init
+            await ws.recv()  # subscribe
+            # Never send another frame — blocks until the client tears the
+            # socket down once its idle timeout fires.
+            with contextlib.suppress(Exception):
+                await ws.recv()
+
+        async with ws_serve(_handler, "127.0.0.1", 0, ping_interval=None) as server:
+            port = server.sockets[0].getsockname()[1]
+            ws_url = f"ws://127.0.0.1:{port}"
+            chunks: list[bytes] = []
+            async for chunk in await stream_handoff_sse(ws_url=ws_url, topic_id=topic, read_timeout=0.05):
+                chunks.append(chunk)
+
+        joined = b"".join(chunks)
+        assert b"[DONE]" not in joined  # never a false completion signal
+        assert b"ccproxy_idle_timeout" in joined
+        marker = json.loads(joined.decode().removeprefix("data: ").strip())
+        assert marker["type"] == "ccproxy_idle_timeout"
+        assert marker["idle_seconds"] == pytest.approx(0.05)
+
+    async def test_idle_timeout_distinguishable_from_done_completion(self) -> None:
+        """The idle-timeout marker and a genuine [DONE] never both appear, and
+        each termination shape uniquely identifies its own cause."""
+        topic_done = "conversation-turn-cmp-done"
+        topic_idle = "conversation-turn-cmp-idle"
+
+        async def _done_handler(ws: ServerConnection) -> None:
+            await ws.recv()
+            await ws.recv()
+            await ws.send(json.dumps([_make_done_frame(topic_done)]))
+
+        async def _idle_handler(ws: ServerConnection) -> None:
+            await ws.recv()
+            await ws.recv()
+            with contextlib.suppress(Exception):
+                await ws.recv()
+
+        async with ws_serve(_done_handler, "127.0.0.1", 0, ping_interval=None) as server:
+            port = server.sockets[0].getsockname()[1]
+            done_chunks = await _collect_ws_sse(ws_url=f"ws://127.0.0.1:{port}", topic_id=topic_done)
+
+        async with ws_serve(_idle_handler, "127.0.0.1", 0, ping_interval=None) as server:
+            port = server.sockets[0].getsockname()[1]
+            idle_chunks: list[bytes] = []
+            async for chunk in await stream_handoff_sse(
+                ws_url=f"ws://127.0.0.1:{port}", topic_id=topic_idle, read_timeout=0.05
+            ):
+                idle_chunks.append(chunk)
+
+        done_joined = b"".join(done_chunks)
+        idle_joined = b"".join(idle_chunks)
+        assert b"[DONE]" in done_joined
+        assert b"ccproxy_idle_timeout" not in done_joined
+        assert b"[DONE]" not in idle_joined
+        assert b"ccproxy_idle_timeout" in idle_joined
 
 
 # ── End-to-end: HTTP SSE + WS frames → intake FSM → text ─────────────────────

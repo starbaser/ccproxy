@@ -29,6 +29,13 @@ Wire shapes decoded:
   continues the last content path with an implied ``append`` (recon §2 — the
   majority of the stream once content begins).
 * ``data: [DONE]`` — stream end.
+* ``data: {type: "ccproxy_idle_timeout", ...}`` — ccproxy's own synthetic
+  terminal signal (never a real chatgpt.com event), injected by
+  :mod:`ccproxy.openai_conversations.session_ws` /
+  :mod:`ccproxy.openai_conversations.ws_handoff` when their idle-timeout
+  backstop gives up waiting for the next conduit frame. Sets ``finish_reason``
+  to ``"error"`` instead of leaving a give-up indistinguishable from a
+  genuine ``[DONE]`` completion.
 
 Patch semantics on a text-content path (``/message/content/parts/0`` array shape
 or ``/message/content/text`` string shape):
@@ -43,6 +50,9 @@ Finish synthesis:
   a synthetic finish event once content has been emitted.
 * ``data: [DONE]`` after content also synthesises a finish, preventing
   duplication via the ``state.final_emitted`` flag.
+* ``ccproxy_idle_timeout`` always synthesises a finish (regardless of whether
+  content had begun), with ``finish_reason = "error"`` — an idle give-up is
+  never left unclassified, and never overwrites an already-recorded finish.
 
 Handoff continuation (the answer arrives over WebSocket):
 
@@ -76,6 +86,7 @@ from pydantic_graph import GraphBuilder, StepContext
 
 import ccproxy.lightllm.graph._subgraph_patch  # noqa: F401  — installs add_subgraph
 from ccproxy.lightllm.graph._base import IntakeState, ResponseIntakeFSM
+from ccproxy.openai_conversations.ws_handoff import CCPROXY_IDLE_TIMEOUT_EVENT_TYPE
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestParameters
@@ -140,6 +151,14 @@ class _TypedSideEvent:
 
 class _DoneEvent:
     """``[DONE]`` sentinel from the SSE stream."""
+
+
+@dataclass(frozen=True)
+class _TimeoutEvent:
+    """ccproxy's own synthetic idle-timeout terminal signal (never a real
+    chatgpt.com event) — see :data:`CCPROXY_IDLE_TIMEOUT_EVENT_TYPE`."""
+
+    idle_seconds: float | None = None
 
 
 class _FeedDone:
@@ -586,6 +605,27 @@ async def handle_done(
 
 
 @_g.step
+async def handle_timeout(
+    ctx: StepContext[_ConversationsIntakeState, None, _TimeoutEvent],
+) -> None:
+    """ccproxy's own idle-timeout terminal signal: record a distinguishable
+    ``"error"`` finish, regardless of whether content had begun, so a
+    truncated turn is never left with an unset (silently-"stop"-defaulting)
+    finish reason. Never overwrites an already-recorded finish (e.g. a
+    genuine ``finished_successfully``/``[DONE]`` that raced the give-up)."""
+    state = ctx.state
+    if not state.final_emitted:
+        state.final_emitted = True
+        state.finish_reason = "error"
+    logger.warning(
+        "oaic intake: turn ended via ccproxy idle-timeout signal (idle_seconds=%s, conv=%s) "
+        "— truncated, not a genuine upstream completion",
+        ctx.inputs.idle_seconds,
+        state.conversation_id[:8] or "?",
+    )
+
+
+@_g.step
 async def handle_handoff_detected(
     ctx: StepContext[_ConversationsIntakeState, None, _HandoffDetected],
 ) -> None:
@@ -612,6 +652,7 @@ _g.add(
         .branch(_g.match(_PatchEnvelope).to(handle_patch))
         .branch(_g.match(_TypedSideEvent).to(handle_typed_side_event))
         .branch(_g.match(_DoneEvent).to(handle_done))
+        .branch(_g.match(_TimeoutEvent).to(handle_timeout))
     ),
     _g.edge_from(handle_add).to(frame_next_event),
     _g.edge_from(handle_patch).to(frame_next_event),
@@ -622,6 +663,7 @@ _g.add(
     ),
     _g.edge_from(handle_handoff_detected).to(frame_next_event),
     _g.edge_from(handle_done).to(frame_next_event),
+    _g.edge_from(handle_timeout).to(frame_next_event),
     _g.edge_from(emit_done).to(_g.end_node),
 )
 
@@ -696,8 +738,9 @@ def _parse_frame(frame: bytes) -> Any:
     """Parse one SSE frame bytes into a dispatch envelope.
 
     Returns one of :class:`_AddEnvelope`, :class:`_PatchEnvelope`,
-    :class:`_TypedSideEvent`, :class:`_DoneEvent`, or ``None`` (silently
-    dropped: encoding banner, keepalive comment, un-parseable data).
+    :class:`_TypedSideEvent`, :class:`_DoneEvent`, :class:`_TimeoutEvent`, or
+    ``None`` (silently dropped: encoding banner, keepalive comment,
+    un-parseable data).
     """
     event_name: str | None = None
     data_lines: list[str] = []
@@ -735,6 +778,9 @@ def _parse_frame(frame: bytes) -> Any:
     # Typed side event: ``{type, ...}`` without ``p`` or ``v`` fields.
     kind = parsed.get("type")
     if isinstance(kind, str) and "v" not in parsed and "p" not in parsed:
+        if kind == CCPROXY_IDLE_TIMEOUT_EVENT_TYPE:
+            idle_seconds = parsed.get("idle_seconds")
+            return _TimeoutEvent(idle_seconds=idle_seconds if isinstance(idle_seconds, (int, float)) else None)
         return _TypedSideEvent(kind=kind, raw=parsed)
 
     channel = _channel_from_frame(parsed)

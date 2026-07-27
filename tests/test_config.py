@@ -20,6 +20,8 @@ from ccproxy.auth.sources import (
 from ccproxy.config import (
     CCProxyConfig,
     GeminiCapacityFallbackConfig,
+    LightllmConfig,
+    OpenAIConversationsConfig,
     Provider,
     TransformOverride,
     clear_config_instance,
@@ -613,6 +615,38 @@ class TestGeminiCapacityConfig:
 
         with pytest.raises(pydantic.ValidationError):
             GeminiCapacityFallbackConfig(sticky_retry_max_delay_seconds=0)
+
+
+class TestOpenAIConversationsTurnIdleTimeout:
+    """Tests for ``lightllm.openai_conversations.turn_idle_timeout_seconds`` —
+    the named config surface for the session_ws / ws_handoff idle-timeout
+    backstop (P-6)."""
+
+    def test_default_is_120_seconds(self) -> None:
+        config = CCProxyConfig()
+        assert config.lightllm.openai_conversations.turn_idle_timeout_seconds == 120.0
+
+    def test_loads_from_yaml(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "ccproxy.yaml"
+        yaml_path.write_text("ccproxy:\n  lightllm:\n    openai_conversations:\n      turn_idle_timeout_seconds: 45\n")
+        config = CCProxyConfig.from_yaml(yaml_path)
+        assert config.lightllm.openai_conversations.turn_idle_timeout_seconds == 45.0
+
+    def test_validation_rejects_zero(self) -> None:
+        import pydantic
+
+        with pytest.raises(pydantic.ValidationError):
+            OpenAIConversationsConfig(turn_idle_timeout_seconds=0)
+
+    def test_validation_rejects_negative(self) -> None:
+        import pydantic
+
+        with pytest.raises(pydantic.ValidationError):
+            OpenAIConversationsConfig(turn_idle_timeout_seconds=-1)
+
+    def test_lightllm_config_carries_the_block(self) -> None:
+        lightllm = LightllmConfig(openai_conversations=OpenAIConversationsConfig(turn_idle_timeout_seconds=30.0))
+        assert lightllm.openai_conversations.turn_idle_timeout_seconds == 30.0
 
 
 class TestOpenAIConversationsProviderDefault:

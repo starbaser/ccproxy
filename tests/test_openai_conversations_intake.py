@@ -544,6 +544,72 @@ class TestHandoffDetection:
         assert fsm.continuation.conversation_id == "my-conv"
 
 
+# ── ccproxy idle-timeout terminal signal (P-6 regression) ─────────────────────
+
+
+class TestIdleTimeoutSignal:
+    """The synthetic ``ccproxy_idle_timeout`` side event — injected by the
+    session_ws / ws_handoff bridges when their idle backstop gives up — must
+    mark the turn as an ``"error"`` finish, distinguishable from a genuine
+    ``[DONE]``/``finished_successfully`` completion, never left unclassified."""
+
+    def test_idle_timeout_sets_error_finish_reason(self) -> None:
+        fsm = _make_fsm()
+        _feed_sync(fsm, _make_add_frame(channel=0, msg_id="asst"))
+        _feed_sync(fsm, _make_shorthand_batch([{"p": "/message/content/parts/0", "o": "append", "v": "partial"}]))
+        _feed_sync(fsm, _make_typed_event("ccproxy_idle_timeout", idle_seconds=120.0))
+        assert fsm.finish_reason == "error"
+        assert fsm.state.final_emitted is True
+        assert _collected_text(fsm) == "partial"  # the partial content is preserved, not discarded
+
+    def test_idle_timeout_distinguishable_from_done(self) -> None:
+        """The same stream up to content, ending on [DONE] vs. idle-timeout,
+        produces different finish reasons — the two causes are never conflated."""
+        done_fsm = _make_fsm()
+        _feed_sync(done_fsm, _make_add_frame(channel=0, msg_id="asst"))
+        _feed_sync(done_fsm, _make_shorthand_batch([{"p": "/message/content/parts/0", "o": "append", "v": "x"}]))
+        _feed_sync(done_fsm, _make_done())
+
+        timeout_fsm = _make_fsm()
+        _feed_sync(timeout_fsm, _make_add_frame(channel=0, msg_id="asst"))
+        _feed_sync(timeout_fsm, _make_shorthand_batch([{"p": "/message/content/parts/0", "o": "append", "v": "x"}]))
+        _feed_sync(timeout_fsm, _make_typed_event("ccproxy_idle_timeout", idle_seconds=120.0))
+
+        assert done_fsm.finish_reason == "stop"
+        assert timeout_fsm.finish_reason == "error"
+
+    def test_idle_timeout_does_not_overwrite_prior_finish(self) -> None:
+        """A [DONE] that raced the give-up already recorded "stop" — the
+        timeout signal must not clobber it."""
+        fsm = _make_fsm()
+        _feed_sync(fsm, _make_add_frame(channel=0, msg_id="asst"))
+        _feed_sync(fsm, _make_shorthand_batch([{"p": "/message/content/parts/0", "o": "append", "v": "x"}]))
+        _feed_sync(fsm, _make_done())
+        _feed_sync(fsm, _make_typed_event("ccproxy_idle_timeout", idle_seconds=120.0))
+        assert fsm.finish_reason == "stop"
+
+    def test_idle_timeout_before_any_content_still_sets_error(self) -> None:
+        """Unlike [DONE] (which is a no-op without content), the idle-timeout
+        signal always records a finish — a give-up before any content is still
+        classifiable, not silently ignored."""
+        fsm = _make_fsm()
+        _feed_sync(fsm, _make_add_frame(channel=0, msg_id="asst"))
+        _feed_sync(fsm, _make_typed_event("ccproxy_idle_timeout", idle_seconds=120.0))
+        assert fsm.finish_reason == "error"
+
+    def test_idle_timeout_collect_mode_reports_error_finish_reason(self) -> None:
+        """Force-streamed collect mode (stream:false client) surfaces the same
+        classifiable finish reason in the buffered JSON body."""
+        raw_sse = (
+            _make_add_frame(channel=0, msg_id="asst")
+            + _make_shorthand_batch([{"p": "/message/content/parts/0", "o": "append", "v": "partial answer"}])
+            + _make_typed_event("ccproxy_idle_timeout", idle_seconds=120.0)
+        )
+        out = _drive_collect(raw_sse, inbound_format=InboundFormat.OPENAI_CHAT)
+        assert out["choices"][0]["message"]["content"] == "partial answer"
+        assert out["choices"][0]["finish_reason"] == "error"
+
+
 # ── /message/content/text path + bare continuation deltas (recon §2) ──────────
 
 # The "Paris" split-token example from the recon doc: an explicit append on the
