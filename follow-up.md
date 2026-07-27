@@ -16,7 +16,7 @@ Source spec: the P-6 section of
 
 ### [High] `finish_reason` never reaches any streaming renderer — DONE
 
-Fixed in `e2d0247`.
+Fixed in `5c8d516`.
 
 `SSEPipeline._drain_and_terminate()` now threads the intake's captured
 `finish_reason` alongside `usage` / `raw_extras` into all three streaming render
