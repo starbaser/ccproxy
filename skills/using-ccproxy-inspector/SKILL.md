@@ -63,7 +63,7 @@ Interpretation:
   behavior; it does not claim that the namespace is a restrictive privacy
   firewall.
 - `namespace doctor` runs a live probe through the same namespace execution path
-  used by `ccproxy run --inspect`.
+  used by `ccproxy run --capture`.
 - `namespace doctor` fails for DNS, public IPv4, or ccproxy-localhost
   reachability failures. IPv6 is reported but is not a failure.
 - `ccproxy namespace wireguard-config` prints raw WireGuard client config and
@@ -91,16 +91,16 @@ intercepted.
 Use for lightweight SDK debugging and normal OpenAI/Anthropic-compatible
 clients.
 
-### WireGuard namespace capture: `ccproxy run --inspect`
+### WireGuard namespace capture: `ccproxy run --capture`
 
 Use this when the tool hardcodes provider endpoints, when base URL injection is
 not enough, or when you need reference traffic from a real provider CLI:
 
 ```bash
 ccproxy start
-ccproxy run --inspect -- claude -p "hello"
-ccproxy run --inspect -- aider --model claude-sonnet-4-5-20250929
-ccproxy run --inspect -- python my_agent.py
+ccproxy run --capture -- claude -p "hello"
+ccproxy run --capture -- aider --model claude-sonnet-4-5-20250929
+ccproxy run --capture -- python my_agent.py
 ```
 
 The subprocess runs in a rootless Linux user+network namespace. ccproxy
@@ -130,10 +130,10 @@ Important behavior:
 | Scenario | Prefer |
 | --- | --- |
 | SDK client supports configurable base URL | `ccproxy run` |
-| CLI hardcodes provider endpoints | `ccproxy run --inspect` |
-| Need native provider CLI reference traffic | `ccproxy run --inspect` |
+| CLI hardcodes provider endpoints | `ccproxy run --capture` |
+| Need native provider CLI reference traffic | `ccproxy run --capture` |
 | Need minimum moving parts | `ccproxy run` |
-| Need full local network capture for a tool | `ccproxy run --inspect` |
+| Need full local network capture for a tool | `ccproxy run --capture` |
 | Need to explain privacy behavior | `docs/privacy.md` + `ccproxy namespace status --json` |
 
 ## Understanding Flow State
@@ -240,7 +240,7 @@ Capture shape source traffic from a real CLI run:
 
 ```bash
 ccproxy start
-ccproxy run --inspect -- claude -p "shape capture"
+ccproxy run --capture -- claude -p "shape capture"
 ccproxy flows list
 ccproxy shapes save anthropic
 ccproxy shapes save anthropic --mflow
