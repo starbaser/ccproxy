@@ -1,0 +1,20 @@
+{
+  "name": "ccproxy",
+  "version": "1.2.1",
+  "description": "Guides users through ccproxy — a mitmproxy-based LLM API interceptor — with SDK integration, OAuth authentication, sentinel key substitution, transform routing, and troubleshooting.",
+  "author": {
+    "name": "***",
+    "email": "mail@***.com"
+  },
+  "keywords": ["ccproxy", "mitmproxy", "oauth", "anthropic", "openai", "agent-sdk"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "ccproxy",
+    "shortDescription": "Inspect and troubleshoot LLM API traffic with ccproxy.",
+    "longDescription": "Guidance for configuring ccproxy, capturing LLM API traffic, inspecting flows, and diagnosing routing, authentication, and shaping behavior.",
+    "developerName": "Eigenmage",
+    "category": "Developer Tools",
+    "capabilities": [],
+    "defaultPrompt": "Help me inspect LLM API traffic with ccproxy."
+  }
+}
