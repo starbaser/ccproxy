@@ -405,8 +405,12 @@ in
         litellm_params.model = "gemini/gemini-2.5-flash-image";
       }
       {
-        model_name = "deepseek-v4";
-        litellm_params.model = "deepseek/deepseek-v4";
+        model_name = "deepseek-v4-pro";
+        litellm_params.model = "deepseek/deepseek-v4-pro";
+      }
+      {
+        model_name = "deepseek-v4-flash";
+        litellm_params.model = "deepseek/deepseek-v4-flash";
       }
     ] ++ perplexityModelBindings;
   };

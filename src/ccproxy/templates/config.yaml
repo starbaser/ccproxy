@@ -57,8 +57,11 @@ model_list:
     model: gemini/gemini-2.5-flash-image
   model_name: gemini-2.5-flash-image
 - litellm_params:
-    model: deepseek/deepseek-v4
-  model_name: deepseek-v4
+    model: deepseek/deepseek-v4-pro
+  model_name: deepseek-v4-pro
+- litellm_params:
+    model: deepseek/deepseek-v4-flash
+  model_name: deepseek-v4-flash
 - litellm_params:
     model: perplexity_pro/perplexity/best
   model_name: perplexity/best
