@@ -1,23 +1,6 @@
 {
   use = [
     {
-      node = "@repo:gproxy-protocol";
-      mount = "gproxy-protocol";
-    }
-    {
-      node = "@repo:gproxy";
-      mount = "gproxy";
-    }
-
-    {
-      node = "@repo:aurora";
-      mount = "aurora";
-    }
-    {
-      node = "@repo:pro-cli";
-      mount = "pro-cli";
-    }
-    {
       node = "@repo:mitmproxy";
       mount = "inspector/mitmproxy";
     }
@@ -53,7 +36,14 @@
       node = "@repo:ty";
       mount = "lsp/ty";
     }
-    { node = "@repo:litellm"; mount = "litellm"; }
+    {
+      node = "@repo:litellm";
+      mount = "litellm";
+    }
+    {
+      node = "@repo:plotille";
+      mount = "plotille";
+    }
   ];
   config = {
     auto_mount = true;
