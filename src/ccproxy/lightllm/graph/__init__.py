@@ -45,7 +45,7 @@ __all__ = [
 ]
 
 
-_ANTHROPIC_COMPATIBLE = frozenset({"anthropic", "deepseek", "zai"})
+_ANTHROPIC_COMPATIBLE = frozenset({"anthropic", "deepseek", "zai", "minimax"})
 _GOOGLE_COMPATIBLE = frozenset({"google", "gemini", "vertex_ai", "vertex_ai_beta"})
 
 
@@ -88,8 +88,8 @@ def dispatch_intake(
 ) -> AnyAsyncIntakeFSM:
     """Dispatch to the right per-upstream response intake FSM.
 
-    Routes Anthropic-compatible providers (anthropic / deepseek / zai) to the
-    Anthropic intake FSM, OpenAI to the OpenAI intake FSM, OpenAI Responses
+    Routes Anthropic-compatible providers to the Anthropic intake FSM,
+    OpenAI to the OpenAI intake FSM, OpenAI Responses
     to the Responses intake FSM, Google family (google / gemini / vertex_ai /
     vertex_ai_beta) to the Google intake FSM, and Perplexity Pro to its own intake FSM. Raises
     :class:`UnsupportedUpstreamError` for anything else — there's no fallback,

@@ -32,6 +32,7 @@ def _models_endpoint(provider: Provider) -> str | None:
     if provider.type not in {
         "anthropic",
         "deepseek",
+        "minimax",
         "openai",
         "openai_responses",
         "zai",
@@ -72,7 +73,7 @@ def _auth_request_parts(
     else:
         headers[provider.auth.header] = token
     headers.update(provider.auth.extra_headers(f"Catalog/{provider_name}"))
-    if provider.type in {"anthropic", "deepseek", "zai"}:
+    if provider.type in {"anthropic", "deepseek", "minimax", "zai"}:
         headers.setdefault("anthropic-version", "2023-06-01")
     return headers, query
 

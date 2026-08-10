@@ -801,6 +801,89 @@ class TestLiteLLMModelBindings:
         assert render_ctx.model == "claude-sonnet-4-6"
         assert render_ctx.settings["max_tokens"] == 2048
 
+    @patch("ccproxy.lightllm.graph.dispatch_dump_sync")
+    def test_packaged_minimax_binding_routes_anthropic_endpoint(
+        self,
+        mock_render: MagicMock,
+        monkeypatch: Any,
+    ) -> None:
+        from importlib.resources import as_file, files
+        from pathlib import Path
+
+        monkeypatch.setenv("MINIMAX_API_KEY", "test-key")
+        with as_file(files("ccproxy.templates").joinpath("ccproxy.yaml")) as template_path:
+            config = CCProxyConfig.from_yaml(Path(template_path))
+        set_config_instance(config)
+        mock_render.return_value = b'{"model":"MiniMax-M3","messages":[]}'
+        router = InspectorRouter(name="test_minimax_binding", request_passthrough=True, response_passthrough=True)
+        register_transform_routes(router)
+        flow = _make_flow(
+            path="/v1/chat/completions",
+            body={"model": "MiniMax-M3", "messages": [{"role": "user", "content": "hello"}]},
+        )
+
+        router.request(flow)
+
+        assert flow.request.scheme == "https"
+        assert flow.request.host == "api.minimax.io"
+        assert flow.request.path == "/anthropic/v1/messages"
+        assert flow.request.headers["x-api-key"] == "test-key"
+        assert "authorization" not in flow.request.headers
+
+    def test_minimax_binding_routes_documented_openai_endpoints(
+        self,
+        monkeypatch: Any,
+        tmp_path: Any,
+    ) -> None:
+        monkeypatch.setenv("MINIMAX_API_KEY", "test-key")
+        for region, base_url, expected_host in (
+            ("global", "https://api.minimax.io/v1", "api.minimax.io"),
+            ("china", "https://api.minimaxi.com/v1", "api.minimaxi.com"),
+        ):
+            ccproxy_path = tmp_path / f"ccproxy-{region}.yaml"
+            litellm_path = tmp_path / f"config-{region}.yaml"
+            ccproxy_path.write_text(
+                f"""
+ccproxy:
+  providers:
+    minimax:
+      auth:
+        command: printenv MINIMAX_API_KEY
+        type: command
+      base_url: {base_url}
+      path: /chat/completions
+      type: openai
+"""
+            )
+            litellm_path.write_text(
+                """
+model_list:
+  - model_name: MiniMax-M3
+    litellm_params:
+      model: minimax/MiniMax-M3
+"""
+            )
+            config = CCProxyConfig.from_yaml(ccproxy_path, litellm_path=litellm_path)
+            set_config_instance(config)
+            router = InspectorRouter(
+                name=f"test_minimax_{region}",
+                request_passthrough=True,
+                response_passthrough=True,
+            )
+            register_transform_routes(router)
+            flow = _make_flow(
+                path="/v1/chat/completions",
+                body={"model": "MiniMax-M3", "messages": [{"role": "user", "content": "hello"}]},
+            )
+
+            router.request(flow)
+
+            assert flow.request.scheme == "https"
+            assert flow.request.host == expected_host
+            assert flow.request.path == "/v1/chat/completions"
+            assert flow.request.headers["authorization"] == "Bearer test-key"
+            assert "x-api-key" not in flow.request.headers
+
 
 class TestGeminiTransform:
     """Tests for the unified Gemini transform path via dispatch_dump_sync."""

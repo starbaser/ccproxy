@@ -191,6 +191,7 @@ _NATIVE_TYPES = frozenset(
         "deepseek",
         "gemini",
         "google",
+        "minimax",
         "openai",
         "openai_conversations",
         "openai_responses",
@@ -201,7 +202,7 @@ _NATIVE_TYPES = frozenset(
     }
 )
 
-_ANTHROPIC_TYPES = frozenset({"anthropic", "deepseek", "zai"})
+_ANTHROPIC_TYPES = frozenset({"anthropic", "deepseek", "minimax", "zai"})
 _GOOGLE_TYPES = frozenset({"gemini", "google", "vertex_ai", "vertex_ai_beta"})
 
 
@@ -307,7 +308,7 @@ def _native_provider(
 
 def _endpoint_path(api_base: str, adapter_type: str) -> str:
     path = urlsplit(api_base).path.rstrip("/")
-    if adapter_type in {"anthropic", "deepseek", "zai"}:
+    if adapter_type in _ANTHROPIC_TYPES:
         if path.endswith("/messages"):
             return ""
         return "/messages" if path.endswith("/v1") else "/v1/messages"
@@ -332,7 +333,7 @@ def _auth_source(raw: Any, *, source_provider: str, adapter_type: str) -> Any:
     if raw is None:
         return None
     placement: dict[str, str]
-    if adapter_type in {"anthropic", "deepseek", "zai"}:
+    if adapter_type in _ANTHROPIC_TYPES:
         placement = {"header": "x-api-key"}
     elif adapter_type in {"gemini", "google"}:
         placement = {"query_param": "key"}
@@ -460,12 +461,16 @@ def load_litellm_config(path: Path, providers: dict[str, Any]) -> LiteLLMFronten
                 f"model_list[{index}].litellm_params.model={raw_model!r} has no provider prefix or resolvable alias"
             )
         has_explicit_endpoint = params.get("api_base") is not None or params.get("base_url") is not None
+        configured_provider = providers.get(source_provider) if not has_explicit_endpoint else None
         # LiteLLM's DeepSeek provider is OpenAI-compatible. ccproxy also has an
         # intentionally Anthropic-compatible native DeepSeek service; retain
         # that only when a declaration inherits the native endpoint.
-        adapter_type = (
-            "openai" if source_provider == "deepseek" and has_explicit_endpoint else _adapter_type(source_provider)
-        )
+        if source_provider == "minimax" and configured_provider is not None and configured_provider.type == "openai":
+            adapter_type = "openai"
+        else:
+            adapter_type = (
+                "openai" if source_provider == "deepseek" and has_explicit_endpoint else _adapter_type(source_provider)
+            )
         inherited = (
             None
             if has_explicit_endpoint

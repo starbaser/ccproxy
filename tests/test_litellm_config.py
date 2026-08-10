@@ -280,6 +280,67 @@ model_list:
     assert binding.provider.auth.header is None
 
 
+@pytest.mark.parametrize(
+    ("base_url", "provider_path", "provider_type", "expected_binding_type"),
+    [
+        ("https://api.minimax.io/anthropic", "/v1/messages", "anthropic", "minimax"),
+        ("https://api.minimaxi.com/anthropic", "/v1/messages", "anthropic", "minimax"),
+        ("https://api.minimax.io/v1", "/chat/completions", "openai", "openai"),
+        ("https://api.minimaxi.com/v1", "/chat/completions", "openai", "openai"),
+    ],
+)
+def test_compiles_native_minimax_provider_binding(
+    tmp_path: Path,
+    base_url: str,
+    provider_path: str,
+    provider_type: str,
+    expected_binding_type: str,
+) -> None:
+    path = _write(
+        tmp_path / "config.yaml",
+        """
+model_list:
+  - model_name: MiniMax-M3
+    litellm_params:
+      model: minimax/MiniMax-M3
+""",
+    )
+    provider = Provider(
+        base_url=base_url,
+        path=provider_path,
+        type=provider_type,
+    )
+
+    binding = load_litellm_config(path, {"minimax": provider}).bindings[0]
+
+    assert binding.owned_by == "minimax"
+    assert binding.provider.type == expected_binding_type
+    assert binding.provider.base_url == base_url
+    assert binding.provider.path == provider_path
+
+
+def test_explicit_minimax_base_url_uses_anthropic_messages_path(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path / "config.yaml",
+        """
+model_list:
+  - model_name: MiniMax-M3
+    litellm_params:
+      model: minimax/MiniMax-M3
+      api_base: https://api.minimax.io/anthropic
+      api_key: test-key
+""",
+    )
+
+    binding = load_litellm_config(path, {}).bindings[0]
+
+    assert binding.provider.type == "minimax"
+    assert binding.provider.base_url == "https://api.minimax.io/anthropic"
+    assert binding.provider.path == "/v1/messages"
+    assert binding.provider.auth is not None
+    assert binding.provider.auth.header == "x-api-key"
+
+
 def test_pricing_fields_move_to_model_info_not_request_defaults(tmp_path: Path) -> None:
     path = _write(
         tmp_path / "config.yaml",

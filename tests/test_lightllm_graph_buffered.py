@@ -124,6 +124,21 @@ class TestAnthropicBufferedToOpenAI:
             out = json.loads(out_bytes)
             assert out["choices"][0]["message"]["content"] == "via deepseek"
 
+    def test_minimax_provider(self) -> None:
+        """The Anthropic synthesizer applies to the MiniMax provider."""
+        raw = _make_anthropic_text_body("via MiniMax", model="MiniMax-M3")
+
+        out_bytes = transform_buffered_response_sync(
+            raw_bytes=raw,
+            provider_type="minimax",
+            inbound_format=InboundFormat.OPENAI_CHAT,
+            model="MiniMax-M3",
+            request_params=ModelRequestParameters(),
+        )
+
+        out = json.loads(out_bytes)
+        assert out["choices"][0]["message"]["content"] == "via MiniMax"
+
 
 # ── Anthropic buffered → OpenAI Responses ──────────────────────────────────
 

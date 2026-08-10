@@ -48,6 +48,7 @@ def _make_parsed(
         ("anthropic", "claude-3"),
         ("deepseek", "deepseek-chat"),
         ("zai", "glm-4"),
+        ("minimax", "MiniMax-M3"),
         ("openai", "gpt-4o"),
         ("openai_responses", "gpt-5"),
         ("google", "gemini-1.5-pro"),

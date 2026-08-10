@@ -37,6 +37,27 @@ def test_empty_config_has_no_fabricated_models() -> None:
     assert build_catalog() == {"object": "list", "data": []}
 
 
+def test_packaged_minimax_entries_include_model_metadata() -> None:
+    from importlib.resources import as_file, files
+
+    with as_file(files("ccproxy.templates").joinpath("ccproxy.yaml")) as template_path:
+        set_config_instance(CCProxyConfig.from_yaml(Path(template_path)))
+
+    entries = {entry["id"]: entry for entry in build_catalog()["data"]}
+
+    assert entries["MiniMax-M3"]["model_info"]["context_window"] == 1000000
+    assert entries["MiniMax-M3"]["model_info"]["input_modalities"] == ["text", "image", "video"]
+    assert entries["MiniMax-M3"]["model_info"]["pricing_usd_per_million_tokens"] == {
+        "cache_read": 0.12,
+        "cache_write": None,
+        "input": 0.6,
+        "output": 2.4,
+    }
+    assert entries["MiniMax-M3"]["model_info"]["thinking"] == ["adaptive", "disabled"]
+    assert entries["MiniMax-M2.7"]["model_info"]["context_window"] == 204800
+    assert entries["MiniMax-M2.7"]["model_info"]["thinking"] == ["always_on"]
+
+
 def test_concrete_aliases_are_the_offline_catalog(tmp_path: Path) -> None:
     _configure(
         tmp_path,
@@ -129,6 +150,30 @@ model_list:
     catalog = build_catalog(refresh=True, transport=httpx.MockTransport(handler))
 
     assert [entry["id"] for entry in catalog["data"]] == ["local/qwen"]
+
+
+def test_refresh_supports_explicit_minimax_anthropic_provider(tmp_path: Path) -> None:
+    _configure(
+        tmp_path,
+        """
+model_list:
+  - model_name: minimax/*
+    litellm_params:
+      model: minimax/*
+      api_base: https://api.minimax.io/anthropic
+      api_key: test-key
+""",
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "https://api.minimax.io/anthropic/v1/models"
+        assert request.headers["x-api-key"] == "test-key"
+        assert request.headers["anthropic-version"] == "2023-06-01"
+        return httpx.Response(200, json={"data": [{"id": "MiniMax-M3"}]})
+
+    catalog = build_catalog(refresh=True, transport=httpx.MockTransport(handler))
+
+    assert [entry["id"] for entry in catalog["data"]] == ["minimax/MiniMax-M3"]
 
 
 def test_refresh_inverts_upstream_wildcard_and_filters_nonmatches(tmp_path: Path) -> None:

@@ -65,6 +65,37 @@ model_list:
     model: deepseek/deepseek-v4-flash
   model_name: deepseek-v4-flash
 - litellm_params:
+    model: minimax/MiniMax-M3
+  model_info:
+    context_window: 1000000
+    input_modalities:
+    - text
+    - image
+    - video
+    pricing_usd_per_million_tokens:
+      cache_read: 0.12
+      cache_write: null
+      input: 0.6
+      output: 2.4
+    thinking:
+    - adaptive
+    - disabled
+  model_name: MiniMax-M3
+- litellm_params:
+    model: minimax/MiniMax-M2.7
+  model_info:
+    context_window: 204800
+    input_modalities:
+    - text
+    pricing_usd_per_million_tokens:
+      cache_read: 0.06
+      cache_write: 0.375
+      input: 0.3
+      output: 1.2
+    thinking:
+    - always_on
+  model_name: MiniMax-M2.7
+- litellm_params:
     model: perplexity_pro/perplexity/best
   model_name: perplexity/best
 - litellm_params:

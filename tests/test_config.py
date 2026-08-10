@@ -683,3 +683,62 @@ class TestOpenAIConversationsProviderDefault:
         from ccproxy.transport import VALID_PROFILES
 
         assert "chrome136" in VALID_PROFILES
+
+
+class TestMiniMaxProviderDefault:
+    """The shipped default template includes a parseable MiniMax provider."""
+
+    def _load_packaged_config(self) -> CCProxyConfig:
+        from importlib.resources import as_file, files
+
+        with as_file(files("ccproxy.templates").joinpath("ccproxy.yaml")) as template_path:
+            return CCProxyConfig.from_yaml(Path(template_path))
+
+    def test_packaged_template_routes_minimax(self) -> None:
+        """The generated default template carries the MiniMax provider."""
+        provider = self._load_packaged_config().providers.get("minimax")
+        assert provider is not None
+        assert provider.type == "anthropic"
+        assert provider.base_url == "https://api.minimax.io/anthropic"
+        assert provider.path == "/v1/messages"
+
+    def test_packaged_template_uses_minimax_api_key(self) -> None:
+        """The MiniMax provider sends its configured key in ``x-api-key``."""
+        provider = self._load_packaged_config().providers["minimax"]
+        assert isinstance(provider.auth, CommandAuthSource)
+        assert provider.auth.command == "printenv MINIMAX_API_KEY"
+        assert provider.auth.header == "x-api-key"
+
+    def test_packaged_template_exposes_minimax_models(self) -> None:
+        """The generated model bindings expose MiniMax models and metadata."""
+        config = self._load_packaged_config()
+        bindings = {binding.model_name: binding for binding in config.model_bindings}
+
+        for model_id in ("MiniMax-M3", "MiniMax-M2.7"):
+            binding = bindings[model_id]
+            assert binding.owned_by == "minimax"
+            assert binding.upstream_model == model_id
+            assert binding.provider.type == "minimax"
+
+        assert bindings["MiniMax-M3"].model_info == {
+            "context_window": 1000000,
+            "input_modalities": ["text", "image", "video"],
+            "pricing_usd_per_million_tokens": {
+                "cache_read": 0.12,
+                "cache_write": None,
+                "input": 0.6,
+                "output": 2.4,
+            },
+            "thinking": ["adaptive", "disabled"],
+        }
+        assert bindings["MiniMax-M2.7"].model_info == {
+            "context_window": 204800,
+            "input_modalities": ["text"],
+            "pricing_usd_per_million_tokens": {
+                "cache_read": 0.06,
+                "cache_write": 0.375,
+                "input": 0.3,
+                "output": 1.2,
+            },
+            "thinking": ["always_on"],
+        }

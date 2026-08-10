@@ -222,7 +222,7 @@ This does NOT affect the main request/response forwarding path (mitmproxy handle
 
 ### providers
 
-`providers` maps a sentinel suffix to a `Provider` entry: an auth source, a single destination (`host` + `path`), and an adapter-family `type` identifier that names the wire format the destination speaks (one of `anthropic`, `openai`, `google` / `gemini` / `vertex_ai` / `vertex_ai_beta`, `perplexity_pro`; Anthropic-compatible forks like `deepseek` and `zai` use `type: anthropic`). When ccproxy sees a sentinel key matching `sk-ant-oat-ccproxy-{name}`, the matching `Provider` drives both auth injection (`inject_auth`) and routing (auto-redirect or cross-format `transform` via lightllm).
+`providers` maps a sentinel suffix to a `Provider` entry: an auth source, a single destination (`base_url` + `path`), and an adapter-family `type` identifier that names the wire format the destination speaks (one of `anthropic`, `openai`, `google` / `gemini` / `vertex_ai` / `vertex_ai_beta`, `perplexity_pro`). Compatible providers use the closest wire-format family, such as `type: anthropic`. When ccproxy sees a sentinel key matching `sk-ant-oat-ccproxy-{name}`, the matching `Provider` drives both auth injection (`inject_auth`) and routing (auto-redirect or cross-format `transform` via lightllm).
 
 **Simple form** — auth dispatched as a bare shell command:
 
@@ -265,14 +265,37 @@ ccproxy:
       base_url: https://api.deepseek.com
       path: /anthropic/v1/messages
       type: anthropic          # DeepSeek's anthropic-compat endpoint speaks the anthropic format
+
+    minimax:
+      auth:
+        type: command
+        command: "printenv MINIMAX_API_KEY"
+        header: x-api-key      # send token as `x-api-key: <token>` (not `Authorization: Bearer ...`)
+      base_url: https://api.minimax.io/anthropic
+      path: /v1/messages
+      type: anthropic          # MiniMax-M3 and MiniMax-M2.7 via the compatible endpoint
 ```
+
+The packaged template selects the global `anthropic` endpoint. A provider has one destination, so use the
+corresponding values below when selecting another MiniMax endpoint:
+
+| `type` | Region | `base_url` | `path` | `auth.header` |
+|---|---|---|---|---|
+| `anthropic` | Global | `https://api.minimax.io/anthropic` | `/v1/messages` | `x-api-key` |
+| `anthropic` | China | `https://api.minimaxi.com/anthropic` | `/v1/messages` | `x-api-key` |
+| `openai` | Global | `https://api.minimax.io/v1` | `/chat/completions` | Omit to use the default Bearer header |
+| `openai` | China | `https://api.minimaxi.com/v1` | `/chat/completions` | Omit to use the default Bearer header |
+
+MiniMax-M3 supports adaptive and disabled thinking. The Anthropic-compatible API defaults thinking off,
+while the OpenAI-compatible API defaults adaptive thinking on; set the mode explicitly for portable behavior.
+MiniMax-M2.7 always uses interleaved thinking.
 
 **Provider entry fields:**
 
 | Field | Description |
 |---|---|
 | `auth` | Discriminated auth source. Bare strings coerce to `{type: command, command: <str>}`. |
-| `host` | Single destination hostname (e.g. `api.anthropic.com`). |
+| `base_url` | Absolute destination URL, including an optional base path (e.g. `https://api.minimax.io/anthropic`). |
 | `path` | Destination path. Supports `{model}` and `{action}` templating substituted from the body / URL at routing time. Defaults to `/`. |
 | `type` | Wire-format identifier (`anthropic`, `gemini`, `openai`, `openai_responses`, `perplexity_pro`, …). When the incoming format matches `type`, the routing handler just rewrites the destination; when they differ, the body is rewritten via `lightllm`. |
 

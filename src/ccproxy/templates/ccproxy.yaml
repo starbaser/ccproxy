@@ -115,6 +115,14 @@ ccproxy:
       base_url: https://cloudcode-pa.googleapis.com
       path: /v1internal:{action}
       type: gemini
+    minimax:
+      auth:
+        command: printenv MINIMAX_API_KEY
+        header: x-api-key
+        type: command
+      base_url: https://api.minimax.io/anthropic
+      path: /v1/messages
+      type: anthropic
     openai_conversations:
       auth:
         cookie_file: ~/.config/ccproxy/openai-conversations-cookies.txt
